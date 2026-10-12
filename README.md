@@ -156,29 +156,14 @@ python3 ops/central_daemon.py --uninstall  # 停用并删除守护
 - **永远不动别人的工作区**。推进 `main` 引用用 `git update-ref`，从不 `checkout` / `reset` / `stash` 任何人的在途改动。
 - **项目相关的旋钮集中在一处**。主干分支名、分支前缀、落盘用的主干 worktree、构建门禁命令、泳道定义，全在 `ops/central.config.json`（环境变量可覆盖）；不配就用对「单仓 + `frontend` 子目录 + `npm run build`」开箱即用的默认值。
 
-## 参考了谁、复用了什么（致谢）
+## 参考了什么
 
-这套东西的价值不在写了多少代码，而在把已有能力接起来。下面按用在哪一层说明它站在谁的肩膀上。
+**Lauren「poteto」的工程分享（P-Stack）** —— 这套设计的两个判断直接来自她：
 
-**Codex 官方的扩展点（核心复用）** —— 这套编排能「长在普通输入框里」，是因为 Codex 把这些做成了公开可用的形态。感谢 Codex 团队：
+- 能靠人拦下的错误，就该写成自动规则。对应这里的门禁前置、冲突分支不自动合、只在拍板时打扰你。
+- 规则从硬到软排序：改代码结构 > 自动检查 > 写规则 > 靠人检查。对应这里用「固定泳道」代替再写一份规范。
 
-- **Skill**：`plugin/skills/central-command/SKILL.md` 负责「可发现 + 可触发」。你在任意对话里说出零散需求，skill 命中后自动接管。
-- **MCP（stdio）**：`ops/central_mcp.py` 把 CLI 变成对话能直接调用的工具（`capture_request` / `sync_control_plane` / `next_actions` …），省掉记命令。
-- **Plugin 清单**：`.codex-plugin/plugin.json` 把 skill 和 MCP 打包成一个可安装项，于是它出现在 Plugins → Personal 里，而不是让你去改配置文件。
-- **`AGENTS.md` / Automations**：作为「开工前先读契约」和长驻调度的落点。
-
-**Git（整套编排的物理底座）** —— 没有 Git 就做不出来。感谢 Git 社区：
-
-- `git worktree`：让每个任务有独立工作区，互不打扰。
-- `git merge-tree --write-tree`：在真正写之前先模拟一次合并，判断冲不冲突。
-- `git update-ref`：推进 `main` 引用，而不去 `checkout` / `reset` 任何人的工作区。
-- `git for-each-ref` / `rev-list`：盘点分支，找出可回收、可入队、有冲突的。
-
-**macOS launchd** —— 常驻调度直接用系统自带能力，没有引入任何第三方守护框架。
-
-**Python 标准库** —— `ops/*.py` 零第三方依赖，有 `python3` 就能跑，不给使用者添安装负担。
-
-**设计灵感：Lauren「poteto」的工程分享** —— 她讲的两件事直接塑造了这套设计：把「能靠人拦下的错误」改成「自动规则」，以及「规则从硬到软」的排序（改代码结构 > 自动检查 > 写规则 > 靠人检查）。这里的「固定泳道 / 门禁前置 / 只在拍板时打扰你」就是这个思路。**仅设计借鉴，无代码复用**，特此致谢。
+仅观点借鉴，无代码复用。除此之外，编排层没有引用任何第三方开源工程。
 
 ## 能力边界（诚实版）
 
