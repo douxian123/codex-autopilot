@@ -1,0 +1,33 @@
+{
+  "name": "codex-autopilot",
+  "version": "0.1.0",
+  "description": "Codex 自动挡化：把零散、即时的需求收进唯一入口，自动归类、路由、追踪，并给出项目下一步。",
+  "author": {
+    "name": "douxian",
+    "url": "https://github.com/douxian123"
+  },
+  "homepage": "https://github.com/douxian123/codex-autopilot",
+  "repository": "https://github.com/douxian123/codex-autopilot",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "orchestration",
+    "autopilot",
+    "central-command",
+    "control-plane",
+    "workflow"
+  ],
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex 自动挡",
+    "shortDescription": "统一入口：散乱需求自动归类、路由、追踪",
+    "longDescription": "把一个复杂项目里零散、即时的视觉/体验/bug/架构问题和“下一步做什么”收进同一个输入框，由控制面自动归类、路由、写进项目真相，并给出当前最该动的工作。合并、状态、进度都由控制面统一编排，用户不再需要自己选对话或分支。",
+    "developerName": "douxian",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ]
+  }
+}

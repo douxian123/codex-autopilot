@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "codex-autopilot": {
+      "command": "python3",
+      "args": [
+        "../ops/central_mcp.py"
+      ]
+    }
+  }
+}

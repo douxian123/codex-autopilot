@@ -1,0 +1,26 @@
+[
+ {
+  "name": "design",
+  "title": "体验与视觉",
+  "gate": "视觉/交互相关门禁",
+  "status": "active"
+ },
+ {
+  "name": "bug",
+  "title": "缺陷修复",
+  "gate": "复现 + 回归门禁",
+  "status": "active"
+ },
+ {
+  "name": "arch",
+  "title": "架构与重构",
+  "gate": "编译 + 构建",
+  "status": "active"
+ },
+ {
+  "name": "gate",
+  "title": "门禁与验证",
+  "gate": "相关 verify 脚本",
+  "status": "active"
+ }
+]

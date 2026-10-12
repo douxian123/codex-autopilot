@@ -1,0 +1,460 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+truthctl —— 项目真相层的唯一读写入口（stdlib only）
+
+它补的是司令台缺的那一半：`kgctl` 管「输入不分叉 + 合并串行」，
+truthctl 管「这个项目现在到底是什么状态」。
+
+  mainline.json      产品主线（手写，改方向才动）
+  decisions.jsonl    决策台账
+  ledger.jsonl       问题台账（bug/视觉/体验/架构）
+  progress.jsonl     进展台账
+  acceptance.jsonl   验收台账
+
+命令：
+  truthctl                     一屏真相（并写 docs/PROJECT_STATUS.md）
+  truthctl snapshot            只写 docs/PROJECT_STATUS.md
+  truthctl ls [type]           列出台账
+  truthctl add <type> "<标题>"  追加一条（细节走环境变量）
+  truthctl promote <n> <kind>  把 ops/tasks/inbox.jsonl 第 n 条提升为问题台账
+
+add 的环境变量：
+  KG_TRUTH_DETAIL KG_TRUTH_STATUS KG_TRUTH_LANE KG_TRUTH_FILES
+  KG_TRUTH_LEVEL KG_TRUTH_EVIDENCE KG_TRUTH_COMMIT KG_TRUTH_SUMMARY
+  KG_TRUTH_DECISION KG_TRUTH_WHY KG_TRUTH_ALTERNATIVES KG_TRUTH_SOURCE
+"""
+
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+# 真相状态（inbox / 台账 / 泳道 / 看板）只有一处权威目录，见 ops/state_root.py。
+# 旧实现取「调用所在 worktree」，而 kgctl 取「git 主工作树」，于是同一个项目能同时
+# 存在两份互不相认的账本。两边共用 state_root 之后，从任何 worktree 调用都读同一份；
+# KG_REPO 仍然是最高的显式覆盖。
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from state_root import resolve_state_root  # noqa: E402
+import central_config  # noqa: E402
+
+REPO = resolve_state_root()
+CFG = central_config.load(REPO)
+TRUTH = REPO / 'ops' / 'truth'
+INBOX = REPO / 'ops' / 'tasks' / 'inbox.jsonl'
+STATUS = REPO / 'docs' / 'PROJECT_STATUS.md'
+
+PREFIX = {'decision': 'D', 'ledger': 'L', 'progress': 'P', 'acceptance': 'A'}
+LEDGER_KINDS = {'visual', 'ux', 'bug', 'arch'}
+LANES = REPO / 'ops' / 'tasks' / 'lanes.json'
+# 从具体到泛化：第一条命中的规则就是归类结果。可用 central.config.json 的
+# lane_rules 覆盖；不配就用这套通用默认。
+_DEFAULT_LANE_RULES = [
+    ('design', ('visual', '视觉', '排版', '样式', '导航', 'layout', 'css', 'ui', '遮挡')),
+    ('bug', ('bug', '报错', '崩溃', '异常', 'error', 'crash', '不生效', '回归')),
+    ('arch', ('refactor', '重构', '架构', '依赖', '性能', 'perf', '拆分')),
+    ('gate', ('gate', '门禁', 'verify', '断言', 'ci', 'test', '构建失败')),
+]
+LANE_RULES = [(r[0], tuple(r[1])) for r in CFG.get('lane_rules') or _DEFAULT_LANE_RULES]
+DEFAULT_LANE = CFG.get('default_lane') or (LANE_RULES[0][0] if LANE_RULES else 'bug')
+PRIORITY = {'bug': 0, 'arch': 1, 'ux': 2, 'visual': 3}
+
+
+def _files() -> list:
+    return [f for f in os.environ.get('KG_TRUTH_FILES', '').split(':') if f]
+
+
+def _read(path: Path) -> list:
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except Exception:
+            pass
+    return out
+
+
+FILES = {'decision': 'decisions.jsonl', 'ledger': 'ledger.jsonl',
+         'progress': 'progress.jsonl', 'acceptance': 'acceptance.jsonl'}
+
+
+def _append(rec: dict):
+    path = TRUTH / FILES[rec['type']]
+    with path.open('a') as fh:
+        fh.write(json.dumps(rec, ensure_ascii=False) + '\n')
+
+
+def _next_id(t: str) -> str:
+    path = TRUTH / FILES[t]
+    n = len(_read(path)) + 1
+    return next_free_id(t, n)
+
+
+def _taken_ids(t: str) -> set:
+    return {r.get('id') for r in _read(TRUTH / FILES[t])}
+
+
+def next_free_id(t: str, start: int) -> str:
+    taken = _taken_ids(t)
+    n = start
+    while f'{PREFIX[t]}-{n:04d}' in taken:
+        n += 1
+    return f'{PREFIX[t]}-{n:04d}'
+
+
+def cmd_add(args):
+    if len(args) < 2 or args[0] not in PREFIX:
+        sys.exit('用法: truthctl add <decision|ledger|progress|acceptance> "<标题>"')
+    t, title = args[0], ' '.join(args[1:])
+    rec = {'id': _next_id(t), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
+           'type': t, 'title': title,
+           'lane': os.environ.get('KG_TRUTH_LANE') or None,
+           'files': _files(),
+           'source': os.environ.get('KG_TRUTH_SOURCE', 'agent')}
+    if t == 'ledger':
+        rec.update(kind=os.environ.get('KG_TRUTH_KIND', 'bug'),
+                   detail=os.environ.get('KG_TRUTH_DETAIL', ''),
+                   status=os.environ.get('KG_TRUTH_STATUS', 'open'))
+    elif t == 'decision':
+        rec.update(decision=os.environ.get('KG_TRUTH_DECISION', ''),
+                   why=os.environ.get('KG_TRUTH_WHY', ''),
+                   alternatives=[a for a in os.environ.get('KG_TRUTH_ALTERNATIVES', '').split('|') if a],
+                   status=os.environ.get('KG_TRUTH_STATUS', 'active'))
+    elif t == 'progress':
+        rec.update(summary=os.environ.get('KG_TRUTH_SUMMARY', ''),
+                   commit=os.environ.get('KG_TRUTH_COMMIT') or None,
+                   landed=os.environ.get('KG_TRUTH_LANDED', '') == '1',
+                   status=os.environ.get('KG_TRUTH_STATUS', 'doing'))
+    elif t == 'acceptance':
+        rec.update(level=os.environ.get('KG_TRUTH_LEVEL', 'P1'),
+                   status=os.environ.get('KG_TRUTH_STATUS', 'todo'),
+                   evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''))
+    _append(rec)
+    print(f"已记入真相 [{rec['id']}] {t}：{title[:70]}")
+
+
+def cmd_promote(args):
+    if len(args) < 2:
+        sys.exit('用法: truthctl promote <inbox 序号> <visual|ux|bug|arch>')
+    n, kind = int(args[0]), args[1]
+    if kind not in LEDGER_KINDS:
+        sys.exit(f'kind 必须是 {sorted(LEDGER_KINDS)}')
+    items = _read(INBOX)
+    if n < 1 or n > len(items):
+        sys.exit(f'inbox 只有 {len(items)} 条，序号 {n} 越界')
+    it = items[n - 1]
+    rec = {'id': _next_id('ledger'), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
+           'type': 'ledger', 'kind': kind, 'title': it.get('text', '')[:80],
+           'detail': it.get('text', ''), 'status': 'open',
+           'lane': it.get('lane'), 'files': it.get('files') or [],
+           'source': f"inbox#{n}"}
+    _append(rec)
+    # 回写 inbox 的 routed 标记
+    items[n - 1]['routed'] = True
+    items[n - 1]['lane'] = rec['id']
+    with INBOX.open('w') as fh:
+        for x in items:
+            fh.write(json.dumps(x, ensure_ascii=False) + '\n')
+    print(f"inbox #{n} -> 真相 [{rec['id']}] {kind}")
+
+
+def _next_ledger_id() -> str:
+    return next_free_id('ledger', len(_read(TRUTH / 'ledger.jsonl')) + 1)
+
+
+def _tokens(text: str) -> set:
+    """提取可区分的代码路径、文件名和 CamelCase 标识，避免按泛词误路由。"""
+    out = set()
+    for raw in re.findall(r'[A-Za-z0-9_./-]+', text or ''):
+        token = raw.strip('`\'"(),:;[]{}<>').lower()
+        if len(token) < 8:
+            continue
+        if any(ch in token for ch in './_-'):
+            out.add(token)
+            base = token.rsplit('/', 1)[-1]
+            if len(base) >= 8:
+                out.add(base)
+            stem = base.rsplit('.', 1)[0]
+            if len(stem) >= 8:
+                out.add(stem)
+    for raw in re.findall(r'[A-Za-z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*', text or ''):
+        if len(raw) >= 8:
+            out.add(raw.lower())
+    return out
+
+
+def infer_lane(kind: str, text: str, files) -> str:
+    hay = (text or '') + ' ' + ' '.join(files or [])
+    low = hay.lower()
+    for lane, keys in LANE_RULES:
+        if any(k.lower() in low for k in keys):
+            return lane
+    return {'visual': 'design', 'ux': 'design'}.get(kind, DEFAULT_LANE)
+
+
+def _append_ledger(kind, title, detail, files, source, lane) -> dict:
+    rec = {'id': _next_ledger_id(), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
+           'type': 'ledger', 'kind': kind, 'title': title, 'detail': detail,
+           'status': 'open', 'lane': lane, 'files': files or [], 'source': source}
+    _append(rec)
+    return rec
+
+
+def _candidates(kind, text, files):
+    """在既有泳道里找这条 intake 该去哪：文件路径优先，代码标识匹配兜底。"""
+    files = list(files or [])
+    query_tokens = _tokens(text or '')
+    out = []
+    for line in _read(TRUTH / FILES['ledger']):
+        if line.get('status') not in ('open', 'doing', 'todo'):
+            continue
+        own = list(line.get('files') or [])
+        exact = len(set(files) & set(own))
+        broad = 0
+        for f in files:
+            for o in own:
+                if f != o and (f.startswith(o + '/') or o.startswith(f + '/')):
+                    broad += 1
+        own_text = ' '.join([line.get('title', ''), line.get('detail', ''), *own])
+        token_hits = len(query_tokens & _tokens(own_text)) if query_tokens else 0
+        if not exact and not broad and not token_hits:
+            continue
+        out.append((1 if (exact or token_hits) else 0, exact, broad, line['id'],
+                    line.get('lane'), line.get('title', ''), token_hits))
+    out.sort(key=lambda x: (-x[0], -x[1], -x[2], -x[6], x[3]))
+    return out
+
+
+def cmd_lanes(args):
+    lanes = _read(LANES) if False else None
+    # lanes.json 是对象数组，单独读
+    data = []
+    if LANES.exists():
+        try:
+            data = json.loads(LANES.read_text())
+        except Exception:
+            data = []
+    if not isinstance(data, list):
+        data = []
+    if args and args[0] == 'init':
+        if data:
+            print('lanes.json 已存在，不覆盖'); return
+        seed = CFG.get('lanes') or []
+        LANES.parent.mkdir(parents=True, exist_ok=True)
+        LANES.write_text(json.dumps(seed, ensure_ascii=False, indent=1) + '\n')
+        print(f'已建 {LANES.relative_to(REPO)}（{len(seed)} 条固定泳道）')
+        return
+    if not data:
+        print('lanes.json 不存在，先跑 truthctl lanes init'); return
+    print('固定泳道（每个 intake 必须落到其中一条）：')
+    for r in data:
+        print(f"  {r['name']:14s} {r.get('title','')}   gate={r.get('gate','')}")
+
+
+def cmd_route(args):
+    go = '--go' in args
+    items = _read(INBOX)
+    pending = [(i, it) for i, it in enumerate(items, 1) if not it.get('routed')]
+    if not pending:
+        print('没有待路由项'); return
+    lanes = []
+    if LANES.exists():
+        try:
+            lanes = json.loads(LANES.read_text())
+        except Exception:
+            lanes = []
+    names = {r.get('name') for r in lanes} or {r.get('name') for r in CFG.get('lanes') or []}
+    plan = []
+    for i, it in pending:
+        kind = it.get('kind')
+        if kind not in LEDGER_KINDS:
+            kind = 'bug'
+        cand = _candidates(kind, it.get('text', ''), it.get('files'))
+        lane = cand[0][4] if cand and cand[0][4] else None
+        if lane and names and lane not in names:
+            lane = None
+        if not lane:
+            lane = infer_lane(kind, it.get('text', ''), it.get('files'))
+        plan.append({'n': i, 'kind': kind, 'lane': lane, 'text': it.get('text', ''),
+                     'files': it.get('files') or [], 'cand': cand[:2]})
+    seen_texts = set()
+    for rec in _read(TRUTH / FILES['ledger']):
+        seen_texts.add((rec.get('detail') or '')[:120])
+        for ev in rec.get('evidence') or []:
+            seen_texts.add(ev.split('] ', 1)[-1][:120])
+    plan = [p for p in plan if p['text'][:120] not in seen_texts]
+    if not plan:
+        print('待路由项都已进过台账，幂等跳过'); return
+    print(f"待路由 {len(plan)} 项；每条先落固定泳道，再写入问题台账，最后回写 inbox。\n")
+    for p in plan:
+        mark = f"  <已有 {p['cand'][0][3]}>" if p['cand'] else ''
+        print(f" #{p['n']:03d} [{p['kind']:6s}] -> {p['lane']:14s} {p['text'][:78]}{mark}")
+    if not go:
+        print('\n预演结束。确认后加 --go 落账（只追加 ledger、回写 routed，不动代码）。')
+        return
+    made = []
+    for p in plan:
+        it = items[p['n'] - 1]
+        if p['cand']:
+            ref = p['cand'][0][3]
+            it['lane'], it['routed'] = ref, True
+            target = None
+            for rec in _read(TRUTH / FILES['ledger']):
+                if rec.get('id') == ref:
+                    target = rec
+                    break
+            note = f"[inbox#{p['n']}] {p['text']}"
+            if target is not None:
+                ev = list(target.get('evidence') or [])
+                if note not in ev:
+                    ev.append(note)
+                    target['evidence'] = ev
+                    path = TRUTH / FILES['ledger']
+                    rows = _read(path)
+                    for i, rec in enumerate(rows):
+                        if rec.get('id') == ref:
+                            rows[i] = target
+                    with path.open('w') as fh:
+                        for rec in rows:
+                            fh.write(json.dumps(rec, ensure_ascii=False) + '\n')
+        else:
+            rec = _append_ledger(p['kind'], p['text'][:80].replace('\n', ' '),
+                                 p['text'], p['files'], f"inbox#{p['n']}", p['lane'])
+            it['lane'], it['routed'] = rec['lane'], True
+            made.append(rec['id'])
+    with INBOX.open('w') as fh:
+        for x in items:
+            fh.write(json.dumps(x, ensure_ascii=False) + '\n')
+    print(f"\n已落账：新增问题台账 {len(made)} 条 {made}，其余归并到既有台账；inbox 全部标 routed。")
+
+
+def cmd_next(args):
+    """只回答一个问题：现在最该动的是哪几条，用户不用自己翻台账。"""
+    led = [r for r in _read(TRUTH / 'ledger.jsonl') if r.get('status') in ('open', 'doing')]
+    led.sort(key=lambda r: (PRIORITY.get(r.get('kind'), 9), r.get('ts', '')))
+    acc = [r for r in _read(TRUTH / 'acceptance.jsonl') if r.get('status') == 'blocked']
+    print('=== 中央司令台 · 现在做什么 ===')
+    if acc:
+        print('被卡住的验收项（需要用户拍板或外部条件）：')
+        for r in acc:
+            print(f"  {r['id']} [{r.get('level','')}] {r.get('title','')}")
+    if not led and not acc:
+        print('没有未决项：可以跑 kgctl reap --go 回收已合并分支，或接收新输入。')
+        return
+    print('优先处理：')
+    for i, r in enumerate(led[:8], 1):
+        lane = f" -> {r.get('lane')}" if r.get('lane') else ' -> 未归属'
+        print(f"  {i}. {r['id']} [{r.get('kind','')}] {r.get('title','')[:88]}{lane}")
+    print('\n下一步：python3 ops/kgctl.py tick（收拢新输入并刷新）/ land <分支>（落盘已验证分支）')
+
+
+def cmd_ls(args):
+    t = args[0] if args else None
+    types = [t] if t in PREFIX else list(PREFIX)
+    for tt in types:
+        rows = _read(TRUTH / FILES[tt])
+        print(f'\n=== {tt}（{len(rows)}）===')
+        for r in rows:
+            lane = f" lane={r['lane']}" if r.get('lane') else ''
+            print(f"  [{r['id']}] {r.get('status',''):8s} {r.get('title','')[:70]}{lane}")
+
+
+def cmd_snapshot(args):
+    ml = json.loads((TRUTH / 'mainline.json').read_text()) if (TRUTH / 'mainline.json').exists() else {}
+    dec = _read(TRUTH / 'decisions.jsonl')
+    led = _read(TRUTH / 'ledger.jsonl')
+    prg = _read(TRUTH / 'progress.jsonl')
+    acc = _read(TRUTH / 'acceptance.jsonl')
+
+    open_led = [r for r in led if r.get('status') in ('open', 'doing')]
+    blocked_acc = [r for r in acc if r.get('status') == 'blocked']
+    p0_open = [r for r in led if r.get('status') in ('open', 'doing') and r.get('kind') in ('bug', 'arch')]
+
+    L = ['# 项目状态（自动生成，勿手改）', '',
+         f"> 生成时间 {time.strftime('%Y-%m-%d %H:%M:%S')}　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。", '']
+
+    if ml:
+        L += ['## 一、产品主线', '',
+              f"**{ml.get('product','')}** — {ml.get('one_liner','')}", '',
+              f"- 阶段：{ml.get('stage','')}",
+              f"- 北极星：{ml.get('north_star','')}",
+              f"- 路径：{' → '.join(ml.get('path', []))}",
+              f"- 当前焦点：{'；'.join(ml.get('current_focus', []))}",
+              f"- 明确不做：{'；'.join(ml.get('not_doing', []))}",
+              f"- 最后更新：{ml.get('updated','')}", '']
+
+    L += ['## 二、需要你注意', '']
+    if p0_open:
+        L.append('**待修的问题（bug / 架构）**')
+        for r in p0_open:
+            L.append(f"- `{r['id']}` {r.get('title','')}")
+        L.append('')
+    if blocked_acc:
+        L.append('**被卡住的验收项**')
+        for r in blocked_acc:
+            L.append(f"- `{r['id']}` {r.get('title','')}")
+        L.append('')
+    if not p0_open and not blocked_acc:
+        L += ['（当前没有需要你拍板的事项）', '']
+
+    L += ['## 三、问题台账', '']
+    for kind in ('bug', 'visual', 'ux', 'arch'):
+        rows = [r for r in led if r.get('kind') == kind and r.get('status') in ('open', 'doing')]
+        if rows:
+            L.append(f'**{kind}（{len(rows)} 待处理）**')
+            for r in rows:
+                lane = f" → `{r['lane']}`" if r.get('lane') else ''
+                L.append(f"- `{r['id']}` {r.get('title','')}{lane}")
+            L.append('')
+    done = [r for r in led if r.get('status') in ('done', 'wontfix', 'duplicate')]
+    L.append(f"（历史已关闭 {len(done)} 条）")
+    L.append('')
+
+    L += ['## 四、进展', '']
+    for r in prg[-8:]:
+        mark = '已落盘' if r.get('landed') else '在途'
+        c = f" @ `{r['commit'][:10]}`" if r.get('commit') else ''
+        L.append(f"- `{r['id']}` [{mark}]{c} {r.get('summary') or r.get('title','')}")
+    L.append('')
+
+    L += ['## 五、验收进度', '']
+    for st in ('blocked', 'wip', 'todo', 'verified'):
+        rows = [r for r in acc if r.get('status') == st]
+        if rows:
+            L.append(f'**{st}（{len(rows)}）**')
+            for r in rows:
+                L.append(f"- `{r['id']}` [{r.get('level','')}] {r.get('title','')}")
+            L.append('')
+
+    L += ['## 六、决策记录', '']
+    for r in dec:
+        if r.get('status') == 'active':
+            L.append(f"- `{r['id']}` {r.get('title','')}")
+    L.append('')
+
+    STATUS.parent.mkdir(parents=True, exist_ok=True)
+    STATUS.write_text('\n'.join(L) + '\n')
+    if not args or '--print' in args:
+        print('\n'.join(L))
+    print(f'\n已写出 {STATUS.relative_to(REPO)}', file=sys.stderr)
+
+
+CMDS = {'add': cmd_add, 'ls': cmd_ls, 'snapshot': cmd_snapshot, 'promote': cmd_promote,
+        'route': cmd_route, 'lanes': cmd_lanes, 'next': cmd_next}
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        cmd_snapshot([])
+    elif sys.argv[1] in CMDS:
+        CMDS[sys.argv[1]](sys.argv[2:])
+    else:
+        print(__doc__)
+        print('命令：' + ' | '.join(['snapshot', 'ls', 'add', 'promote', 'route', 'lanes', 'next']))
+        sys.exit(1)

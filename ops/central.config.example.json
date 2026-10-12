@@ -1,0 +1,15 @@
+{
+  "main_branch": "main",
+  "branch_prefix": "codex/",
+  "trunk_dir": null,
+  "shared_dir": null,
+  "link_dirs": [
+    "frontend",
+    "backend"
+  ],
+  "build": {
+    "cmd": "npm run build",
+    "cwd": "frontend"
+  },
+  "default_lane": "bug"
+}
