@@ -18,6 +18,11 @@ worktree。于是同一个项目里长出两份互不相认的账本——
 
 选择标准是「这个目录真的带着编排状态」，而不是「Git 说它是什么目录」——共享检出
 的 ops/ 可能因为历史脏度不完整，那它就不配当状态根。
+
+2026-10-13 起，运行时代码（kgctl.py / truthctl.py / central_mcp.py）不再要求待在
+目标项目里：插件自带一份，目标项目只留 ops/tasks + ops/truth 这份状态。所以状态根
+的判据从「有 kgctl.py 且有 tasks/truth」放宽成「有 tasks/truth」——否则自包含插件
+在只放账本的项目里会认不出自己的状态根。
 """
 
 import os
@@ -57,10 +62,12 @@ def current_worktree() -> Path:
 
 
 def looks_like_state_root(path: Path) -> bool:
-    """真正的状态根必须同时有入口脚本、输入账本目录和真相目录。"""
+    """真正的状态根 = 同时带着输入账本目录和真相目录。
+
+    运行时代码不参与判定：插件自带的 ops/ 负责执行，项目里的 ops/ 只负责存账。
+    """
     path = Path(path)
-    return ((path / "ops" / "kgctl.py").exists()
-            and (path / "ops" / "tasks").is_dir()
+    return ((path / "ops" / "tasks").is_dir()
             and (path / "ops" / "truth").is_dir())
 
 

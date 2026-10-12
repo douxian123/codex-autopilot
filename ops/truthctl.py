@@ -37,14 +37,26 @@ from pathlib import Path
 # 存在两份互不相认的账本。两边共用 state_root 之后，从任何 worktree 调用都读同一份；
 # KG_REPO 仍然是最高的显式覆盖。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from plugin_binding import apply_plugin_env  # noqa: E402
 from state_root import resolve_state_root  # noqa: E402
 import central_config  # noqa: E402
 
+# 自包含安装下，绑定的项目写在插件 .mcp.json 里；显式 KG_REPO 优先。
+apply_plugin_env()
 REPO = resolve_state_root()
 CFG = central_config.load(REPO)
 TRUTH = REPO / 'ops' / 'truth'
 INBOX = REPO / 'ops' / 'tasks' / 'inbox.jsonl'
 STATUS = REPO / 'docs' / 'PROJECT_STATUS.md'
+
+
+def _kgctl_cmd() -> str:
+    """给用户的下一步命令。自包含安装下运行时在插件目录，不能再提示相对路径。"""
+    ops_dir = Path(__file__).resolve().parent
+    if (ops_dir.parent / ".mcp.json").exists():
+        return str(ops_dir / "kgctl.py")
+    return "ops/kgctl.py"
+
 
 PREFIX = {'decision': 'D', 'ledger': 'L', 'progress': 'P', 'acceptance': 'A'}
 LEDGER_KINDS = {'visual', 'ux', 'bug', 'arch', 'gate'}
@@ -393,7 +405,7 @@ def cmd_next(args):
     for i, r in enumerate(led[:8], 1):
         lane = f" -> {r.get('lane')}" if r.get('lane') else ' -> 未归属'
         print(f"  {i}. {r['id']} [{r.get('kind','')}] {r.get('title','')[:88]}{lane}")
-    print('\n下一步：python3 ops/kgctl.py tick（收拢新输入并刷新）/ land <分支>（落盘已验证分支）')
+    print(f'\n下一步：python3 {_kgctl_cmd()} tick（收拢新输入并刷新）/ land <分支>（落盘已验证分支）')
 
 
 def cmd_ls(args):

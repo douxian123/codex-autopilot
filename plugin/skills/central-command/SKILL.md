@@ -27,28 +27,32 @@ description: Codex 自动挡。当用户在同一项目里提出零散、即时�
   `intake_request`（一句话收进唯一入口并走完整条链，首选）、`sync_control_plane`（重扫主循环）、
   `next_actions`、`project_status`、`route_inbox`、`convergence_plan`（冲突收拢）、
   `generate_context`、`dashboard`、`capture_request`（只追加）、`suggest_branch`。
-- 否则走 CLI（状态根由 `ops/state_root.py` 统一解析，从任何 worktree 调都读同一份账本）：
+- 否则走 CLI。运行时代码在插件里（自包含安装：`~/plugins/codex-autopilot/ops/`），
+  项目里只留账本；手敲时先设 `KG_REPO` 指到项目（MCP 调用时插件已自动注入）：
 
 ```bash
+KGCTL=~/plugins/codex-autopilot/ops/kgctl.py
+export KG_REPO=/path/to/your-project
+
 # 一句话入口：记录 -> 归类 -> 刷新真相 -> 刷看板 -> 给下一步（一步完成）
-python3 ops/kgctl.py intake "左侧导航 rail 排版坏了，图标贴左缘被裁切"
+python3 "$KGCTL" intake "左侧导航 rail 排版坏了，图标贴左缘被裁切"
 
 # 一次抛了多条、或想重扫全项目时，跑主循环
-python3 ops/kgctl.py tick
+python3 "$KGCTL" tick
 
 # 看项目真相 / 当前待办 / 驾驶舱
-sed -n 1,80p docs/PROJECT_STATUS.md
-python3 ops/kgctl.py next
-python3 ops/kgctl.py dash --open        # 生成并打开 docs/CONTROL_PLANE.html
+sed -n 1,80p "$KG_REPO/docs/PROJECT_STATUS.md"
+python3 "$KGCTL" next
+python3 "$KGCTL" dash --open            # 生成并打开 docs/CONTROL_PLANE.html
 ```
 
 ## 分支很多、到底谁先合
 冲突分支不要逐条问用户。先收拢成族，再逐族解：
 
 ```bash
-python3 ops/kgctl.py converge           # 预演：把抢同一批文件的冲突分支收成几个 convergence 任务
-python3 ops/kgctl.py converge --go      # 建 convergence 分支/worktree（不改 main、不改源分支）
-python3 ops/kgctl.py context <分支>     # 给该分支写一份版本化 Context Pack
+python3 "$KGCTL" converge          # 预演：把抢同一批文件的冲突分支收成几个 convergence 任务
+python3 "$KGCTL" converge --go     # 建 convergence 分支/worktree（不改 main、不改源分支）
+python3 "$KGCTL" context <分支>    # 给该分支写一份版本化 Context Pack
 ```
 
 `converge` 只新建 WIP 工作区，冲突原样保留（JSONL 走行级并集）；一个 agent 面对的是

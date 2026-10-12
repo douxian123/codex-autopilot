@@ -30,6 +30,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -41,12 +42,16 @@ MAIN = os.environ.get("KG_MAIN", "main")
 # 旧实现取「git 主工作树」当账本家，而 truthctl 取「调用所在 worktree」，于是
 # 同一个项目能同时存在两份互不相认的账本。现在两个脚本共用同一个解析器。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from plugin_binding import apply_plugin_env  # noqa: E402
 from state_root import main_worktree, looks_like_state_root, resolve_state_root  # noqa: E402
 import central_config  # noqa: E402
 
+# 自包含安装下，绑定的项目写在插件 .mcp.json 里；显式 KG_REPO 优先。
+apply_plugin_env()
 REPO = resolve_state_root()
 if not looks_like_state_root(REPO):
-    sys.exit(f"找不到编排状态根（{REPO}）；请先同步 main，或设 KG_REPO 指到带 ops/ 的检出")
+    sys.exit(f"找不到编排状态根（{REPO}）；请设 KG_REPO 指到带 ops/tasks + ops/truth 的目录"
+             "（自包含插件用 ./install.sh <项目> 初始化，不再要求项目里放运行时代码）")
 # 项目相关的旋钮集中在 ops/central.config.json（env 可覆盖），见 ops/central_config.py。
 CFG = central_config.load(REPO)
 MAIN = CFG["main_branch"]
@@ -55,6 +60,9 @@ BRANCH_PREFIX = CFG["branch_prefix"]
 SHARED = central_config.shared_dir(REPO, CFG)
 # 代码入口以「被调用的 worktree」为准；REPO 只负责编排状态。
 CODE_ROOT = Path(__file__).resolve().parents[1]
+# 运行时代码目录：自包含安装下 = 插件目录里的 ops/，传统布局下 = 项目里的 ops/。
+# land / supersede 里的真相写入必须用这份代码，而不是目标项目里可能过期的副本。
+RUNTIME_OPS = Path(__file__).resolve().parent
 OPS = REPO / "ops" / "tasks"
 INBOX = OPS / "inbox.jsonl"
 LANES = OPS / "lanes.json"
@@ -384,7 +392,7 @@ def cmd_supersede(args):
                     "属重复分支，不产生空合并提交。"),
             })
             added = subprocess.run(
-                [sys.executable, str(wt / "ops" / "truthctl.py"), "add", "progress",
+                [sys.executable, str(RUNTIME_OPS / "truthctl.py"), "add", "progress",
                  f'{r["branch"]} 已被 main 完全覆盖（重复分支）'],
                 cwd=str(wt), env=env, capture_output=True, text=True)
             if added.returncode != 0:
@@ -1060,7 +1068,7 @@ def _record_land_progress(wt: Path, branch: str, commit: str) -> None:
         "KG_TRUTH_SOURCE": "kgctl land",
     })
     added = subprocess.run(
-        [sys.executable, str(wt / "ops" / "truthctl.py"), "add", "progress",
+        [sys.executable, str(RUNTIME_OPS / "truthctl.py"), "add", "progress",
          f"落盘 {branch}"],
         cwd=str(wt), env=env, capture_output=True, text=True)
     if added.returncode != 0:
@@ -1076,6 +1084,30 @@ def _record_land_progress(wt: Path, branch: str, commit: str) -> None:
     if committed.returncode != 0:
         raise RuntimeError(f"提交进展台账失败: {committed.stderr.strip()[:500]}")
     print(f"  进展台账 {added.stdout.strip()}")
+
+
+def _mirror_truth_into_trunk(wt: Path) -> None:
+    """把状态根的账本镜像进落盘用的主干工作树。
+
+    自包含安装下，账本在项目目录的 `ops/truth` 里，而主干工作树是从 `main` 检出的；
+    若 `ops/truth` 没进过版本库，trunk 里连目录都不存在，写进展台账会直接崩。这里只做
+    文件级拷贝（加法），让主干工作树拥有同一份账本，后续 `sync_trunk_truth` 才能把它
+    作为真相层提交，与代码一起推回 `main`。
+    """
+    for rel in TRUTH_PATHS:
+        src, dst = REPO / rel, wt / rel
+        if not src.exists():
+            continue
+        if src.is_dir():
+            for item in src.rglob("*"):
+                if not item.is_file():
+                    continue
+                target = dst / item.relative_to(src)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(item, target)
+        elif src.is_file():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
 
 
 def _build_frontend(wt: Path) -> tuple:
@@ -1352,6 +1384,7 @@ def cmd_land(args):
         pre = git("rev-parse", MAIN)
         wt = _trunk_worktree()
         reset_trunk_head(wt)
+        _mirror_truth_into_trunk(wt)
         dirty = [line for line in trunk_status(wt) if not is_truth_path(line)]
         if dirty:
             print(f"× 主干工作树有非真相层改动，拒绝 land：{wt}")
@@ -1461,13 +1494,12 @@ def cmd_board(args):
 
 
 def _truthctl_path() -> Path:
-    """找到可执行的 truthctl.py，优先当前 worktree，其次主干/共享检出。
+    """找到可执行的 truthctl.py。
 
-    真相层代码属于版本库内容，和 Git 编排状态不是一回事。命令可能从主干 worktree 调用，
-    但共享检出可能尚未检出该文件；这时必须
-    回退到调用者所在 worktree，而不是让 `kgctl next` 直接失败。
+    自包含安装下，运行时代码只存在于插件目录，目标项目里没有 `ops/truthctl.py`；
+    所以先看本次调用所在的 ops/（即插件自己的运行时），再回退到主干/共享检出。
     """
-    roots = [CODE_ROOT, central_config.trunk_dir(REPO, CFG), REPO]
+    roots = [RUNTIME_OPS, CODE_ROOT, central_config.trunk_dir(REPO, CFG), REPO]
     for root in roots:
         candidate = root / "ops" / "truthctl.py"
         if candidate.exists():

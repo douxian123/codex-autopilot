@@ -9,8 +9,10 @@
   * 只走 stdio，stdout 只允许出现 JSON-RPC 消息；子进程输出全部被捕获后随
     tool result 返回，绝不直接 print 到 stdout。
   * 每个工具都委托给 kgctl.py / truthctl.py，不复制逻辑；状态根由 kgctl 的
-    state_root 统一解析（KG_REPO > KG_TRUNK > 主工作树 > 当前 worktree），
-    本 server 不强行覆盖 KG_REPO，避免又从插件检出里长出第三份账本。
+    state_root 统一解析（KG_REPO > KG_TRUNK > 主工作树 > 当前 worktree）。
+  * 自包含安装下，本文件随插件走（<插件目录>/ops/central_mcp.py），运行时代码就是
+    这一份；目标项目只存账本。插件的 .mcp.json 因此注入 KG_REPO=<目标项目>
+    （可选 KG_TRUNK=<落盘用的主干 worktree>），把状态写回项目而不是写进插件目录。
   * 默认不破坏：记录是追加；路由默认预演，confirm=true 才落账；合并仍交给
     `kgctl land`，本 server 不直接合并。
 """
@@ -23,21 +25,30 @@ from pathlib import Path
 
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "codex-autopilot"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.1.4"
 
 OPS_DIR = Path(__file__).resolve().parent
 REPO = OPS_DIR.parent
 KGCTL = OPS_DIR / "kgctl.py"
 TRUTHCTL = OPS_DIR / "truthctl.py"
 
+from plugin_binding import apply_plugin_env  # noqa: E402
+
+# 自包含安装下，Codex 一般已从 .mcp.json 注入 env；这里再兜底一次，
+# 保证脱离 Codex 手动拉起 MCP 时也绑定到同一个项目。
+apply_plugin_env()
+
 
 def _run(argv, extra_env=None, timeout=900):
     env = os.environ.copy()
     if extra_env:
         env.update({k: str(v) for k, v in extra_env.items() if v is not None})
+    # cwd 用状态根：kgctl 的 git 回退路径（worktree list / rev-parse）要落在目标项目里，
+    # 而不是插件自己所在的目录（那里通常不是一个 Git 仓库）。
+    cwd = os.environ.get("KG_REPO") or str(REPO)
     try:
         p = subprocess.run([sys.executable, *argv], capture_output=True, text=True,
-                           cwd=str(REPO), env=env, timeout=timeout)
+                           cwd=cwd, env=env, timeout=timeout)
         out = (p.stdout or "").rstrip()
         err = (p.stderr or "").rstrip()
         text = out + (("\n" + err) if err else "")

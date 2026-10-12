@@ -47,6 +47,12 @@ HERE = Path(__file__).resolve().parent
 CODE_ROOT = HERE.parent
 KGCTL = HERE / "kgctl.py"
 
+
+from plugin_binding import apply_plugin_env  # noqa: E402
+
+# KG_REPO（账本）/ KG_TRUNK（落盘主干）优先取显式环境变量，其次读插件 .mcp.json。
+apply_plugin_env()
+
 RUNTIME = Path(os.environ.get("KG_DAEMON_HOME",
                               str(Path.home() / ".codex-autopilot"))).expanduser()
 LOG = RUNTIME / "daemon.log"
@@ -398,17 +404,21 @@ def _python_for_plist() -> str:
 
 
 def build_plist(interval_min: int) -> dict:
-    # 守护必须跑权威主干里的脚本，而不是当前 worktree 里的副本 —— 否则临时
-    # worktree 一清理，launchd 下次重启就找不到脚本（实测踩过：从 worktree
-    # 执行 --install 会把 plist 写到 worktree 路径）。
+    # 守护永远跑插件目录里的这份脚本。KG_TRUNK 是落盘用的主干 worktree，它的 ops/
+    # 可能是旧副本；如果 plist 指向 `$KG_TRUNK/ops/central_daemon.py`，插件升级后
+    # 守护又会跑旧代码 —— 这正是自包含安装要消掉的问题。KG_TRUNK 只作为运行时旋钮
+    # 传给脚本，不用来定位运行时。
     trunk = Path(os.environ.get("KG_TRUNK", str(CODE_ROOT))).expanduser()
-    script = trunk / "ops" / "central_daemon.py"
+    script = HERE / "central_daemon.py"
     env = {
         "KG_TRUNK": str(trunk),
         "KG_DAEMON_HOME": str(RUNTIME),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
         "LANG": os.environ.get("LANG", "en_US.UTF-8"),
     }
+    # KG_REPO 是账本所在；自包含安装下它和 KG_TRUNK 不一定同一个目录。
+    if os.environ.get("KG_REPO"):
+        env["KG_REPO"] = str(Path(os.environ["KG_REPO"]).expanduser())
     return {
         "Label": PLIST_LABEL,
         "ProgramArguments": [_python_for_plist(), str(script),
@@ -474,10 +484,6 @@ def install(interval_min: int) -> int:
         log("install 只支持 macOS（launchd）。其它平台请用 `--loop` 自己托管。")
         return 1
     trunk = Path(os.environ.get("KG_TRUNK", str(CODE_ROOT))).expanduser()
-    if not (trunk / "ops" / "central_daemon.py").exists():
-        log(f"× 找不到权威主干脚本 {trunk}/ops/central_daemon.py；"
-            f"请设 KG_TRUNK 指向主干 worktree 后再 --install")
-        return 1
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     with PLIST_PATH.open("wb") as fh:
         plistlib.dump(build_plist(interval_min), fh)
