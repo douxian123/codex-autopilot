@@ -10,9 +10,10 @@
 时也按固定节奏把**安全的工作**推进掉，只在真正需要人拍板时才打扰用户。
 
 安全子集（硬编码，不可关）
-  * 只 land `kgctl queue` 列出的 CLEAN 分支（与 main 无冲突）。冲突分支**不自动合**。
-    冲突不丢给你逐条裁决，而是由 `tick` 里的 `kgctl converge` 收拢成少数几个
-    convergence 任务（保留 conflict markers），交给一个 agent 逐族解。
+  * 只 land `kgctl queue` 列出的 CLEAN 分支（与 main 无冲突，且树里没有残留
+    conflict markers）。冲突分支**不自动合**。冲突不丢给你逐条裁决，而是由
+    `tick` 里的 `kgctl converge` 收拢成少数几个 convergence 任务（保留 markers），
+    交给一个 agent 逐族解干净。
   * 每个分支仍走 `kgctl land` 的全部护栏：真实 build 门禁、origin/main 对齐、
     失败即丢弃、从不 force push。
   * 单实例锁 + 复用 kgctl 自己的 land 锁：不会和手动 land 抢。
@@ -177,6 +178,7 @@ def _sig(payload) -> str:
 
 QUEUE_RE = re.compile(r"^\s*\d+\.\s+kgctl land (\S+)")
 SUMMARY_RE = re.compile(r"其余 (\d+) 个：(\d+) 个已合并待回收、(\d+) 个有冲突需裁决")
+UNRESOLVED_RE = re.compile(r"另有 (\d+) 个分支残留冲突标记")
 CONVERGE_PLAN_RE = re.compile(r"可收成 (\d+) 个 convergence 任务")
 CONVERGE_MADE_RE = re.compile(r"已生成 (\d+) 个 convergence 分支")
 
@@ -188,11 +190,14 @@ def parse_queue(out: str):
         m = QUEUE_RE.match(line)
         if m:
             branches.append(m.group(1))
-    summary = {"other": 0, "merged": 0, "conflict": 0}
+    summary = {"other": 0, "merged": 0, "conflict": 0, "unresolved": 0}
     m = SUMMARY_RE.search(out)
     if m:
         summary = {"other": int(m.group(1)), "merged": int(m.group(2)),
-                   "conflict": int(m.group(3))}
+                   "conflict": int(m.group(3)), "unresolved": 0}
+    m = UNRESOLVED_RE.search(out)
+    if m:
+        summary["unresolved"] = int(m.group(1))
     return branches, summary
 
 
@@ -214,6 +219,8 @@ def classify_land(out: str, rc: int) -> str:
     if "已有 land 在进行" in out:
         return "locked"
     if "拒绝自动 land" in out:
+        if "残留" in out or "冲突标记" in out:
+            return "unresolved_markers"
         return "conflict"
     if "× 失败 → 丢弃" in out or "build × 失败" in out or "构建门禁 × 失败" in out:
         return "gate_fail"
@@ -251,7 +258,7 @@ def run_cycle(dry: bool, max_land: int) -> dict:
     if rc != 0 and not out.strip():
         failures.append(("(tick)", "tick_error"))
 
-    summary = {"other": 0, "merged": 0, "conflict": 0}
+    summary = {"other": 0, "merged": 0, "conflict": 0, "unresolved": 0}
     attempts = 0
     while attempts < max_land:
         rc, qout = run_kgctl(["queue"])

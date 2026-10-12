@@ -59,5 +59,6 @@
 - 本机 stdio MCP **不是官方可移植形态**：官方插件市场的 MCP 要求 HTTPS 端点。本插件面向
   本机的 Codex（桌面 / CLI），用 compat 布局挂本机 stdio server。
 - **长期常驻调度**（关掉对话也自己跑）由 `ops/central_daemon.py` 承担。它只做安全子集：
-  路由 inbox + 自动 land 与 main 无冲突的分支 + 把冲突分支收拢成族（`converge`）。
-  冲突分支不会自动合，而是收进少数几个 convergence 分支交给 agent 逐族解。
+  路由 inbox + 自动 land 与 main 无冲突、且树里没有残留冲突标记的分支 + 把冲突分支
+  收拢成族（`converge`）。冲突分支不会自动合；未解干净的 convergence 分支也不会被
+  `queue` 列为可落盘，而是留在 convergence worktree 里交给 agent 逐族解。

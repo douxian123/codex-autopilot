@@ -173,6 +173,27 @@ def conflict_files(branch):
     return sorted(set(re.findall(r"CONFLICT[^:]*:\s*(?:Merge conflict in )?(\S+)", p.stdout)))
 
 
+def unresolved_marker_files(branch):
+    """分支树里已经提交进去的冲突标记文件。
+
+    `conflict_files()` 只回答“分支和当前 main 能不能自动合”，回答不了“分支自己的树
+    是否已经坏了”。convergence 分支会把未解合并保留在提交里，等 agent 继续处理；
+    如果不单独拦，它会被当成 CLEAN，守护进程就能把一个满是冲突标记的树推上 main。
+    两个行首标记同时出现才算，避免把文档里的单侧示例误判为坏树。
+    """
+    def grep(pattern):
+        p = subprocess.run(
+            ["git", "-C", str(REPO), "grep", "-l", "-I", "-E", pattern, branch, "--", "."],
+            capture_output=True, text=True, errors="replace")
+        if p.returncode not in (0, 1):
+            return set()
+        return {line.strip() for line in p.stdout.splitlines() if line.strip()}
+
+    starts = grep(r"^<<<<<<< ")
+    ends = grep(r"^>>>>>>> ")
+    return sorted(starts & ends)
+
+
 def branch_meta(branch: str) -> dict:
     """分支的提交者/时间/标题。给收拢计划做归属提示，不做自动裁决。"""
     return {
@@ -533,28 +554,32 @@ def scan():
         ahead, behind = counts(b)
         ts = int(git("log", "-1", "--format=%ct", b) or 0)
         files = changed_files(b)
+        markers = []
         if ahead == 0:
             kind, conf = "MERGED", []
         else:
             conf = conflict_files(b)
-            kind = "CONFLICT" if conf else "CLEAN"
+            markers = unresolved_marker_files(b) if not conf else []
+            kind = "CONFLICT" if conf else ("UNRESOLVED" if markers else "CLEAN")
         rows.append(dict(branch=b, ahead=ahead, behind=behind,
                          age=round((time.time() - ts) / 86400, 1) if ts else -1,
                          subject=git("log", "-1", "--format=%s", b)[:70],
-                         nfiles=len(files), files=files, kind=kind, conflicts=conf))
+                         nfiles=len(files), files=files, kind=kind, conflicts=conf,
+                         markers=markers))
     return rows
 
 
 def cmd_matrix(args):
     rows = scan()
     json.dump(rows, (OPS / "matrix.json").open("w"), ensure_ascii=False, indent=1)
-    g = {"MERGED": [], "CLEAN": [], "CONFLICT": []}
+    g = {"MERGED": [], "CLEAN": [], "CONFLICT": [], "UNRESOLVED": []}
     for r in rows:
         g[r["kind"]].append(r)
     print(f"仓库 {REPO}")
     print(f"主干 {MAIN} @ {git('log','-1','--format=%h %s',MAIN)[:60]}\n")
     print(f"codex 分支 {len(rows)} 个 ->  已合并 {len(g['MERGED'])} | "
-          f"能干净合 {len(g['CLEAN'])} | 有冲突 {len(g['CONFLICT'])}\n")
+          f"能干净合 {len(g['CLEAN'])} | 有冲突 {len(g['CONFLICT'])} | "
+          f"残留冲突标记 {len(g['UNRESOLVED'])}\n")
 
     print("— A 已完全合并（可回收）—")
     for r in sorted(g["MERGED"], key=lambda x: -x["behind"]):
@@ -578,6 +603,14 @@ def cmd_matrix(args):
             print(f"       ... 共 {len(bs)} 个分支抢这个文件")
     print(f"\n（C 组 {len(g['CONFLICT'])} 个分支 / "
           f"{len({f for r in g['CONFLICT'] for f in r['conflicts']})} 个冲突文件）")
+
+    print("\n— D 残留冲突标记·禁止落盘（先在 convergence worktree 解干净）—")
+    for r in sorted(g["UNRESOLVED"], key=lambda x: (x["ahead"], x["branch"])):
+        print(f"   {r['branch']:44s} {len(r['markers']):3d}文件 {r['subject']}")
+        for f in r["markers"][:3]:
+            print(f"       {f}")
+        if len(r["markers"]) > 3:
+            print(f"       ... 共 {len(r['markers'])} 个文件")
     print("明细：ops/tasks/matrix.json")
 
 
@@ -594,6 +627,9 @@ def cmd_queue(args):
     print(f"\n其余 {len(rows)-len(clean)} 个："
           f"{sum(1 for r in rows if r['kind']=='MERGED')} 个已合并待回收、"
           f"{sum(1 for r in rows if r['kind']=='CONFLICT')} 个有冲突需裁决。")
+    unresolved = sum(1 for r in rows if r["kind"] == "UNRESOLVED")
+    if unresolved:
+        print(f"另有 {unresolved} 个分支残留冲突标记，已从队列排除。")
 
 
 def cmd_clash(args):
@@ -804,6 +840,7 @@ def _context_payload(branch: str) -> dict:
     ahead, behind = counts(branch)
     files = changed_files(branch)
     conf = conflict_files(branch)
+    markers = unresolved_marker_files(branch) if not conf else []
     rows = read_jsonl(REPO / "ops" / "truth" / "ledger.jsonl")
     open_rows = [r for r in rows if r.get("status") in ("open", "doing", "todo")]
     overlap = []
@@ -822,8 +859,9 @@ def _context_payload(branch: str) -> dict:
         "main_head": git("rev-parse", MAIN),
         "ahead": ahead,
         "behind": behind,
-        "mergeable": not conf,
+        "mergeable": not conf and not markers,
         "conflict_files": conf,
+        "unresolved_marker_files": markers,
         "changed_files": files,
         "mainline": json.loads((REPO / "ops" / "truth" / "mainline.json").read_text(encoding="utf-8"))
         if (REPO / "ops" / "truth" / "mainline.json").exists() else {},
@@ -884,6 +922,9 @@ def cmd_context(args):
         if payload["conflict_files"]:
             lines += ["", "## 冲突文件"]
             lines += [f"- `{f}`" for f in payload["conflict_files"]]
+        if payload["unresolved_marker_files"]:
+            lines += ["", "## 残留冲突标记（禁止落盘）"]
+            lines += [f"- `{f}`" for f in payload["unresolved_marker_files"][:20]]
         if payload["convergence"]:
             lines += ["", "## 收拢任务"]
             lines += [f"- convergence: `{payload['convergence'].get('branch')}`",
@@ -912,6 +953,7 @@ def cmd_dash(args):
 
     clean = [r for r in rows if r["kind"] == "CLEAN"]
     conflict = [r for r in rows if r["kind"] == "CONFLICT"]
+    unresolved = [r for r in rows if r["kind"] == "UNRESOLVED"]
     merged = [r for r in rows if r["kind"] == "MERGED"]
     html_rows = []
     for r in open_led[:20]:
@@ -925,7 +967,7 @@ def cmd_dash(args):
             f"<td>{len(g['branches'])}</td><td>{len(g['files'])}</td>"
             f"<td>{esc(', '.join(g['files'][:3]))}</td></tr>")
     branch_rows = []
-    for r in sorted(clean + conflict, key=lambda x: (x["kind"], -x["ahead"]))[:30]:
+    for r in sorted(clean + conflict + unresolved, key=lambda x: (x["kind"], -x["ahead"]))[:30]:
         branch_rows.append(
             f"<tr><td>{esc(r['kind'])}</td><td><code>{esc(r['branch'])}</code></td>"
             f"<td>{r['ahead']}</td><td>{r['behind']}</td>"
@@ -943,7 +985,7 @@ def cmd_dash(args):
 main{{max-width:1180px;margin:0 auto;padding:24px}}h1{{font-size:24px;margin:0 0 4px}}h2{{font-size:16px;margin:24px 0 8px}}
 .meta{{color:var(--muted)}}table{{width:100%;border-collapse:collapse;background:white;border:1px solid var(--line)}}th,td{{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}}th{{background:#eef1f4;font-size:12px;color:#475467}}
 code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}}ul{{background:white;border:1px solid var(--line);margin:0;padding:12px 12px 12px 30px}}
-.stats{{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}}.stat{{background:white;border:1px solid var(--line);padding:12px}}.num{{font-size:22px;font-weight:650;color:var(--accent)}}
+.stats{{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}}.stat{{background:white;border:1px solid var(--line);padding:12px}}.num{{font-size:22px;font-weight:650;color:var(--accent)}}
 @media(max-width:760px){{.stats{{grid-template-columns:repeat(2,minmax(0,1fr))}}main{{padding:14px}}table{{display:block;overflow:auto}}}}
 </style></head><body><main>
 <h1>Codex Autopilot 驾驶舱</h1>
@@ -952,6 +994,7 @@ code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}}ul
 <div class="stat"><div class="num">{len(pending)}</div><div>待路由输入</div></div>
 <div class="stat"><div class="num">{len(clean)}</div><div>可落盘</div></div>
 <div class="stat"><div class="num">{len(conflict)}</div><div>冲突分支</div></div>
+<div class="stat"><div class="num">{len(unresolved)}</div><div>残留冲突标记</div></div>
 <div class="stat"><div class="num">{len(groups)}</div><div>可收拢冲突族</div></div>
 <div class="stat"><div class="num">{len(open_led)}</div><div>未决问题</div></div>
 </div>
@@ -971,7 +1014,8 @@ code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}}ul
 </main></body></html>"""
     write_text(DASHBOARD, doc)
     print(f"已写出 {DASHBOARD.relative_to(REPO)}（待路由 {len(pending)}，可落盘 {len(clean)}，"
-          f"冲突 {len(conflict)}，收拢族 {len(groups)}，已合并 {len(merged)}）")
+          f"冲突 {len(conflict)}，残留标记 {len(unresolved)}，收拢族 {len(groups)}，"
+          f"已合并 {len(merged)}）")
     if "--open" in args and sys.platform == "darwin":
         subprocess.run(["open", str(DASHBOARD)], check=False)
 
@@ -1434,6 +1478,13 @@ def cmd_land(args):
             print(f"    {f}")
         print("  这是需要归属裁决的信号（kgctl matrix 的 C 组）。")
         return
+    markers = unresolved_marker_files(branch)
+    if markers:
+        print(f"× {branch} 的树里残留 {len(markers)} 个冲突标记文件，拒绝自动 land：")
+        for f in markers[:10]:
+            print(f"    {f}")
+        print("  先在 convergence worktree 解干净并提交，再重新排队。")
+        return
 
     print(f"→ {branch}: {ahead} 提交、落后 {behind}、无冲突")
     print("  步骤：主干工作树 merge → 真实 build → 写进展台账 → push origin/main → 同步 main")
@@ -1529,7 +1580,8 @@ def cmd_status(args):
     print(f"codex 分支     {len(rows)}")
     print(f"  ├ 已合并可回收 {sum(1 for r in rows if r['kind']=='MERGED')}")
     print(f"  ├ 可入队落盘   {sum(1 for r in rows if r['kind']=='CLEAN')}")
-    print(f"  └ 有冲突需裁决 {sum(1 for r in rows if r['kind']=='CONFLICT')}")
+    print(f"  ├ 有冲突需裁决 {sum(1 for r in rows if r['kind']=='CONFLICT')}")
+    print(f"  └ 残留冲突标记 {sum(1 for r in rows if r['kind']=='UNRESOLVED')}")
     groups = conflict_groups(rows)
     print(f"冲突收拢族     {len(groups)} 个（可把冲突分支收成 convergence 任务）")
     wts = worktree_map()
@@ -1597,10 +1649,11 @@ def cmd_tick(args):
     _truth("snapshot")
 
     rows = scan()
-    print("  merged=%d clean=%d conflict=%d" % (
+    print("  merged=%d clean=%d conflict=%d unresolved=%d" % (
         sum(1 for r in rows if r["kind"] == "MERGED"),
         sum(1 for r in rows if r["kind"] == "CLEAN"),
-        sum(1 for r in rows if r["kind"] == "CONFLICT")))
+        sum(1 for r in rows if r["kind"] == "CONFLICT"),
+        sum(1 for r in rows if r["kind"] == "UNRESOLVED")))
 
     print("\n[3/7] consolidate conflict families", flush=True)
     if "--no-converge" not in args:

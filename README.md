@@ -126,9 +126,9 @@ python3 "$PLUGIN/ops/kgctl.py" dash --open
 | `python3 "$PLUGIN/ops/kgctl.py" context <分支>` | 给分支写一份版本化 Context Pack（主线/决策/相关未决/DoD） |
 | `python3 "$PLUGIN/ops/kgctl.py" dash [--open]` | 生成（可打开）驾驶舱 `docs/CONTROL_PLANE.html` |
 | `python3 "$PLUGIN/ops/kgctl.py" next` | 只回答一个问题：现在最该动哪几条 |
-| `python3 "$PLUGIN/ops/kgctl.py" status` | 一屏看清：待路由、分支可合/冲突、冲突收拢族、共享检出脏度 |
-| `python3 "$PLUGIN/ops/kgctl.py" queue` / `matrix` | 盘点分支：哪些能干净合、哪些在抢同一个文件 |
-| `python3 "$PLUGIN/ops/kgctl.py" land <分支>` | 串行落盘：合并 → 真实构建门禁 → 写进展 → 推 `main` |
+| `python3 "$PLUGIN/ops/kgctl.py" status` | 一屏看清：待路由、分支可合/冲突/残留冲突标记、冲突收拢族、共享检出脏度 |
+| `python3 "$PLUGIN/ops/kgctl.py" queue` / `matrix` | 盘点分支：哪些能干净合、哪些在抢同一个文件、哪些树里还残留冲突标记 |
+| `python3 "$PLUGIN/ops/kgctl.py" land <分支>` | 串行落盘：冲突标记扫描 → 合并 → 真实构建门禁 → 写进展 → 推 `main` |
 | `python3 "$PLUGIN/ops/kgctl.py" reap --go` | 回收已合并的分支（默认只预演） |
 | `python3 "$PLUGIN/ops/truthctl.py" ls` / `next` | 看台账 / 看优先级（同 `kgctl next`） |
 
@@ -185,7 +185,7 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 
 - **一本账、一处根**。状态根由 `ops/state_root.py` 统一解析（`KG_REPO` > 主干 worktree > 主工作树 > 当前 worktree），不会出现「这个 worktree 说待办 10 条、那个说没有」。
 - **只追加，不改历史**。台账是 JSONL，状态变化写新记录；快照和看板都是自动生成物。
-- **合并串行**。`land` 一次只推一个分支，用 `git merge-tree --write-tree` 在**写之前**先模拟合并；冲突就不动，能合才走构建门禁，构建失败就丢弃、`main` 一动不动。
+- **合并串行**。`land` 一次只推一个分支，用 `git merge-tree --write-tree` 在**写之前**先模拟合并，再扫描分支自己的树里是否残留 `<<<<<<<` / `>>>>>>>`；任一命中都不动，能合才走构建门禁，构建失败就丢弃、`main` 一动不动。
 - **永远不动别人的工作区**。推进 `main` 引用用 `git update-ref`，从不 `checkout` / `reset` / `stash` 任何人的在途改动。
 - **项目相关的旋钮集中在一处**。主干分支名、分支前缀、落盘用的主干 worktree、构建门禁命令、泳道定义，全在 `ops/central.config.json`（环境变量可覆盖）；不配就用对「单仓 + `frontend` 子目录 + `npm run build`」开箱即用的默认值。
 
@@ -195,6 +195,7 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 
 - `kgctl converge` 按「抢同一批文件」把冲突分支收成**少数几个 convergence 任务**（一个连通族 = 一个任务），而不是几十条待裁决项。
 - 每个 convergence 任务建一条 `codex/converge-<hash>` 分支和独立 worktree，把源分支相继并进去；冲突**原样保留**成 marker（JSONL 另做行级并集），`main` 和源分支都不动。
+- 未解干净的 convergence 分支不会进 `queue`，`land` 也会硬拒绝。它只能回到 convergence worktree 里解完、提交，再重新排队。
 - 于是交给一个 agent 的是「去解这一族的冲突」，不是「你告诉我该合哪个」。`kgctl tick` 已自动包含这一步。
 
 ## 参考了什么
@@ -213,7 +214,7 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 ## 能力边界（诚实版）
 
 - 它**不保证**全自动。改产品方向、删数据、发布仍然要停下来问你，并给出「选 A 会怎样 / 选 B 会怎样」。
-- 常驻守护只做**安全子集**：路由散需求 + land 与 `main` 无冲突的分支。冲突分支不碰。
+- 常驻守护只做**安全子集**：路由散需求 + land 与 `main` 无冲突、且树里没有残留冲突标记的分支。其余分支不碰。
 - 本机 stdio MCP 是面向**本机** Codex 的形态；官方插件市场的 MCP 要求 HTTPS 端点，所以这里用的是本机 compat 布局。
 - 归类基于关键词 + 文件路径重叠 + 代码标识匹配，**是启发式，不是语义理解**。它可能判错泳道；判错不致命（只影响优先级和归属），你可以在 `ops/central.config.json` 里覆盖规则，或手工改台账。
 - 冲突收拢（`converge`）只做**机械合并**：建分支、并入源分支、保留冲突 marker。真正解冲突仍需一个 agent 在 convergence worktree 里做，它不假装能替你判断「谁对」。
