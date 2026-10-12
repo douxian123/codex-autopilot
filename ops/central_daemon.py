@@ -408,17 +408,28 @@ def build_plist(interval_min: int) -> dict:
     # 可能是旧副本；如果 plist 指向 `$KG_TRUNK/ops/central_daemon.py`，插件升级后
     # 守护又会跑旧代码 —— 这正是自包含安装要消掉的问题。KG_TRUNK 只作为运行时旋钮
     # 传给脚本，不用来定位运行时。
-    trunk = Path(os.environ.get("KG_TRUNK", str(CODE_ROOT))).expanduser()
+    #
+    # 关键约束：落盘主干不能等于状态根（KG_REPO）。KG_TRUNK 指到账本目录时，land 的
+    # merge/reset 会直接改写 ops/tasks、ops/truth，实测因此丢过路由结果。所以
+    # KG_TRUNK 缺省、或恰好等于 KG_REPO，都退回独立的 `<KG_REPO>-trunk`。
     script = HERE / "central_daemon.py"
     env = {
-        "KG_TRUNK": str(trunk),
         "KG_DAEMON_HOME": str(RUNTIME),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
         "LANG": os.environ.get("LANG", "en_US.UTF-8"),
     }
     # KG_REPO 是账本所在；自包含安装下它和 KG_TRUNK 不一定同一个目录。
-    if os.environ.get("KG_REPO"):
-        env["KG_REPO"] = str(Path(os.environ["KG_REPO"]).expanduser())
+    repo_env = os.environ.get("KG_REPO")
+    trunk_env = os.environ.get("KG_TRUNK")
+    if repo_env:
+        repo_path = Path(repo_env).expanduser()
+        env["KG_REPO"] = str(repo_path)
+        trunk = Path(trunk_env).expanduser() if trunk_env else None
+        if trunk is None or trunk.resolve() == repo_path.resolve():
+            trunk = repo_path.parent / (repo_path.name + "-trunk")
+        env["KG_TRUNK"] = str(trunk)
+    elif trunk_env:
+        env["KG_TRUNK"] = str(Path(trunk_env).expanduser())
     return {
         "Label": PLIST_LABEL,
         "ProgramArguments": [_python_for_plist(), str(script),

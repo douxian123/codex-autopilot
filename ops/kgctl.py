@@ -1015,6 +1015,14 @@ def _trunk_worktree():
     看起来"合了"而 main 一动不动 —— 实测踩过。train 因此自带工作树，并用 update-ref 推进 main。
     """
     wt = central_config.trunk_dir(REPO, CFG)
+    if wt.resolve() == REPO.resolve():
+        # KG_TRUNK 被指到了状态根本身：落盘会直接在这个目录里 merge / reset，而账本
+        # （ops/tasks、ops/truth）就在这儿。一次 reset 就能把账本打回 main 的旧版本
+        # ——实测正是这么丢掉了刚路由好的 7 条 inbox。落盘主干必须是独立 worktree，
+        # 所以这里强制改用默认的 `<项目名>-trunk`。
+        fallback = REPO.parent / (REPO.name + "-trunk")
+        print(f"  !KG_TRUNK 指向状态根本身（{REPO}），已改用独立主干工作树：{fallback}")
+        wt = fallback
     if not (wt / ".git").exists():
         wt.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "-C", str(REPO), "worktree", "add", "--detach", str(wt), MAIN],
@@ -1097,6 +1105,10 @@ def _mirror_truth_into_trunk(wt: Path) -> None:
     for rel in TRUTH_PATHS:
         src, dst = REPO / rel, wt / rel
         if not src.exists():
+            continue
+        if src.resolve() == dst.resolve():
+            # 状态根本身就是落盘主干时（配置错误），源与目标同一个文件；
+            # 直接跳过，绝不 shutil.copy2 到自己。
             continue
         if src.is_dir():
             for item in src.rglob("*"):
@@ -1185,16 +1197,64 @@ def trunk_truth_commits(wt: Path, base: str = None):
 
 
 def trunk_head_is_truth_only(wt: Path, base: str = None) -> bool:
-    subjects = trunk_truth_commits(wt, base)
-    return bool(subjects) and all(TRUTH_COMMIT_RE.match(s) for s in subjects)
+    """HEAD 相对 base 是否只动了真相层文件。
+
+    判据必须是「改了什么文件」，不能只看提交信息：`train: merge <分支>` 这类合并提交
+    的消息会命中 TRUTH_COMMIT_RE，但它可能把整整一个代码分支并进真相层——一旦混入代码
+    提交，真相层就永远推不上去（实测：分支里几十条 fix() 提交混进来后 push 被永久拦死）。
+    改成三向 diff 之后，只有「HEAD 侧相对 base 的净改动全是真相层文件」才放行：合并提交
+    携带的代码会被正确拦下，纯真相层的 train 合并依旧放行。
+    """
+    base = base or MAIN
+    out = git("-C", str(wt), "diff", "--name-only", f"{base}...HEAD")
+    files = [f.strip().strip('"') for f in out.split("\n") if f.strip()]
+    if not files:
+        return False
+    return all(any(f == t or f.startswith(t.rstrip("/") + "/") for t in TRUTH_PATHS)
+               for f in files)
+
+
+def _snapshot_truth_files(wt: Path) -> dict:
+    """把主干工作树上真相层文件的内容读进内存（路径 -> bytes）。
+
+    用来在「把 HEAD 切回 main」之前兜底：checkout 会用 main 的版本覆盖工作树里的
+    ops/truth、ops/tasks 等文件，若不先抓一份，路由结果、台账追加这些只存在于本地
+    的真相改动就永久丢了（实测：一次 `checkout --detach main` 把刚路由好的 inbox 打回
+    未路由）。只读，不改任何文件。
+    """
+    snap = {}
+    for rel in TRUTH_PATHS:
+        root = wt / rel
+        if root.is_dir():
+            for item in root.rglob("*"):
+                if item.is_file():
+                    snap[str(item.relative_to(wt))] = item.read_bytes()
+        elif root.is_file():
+            snap[rel] = root.read_bytes()
+    return snap
+
+
+def _restore_truth_files(wt: Path, snap: dict) -> None:
+    """把 `_snapshot_truth_files` 抓到的真相文件写回工作树（纯加法，只写真相路径）。"""
+    for rel, data in snap.items():
+        dst = wt / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(data)
 
 
 def reset_trunk_head(wt: Path) -> None:
-    """让主干工作树的 HEAD 对齐 main，但保留真相层自己的提交。
+    """让主干工作树的 HEAD 对齐 main，但绝不丢真相层。
 
     失败的 land 会在主干工作树留下一个 merge 提交（main 未动），必须清掉，否则下一次
-    land 会把上一次失败的合并一起推上 main。真相层提交（只动 ops/truth、ops/tasks、
-    docs/PROJECT_STATUS.md 等）是有价值的本地状态，则保留下来一起落盘。
+    land 会把上一次失败的合并一起推上 main。真相层状态（ops/truth、ops/tasks、
+    docs/PROJECT_STATUS.md 等）是有价值的本地状态，必须保留。
+
+    两种情形分开处理：
+      * HEAD 相对 main 只动了真相层文件 -> 直接把 origin/main 合到真相提交之上，提交
+        与文件都保留。
+      * HEAD 夹带了非真相内容（例如一次没推成的 `train: merge <分支>`）-> 切回 main，
+        但在切换前先把真相文件抓进内存，切完再写回，保证路由结果、台账追加一条不丢。
+        被丢弃的代码来自仍存在的源分支，可随时重放；真相层不能丢，因为它没有别处副本。
     """
     if trunk_head_is_truth_only(wt):
         merged = subprocess.run(["git", "-C", str(wt), "merge", "--no-ff", f"origin/{MAIN}",
@@ -1207,11 +1267,15 @@ def reset_trunk_head(wt: Path) -> None:
             sys.exit(1)
         print(f"  保留主干工作树上 {len(trunk_truth_commits(wt))} 条真相提交并同步 origin/{MAIN}")
         return
+    snap = _snapshot_truth_files(wt)
     ok = subprocess.run(["git", "-C", str(wt), "checkout", "--detach", MAIN],
                         capture_output=True, text=True)
     if ok.returncode != 0:
         print("× 主干工作树切不到 main：", ok.stderr.strip()[:200])
         sys.exit(1)
+    _restore_truth_files(wt, snap)
+    if snap:
+        print(f"  已把 {len(snap)} 个真相层文件从切换前状态写回（路由/台账不丢）")
 
 
 def sync_trunk_truth(wt: Path, reason: str) -> bool:

@@ -60,12 +60,19 @@ if [ ! -d "$PROJECT" ]; then
   exit 1
 fi
 PROJECT="$(cd "$PROJECT" && pwd)"
-if [ -n "$TRUNK" ]; then
-  if [ ! -d "$TRUNK" ]; then
-    echo "× --trunk 指定的主干 worktree 不存在：$TRUNK" >&2
-    exit 1
-  fi
+# 落盘主干 = 一个独立的 worktree；缺省用同级的 <项目名>-trunk（kgctl 首次落盘时自建）。
+# 它绝不能等于状态根本身：那样 land 的 merge/reset 会直接改写 ops/tasks、ops/truth 账本。
+if [ -z "$TRUNK" ]; then
+  TRUNK="$PROJECT-trunk"
+fi
+if [ -d "$TRUNK" ]; then
   TRUNK="$(cd "$TRUNK" && pwd)"
+fi
+if [ "$TRUNK" = "$PROJECT" ]; then
+  echo "× --trunk 不能等于 --state-root（$PROJECT）。" >&2
+  echo "  落盘主干必须是独立 worktree；指到账本目录会在 merge/reset 时直接改写它。" >&2
+  echo "  留空即用默认的 ${PROJECT}-trunk。" >&2
+  exit 1
 fi
 
 # 1) 初始化目标项目的状态层：只补缺失文件，绝不覆盖已有账本。
