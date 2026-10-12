@@ -25,12 +25,25 @@ from pathlib import Path
 
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "codex-autopilot"
-SERVER_VERSION = "0.1.4"
 
 OPS_DIR = Path(__file__).resolve().parent
 REPO = OPS_DIR.parent
 KGCTL = OPS_DIR / "kgctl.py"
 TRUTHCTL = OPS_DIR / "truthctl.py"
+
+
+def _server_version() -> str:
+    """版本以插件清单为准，避免 MCP 里再写死一份导致漂移。"""
+    for rel in (".codex-plugin/plugin.json", "plugin/.codex-plugin/plugin.json"):
+        manifest = OPS_DIR.parent / rel
+        try:
+            return json.loads(manifest.read_text(encoding="utf-8")).get("version", "0.0.0")
+        except (OSError, ValueError):
+            continue
+    return "0.0.0"
+
+
+SERVER_VERSION = _server_version()
 
 from plugin_binding import apply_plugin_env  # noqa: E402
 
