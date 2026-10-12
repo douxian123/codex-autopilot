@@ -204,6 +204,11 @@ def branch_meta(branch: str) -> dict:
     }
 
 
+def _is_convergence_branch(branch: str) -> bool:
+    """codex/converge-* 是自动挡自己生成的收拢分支，不是用户的源工作分支。"""
+    return bool(branch) and branch.startswith(f"{BRANCH_PREFIX}converge-")
+
+
 def conflict_groups(rows=None) -> list:
     """把冲突分支按「抢同一批文件」收成少数几个冲突族。
 
@@ -211,7 +216,12 @@ def conflict_groups(rows=None) -> list:
     一个 convergence 任务，用户/agent 面对的是「一族冲突」，不是几十个分支。
     """
     rows = rows if rows is not None else scan()
-    conflicts = [r for r in rows if r["kind"] == "CONFLICT"]
+    # 收拢分支本身是派生产物，绝不能再当源分支喂回收拢。否则它一进入成员集，
+    # 族规模就自我膨胀、id 被重算，旧记录变孤儿、worktree 永久半合并（实测：
+    # codex/converge-055ddd5718 被当成源分支后，族成员 59→60，id 重算成
+    # 39836fb2a8，055 卡死）。所以先把 codex/converge-* 从源集合里剔除。
+    conflicts = [r for r in rows if r["kind"] == "CONFLICT"
+                 and not _is_convergence_branch(r["branch"])]
     parent = {r["branch"]: r["branch"] for r in conflicts}
 
     def find(x):
@@ -551,6 +561,11 @@ def cmd_suggest(args):
 def scan():
     rows = []
     for b in codex_branches():
+        # 收拢分支是自动挡生成的任务容器，不是待裁决的用户分支。把它排除在一屏 /
+        # matrix / queue 之外，否则它自己带 conflict markers 时会被当成“残留冲突
+        # 标记”反复报出来，用户会误以为还有一条工作没收拾。
+        if _is_convergence_branch(b):
+            continue
         ahead, behind = counts(b)
         ts = int(git("log", "-1", "--format=%ct", b) or 0)
         files = changed_files(b)
@@ -774,6 +789,79 @@ def _abort_stale_merge(wt: Path) -> bool:
     return r.returncode == 0
 
 
+def _adopt_stable_ids(groups, records) -> None:
+    """把当前冲突族的 id 粘到既有收拢记录上，别让成员集一漂移就换 id。
+
+    族 id 原本是「成员集 digest」，成员集一变（main 前进、分支新加入/转干净）就
+    重算，旧记录连带它的 worktree 变成没人认领的孤儿。这里做粘性匹配：一份既有
+    记录只要和当前族有足够重叠（≥ 半数），就沿用它已登记的 id / 收拢分支 / worktree。
+    """
+    taken = set()
+    recs = [r for r in records.values() if r.get("id")]
+    for g in groups:
+        members = set(g["branches"])
+        best, best_key = None, None
+        for rec in recs:
+            if rec["id"] in taken:
+                continue
+            rb = set(rec.get("branches") or [])
+            ov = len(members & rb)
+            if not ov:
+                continue
+            ratio = ov / max(1, min(len(members), len(rb)))
+            if ratio < 0.5:
+                continue
+            # 同一族被两份记录覆盖时，用「重合度 -> 已完成的合并数」取舍，尽量接着
+            # 已经合过大半的那份 worktree 往下走，而不是从只合了几条的那份重来。
+            key = (ov, round(ratio, 4), len(rec.get("merges") or []))
+            if best_key is None or key > best_key:
+                best, best_key = rec, key
+        if best is not None:
+            g["id"] = best["id"]
+            taken.add(best["id"])
+
+
+def _clean_orphan_convergences(records, used_ids, made) -> list:
+    """清理不再对应任何当前冲突族的收拢记录。
+
+    成员集一变，旧 id 就不再被算出来，旧记录连同它的 worktree 变成孤儿——里面若卡着
+    半合并就永久残留（实测就是 055ddd5718）。这里只做安全的收尾：清掉残留半合并；
+    若它的源分支都已被别的收拢分支或 main 接走，就把记录标成 superseded 指向接管者。
+    绝不删源分支、绝不动 main。
+    """
+    archived = []
+    for rid, rec in records.items():
+        if rid in used_ids or not rec.get("branch"):
+            continue
+        if not git("rev-parse", "--verify", rec["branch"]):
+            continue
+        wt = Path(rec.get("worktree") or (REPO.parent / f"{REPO.name}-converge-{rid}"))
+        if wt.exists() and _abort_stale_merge(wt):
+            print(f"  ！孤儿收拢 {rec['branch']} 清掉了残留半合并")
+        # 判断「内容有没有被接管」时忽略派生的收拢分支，只看真实源分支。
+        srcs = [s for s in (rec.get("branches") or [])
+                if not _is_convergence_branch(s) and git("rev-parse", "--verify", s)]
+        if not srcs:
+            continue
+        holder = None
+        for mrec in made:
+            mwt = Path(mrec["worktree"])
+            if mwt.exists() and all(_branch_contained(mwt, s) for s in srcs):
+                holder = mrec["id"]
+                break
+        if holder is None and all(counts(s)[0] == 0 for s in srcs):
+            holder = "main"
+        if holder:
+            rec = dict(rec)
+            rec["status"] = "superseded"
+            rec["superseded_by"] = holder
+            rec["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            _write_convergence_record(rec)
+            archived.append(rec["branch"])
+            print(f"  已归档孤儿收拢 {rec['branch']}（内容已由 {holder} 接管）")
+    return archived
+
+
 def cmd_converge(args):
     """把几十个冲突分支收成少数几个 convergence 任务。
 
@@ -793,10 +881,13 @@ def cmd_converge(args):
     groups = conflict_groups(rows)
     if limit:
         groups = groups[:limit]
+    records = {g.get("id"): g for g in load_convergence().get("groups", [])}
+    _adopt_stable_ids(groups, records)
     if not groups:
         print("没有冲突分支，无需收拢。")
+        if go:
+            _clean_orphan_convergences(records, set(), [])
         return
-    records = {g.get("id"): g for g in load_convergence().get("groups", [])}
     print(f"冲突分支 {sum(len(g['branches']) for g in groups)} 个，可收成 "
           f"{len(groups)} 个 convergence 任务：\n")
     for g in groups:
@@ -899,6 +990,10 @@ def cmd_converge(args):
         if made:
             print(f"\n已生成 {len(made)} 个 convergence 分支。下一步：对每个 needs_resolution "
                   "分支跑 `kgctl context <分支>`，再让一个 agent 在该 convergence worktree 里解冲突。")
+        # 孤儿收拢：既有记录已不再对应任何当前族，先清掉它 worktree 里可能卡着的半合并，
+        # 内容被别处接走就归档，绝不留下永久半合并。必须等所有当前族都处理完再判断，
+        # 否则多族收拢时，尚未轮到的既有记录会被误判成孤儿。
+        _clean_orphan_convergences(records, {g["id"] for g in groups}, made)
     finally:
         if LOCK.exists():
             LOCK.unlink()

@@ -134,8 +134,80 @@ def main():
                     raise AssertionError(
                         f"converge 第 {attempt} 次后仍残留半合并（MERGE_HEAD）: {wt}")
 
+        # 回归：收拢分支不能被当成源分支再喂回收拢。
+        # 触发条件是 main 前进：旧的收拢分支基于旧 main，main 一动它就重新与 main 冲突，
+        # 于是被 CONFLICT 扫描当成源分支捞回来。成员集自我膨胀、id 漂移、旧 worktree 变
+        # 孤儿、永久半合并。这一整套都锁在这里。
+        import json as _json
+        cj = repo / "ops" / "tasks" / "convergence.json"
+        data = _json.loads(cj.read_text(encoding="utf-8"))
+        if not data.get("groups"):
+            raise AssertionError("converge 应登记至少一个收拢组")
+        first_ids = {g["id"] for g in data["groups"]}
+        before_wts = {q.name for q in root.iterdir() if q.is_dir() and "-converge-" in q.name}
+
+        # main 前进，复现真实漂移：旧收拢分支重新与 main 冲突。
+        git(repo, "checkout", "-q", "main")
+        (repo / "common.txt").write_text("M2\n", encoding="utf-8")
+        (repo / "gen" / "f.json").write_text("vM2\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "main advances again")
+
+        conv = kgctl(repo, trunk, "converge", "--go")
+        if conv.returncode != 0:
+            raise AssertionError(f"漂移后 converge 失败:\n{conv.stdout}\n{conv.stderr}")
+        if "没有冲突分支" in conv.stdout:
+            raise AssertionError(f"漂移后 fixture 没造出冲突:\n{conv.stdout}")
+        matrix_cmd = kgctl(repo, trunk, "matrix")
+        if matrix_cmd.returncode != 0 or "codex/converge-" in matrix_cmd.stdout:
+            raise AssertionError(f"收拢分支仍被计入 matrix / 一屏:\n{matrix_cmd.stdout}")
+        queue_cmd = kgctl(repo, trunk, "queue")
+        if queue_cmd.returncode != 0 or "codex/converge-" in queue_cmd.stdout:
+            raise AssertionError(f"收拢分支仍被计入 queue:\n{queue_cmd.stdout}")
+
+        after_wts = {q.name for q in root.iterdir() if q.is_dir() and "-converge-" in q.name}
+        if after_wts != before_wts:
+            raise AssertionError(
+                f"漂移后凭空多出收拢 worktree：before={before_wts} after={after_wts}")
+        data2 = _json.loads(cj.read_text(encoding="utf-8"))
+        now_ids = {g["id"] for g in data2["groups"]}
+        if now_ids != first_ids:
+            raise AssertionError(f"漂移后收拢 id 未粘住：{first_ids} -> {now_ids}")
+        for g in data2["groups"]:
+            for src in g.get("branches", []):
+                if "/converge-" in src:
+                    raise AssertionError(f"收拢分支被当成源分支写入组：{src}")
+        matrix = _json.loads((repo / "ops" / "tasks" / "matrix.json").read_text(encoding="utf-8"))
+        if any("/converge-" in r.get("branch", "") for r in matrix):
+            raise AssertionError("收拢分支仍被写进 matrix / 状态扫描")
+        for wt in [q for q in root.iterdir() if q.is_dir() and "-converge-" in q.name]:
+            gd = run(["git", "-C", str(wt), "rev-parse", "--git-dir"]).stdout.strip()
+            gdp = Path(gd) if os.path.isabs(gd) else (wt / gd)
+            if (gdp / "MERGE_HEAD").exists():
+                raise AssertionError(f"漂移收敛后残留半合并: {wt}")
+
+        # 回归：孤儿收拢记录（id 已不再被算出来）里卡着的半合并必须被清掉，不能永久残留。
+        orphan_branch = "codex/converge-deadbeef00"
+        owt = root / "state-converge-deadbeef00"
+        git(repo, "branch", orphan_branch, "main")
+        git(repo, "worktree", "add", "-q", str(owt), orphan_branch)
+        run(["git", "-C", str(owt), "merge", "--no-commit", "--no-ff", "codex/ig-a"], check=False)
+        ogd = run(["git", "-C", str(owt), "rev-parse", "--git-dir"]).stdout.strip()
+        ogdp = Path(ogd) if os.path.isabs(ogd) else (owt / ogd)
+        if not (ogdp / "MERGE_HEAD").exists():
+            raise AssertionError("fixture 没造出孤儿半合并")
+        data3 = _json.loads(cj.read_text(encoding="utf-8"))
+        data3["groups"].append({
+            "id": "deadbeef00", "branch": orphan_branch, "worktree": str(owt),
+            "branches": ["codex/ig-a"], "files": ["common.txt"], "status": "needs_resolution",
+        })
+        cj.write_text(_json.dumps(data3, ensure_ascii=False), encoding="utf-8")
+        kgctl(repo, trunk, "converge", "--go")
+        if (ogdp / "MERGE_HEAD").exists():
+            raise AssertionError("孤儿收拢的残留半合并没有被清掉")
+
     print("selftest ok: 干净分支可入队；带冲突标记的分支被 queue 排除且 land 拒绝。")
     print("selftest ok: 冲突路径落在被 ignore 目录时，converge 不残留半合并且可重跑。")
+    print("selftest ok: 收拢分支不被当源分支喂回收拢；main 漂移后 id 粘住；孤儿收拢的半合并被清掉。")
 
 
 if __name__ == "__main__":
