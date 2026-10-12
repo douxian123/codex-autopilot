@@ -84,7 +84,58 @@ def main():
         if good.returncode != 0 or "无冲突" not in good.stdout:
             raise AssertionError(f"干净分支 dry-run 失败:\n{good.stdout}\n{good.stderr}")
 
+
+        # 回归：冲突路径落在被 ignore 的目录里。目录整体被 .gitignore 命中、但文件是
+        # tracked，此时 `git add -- <全部未合并>` 会因该路径返回非零。旧实现把它当致命
+        # 错误抛出，把 worktree 留在 MERGE_HEAD 半合并；收敛分支已登记，之后每次 converge
+        # 都“已存在则跳过”，worktree 永久半合并。这里锁住：converge 必须收敛完成，
+        # 且不能留下任何 MERGE_HEAD，二次运行还要幂等。
+        git(repo, "checkout", "-q", "main")
+        (repo / ".gitignore").write_text("gen/\n", encoding="utf-8")
+        (repo / "common.txt").write_text("x\n", encoding="utf-8")
+        (repo / "gen").mkdir()
+        (repo / "gen" / "f.json").write_text("v0\n", encoding="utf-8")
+        git(repo, "add", ".gitignore", "common.txt")
+        git(repo, "add", "-f", "gen/f.json")
+        git(repo, "commit", "-q", "-m", "ignored-dir fixture on main")
+
+        git(repo, "checkout", "-q", "-b", "codex/ig-a")
+        (repo / "gen" / "f.json").write_text("vA\n", encoding="utf-8")
+        (repo / "common.txt").write_text("A\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "A")
+
+        git(repo, "checkout", "-q", "main")
+        git(repo, "checkout", "-q", "-b", "codex/ig-b")
+        (repo / "gen" / "f.json").write_text("vB\n", encoding="utf-8")
+        (repo / "common.txt").write_text("B\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "B")
+
+        # main 必须往前走，两支才会与 main 各自冲突（否则只是各自延长 main，合起来是干净的）。
+        git(repo, "checkout", "-q", "main")
+        (repo / "gen" / "f.json").write_text("vM\n", encoding="utf-8")
+        (repo / "common.txt").write_text("M\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "main advances")
+
+        for attempt in (1, 2):
+            conv = kgctl(repo, trunk, "converge", "--go")
+            if conv.returncode != 0:
+                raise AssertionError(
+                    f"converge 第 {attempt} 次失败:\n{conv.stdout}\n{conv.stderr}")
+            if "没有冲突分支" in conv.stdout:
+                raise AssertionError(f"fixture 没造出冲突分支:\n{conv.stdout}")
+            converge_wts = [q for q in root.iterdir()
+                            if q.is_dir() and "-converge-" in q.name]
+            if not converge_wts:
+                raise AssertionError(f"converge 没有建出收敛 worktree:\n{conv.stdout}")
+            for wt in converge_wts:
+                gd = run(["git", "-C", str(wt), "rev-parse", "--git-dir"]).stdout.strip()
+                gdp = Path(gd) if os.path.isabs(gd) else (wt / gd)
+                if (gdp / "MERGE_HEAD").exists():
+                    raise AssertionError(
+                        f"converge 第 {attempt} 次后仍残留半合并（MERGE_HEAD）: {wt}")
+
     print("selftest ok: 干净分支可入队；带冲突标记的分支被 queue 排除且 land 拒绝。")
+    print("selftest ok: 冲突路径落在被 ignore 目录时，converge 不残留半合并且可重跑。")
 
 
 if __name__ == "__main__":

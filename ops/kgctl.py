@@ -703,6 +703,26 @@ def _merge_jsonl_conflict(wt: Path, rel: str) -> None:
     write_text(wt / rel, "\n".join(lines) + ("\n" if lines else ""))
 
 
+def _stage_unmerged(wt: Path, paths) -> None:
+    """把未合并路径逐个落进索引，避免一个被忽略/已删除的路径让整批 git add 失败。
+
+    单文件冲突时最容易踩的坑：某个未合并路径正好被 .gitignore 忽略（构建产物 / probe
+    文件），`git add -- <全部>` 会因该路径返回非零 -> 整批失败 -> 合并卡在 MERGE_HEAD，
+    而收敛分支已被登记，后续“已存在则跳过”，这个 worktree 就永久半合并。这里改成
+    逐路径处理：文件存在用 add --force（越过 ignore 收口），文件被某侧删除用 rm --force。
+    """
+    for rel in paths:
+        if (wt / rel).exists():
+            r = subprocess.run(["git", "-C", str(wt), "add", "--force", "--", rel],
+                               capture_output=True, text=True)
+        else:
+            r = subprocess.run(["git", "-C", str(wt), "rm", "--force", "--", rel],
+                               capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RuntimeError(
+                f"无法把未合并路径落索引：{rel}：{(r.stdout + r.stderr).strip()[:200]}")
+
+
 def _commit_conflicted_merge(wt: Path, branch: str, group_id: str) -> dict:
     unresolved = subprocess.run(
         ["git", "-C", str(wt), "diff", "--name-only", "--diff-filter=U"],
@@ -714,7 +734,7 @@ def _commit_conflicted_merge(wt: Path, branch: str, group_id: str) -> dict:
         if rel.endswith(".jsonl"):
             _merge_jsonl_conflict(wt, rel)
             auto.append(rel)
-    subprocess.run(["git", "-C", str(wt), "add", "--", *unresolved], check=True)
+    _stage_unmerged(wt, unresolved)
     commit = subprocess.run(
         ["git", "-C", str(wt), "commit", "-m",
          f"wip(converge): merge {branch} into {group_id} with conflict markers"],
@@ -726,6 +746,32 @@ def _commit_conflicted_merge(wt: Path, branch: str, group_id: str) -> dict:
 
 def _convergence_branch(group: dict) -> str:
     return f"{BRANCH_PREFIX}converge-{group['id']}"
+
+
+def _branch_contained(wt: Path, src: str) -> bool:
+    """src 是否已在 wt 当前 HEAD 的历史里（已合入，或 base 本来就有）。"""
+    return subprocess.run(
+        ["git", "-C", str(wt), "merge-base", "--is-ancestor", src, "HEAD"],
+        capture_output=True, text=True).returncode == 0
+
+
+def _abort_stale_merge(wt: Path) -> bool:
+    """worktree 若停在半合并（MERGE_HEAD 存在），abort 回上一个已提交状态。
+
+    已完成并提交的 merge 都在提交历史里，abort 只丢未提交的中间索引。不清掉的话，
+    下一次 converge 会因为“分支已存在”而跳过，这个 worktree 就永久半合并。
+    """
+    out = subprocess.run(["git", "-C", str(wt), "rev-parse", "--git-dir"],
+                         capture_output=True, text=True)
+    gd = out.stdout.strip()
+    if out.returncode != 0 or not gd:
+        return False
+    gd_path = Path(gd) if os.path.isabs(gd) else (wt / gd)
+    if not (gd_path / "MERGE_HEAD").exists():
+        return False
+    r = subprocess.run(["git", "-C", str(wt), "merge", "--abort"],
+                       capture_output=True, text=True)
+    return r.returncode == 0
 
 
 def cmd_converge(args):
@@ -779,22 +825,34 @@ def cmd_converge(args):
         for g in groups:
             branch = _convergence_branch(g)
             existing = records.get(g["id"]) or {}
-            if existing.get("branch") == branch and git("rev-parse", "--verify", branch):
-                print(f"  {branch} 已存在，跳过")
-                continue
+            branch_exists = bool(git("rev-parse", "--verify", branch))
             wt = REPO.parent / f"{REPO.name}-converge-{g['id']}"
-            if wt.exists():
+            resume = branch_exists and existing.get("branch") == branch and wt.exists()
+            if resume:
+                # 断点续跑：先清掉可能残留的半合并（已提交的 merge 在历史里，不会丢），
+                # 再只补合尚未进入 HEAD 的源分支；已合入的靠 is-ancestor 跳过。
+                aborted = _abort_stale_merge(wt)
+                print(f"  {branch} 已存在，续跑未合入的源分支"
+                      + ("（清掉了残留半合并）" if aborted else ""))
+            elif branch_exists:
+                print(f"  {branch} 已存在但未登记或 worktree 缺失，跳过")
+                continue
+            elif wt.exists():
                 print(f"  × {wt} 已存在但不是已登记分支；跳过 {branch}")
                 continue
-            add = subprocess.run(
-                ["git", "-C", str(REPO), "worktree", "add", "-b", branch, str(wt), base_ref],
-                capture_output=True, text=True)
-            if add.returncode != 0:
-                print(f"  × 建 worktree 失败 {branch}: {(add.stdout + add.stderr).strip()[:300]}")
-                continue
-            _link_side_dirs(wt)
-            merge_notes = []
+            else:
+                add = subprocess.run(
+                    ["git", "-C", str(REPO), "worktree", "add", "-b", branch, str(wt), base_ref],
+                    capture_output=True, text=True)
+                if add.returncode != 0:
+                    print(f"  × 建 worktree 失败 {branch}: {(add.stdout + add.stderr).strip()[:300]}")
+                    continue
+                _link_side_dirs(wt)
+            merge_notes = list(existing.get("merges") or [])
+            merged_now = 0
             for src in g["branches"]:
+                if _branch_contained(wt, src):
+                    continue
                 merged = subprocess.run(
                     ["git", "-C", str(wt), "merge", "--no-ff", src,
                      "-m", f"converge: merge {src} into {g['id']}"],
@@ -802,15 +860,23 @@ def cmd_converge(args):
                 if merged.returncode == 0:
                     merge_notes.append({"branch": src, "files": [],
                                         "auto_resolved_jsonl": []})
+                    merged_now += 1
                     continue
                 try:
                     note = _commit_conflicted_merge(wt, src, g["id"])
                 except Exception as exc:
-                    print(f"  × {branch} 合并 {src} 失败：{exc}")
+                    subprocess.run(["git", "-C", str(wt), "merge", "--abort"],
+                                   capture_output=True, text=True)
+                    print(f"  × {branch} 合并 {src} 失败：{exc}，已 merge --abort 回到干净状态")
                     merge_notes.append({"branch": src, "files": ["(commit failed)"],
                                         "auto_resolved_jsonl": []})
                     continue
                 merge_notes.append(note)
+                merged_now += 1
+            # 半合并兜底：任何路径异常都不许把 MERGE_HEAD 留在 worktree 里，
+            # 否则下一次 converge 会误判“已存在，跳过”，worktree 永久半合并。
+            if _abort_stale_merge(wt):
+                print(f"  ！{branch} 发现并清掉了残留半合并（未提交的中间索引已丢弃）")
             grep = subprocess.run(
                 ["git", "-C", str(wt), "grep", "-l", "-E", "^(<<<<<<<|>>>>>>>)"],
                 capture_output=True, text=True)
@@ -819,7 +885,9 @@ def cmd_converge(args):
                                   capture_output=True, text=True).stdout.strip()
             record = {
                 "id": g["id"], "branch": branch, "worktree": str(wt),
-                "base": base_sha, "head": head, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "base": existing.get("base") or base_sha, "head": head,
+                "created": existing.get("created") or time.strftime("%Y-%m-%d %H:%M:%S"),
+                "updated": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "status": "needs_resolution" if unresolved_files else "ready",
                 "branches": g["branches"], "files": g["files"],
                 "unresolved_files": unresolved_files, "merges": merge_notes,
@@ -827,7 +895,7 @@ def cmd_converge(args):
             _write_convergence_record(record)
             made.append(record)
             print(f"  已收拢 {len(g['branches'])} 分支 -> {branch}"
-                  f"（待解冲突文件 {len(unresolved_files)}，worktree={wt}）")
+                  f"（补合 {merged_now} 条，待解冲突文件 {len(unresolved_files)}，worktree={wt}）")
         if made:
             print(f"\n已生成 {len(made)} 个 convergence 分支。下一步：对每个 needs_resolution "
                   "分支跑 `kgctl context <分支>`，再让一个 agent 在该 convergence worktree 里解冲突。")
