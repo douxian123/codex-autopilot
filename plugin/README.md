@@ -34,9 +34,10 @@
 ./install.sh
 ```
 
-它会：把 `plugin/.mcp.json` 的 MCP server 指向本仓库的 `ops/central_mcp.py`（绝对路径）、
-把插件目录软链进 `~/.agents/plugins/`、并把本插件登记进个人 marketplace
+它会：把 `plugin/` 装一份到 `~/.agents/plugins/codex-autopilot/`、把其中的 `.mcp.json`
+指向目标项目的 `ops/central_mcp.py`（绝对路径）、并把本插件登记进个人 marketplace
 （`~/.agents/plugins/marketplace.json`，原文件备份为 `.bak-codex-autopilot`）。
+它不改本仓库里的任何文件。
 
 换目录 / 换机器时重跑一次即可。不想自动改 marketplace，用 `./install.sh --no-marketplace`。
 

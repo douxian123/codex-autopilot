@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Codex Autopilot 安装脚本（macOS / Linux）
 #
-# 作用：把本仓库的插件挂进 Codex 个人插件市场，并把 MCP server 指到你那个项目的 ops/。
-# 非破坏：只覆盖 plugin/.mcp.json、创建/替换符号链接、给 marketplace.json 加一条（先备份）。
+# 作用：把本仓库的插件安装进 Codex 个人插件市场，并把 MCP server 指到你那个项目的 ops/。
+# 非破坏：只写 ~/.agents/plugins/codex-autopilot/（本脚本自己的安装目录）和给
+# marketplace.json 加一条（先备份）；不改本仓库里的任何文件。
 #
 # 用法：
 #   ./install.sh [项目目录]        # 默认指向本仓库自身
@@ -22,7 +23,6 @@ done
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$REPO/plugin"
 AGENTS_DIR="$HOME/.agents/plugins"
-LINK="$AGENTS_DIR/codex-autopilot"
 MARKET="$AGENTS_DIR/marketplace.json"
 
 PY="$(command -v python3 || true)"
@@ -42,8 +42,14 @@ fi
 
 mkdir -p "$AGENTS_DIR"
 
+DEST="$AGENTS_DIR/codex-autopilot"
+# 装一份干净副本，避免安装动作把 clone 弄脏；重跑即覆盖更新。
+if [ -L "$DEST" ] || [ -e "$DEST" ]; then rm -rf -- "$DEST"; fi
+mkdir -p "$DEST"
+cp -R "$PLUGIN_DIR/." "$DEST/"
+
 # 1) MCP server 指向 <项目>/ops/central_mcp.py（绝对路径；换项目重跑本脚本）
-"$PY" - "$PLUGIN_DIR/.mcp.json" "$PROJECT/ops/central_mcp.py" <<'PYEOF'
+"$PY" - "$DEST/.mcp.json" "$PROJECT/ops/central_mcp.py" <<'PYEOF'
 import json, sys
 path, script = sys.argv[1], sys.argv[2]
 data = {"mcpServers": {"codex-autopilot": {"command": "python3", "args": [script]}}}
@@ -53,9 +59,7 @@ with open(path, "w", encoding="utf-8") as fh:
 print(f"已写 {path} -> {script}")
 PYEOF
 
-# 2) 把插件目录软链进个人插件根
-ln -sfn "$PLUGIN_DIR" "$LINK"
-echo "已链接 $LINK -> $PLUGIN_DIR"
+echo "已安装插件到 $DEST"
 
 # 3) 登记进个人 marketplace
 if [ "$NO_MARKET" -eq 0 ]; then

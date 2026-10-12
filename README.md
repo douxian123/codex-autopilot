@@ -55,9 +55,9 @@ cp -r ops /path/to/your-project/ops
 # 3) 重启 Codex 桌面端 / CLI，打开 Plugins → Personal → 安装「Codex 自动挡」
 ```
 
-> `install.sh` 做三件事：把 `plugin/.mcp.json` 的 MCP server 指到
-> `<项目>/ops/central_mcp.py`（绝对路径）、把 `plugin/` 软链进 `~/.agents/plugins/`、
-> 把插件登记进 `~/.agents/plugins/marketplace.json`（原文件会备份）。
+> `install.sh` 做三件事：把 `plugin/` 装一份到 `~/.agents/plugins/codex-autopilot/`、
+> 把其中的 `.mcp.json` 指到 `<项目>/ops/central_mcp.py`（绝对路径）、把插件登记进
+> `~/.agents/plugins/marketplace.json`（原文件会备份）。它不改本仓库里的任何文件。
 > 换项目 / 换目录时重跑一次。想手工做，用 `./install.sh --no-marketplace` 看提示。
 
 装好之后，**那个普通的 Codex 输入框就是总输入框**。
