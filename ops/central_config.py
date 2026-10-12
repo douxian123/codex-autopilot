@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""central_config —— 中央司令台里「项目相关」的几个旋钮，集中到这一处（stdlib only）。
+"""central_config —— 自动挡里「项目相关」的几个旋钮，集中到这一处（stdlib only）。
 
 为什么单独抽出来
 ----------------

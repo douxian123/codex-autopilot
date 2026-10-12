@@ -3,7 +3,7 @@
 """
 truthctl —— 项目真相层的唯一读写入口（stdlib only）
 
-它补的是司令台缺的那一半：`kgctl` 管「输入不分叉 + 合并串行」，
+它补的是自动挡缺的那一半：`kgctl` 管「输入不分叉 + 合并串行」，
 truthctl 管「这个项目现在到底是什么状态」。
 
   mainline.json      产品主线（手写，改方向才动）
@@ -340,7 +340,7 @@ def cmd_next(args):
     led = [r for r in _read(TRUTH / 'ledger.jsonl') if r.get('status') in ('open', 'doing')]
     led.sort(key=lambda r: (PRIORITY.get(r.get('kind'), 9), r.get('ts', '')))
     acc = [r for r in _read(TRUTH / 'acceptance.jsonl') if r.get('status') == 'blocked']
-    print('=== 中央司令台 · 现在做什么 ===')
+    print('=== 自动挡 · 现在做什么 ===')
     if acc:
         print('被卡住的验收项（需要用户拍板或外部条件）：')
         for r in acc:

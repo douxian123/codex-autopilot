@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""中央司令台的 MCP server（stdio，JSON-RPC 2.0，stdlib only）。
+"""自动挡的 MCP server（stdio，JSON-RPC 2.0，stdlib only）。
 
 它把 ops/kgctl.py 的能力暴露成 MCP 工具，让任意 Codex 对话不必知道 CLI 细节，
 就能：记录零散需求、刷新项目真相、看下一步、路由到固定泳道、给分支建议。
@@ -78,7 +78,7 @@ TOOLS = [
     },
     {
         "name": "sync_control_plane",
-        "description": "司令台主循环：路由 inbox 到固定泳道 -> 刷新项目真相 -> 刷新控制看板 -> 落盘真相层 -> 给出下一步。用户一次抛了多条需求后调用。",
+        "description": "自动挡主循环：路由 inbox 到固定泳道 -> 刷新项目真相 -> 刷新控制看板 -> 落盘真相层 -> 给出下一步。用户一次抛了多条需求后调用。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
@@ -149,7 +149,7 @@ def handle(msg):
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             "instructions": (
-                "这是项目的中央司令台。用户抛出零散、即时的需求（视觉/体验/bug/架构/"
+                "这是项目的自动挡。用户抛出零散、即时的需求（视觉/体验/bug/架构/"
                 "门禁红灯/多分支要不要合/该在哪继续）时：先 capture_request 记录原话，"
                 "再 sync_control_plane 归类并刷新真相，然后按 next_actions 的优先级执行。"
                 "不要要求用户自己选对话、分支或角色。"

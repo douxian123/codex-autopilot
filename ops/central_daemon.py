@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""central_daemon —— 中央司令台的常驻执行器（安全子集 v1，stdlib only）。
+"""central_daemon —— 自动挡的常驻执行器（安全子集 v1，stdlib only）。
 
 为什么需要它
 ------------
@@ -276,17 +276,17 @@ def run_cycle(dry: bool, max_land: int) -> dict:
     prev_conflict = prev.get("conflict")
 
     if landed:
-        notify("司令台：已自动落盘",
+        notify("自动挡：已自动落盘",
                f"自动合入 {len(landed)} 个分支：{', '.join(landed[:3])}"
                + (" 等" if len(landed) > 3 else ""))
     fail_sig = _sig(failures) if failures else None
     if failures and fail_sig != state.get("last_failure_sig"):
         target, kind = failures[0]
-        notify("司令台：有分支没落成",
+        notify("自动挡：有分支没落成",
                f"{target} 卡在 {kind}，需要裁决或改门禁（其余 "
                f"{max(len(failures) - 1, 0)} 项见 daemon.log）")
     if (prev_conflict is not None and summary["conflict"] > prev_conflict):
-        notify("司令台：新增需裁决的冲突",
+        notify("自动挡：新增需裁决的冲突",
                f"冲突分支 {prev_conflict} -> {summary['conflict']}，"
                f"这些不给自动器，需要你或 agent 定归属")
 
@@ -504,7 +504,7 @@ def show_status() -> int:
     uid = os.getuid()
     loaded = launchctl("print", f"gui/{uid}/{PLIST_LABEL}", capture=True) == 0
     lock = DAEMON_LOCK.read_text().strip() if DAEMON_LOCK.exists() else "(无)"
-    print("=== 中央司令台常驻（KgCentralDaemon）===")
+    print("=== 自动挡常驻（KgCentralDaemon）===")
     print(f"守护状态       {'launchd 已加载' if loaded else '未加载'}"
           f"{'' if loaded else '（用 --install 打开）'}")
     print(f"实例锁         {lock}")
@@ -574,7 +574,7 @@ def loop(interval_min: int, max_land: int, dry: bool) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="中央司令台常驻执行器（安全子集：只自动合无冲突分支）")
+        description="自动挡常驻执行器（安全子集：只自动合无冲突分支）")
     ap.add_argument("--once", action="store_true", help="跑一个周期就退出")
     ap.add_argument("--loop", action="store_true", help="常驻，按 --interval 循环")
     ap.add_argument("--dry-run", action="store_true", help="只预演，不真的 land")

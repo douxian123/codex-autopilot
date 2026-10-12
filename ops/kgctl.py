@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-kgctl —— 中央司令台的唯一执行入口（stdlib only）
+kgctl —— 自动挡的唯一执行入口（stdlib only）
 
 它存在的理由
 ------------
@@ -320,7 +320,7 @@ def load_lanes():
 
 
 def cmd_inbox(args):
-    """零散需求不需要用户分类：一律追加进同一账本，由司令台负责路由。"""
+    """零散需求不需要用户分类：一律追加进同一账本，由自动挡负责路由。"""
     OPS.mkdir(parents=True, exist_ok=True)
     if not args:
         lines = INBOX.read_text().splitlines() if INBOX.exists() else []
@@ -345,7 +345,7 @@ def cmd_inbox(args):
     with INBOX.open("a") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
     print(f"已记入唯一入口 {rec['ts']}：{text[:80]}")
-    print("（无需分类；司令台路由时按 files 落到既有泳道）")
+    print("（无需分类；自动挡路由时按 files 落到既有泳道）")
 
 
 def cmd_route(args):
@@ -390,7 +390,7 @@ def cmd_suggest(args):
         else:
             print(f" #{it['_n']:03d} {it['text'][:70]}")
             print(f"      -> 无匹配泳道，建议开新泳道：kgctl new <名字>")
-    print("\n（路由是给司令台的建议；落地动作是 land 入队或起新泳道）")
+    print("\n（路由是给自动挡的建议；落地动作是 land 入队或起新泳道）")
 
 
 # ---------------------------------------------------------------- 分诊
@@ -843,7 +843,7 @@ def cmd_status(args):
                     unrouted += 1
             except Exception:
                 pass
-    print("=== 司令台一屏 ===")
+    print("=== 自动挡一屏 ===")
     print(f"状态根         {REPO}")
     print(f"共享检出       {SHARED}（只读诊断，不当账本）")
     print(f"主干           {MAIN} @ {git('log','-1','--format=%h %s',MAIN)[:56]}")
