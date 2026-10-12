@@ -34,10 +34,14 @@
 ./install.sh
 ```
 
-它会：把 `plugin/` 装一份到 `~/.agents/plugins/codex-autopilot/`、把其中的 `.mcp.json`
+它会：把 `plugin/` 装一份到 `~/plugins/codex-autopilot/`、把其中的 `.mcp.json`
 指向目标项目的 `ops/central_mcp.py`（绝对路径）、并把本插件登记进个人 marketplace
 （`~/.agents/plugins/marketplace.json`，原文件备份为 `.bak-codex-autopilot`）。
 它不改本仓库里的任何文件。
+
+> 为什么是 `~/plugins/`：Codex 的 personal marketplace 以 `$HOME` 为根，清单在
+> `$HOME/.agents/plugins/marketplace.json`，清单里的 `./plugins/<name>` 相对根解析。
+> 插件实体若放错到 `~/.agents/plugins/<name>`，会被 marketplace 列出、却 `add` 不进去。
 
 换目录 / 换机器时重跑一次即可。不想自动改 marketplace，用 `./install.sh --no-marketplace`。
 

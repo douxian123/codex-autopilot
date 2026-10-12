@@ -55,9 +55,11 @@ cp -r ops /path/to/your-project/ops
 # 3) 重启 Codex 桌面端 / CLI，打开 Plugins → Personal → 安装「Codex 自动挡」
 ```
 
-> `install.sh` 做三件事：把 `plugin/` 装一份到 `~/.agents/plugins/codex-autopilot/`、
+> `install.sh` 做三件事：把 `plugin/` 装一份到 `~/plugins/codex-autopilot/`、
 > 把其中的 `.mcp.json` 指到 `<项目>/ops/central_mcp.py`（绝对路径）、把插件登记进
 > `~/.agents/plugins/marketplace.json`（原文件会备份）。它不改本仓库里的任何文件。
+> 注意：Codex 的 personal marketplace 以 `$HOME` 为根，插件实体必须在 `~/plugins/<name>/`，
+> 而清单在 `~/.agents/plugins/marketplace.json`——这是两个目录，别写混。
 > 换项目 / 换目录时重跑一次。想手工做，用 `./install.sh --no-marketplace` 看提示。
 
 装好之后，**那个普通的 Codex 输入框就是总输入框**。

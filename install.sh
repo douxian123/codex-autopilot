@@ -2,8 +2,8 @@
 # Codex Autopilot 安装脚本（macOS / Linux）
 #
 # 作用：把本仓库的插件安装进 Codex 个人插件市场，并把 MCP server 指到你那个项目的 ops/。
-# 非破坏：只写 ~/.agents/plugins/codex-autopilot/（本脚本自己的安装目录）和给
-# marketplace.json 加一条（先备份）；不改本仓库里的任何文件。
+# 非破坏：只写 ~/plugins/codex-autopilot/（插件实体）和给
+# ~/.agents/plugins/marketplace.json 加一条（先备份）；不改本仓库里的任何文件。
 #
 # 用法：
 #   ./install.sh [项目目录]        # 默认指向本仓库自身
@@ -22,8 +22,12 @@ done
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$REPO/plugin"
-AGENTS_DIR="$HOME/.agents/plugins"
-MARKET="$AGENTS_DIR/marketplace.json"
+# Codex 的 personal marketplace 根是 $HOME：清单在 $HOME/.agents/plugins/marketplace.json，
+# 而清单里的 "./plugins/<name>" 是相对根解析的，所以插件实体必须落在 $HOME/plugins/<name>。
+# 这两个目录不是同一个地方，装错了会被 marketplace 列出、却 add 不进去。
+MANIFEST_DIR="$HOME/.agents/plugins"
+MARKET="$MANIFEST_DIR/marketplace.json"
+PLUGIN_ROOT="$HOME/plugins"
 
 PY="$(command -v python3 || true)"
 if [ -z "$PY" ]; then
@@ -40,9 +44,9 @@ if [ ! -f "$PROJECT/ops/kgctl.py" ]; then
   exit 1
 fi
 
-mkdir -p "$AGENTS_DIR"
+mkdir -p "$MANIFEST_DIR" "$PLUGIN_ROOT"
 
-DEST="$AGENTS_DIR/codex-autopilot"
+DEST="$PLUGIN_ROOT/codex-autopilot"
 # 装一份干净副本，避免安装动作把 clone 弄脏；重跑即覆盖更新。
 if [ -L "$DEST" ] || [ -e "$DEST" ]; then rm -rf -- "$DEST"; fi
 mkdir -p "$DEST"
