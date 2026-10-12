@@ -1,0 +1,2 @@
+ops/tasks/inbox.jsonl merge=union
+ops/truth/*.jsonl merge=union

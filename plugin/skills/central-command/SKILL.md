@@ -23,26 +23,41 @@ description: Codex 自动挡。当用户在同一项目里提出零散、即时�
 5. 用户拍板只限三种：改产品方向、删数据、发布。其余自行路由执行。
 
 ## 两种调用方式
-- 如果这个插件暴露了 MCP 工具，优先直接调用：`capture_request` / `sync_control_plane` /
-  `next_actions` / `project_status` / `route_inbox` / `suggest_branch`。它们读写的就是下面这套 CLI。
+- 有 MCP 工具时优先直接调用（读写的就是下面这套 CLI）：
+  `intake_request`（一句话收进唯一入口并走完整条链，首选）、`sync_control_plane`（重扫主循环）、
+  `next_actions`、`project_status`、`route_inbox`、`convergence_plan`（冲突收拢）、
+  `generate_context`、`dashboard`、`capture_request`（只追加）、`suggest_branch`。
 - 否则走 CLI（状态根由 `ops/state_root.py` 统一解析，从任何 worktree 调都读同一份账本）：
 
 ```bash
-# 1) 记录（用户原话即可，不要重写、不要分类）
-KG_INBOX_KIND=visual KG_INBOX_FILES=src/index.css \
-  python3 ops/kgctl.py inbox "左侧导航 rail 排版坏了，图标贴左缘被裁切"
+# 一句话入口：记录 -> 归类 -> 刷新真相 -> 刷看板 -> 给下一步（一步完成）
+python3 ops/kgctl.py intake "左侧导航 rail 排版坏了，图标贴左缘被裁切"
 
-# 2) 归类 + 刷新状态 + 给出下一步（一步完成）
+# 一次抛了多条、或想重扫全项目时，跑主循环
 python3 ops/kgctl.py tick
 
-# 3) 看项目真相 / 当前待办
+# 看项目真相 / 当前待办 / 驾驶舱
 sed -n 1,80p docs/PROJECT_STATUS.md
 python3 ops/kgctl.py next
+python3 ops/kgctl.py dash --open        # 生成并打开 docs/CONTROL_PLANE.html
 ```
 
+## 分支很多、到底谁先合
+冲突分支不要逐条问用户。先收拢成族，再逐族解：
+
+```bash
+python3 ops/kgctl.py converge           # 预演：把抢同一批文件的冲突分支收成几个 convergence 任务
+python3 ops/kgctl.py converge --go      # 建 convergence 分支/worktree（不改 main、不改源分支）
+python3 ops/kgctl.py context <分支>     # 给该分支写一份版本化 Context Pack
+```
+
+`converge` 只新建 WIP 工作区，冲突原样保留（JSONL 走行级并集）；一个 agent 面对的是
+少数几个 convergence 分支，而不是几十条“要不要合”。`tick` 已自动包含这一步。
+
 ## 执行路径
-- `tick` 之后，按 `next` 给出的优先级挑一条，在独立 worktree 里做；不碰别人在途文件。
+- `intake` / `tick` 之后，按 `next` 给出的优先级挑一条，在独立 worktree 里做；不碰别人在途文件。
 - 改完提交到该泳道分支；能干净合并、相关门禁通过就直接 `kgctl land <分支>`，不要把“能不能合”当问题回报给用户。
+- 接手一条陌生分支前先 `kgctl context <分支>`，读它写出的主线/决策/相关未决问题/DoD，而不是靠聊天记忆。
 - 落盘后把进展写进真相层：`truthctl add progress "..."`（`KG_TRUTH_COMMIT=<sha>`、`KG_TRUTH_LANDED=1`）。
 - 问题修完写一条状态变更：`truthctl add ledger` 或直接更新对应条目的 `status=done`。
 

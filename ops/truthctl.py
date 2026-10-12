@@ -47,19 +47,26 @@ INBOX = REPO / 'ops' / 'tasks' / 'inbox.jsonl'
 STATUS = REPO / 'docs' / 'PROJECT_STATUS.md'
 
 PREFIX = {'decision': 'D', 'ledger': 'L', 'progress': 'P', 'acceptance': 'A'}
-LEDGER_KINDS = {'visual', 'ux', 'bug', 'arch'}
+LEDGER_KINDS = {'visual', 'ux', 'bug', 'arch', 'gate'}
 LANES = REPO / 'ops' / 'tasks' / 'lanes.json'
 # 从具体到泛化：第一条命中的规则就是归类结果。可用 central.config.json 的
 # lane_rules 覆盖；不配就用这套通用默认。
 _DEFAULT_LANE_RULES = [
-    ('design', ('visual', '视觉', '排版', '样式', '导航', 'layout', 'css', 'ui', '遮挡')),
-    ('bug', ('bug', '报错', '崩溃', '异常', 'error', 'crash', '不生效', '回归')),
-    ('arch', ('refactor', '重构', '架构', '依赖', '性能', 'perf', '拆分')),
-    ('gate', ('gate', '门禁', 'verify', '断言', 'ci', 'test', '构建失败')),
+    ('design', ('visual', '视觉', '排版', '样式', '导航', '侧栏', '侧边栏', 'rail',
+                'layout', 'css', 'ui', '遮挡', '裁切', '对齐', '间距', '字号', '颜色',
+                '图标', '圆角', '阴影', 'hover', '动画', '按钮位置', '边距')),
+    ('design', ('体验', '交互', '流程', '点击', '跳转', '反馈', '入口', '操作路径',
+                '上手', '可用性', 'ux', '别扭', '顺手')),
+    ('bug', ('bug', '报错', '崩溃', '异常', 'error', 'crash', '不生效', '回归',
+             '坏了', '失效', '卡住', '白屏', '闪退', 'undefined', 'null', '失败')),
+    ('arch', ('refactor', '重构', '架构', '依赖', '性能', 'perf', '拆分', '抽象',
+              '耦合', '内存', '并发', '缓存', '索引')),
+    ('gate', ('gate', '门禁', 'verify', '断言', 'ci', 'test', '构建失败', 'build 失败',
+              '编译失败', '测试失败')),
 ]
 LANE_RULES = [(r[0], tuple(r[1])) for r in CFG.get('lane_rules') or _DEFAULT_LANE_RULES]
 DEFAULT_LANE = CFG.get('default_lane') or (LANE_RULES[0][0] if LANE_RULES else 'bug')
-PRIORITY = {'bug': 0, 'arch': 1, 'ux': 2, 'visual': 3}
+PRIORITY = {'bug': 0, 'gate': 1, 'arch': 2, 'ux': 3, 'visual': 4}
 
 
 def _files() -> list:
@@ -190,13 +197,49 @@ def _tokens(text: str) -> set:
     return out
 
 
+def infer_kind(text: str, files, current: str = 'unknown') -> str:
+    """把用户的自然语言粗分成 kind；未知不是默认 bug，而是继续按语义猜。"""
+    if current in ('visual', 'ux', 'bug', 'arch'):
+        return current
+    low = ((text or '') + ' ' + ' '.join(files or [])).lower()
+    buckets = [
+        # gate 先于 bug：门禁红灯常带「失败/断言」，不先判就会被泛词吞成 bug。
+        ('gate', ('gate', '门禁', 'verify', '断言', 'ci', 'test', '构建失败',
+                  'build 失败', '编译失败', '测试失败')),
+        ('bug', ('bug', '报错', '崩溃', '异常', 'error', 'crash', '不生效', '回归',
+                 '坏了', '失效', '卡住', '白屏', '闪退', 'undefined', 'null', '失败')),
+        ('arch', ('refactor', '重构', '架构', '依赖', '性能', 'perf', '拆分', '抽象',
+                  '耦合', '内存', '并发', '缓存', '索引')),
+        ('visual', ('visual', '视觉', '排版', '样式', '导航', '侧栏', '侧边栏', 'rail',
+                    'layout', 'css', 'ui', '遮挡', '裁切', '对齐', '间距', '字号',
+                    '颜色', '图标', '圆角', '阴影', 'hover', '动画', '按钮位置', '边距')),
+        ('ux', ('体验', '交互', '流程', '点击', '跳转', '反馈', '入口', '操作路径',
+                '上手', '可用性', 'ux', '别扭', '顺手')),
+    ]
+    for kind, keys in buckets:
+        if any(k.lower() in low for k in keys):
+            return kind
+    return current if current in LEDGER_KINDS else 'bug'
+
+
+_KIND_LANE = {'visual': 'design', 'ux': 'design', 'bug': 'bug',
+              'arch': 'arch', 'gate': 'gate'}
+
+
 def infer_lane(kind: str, text: str, files) -> str:
-    hay = (text or '') + ' ' + ' '.join(files or [])
-    low = hay.lower()
+    """kind 决定泳道，关键词只做兜底。
+
+    之前是关键词优先，于是「点击导出没反馈，疑似 bug」里的「点击 / 反馈」把一条
+    bug 拽进了 design 泳道——泛化词会盖住真正的分诊结果。kind 已经是语义分诊的
+    产物，泳道只是它的归属，所以先按 kind 落，kind 拿不准时才看关键词。
+    """
+    if kind in _KIND_LANE:
+        return _KIND_LANE[kind]
+    low = ((text or '') + ' ' + ' '.join(files or [])).lower()
     for lane, keys in LANE_RULES:
         if any(k.lower() in low for k in keys):
             return lane
-    return {'visual': 'design', 'ux': 'design'}.get(kind, DEFAULT_LANE)
+    return DEFAULT_LANE
 
 
 def _append_ledger(kind, title, detail, files, source, lane) -> dict:
@@ -273,9 +316,7 @@ def cmd_route(args):
     names = {r.get('name') for r in lanes} or {r.get('name') for r in CFG.get('lanes') or []}
     plan = []
     for i, it in pending:
-        kind = it.get('kind')
-        if kind not in LEDGER_KINDS:
-            kind = 'bug'
+        kind = infer_kind(it.get('text', ''), it.get('files'), it.get('kind'))
         cand = _candidates(kind, it.get('text', ''), it.get('files'))
         lane = cand[0][4] if cand and cand[0][4] else None
         if lane and names and lane not in names:
@@ -375,7 +416,7 @@ def cmd_snapshot(args):
 
     open_led = [r for r in led if r.get('status') in ('open', 'doing')]
     blocked_acc = [r for r in acc if r.get('status') == 'blocked']
-    p0_open = [r for r in led if r.get('status') in ('open', 'doing') and r.get('kind') in ('bug', 'arch')]
+    p0_open = [r for r in led if r.get('status') in ('open', 'doing') and r.get('kind') in ('bug', 'arch', 'gate')]
 
     L = ['# 项目状态（自动生成，勿手改）', '',
          f"> 生成时间 {time.strftime('%Y-%m-%d %H:%M:%S')}　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。", '']
@@ -405,7 +446,7 @@ def cmd_snapshot(args):
         L += ['（当前没有需要你拍板的事项）', '']
 
     L += ['## 三、问题台账', '']
-    for kind in ('bug', 'visual', 'ux', 'arch'):
+    for kind in ('bug', 'gate', 'visual', 'ux', 'arch'):
         rows = [r for r in led if r.get('kind') == kind and r.get('status') in ('open', 'doing')]
         if rows:
             L.append(f'**{kind}（{len(rows)} 待处理）**')

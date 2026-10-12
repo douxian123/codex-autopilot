@@ -10,8 +10,9 @@
 时也按固定节奏把**安全的工作**推进掉，只在真正需要人拍板时才打扰用户。
 
 安全子集（硬编码，不可关）
-  * 只 land `kgctl queue` 列出的 CLEAN 分支（与 main 无冲突）。
-    有冲突的分支一律不碰 —— 冲突是归属裁决，属于人 / agent 的判断，不给自动器。
+  * 只 land `kgctl queue` 列出的 CLEAN 分支（与 main 无冲突）。冲突分支**不自动合**。
+    冲突不丢给你逐条裁决，而是由 `tick` 里的 `kgctl converge` 收拢成少数几个
+    convergence 任务（保留 conflict markers），交给一个 agent 逐族解。
   * 每个分支仍走 `kgctl land` 的全部护栏：真实 build 门禁、origin/main 对齐、
     失败即丢弃、从不 force push。
   * 单实例锁 + 复用 kgctl 自己的 land 锁：不会和手动 land 抢。
@@ -25,7 +26,8 @@
 
 边界
 ----
-本进程不做冲突自动裁决、不删数据、不改产品方向、不发布。这些仍然要停下来问人。
+本进程不做冲突的最终裁决（只把冲突收拢成族、不替谁决定对错）、不删数据、不改产品
+方向、不发布。这些仍然要停下来问人。
 """
 
 import argparse
@@ -169,6 +171,8 @@ def _sig(payload) -> str:
 
 QUEUE_RE = re.compile(r"^\s*\d+\.\s+kgctl land (\S+)")
 SUMMARY_RE = re.compile(r"其余 (\d+) 个：(\d+) 个已合并待回收、(\d+) 个有冲突需裁决")
+CONVERGE_PLAN_RE = re.compile(r"可收成 (\d+) 个 convergence 任务")
+CONVERGE_MADE_RE = re.compile(r"已生成 (\d+) 个 convergence 分支")
 
 
 def parse_queue(out: str):
@@ -184,6 +188,14 @@ def parse_queue(out: str):
         summary = {"other": int(m.group(1)), "merged": int(m.group(2)),
                    "conflict": int(m.group(3))}
     return branches, summary
+
+
+def parse_convergence(tick_out: str) -> dict:
+    """从 `kgctl tick` 输出里取冲突收拢情况：可收拢族数 / 本轮新建族数。"""
+    plan = CONVERGE_PLAN_RE.search(tick_out or "")
+    made = CONVERGE_MADE_RE.search(tick_out or "")
+    return {"families": int(plan.group(1)) if plan else 0,
+            "made": int(made.group(1)) if made else 0}
 
 
 def classify_land(out: str, rc: int) -> str:
@@ -226,6 +238,8 @@ def run_cycle(dry: bool, max_land: int) -> dict:
     log("--- cycle start (live) ---")
     rc, out = run_kgctl(["tick"])
     log_block("tick", rc, out)
+    convergence = parse_convergence(out)
+    log(f"[converge] 可收拢族 {convergence['families']}，本轮新建 {convergence['made']}")
 
     landed, failures = [], []
     if rc != 0 and not out.strip():
@@ -268,12 +282,14 @@ def run_cycle(dry: bool, max_land: int) -> dict:
         log_block("tick(post-land)", rc2, out2)
 
     result = {"ts": time.time(), "iso": _now(), "dry": dry,
-              "summary": summary, "landed": landed, "failures": failures}
+              "summary": summary, "landed": landed, "failures": failures,
+              "convergence": convergence}
 
-    # ---- 通知：只在「完成 / 失败 / 新增需裁决」时出声，且去重 ----
+    # ---- 通知：只在「完成 / 失败 / 新收拢出族」时出声，且去重 ----
     state = load_state()
     prev = state.get("last_summary") or {}
     prev_conflict = prev.get("conflict")
+    prev_families = int(state.get("convergence_families", 0))
 
     if landed:
         notify("自动挡：已自动落盘",
@@ -285,10 +301,11 @@ def run_cycle(dry: bool, max_land: int) -> dict:
         notify("自动挡：有分支没落成",
                f"{target} 卡在 {kind}，需要裁决或改门禁（其余 "
                f"{max(len(failures) - 1, 0)} 项见 daemon.log）")
-    if (prev_conflict is not None and summary["conflict"] > prev_conflict):
-        notify("自动挡：新增需裁决的冲突",
-               f"冲突分支 {prev_conflict} -> {summary['conflict']}，"
-               f"这些不给自动器，需要你或 agent 定归属")
+    # 冲突不再推给用户逐条裁决：自动收拢成族，只在「新收拢出族」时告知一次。
+    if convergence["made"] > 0 and convergence["families"] != prev_families:
+        notify("自动挡：冲突已收拢成族",
+               f"冲突分支已收成 {convergence['families']} 个 convergence 任务"
+               f"（本轮新建 {convergence['made']} 个），agent 逐族解，不用你逐条裁决")
 
     state["last_summary"] = summary
     state["last_cycle_ts"] = result["ts"]
@@ -296,11 +313,12 @@ def run_cycle(dry: bool, max_land: int) -> dict:
     state["last_landed"] = landed or state.get("last_landed", [])
     state["last_failures"] = failures
     state["last_failure_sig"] = fail_sig
+    state["convergence_families"] = convergence["families"]
     state["total_landed"] = int(state.get("total_landed", 0)) + len(landed)
     save_state(state)
 
     log(f"--- cycle done: landed={len(landed)} failures={len(failures)} "
-        f"conflict={summary['conflict']} ---")
+        f"conflict={summary['conflict']} converge_families={convergence['families']} ---")
     return result
 
 

@@ -5,3 +5,9 @@ __pycache__/
 venv/
 ops/tasks/matrix.json
 .DS_Store
+# 生成视图（由 kgctl dash / tick 生成，可随时重建）
+docs/CONTROL_PLANE.html
+docs/CONTROL_BOARD.md
+docs/PROJECT_STATUS.md
+ops/context/
+ops/tasks/convergence.json

@@ -14,7 +14,7 @@
 | ChatGPT 桌面版 / Codex | 打开 **Plugins** 标签，在 **Personal** 里找到「Codex 自动挡」，安装 |
 | Codex CLI | 输入 `/plugins`，装上后**新开一个会话** |
 | 任意对话内 | 直接说需求（skill 的 description 命中即触发），或输入 `$central-command` |
-| 需要工具时 | 插件暴露 MCP 工具：`project_status` / `capture_request` / `sync_control_plane` / `next_actions` / `route_inbox` / `suggest_branch` |
+| 需要工具时 | 插件暴露 MCP 工具：`intake_request`（一句话走完整条链，首选）/ `sync_control_plane` / `next_actions` / `project_status` / `route_inbox` / `convergence_plan` / `generate_context` / `dashboard` / `capture_request` / `suggest_branch` |
 
 装好之后，**那个普通的 Codex 输入框就是总输入框**：你不需要先想“这该发哪个对话、
 开哪个分支、派给哪个角色”。把感受原样说出来，控制面负责把它变成有序工作。
@@ -54,4 +54,5 @@
 - 本机 stdio MCP **不是官方可移植形态**：官方插件市场的 MCP 要求 HTTPS 端点。本插件面向
   本机的 Codex（桌面 / CLI），用 compat 布局挂本机 stdio server。
 - **长期常驻调度**（关掉对话也自己跑）由 `ops/central_daemon.py` 承担。它只做安全子集：
-  路由 inbox + 自动 land 与 main 无冲突的分支；冲突分支不碰。
+  路由 inbox + 自动 land 与 main 无冲突的分支 + 把冲突分支收拢成族（`converge`）。
+  冲突分支不会自动合，而是收进少数几个 convergence 分支交给 agent 逐族解。

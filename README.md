@@ -75,28 +75,33 @@ cp -r ops /path/to/your-project/ops
 
 > 左边导航 rail 的排版坏了，图标贴到左缘，被裁掉了。
 
-对话会把它记进唯一入口，归类、排期、追踪，然后告诉你现在最该动哪条。也可以让对话直接调 MCP 工具：`capture_request` / `sync_control_plane` / `next_actions` / `project_status` / `route_inbox` / `suggest_branch`。
+对话会把它记进唯一入口，归类、排期、追踪，然后告诉你现在最该动哪条。也可以让对话直接调 MCP 工具：`intake_request`（一句话走完整条链，首选）/ `sync_control_plane` / `next_actions` / `project_status` / `route_inbox` / `convergence_plan` / `generate_context` / `dashboard` / `capture_request` / `suggest_branch`。
 
 想手敲命令：
 
 ```bash
-# 记录一条零散需求（原话即可，不要自己分类）
-python3 ops/kgctl.py inbox "左侧导航 rail 排版坏了，图标贴左缘被裁切"
+# 一句话入口：记录 -> 归类 -> 刷新真相 -> 刷看板 -> 给下一步（一步完成）
+python3 ops/kgctl.py intake "左侧导航 rail 排版坏了，图标贴左缘被裁切"
 
-# 归类 + 刷新项目真相 + 给出下一步（一步完成）
+# 一次抛了多条、或想重扫全项目时，跑主循环
 python3 ops/kgctl.py tick
 
-# 现在最该做什么 / 项目到哪了
+# 现在最该做什么 / 项目到哪了 / 打开驾驶舱
 python3 ops/kgctl.py next
 python3 ops/kgctl.py status
+python3 ops/kgctl.py dash --open
 ```
 
 | 命令 | 作用 |
 | --- | --- |
-| `kgctl inbox "…"` | 把一条零散需求收进唯一入口（追加，不分类） |
-| `kgctl tick` | 路由 inbox → 刷新真相快照 → 刷新看板 → 给出下一步 |
+| `kgctl intake "…"` | 一句话走完整条链：记录 → 归类 → 刷新真相 → 刷看板 → 给下一步 |
+| `kgctl inbox "…"` | 只把一条零散需求追加进唯一入口（不归类，脚本/调试用） |
+| `kgctl tick` | 主循环：路由 inbox → 刷新真相 → 收拢冲突 → 刷看板/上下文 → 推真相层 |
+| `kgctl converge [--go]` | 把几十个冲突分支收成少数几个 convergence 任务（默认预演） |
+| `kgctl context <分支>` | 给分支写一份版本化 Context Pack（主线/决策/相关未决/DoD） |
+| `kgctl dash [--open]` | 生成（可打开）驾驶舱 `docs/CONTROL_PLANE.html` |
 | `kgctl next` | 只回答一个问题：现在最该动哪几条 |
-| `kgctl status` | 一屏看清：待路由、分支可合/冲突、共享检出脏度 |
+| `kgctl status` | 一屏看清：待路由、分支可合/冲突、冲突收拢族、共享检出脏度 |
 | `kgctl queue` / `matrix` | 盘点分支：哪些能干净合、哪些在抢同一个文件 |
 | `kgctl land <分支>` | 串行落盘：合并 → 真实构建门禁 → 写进展 → 推 `main` |
 | `kgctl reap --go` | 回收已合并的分支（默认只预演） |
@@ -115,7 +120,7 @@ python3 ops/central_daemon.py --install    # 装成常驻（默认每 15 分钟�
 python3 ops/central_daemon.py --uninstall  # 停用并删除守护
 ```
 
-常驻只自动做两件事：路由唯一入口里的散需求，以及把与 `main` 无冲突的分支串行落盘。每个分支仍走 `kgctl land` 的全部护栏（真实构建、`origin/main` 对齐、失败即丢弃）。**有冲突的分支一律不动**，那是归属裁决，留给人。通知是去重的，只有「有分支落盘 / 有分支卡住 / 新增需裁决的冲突」时才打扰你。运行目录 `~/.codex-autopilot/`。
+常驻自动做三件事：路由唯一入口里的散需求、把与 `main` 无冲突的分支串行落盘、把冲突分支收拢成族（`converge`）。每个落盘分支仍走 `kgctl land` 的全部护栏（真实构建、`origin/main` 对齐、失败即丢弃）。**有冲突的分支不会自动合**，而是被收进少数几个 convergence 分支，交给一个 agent 逐族解，不再让你逐条回答「这 60 个分支要不要合」。通知是去重的，只有「有分支落盘 / 有分支卡住 / 新收拢出冲突族」时才打扰你。运行目录 `~/.codex-autopilot/`。
 
 ## 运行机制
 
@@ -156,6 +161,14 @@ python3 ops/central_daemon.py --uninstall  # 停用并删除守护
 - **永远不动别人的工作区**。推进 `main` 引用用 `git update-ref`，从不 `checkout` / `reset` / `stash` 任何人的在途改动。
 - **项目相关的旋钮集中在一处**。主干分支名、分支前缀、落盘用的主干 worktree、构建门禁命令、泳道定义，全在 `ops/central.config.json`（环境变量可覆盖）；不配就用对「单仓 + `frontend` 子目录 + `npm run build`」开箱即用的默认值。
 
+## 冲突怎么收口
+
+这是它和「一沓规范」最不一样的地方。分支多起来之后，最容易把人反复打断的不是写代码，是「这 60 个分支谁跟谁冲突、谁先合」。自动挡不把这个问题丢回给你：
+
+- `kgctl converge` 按「抢同一批文件」把冲突分支收成**少数几个 convergence 任务**（一个连通族 = 一个任务），而不是几十条待裁决项。
+- 每个 convergence 任务建一条 `codex/converge-<hash>` 分支和独立 worktree，把源分支相继并进去；冲突**原样保留**成 marker（JSONL 另做行级并集），`main` 和源分支都不动。
+- 于是交给一个 agent 的是「去解这一族的冲突」，不是「你告诉我该合哪个」。`kgctl tick` 已自动包含这一步。
+
 ## 参考了什么
 
 **同类开源做法（设计参考，无代码复用）** —— 做架构调研时，这类问题在开源里已经攒出一套共识：每个任务一个独立 worktree 隔离、输入先进收件箱再分诊、spec 先于执行、合并走串行队列、issue/task 图当唯一事实来源。代表项目：`max-sixty/worktrunk`、`automazeio/ccpm`、`smtg-ai/claude-squad`、`BloopAI/vibe-kanban`、`github/spec-kit`、`aviator-co/av`。
@@ -173,6 +186,7 @@ python3 ops/central_daemon.py --uninstall  # 停用并删除守护
 - 常驻守护只做**安全子集**：路由散需求 + land 与 `main` 无冲突的分支。冲突分支不碰。
 - 本机 stdio MCP 是面向**本机** Codex 的形态；官方插件市场的 MCP 要求 HTTPS 端点，所以这里用的是本机 compat 布局。
 - 归类基于关键词 + 文件路径重叠 + 代码标识匹配，**是启发式，不是语义理解**。它可能判错泳道；判错不致命（只影响优先级和归属），你可以在 `ops/central.config.json` 里覆盖规则，或手工改台账。
+- 冲突收拢（`converge`）只做**机械合并**：建分支、并入源分支、保留冲突 marker。真正解冲突仍需一个 agent 在 convergence worktree 里做，它不假装能替你判断「谁对」。
 
 ## 目录
 
@@ -184,8 +198,10 @@ ops/
   central_daemon.py   常驻执行器（安全子集）
   state_root.py       状态根统一解析（避免多本账）
   central_config.py   项目相关旋钮：主干/前缀/worktree/构建门禁/泳道
-  tasks/              inbox.jsonl（唯一入口）· lanes.json（固定泳道）
+  tasks/              inbox.jsonl（唯一入口）· lanes.json（固定泳道）· convergence.json（收拢记录）
   truth/              mainline.json · decisions/ledger/progress/acceptance.jsonl
+  context/            每分支的 Context Pack（.json / .md）
+docs/CONTROL_PLANE.html  驾驶舱（kgctl dash 生成）
 plugin/               Codex 插件：skill + MCP + 清单
 install.sh            安装脚本
 ```
