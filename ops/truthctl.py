@@ -337,20 +337,28 @@ def cmd_route(args):
             lane = infer_lane(kind, it.get('text', ''), it.get('files'))
         plan.append({'n': i, 'kind': kind, 'lane': lane, 'text': it.get('text', ''),
                      'files': it.get('files') or [], 'cand': cand[:2]})
-    seen_texts = set()
+    # text[:120] -> 已有台账 id。命中即「这条其实已经进过台账」，不再新建，但必须把它
+    # 归并到那条台账并把 inbox 标 routed —— 否则重复输入会永远停在「待路由」，
+    # 每轮 tick 都重复报同一批待办，进度永远清不干净。
+    seen = {}
     for rec in _read(TRUTH / FILES['ledger']):
-        seen_texts.add((rec.get('detail') or '')[:120])
+        rid = rec.get('id')
+        seen.setdefault((rec.get('detail') or '')[:120], rid)
         for ev in rec.get('evidence') or []:
-            seen_texts.add(ev.split('] ', 1)[-1][:120])
-    plan = [p for p in plan if p['text'][:120] not in seen_texts]
-    if not plan:
-        print('待路由项都已进过台账，幂等跳过'); return
-    print(f"待路由 {len(plan)} 项；每条先落固定泳道，再写入问题台账，最后回写 inbox。\n")
+            seen.setdefault(ev.split('] ', 1)[-1][:120], rid)
+    dups = [p for p in plan if p['text'][:120] in seen]
+    plan = [p for p in plan if p['text'][:120] not in seen]
+    if not plan and not dups:
+        print('没有待路由项'); return
+    print(f"待路由 {len(plan) + len(dups)} 项（新增 {len(plan)} / 归并既有 {len(dups)}）；"
+          "每条先落固定泳道，再写入或归并问题台账，最后回写 inbox。\n")
     for p in plan:
         mark = f"  <已有 {p['cand'][0][3]}>" if p['cand'] else ''
         print(f" #{p['n']:03d} [{p['kind']:6s}] -> {p['lane']:14s} {p['text'][:78]}{mark}")
+    for p in dups:
+        print(f" #{p['n']:03d} [{p['kind']:6s}] -> 归并 {seen[p['text'][:120]]}  {p['text'][:70]}")
     if not go:
-        print('\n预演结束。确认后加 --go 落账（只追加 ledger、回写 routed，不动代码）。')
+        print('\n预演结束。确认后加 --go 落账（只追加/归并 ledger、回写 routed，不动代码）。')
         return
     made = []
     for p in plan:
@@ -382,10 +390,30 @@ def cmd_route(args):
                                  p['text'], p['files'], f"inbox#{p['n']}", p['lane'])
             it['lane'], it['routed'] = rec['lane'], True
             made.append(rec['id'])
+    merged = 0
+    for p in dups:
+        it = items[p['n'] - 1]
+        ref = seen[p['text'][:120]]
+        it['lane'], it['routed'] = ref, True
+        note = f"[inbox#{p['n']}] {p['text']}"
+        path = TRUTH / FILES['ledger']
+        rows = _read(path)
+        for j, rec in enumerate(rows):
+            if rec.get('id') == ref:
+                ev = list(rec.get('evidence') or [])
+                if note not in ev:
+                    ev.append(note)
+                    rec['evidence'] = ev
+                    rows[j] = rec
+                break
+        with path.open('w') as fh:
+            for rec in rows:
+                fh.write(json.dumps(rec, ensure_ascii=False) + '\n')
+        merged += 1
     with INBOX.open('w') as fh:
         for x in items:
             fh.write(json.dumps(x, ensure_ascii=False) + '\n')
-    print(f"\n已落账：新增问题台账 {len(made)} 条 {made}，其余归并到既有台账；inbox 全部标 routed。")
+    print(f"\n已落账：新增问题台账 {len(made)} 条 {made}，归并 {merged} 条到既有台账；inbox 全部标 routed。")
 
 
 def cmd_next(args):
