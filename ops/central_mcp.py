@@ -49,6 +49,11 @@ from plugin_binding import apply_plugin_env  # noqa: E402
 
 import control_state  # noqa: E402
 
+try:
+    import exec_status  # noqa: E402
+except Exception:  # 自动实现状态探测缺失时降级：面板只少一行，不影响其它判断
+    exec_status = None
+
 # 自包含安装下，Codex 一般已从 .mcp.json 注入 env；这里再兜底一次，
 # 保证脱离 Codex 手动拉起 MCP 时也绑定到同一个项目。
 apply_plugin_env()
@@ -625,6 +630,34 @@ def _active_resolve_tasks():
     return out
 
 
+def _running_exec():
+    """此刻 auto_exec 是否真的派了一个独立 codex 会话在改代码；没有则 None。
+
+    常驻进程同步等 exec 结束，这期间 state.json 不动，面板会误报「没有分支可合」。
+    这里从 daemon.log 的派发/退出配对里读出「正在实现哪条需求」，并补上它的标题。
+    """
+    if exec_status is None or not control_state.load().get("auto_exec", False):
+        return None
+    try:
+        info = exec_status.running()
+    except Exception:
+        return None
+    if not info:
+        return None
+    rid = info.get("id")
+    for r in _read_jsonl(_truth_dir() / "ledger.jsonl"):
+        if r.get("id") == rid:
+            _t = (r.get("title") or "").strip()
+            if len(_t) > 36:
+                _t = _t[:36] + "…"
+            info["title"] = _t
+            info["kind"] = r.get("kind") or ""
+            break
+    info.setdefault("title", "")
+    info.setdefault("kind", "")
+    return info
+
+
 def _status_payload(fast=True):
     """把控制开关 + 缓存状态 + 项目计数，拼成面板和模型都能用的一个 JSON。"""
     from datetime import datetime, timezone
@@ -639,10 +672,13 @@ def _status_payload(fast=True):
     port_blocked = st.get("port_blocked") or {}
     paused = bool(ctrl.get("paused"))
 
+    exec_now = _running_exec()
     if ctrl.get("error"):
         state_key, state_label = "error", "状态异常，已安全暂停"
     elif paused:
         state_key, state_label = "paused", "已暂停"
+    elif exec_now:
+        state_key, state_label = "working", "正在自动实现一条需求"
     elif failures:
         state_key, state_label = "blocked", "有分支需要你拍板"
     elif not live:
@@ -656,6 +692,13 @@ def _status_payload(fast=True):
     if paused:
         doing = "暂停中，没有在动任何分支"
         why = "你按了暂停。恢复后它才会继续检查、合入"
+    elif exec_now:
+        _mins = int((exec_now.get("elapsed_sec") or 0) // 60)
+        _nm = exec_now.get("id") or ""
+        _ti = exec_now.get("title") or ""
+        doing = ("正在自动实现 " + _nm + ("（" + _ti + "）" if _ti else "")
+                 + "，已跑 %d 分钟：在一个独立工作区里改代码，自测通过后自动合入 main" % _mins)
+        why = "这条需求已经归好类、排在队首；自动实现开着，所以它自己动手，不用你盯"
     elif failures:
         tgt, kind = failures[0]["target"], failures[0]["kind"]
         doing = f"卡在 {tgt}（{kind}），已停下等你决定"
@@ -723,6 +766,7 @@ def _status_payload(fast=True):
             "conflict": summary.get("conflict"),
             "unresolved": summary.get("unresolved"),
         },
+        "exec_now": exec_now,
         "blocked": {
             "failures": failures,
             "resolve": [{"branch": b, "reason": (v or {}).get("reason")}
@@ -771,6 +815,11 @@ def _status_text(payload):
         % (payload["counters"]["received"], payload["counters"]["landed"],
            payload["counters"]["resolved"]),
     ]
+    en = payload.get("exec_now")
+    if en:
+        _m = int((en.get("elapsed_sec") or 0) // 60)
+        lines.append("执行中：%s %s（已 %d 分钟，独立工作区改代码，自测通过后自动合入）"
+                     % (en.get("id") or "", en.get("title") or "", _m))
     ps = payload.get("product_state") or {}
     if ps.get("count"):
         lines.append("产品状态：已记录 %s 个模块行为（最后更新 %s）"

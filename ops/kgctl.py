@@ -1553,11 +1553,31 @@ def cmd_dash(args):
     unresolved = [r for r in rows if r["kind"] == "UNRESOLVED"]
     merged = [r for r in rows if r["kind"] == "MERGED"]
 
+    try:
+        import exec_status
+        exec_now = exec_status.running()
+    except Exception:
+        exec_now = None
+    if exec_now:
+        _rec = latest(led).get(exec_now.get("id")) or {}
+        exec_now["title"] = _rec.get("title") or exec_now.get("title") or ""
+
     paused = bool(ctrl.get("paused"))
     state_txt = "已暂停" if paused else "运行中"
     state_cls = "paused" if paused else "live"
     ts_str = time.strftime("%Y-%m-%d %H:%M:%S")
     head = git("log", "-1", "--format=%h %s", MAIN)
+    if exec_now:
+        _m = int((exec_now.get("elapsed_sec") or 0) // 60)
+        _ti = exec_now.get("title") or ""
+        _t = f"（{_ti}）" if _ti else ""
+        exec_html = (
+            '<section class="card execnow"><h2>正在自动实现</h2>'
+            f'<p><b>{esc(exec_now.get("id"))}</b>{esc(_t)} · 已跑 {_m} 分钟</p>'
+            '<div class="note">它在一个独立工作区里改代码，自测通过后自动合入 main；'
+            '这一条跑完，下一条会接着来。</div></section>')
+    else:
+        exec_html = ""
 
     KIND_LABEL = {"bug": "bug", "gate": "门禁", "visual": "视觉", "ux": "体验",
                   "arch": "架构", "idea": "想法", "reprocess": "待重排"}
@@ -1716,6 +1736,8 @@ h3{font-size:13px;margin:18px 0 8px;color:var(--ink2)}
 .metric .n{font-size:24px;font-weight:650;color:var(--accent);line-height:1.2}
 .metric .l{font-size:12.5px;color:var(--ink2)}
 .note{color:var(--ink3);font-size:12.5px;margin-top:10px}
+.execnow{background:var(--accent-soft);border-color:#bfe0db}
+.execnow h2{margin-bottom:6px;color:var(--accent)}
 .empty{color:var(--ink2);font-size:13.5px;background:var(--bg);border:1px dashed var(--line);border-radius:10px;padding:12px 14px}
 .road{list-style:none;padding:0;margin:0}
 .road li{display:flex;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)}
@@ -1773,6 +1795,8 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
   </div>
 </div>
 <p class="lede">它接管你零散的需求——归类、记录、追踪，把和主线不冲突、检查通过的改动自己合好；你只在必须拍板时出现。</p>
+
+{exec_html}
 
 <section class="card">
   <h2>怎么用</h2>

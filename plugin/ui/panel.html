@@ -63,6 +63,12 @@
   .explain .k{color:var(--ink3);font-size:12.5px}
   .need{margin-top:10px;border-radius:9px;padding:9px 12px;background:var(--brand-soft);color:#1f4fd0;font-size:12.5px}
   .need.warn{background:var(--warn-soft);color:var(--warn)}
+  .execnow{margin-top:10px;border-radius:9px;padding:9px 12px;background:var(--brand-soft);color:#1f4fd0;font-size:12.5px;display:flex;gap:8px;align-items:flex-start}
+  .execnow[hidden]{display:none}
+  .execnow .edot{width:8px;height:8px;border-radius:50%;background:var(--brand);margin-top:6px;flex:0 0 auto;animation:autopulse 1.6s ease-in-out infinite}
+  .execnow .etx{min-width:0;line-height:1.5}
+  .execnow .emeta{display:block;color:#3f6fd6;font-size:12px;margin-top:2px}
+  @keyframes autopulse{0%,100%{opacity:1}50%{opacity:.3}}
   /* used guide */
   .steps{display:grid;gap:10px;margin:2px 0 0;padding:0;list-style:none}
   .steps li{display:grid;grid-template-columns:24px 1fr;gap:10px;align-items:start}
@@ -176,6 +182,7 @@
       <div class="row"><div class="k">为什么</div><div id="why">—</div></div>
       <div class="row"><div class="k">最近</div><div id="recent">—</div></div>
     </div>
+    <div class="execnow" id="execNow" hidden><span class="edot"></span><div class="etx" id="execNowText"></div></div>
     <div class="need" id="need">—</div>
   </section>
 
@@ -371,6 +378,7 @@
     setText("need", s.need_action);
     var need = el("need");
     need.className = "need" + (s.state === "blocked" || s.state === "error" ? " warn" : "");
+    renderExecNow(s.exec_now);
     setText("statusTime", "更新于 " + fmtTime(s.generated_at));
     var c = s.counters || {};
     setText("cReceived", c.received); setText("cLanded", c.landed); setText("cResolved", c.resolved);
@@ -407,6 +415,21 @@
     renderAcceptance(s.human_acceptance || [], s.machine_verified || []);
     renderProgress(s.doing_items || [], s.todo_items || [], s.todo_count || 0);
     renderMainline(s.mainline || {});
+  }
+
+  function renderExecNow(en){
+    var box = el("execNow"); if (!box) return;
+    if (!en){ box.hidden = true; return; }
+    box.hidden = false;
+    var txt = el("execNowText"); txt.innerHTML = "";
+    var lead = document.createElement("span"); lead.textContent = "正在自动实现 ";
+    var idb = document.createElement("b"); idb.textContent = en.id || "";
+    txt.appendChild(lead); txt.appendChild(idb);
+    if (en.title){ var ti = document.createElement("span"); ti.textContent = "（" + en.title + "）"; txt.appendChild(ti); }
+    var mins = Math.max(0, Math.round((en.elapsed_sec || 0) / 60));
+    var meta = document.createElement("span"); meta.className = "emeta";
+    meta.textContent = "已跑 " + mins + " 分钟 · 在一个独立工作区里改代码，自测通过后自动合入 main";
+    txt.appendChild(meta);
   }
 
   function renderProduct(ps){
