@@ -54,6 +54,7 @@ python3 "$KGCTL" supersede --fast      # 归档「内容已全部在 main」的�
 python3 "$KGCTL" port --auto --go      # 把「只差 1–2 个提交」的冲突分支移植到 main，冲突即整体放弃
 python3 "$KGCTL" converge          # 预演：把抢同一批文件的冲突分支收成几个 convergence 任务
 python3 "$KGCTL" converge --go     # 建 convergence 分支/worktree（不改 main、不改源分支）
+python3 "$KGCTL" replan --go       # 过时的超级合并按当前 main 重盘：解散成逐支流水线，不再重建
 python3 "$KGCTL" context <分支>    # 给该分支写一份版本化 Context Pack
 ```
 

@@ -383,6 +383,75 @@ def unlanded_commits(branch):
             if len(parts) > 1 and line.startswith("+")]
 
 
+# 自动移植的体量闸门。commit 数骗人的场景：一个分支只有 1 条未落提交，但那一条
+# 是上千行的大改动，cherry-pick 到当前 main 必然文本冲突、白烧一轮 build 门禁。
+# 按「未落改动相对 main 的真实规模和文件数」放行，才符合「只差一点点」的本意。
+PORT_MAX_FILES = int(os.environ.get("KG_PORT_MAX_FILES", "15"))
+PORT_MAX_LINES = int(os.environ.get("KG_PORT_MAX_LINES", "600"))
+
+
+def unlanded_diff_size(branch):
+    """分支相对 merge-base(main, branch) 的真实改动规模 (files, changed_lines)。
+
+    用 merge-base 三点差：只数「main 还没有的那部分」，不含分支自己落后的旧基线。
+    与 `git cherry`（按 patch-id）互补——cherry 判「在不在」，这里判「有多大」。
+    """
+    mb = git("merge-base", MAIN, branch).strip()
+    if not mb:
+        return (0, 0)
+    out = git("diff", "--numstat", mb, branch)
+    files = 0
+    lines = 0
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        files += 1
+        for tok in parts[:2]:
+            if tok.isdigit():
+                lines += int(tok)
+    return (files, lines)
+
+
+def conflict_burden(branch):
+    """这条冲突分支真正要面对多少冲突文件。用 merge-tree 预演一次真实合并得到的
+    冲突文件数——比 `scan` 的 nfiles（分支改了多少文件）更接近「要解多少」。
+    0 表示其实能干净合并（scan 的 CONFLICT 可能只是索引态误判）。"""
+    p = subprocess.run(["git", "-C", str(REPO), "merge-tree", "--write-tree",
+                        "--name-only", MAIN, branch], capture_output=True, text=True)
+    if p.returncode == 0:
+        return 0
+    files = []
+    for line in p.stdout.splitlines()[1:]:
+        if not line.strip():
+            break
+        files.append(line)
+    return len(files)
+
+
+def conflict_burden_map(rows=None):
+    """{branch: 冲突文件数}，按 main 版本缓存。merge-tree 预演不便宜，一屏状态
+    不该每次都重算——只在 main 前进或出现新分支时重算一次，其余读缓存。"""
+    rows = rows if rows is not None else scan()
+    cons = sorted(r["branch"] for r in rows if r["kind"] == "CONFLICT")
+    key = git("rev-parse", MAIN)
+    cache = OPS / "conflict_burden.json"
+    try:
+        data = json.loads(cache.read_text(encoding="utf-8"))
+        if data.get("main") == key and data.get("branches") == cons:
+            return data.get("burden") or {}
+    except (OSError, ValueError):
+        pass
+    burden = {b: conflict_burden(b) for b in cons}
+    try:
+        cache.write_text(json.dumps(
+            {"main": key, "branches": cons, "burden": burden},
+            ensure_ascii=False, indent=1), encoding="utf-8")
+    except OSError:
+        pass
+    return burden
+
+
 def branch_content_landed(branch):
     """分支想表达的内容，是不是已经全部在 main 里了。
 
@@ -534,18 +603,24 @@ def cmd_port(args):
         skip = {b for b in os.environ.get("KG_PORT_SKIP", "").split(":") if b}
         done = already_superseded()
         cands = []
+        oversize = 0
         for r in scan():
             if r["kind"] != "CONFLICT" or r["branch"] in done or r["branch"] in skip:
                 continue
             n = len(unlanded_commits(r["branch"]))
             if 1 <= n <= unlanded_max:
-                cands.append((n, r["nfiles"], r["branch"]))
+                nf, nl = unlanded_diff_size(r["branch"])
+                if nf > PORT_MAX_FILES or nl > PORT_MAX_LINES:
+                    oversize += 1
+                    continue
+                cands.append((n, nf, nl, r["branch"]))
         if not cands:
             skipped = f"（已跳过 {len(skip)} 个暂缓分支）" if skip else ""
-            print(f"auto-port：没有「只差 1–{unlanded_max} 个提交」的冲突分支。{skipped}")
+            extra = f"，另有 {oversize} 条提交数少但改动体量超闸门（需人工/收敛）" if oversize else ""
+            print(f"auto-port：没有「只差 1–{unlanded_max} 个提交且体量可控」的冲突分支。{skipped}{extra}")
             return
-        n, nf, branch = sorted(cands)[0]
-        print(f"auto-port：选中 {branch}（未落 {n} 提交，{nf} 文件）")
+        n, nf, nl, branch = sorted(cands)[0]
+        print(f"auto-port：选中 {branch}（未落 {n} 提交，{nf} 文件，{nl} 行）")
     else:
         branch = args[0]
         if not branch.startswith(BRANCH_PREFIX):
@@ -554,6 +629,14 @@ def cmd_port(args):
     if not plus:
         print(f"{branch} 没有未落提交（内容已全部在 main）：用 supersede --go 归档即可。")
         print(f"PORT_RESULT branch={branch} outcome=already")
+        return
+    nf, nl = unlanded_diff_size(branch)
+    if nf > PORT_MAX_FILES or nl > PORT_MAX_LINES:
+        print(f"{branch} 未落改动体量 {nf} 文件 / {nl} 行，超过自动移植闸门 "
+              f"({PORT_MAX_FILES} 文件 / {PORT_MAX_LINES} 行)。")
+        print("  这类「单提交上千行」cherry-pick 到当前 main 必然文本冲突，自动移植会白烧一轮门禁；")
+        print("  需要时先 converge 或人工解冲突，再走 land。")
+        print(f"PORT_RESULT branch={branch} outcome=too_big")
         return
     print(f"{branch} 未落提交 {len(plus)} 条（main 里没有等价改动）：")
     for sha in plus:
@@ -1063,6 +1146,86 @@ def _clean_orphan_convergences(records, used_ids, made) -> list:
     return archived
 
 
+def cmd_replan(args):
+    """把过时的 convergence 大组按当前 main 重盘，解散成逐支可执行的工作队列。
+
+    背景：convergence 组是在某个历史 main 上收拢几十个冲突分支生成的超级合并。
+    之后 main 不断前进，这个组会和 main 越差越远——一个 218 文件 / 7000+ 冲突标记
+    的 worktree，人根本啃不动。但它的成员分支单独相对当前 main 时，很多只差几条提交，
+    甚至内容早已落盘。真正的最优解不是解超级合并，而是把它解散，让每支回到
+    「supersede / auto-port / land」这套现有流水线里逐支处理。
+
+    只读默认：打印每支在「当前 main」下的分类。
+    `--go`：把组标成 replanned（不再出现在 matrix/看板），物理删掉它的 worktree 和
+    分支，成员分支重新回到扫描队列，由后续 supersede / port 自动收敛。
+    """
+    go = "--go" in args
+    groups = load_convergence().get("groups", [])
+    pending = [g for g in groups
+               if g.get("status") not in ("superseded", "replanned")
+               and g.get("branches")]
+    if not pending:
+        print("没有可重盘的 convergence 组（都已被接管或已重盘）。")
+        return
+    if go and LOCK.exists():
+        sys.exit(f"已有 land/port/converge/replan 在进行（{LOCK}）")
+    if go:
+        LOCK.write_text(str(os.getpid()))
+    try:
+        _replan_groups(pending, go)
+    finally:
+        if go and LOCK.exists():
+            LOCK.unlink()
+
+
+def _replan_groups(pending, go):
+    changed = 0
+    for g in pending:
+        members = [b for b in g["branches"] if git("rev-parse", "--verify", b)]
+        already, port, manual = [], [], []
+        for b in members:
+            n = len(unlanded_commits(b))
+            if n == 0:
+                already.append(b)
+                continue
+            nf, nl = unlanded_diff_size(b)
+            if n <= 2 and nf <= PORT_MAX_FILES and nl <= PORT_MAX_LINES:
+                port.append((n, nf, nl, b))
+            else:
+                manual.append((n, nf, nl, b))
+        print(f"\n组 {g['id']} ({g.get('branch')}) 状态 {g.get('status')}，成员 {len(members)}：")
+        print(f"  已落盘可归档 : {len(already)}")
+        print(f"  小而可控可移植: {len(port)}")
+        print(f"  需人工/收敛  : {len(manual)}")
+        if g.get("status") == "needs_resolution":
+            print("  → 建议 replan --go：解散超级合并，成员回到逐支流水线。")
+        if not go:
+            continue
+        # 解散：记录标 replanned，删掉 worktree/分支；成员本来就是分支，回到扫描集。
+        rec = dict(g)
+        rec["status"] = "replanned"
+        rec["replanned"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        rec["replan_report"] = {
+            "members": len(members), "already": len(already),
+            "auto_port": len(port), "manual": len(manual),
+        }
+        _write_convergence_record(rec)
+        wt = rec.get("worktree")
+        branch = rec.get("branch")
+        if wt and Path(wt).exists():
+            subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", wt],
+                           capture_output=True, text=True)
+        if branch and git("rev-parse", "--verify", branch):
+            subprocess.run(["git", "-C", str(REPO), "branch", "-D", branch],
+                           capture_output=True, text=True)
+        print(f"  已解散 {g['id']}：worktree/分支已清理，{len(members)} 个成员回到逐支流水线。")
+        changed += 1
+    if go and changed:
+        print(f"\n共重盘 {changed} 个组。下一轮 supersede / port 会逐支处理成员分支。")
+    elif not go:
+        print("\n（预演。加 --go 解散这些过时组。）")
+
+
 def cmd_converge(args):
     """把几十个冲突分支收成少数几个 convergence 任务。
 
@@ -1084,6 +1247,13 @@ def cmd_converge(args):
         groups = groups[:limit]
     records = {g.get("id"): g for g in load_convergence().get("groups", [])}
     _adopt_stable_ids(groups, records)
+    # 已 replan 过的组不允许再被 tick 自动重建：否则解散过的超级合并每轮复活，
+    # 成员分支永远回不到逐支流水线。要让它们重新收拢，得先手动清掉记录。
+    dissolved = [g for g in groups
+                 if (records.get(g.get("id")) or {}).get("status") == "replanned"]
+    if dissolved:
+        groups = [g for g in groups if g not in dissolved]
+        print(f"跳过 {len(dissolved)} 个已 replan 的组（不重建超级合并）。")
     if not groups:
         print("没有冲突分支，无需收拢。")
         if go:
@@ -1948,6 +2118,13 @@ def cmd_status(args):
     print(f"  └ 残留冲突标记 {sum(1 for r in rows if r['kind']=='UNRESOLVED')}")
     groups = conflict_groups(rows)
     print(f"冲突收拢族     {len(groups)} 个（可把冲突分支收成 convergence 任务）")
+    conflicts = [r for r in rows if r["kind"] == "CONFLICT"]
+    if conflicts:
+        bmap = conflict_burden_map(rows)
+        burden = sorted((bmap.get(r["branch"], r["nfiles"]), r["branch"]) for r in conflicts)
+        light = [b for n, b in burden if n <= 8]
+        print(f"冲突可解度     {len(light)}/{len(conflicts)} 支只需解 <=8 个冲突文件"
+              f"（最轻 {burden[0][0]} 个：{burden[0][1]}）")
     wts = worktree_map()
     behind50 = [b for b in codex_branches() if counts(b)[1] > 50]
     print(f"worktree       {len(wts)} 个（其中落后 main >50 的分支 {len(behind50)} 条）")
@@ -2048,6 +2225,7 @@ def cmd_tick(args):
 
 CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route, "suggest": cmd_suggest,
         "matrix": cmd_matrix, "queue": cmd_queue, "converge": cmd_converge,
+        "replan": cmd_replan,
         "context": cmd_context, "dash": cmd_dash,
         "clash": cmd_clash, "reap": cmd_reap, "land": cmd_land, "supersede": cmd_supersede,
         "port": cmd_port, "sync": cmd_sync,

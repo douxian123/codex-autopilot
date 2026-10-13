@@ -244,5 +244,74 @@ def main():
     print("selftest ok: 收拢分支不被当源分支喂回收拢；main 漂移后 id 粘住；孤儿收拢的半合并被清掉。")
 
 
+def test_replan():
+    """replan 把一个真实的 needs_resolution 收拢组解散：标 replanned、删 worktree/分支，
+    且后续 converge 不许把它重建。这是「过时大杂烩不再反复复活」的核心保证。"""
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-replan-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        trunk = root / "state-trunk"
+        repo.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for f in ("ledger", "progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{f}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "doc.txt").write_text("base\n", encoding="utf-8")
+        git(repo, "add", "doc.txt")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = root / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+        base = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        # 两支抢同一个文件，各写不同内容，形成真实冲突族。
+        for name, val in (("codex/rp-a", "A"), ("codex/rp-b", "B")):
+            git(repo, "checkout", "-q", "-b", name, base)
+            (repo / "doc.txt").write_text(val + "\n", encoding="utf-8")
+            git(repo, "commit", "-qam", name)
+        git(repo, "checkout", "-q", "main")
+        (repo / "doc.txt").write_text("M\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "main advances")
+        git(repo, "push", "-q", "origin", "main")
+
+        conv = kgctl(repo, trunk, "converge", "--go")
+        if "已收拢" not in conv.stdout:
+            raise AssertionError(f"fixture 没造出可收拢的冲突组:\n{conv.stdout}")
+        cj = repo / "ops" / "tasks" / "convergence.json"
+        groups = _json.loads(cj.read_text(encoding="utf-8"))["groups"]
+        grp = next(g for g in groups if g.get("status") == "needs_resolution")
+        gid, gbr, gwt = grp["id"], grp["branch"], Path(grp["worktree"])
+
+        rp = kgctl(repo, trunk, "replan", "--go")
+        if rp.returncode != 0:
+            raise AssertionError(f"replan --go 失败:\n{rp.stdout}\n{rp.stderr}")
+        rec = next(g for g in _json.loads(cj.read_text(encoding="utf-8"))["groups"]
+                   if g["id"] == gid)
+        if rec.get("status") != "replanned":
+            raise AssertionError(f"replan 未把组标为 replanned: {rec.get('status')}")
+        if gwt.exists():
+            raise AssertionError("replan 未清理超级合并 worktree")
+        if run(["git", "-C", str(repo), "rev-parse", "--verify", gbr],
+               check=False).returncode == 0:
+            raise AssertionError("replan 未删除超级合并分支")
+
+        # 关键：成员仍在冲突，converge 会重新算出同 id 的组，但必须跳过、不重建。
+        conv2 = kgctl(repo, trunk, "converge", "--go")
+        if "已 replan" not in conv2.stdout:
+            raise AssertionError(f"converge 没有跳过已 replan 的组:\n{conv2.stdout}")
+        if run(["git", "-C", str(repo), "rev-parse", "--verify", gbr],
+               check=False).returncode == 0:
+            raise AssertionError("已 replan 的组被 converge 重建了")
+    print("selftest ok: replan 解散超级合并组后不复活，worktree/分支被清理。")
+
+
 if __name__ == "__main__":
     main()
+    test_replan()

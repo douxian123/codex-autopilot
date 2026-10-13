@@ -123,6 +123,7 @@ python3 "$PLUGIN/ops/kgctl.py" dash --open
 | `python3 "$PLUGIN/ops/kgctl.py" inbox "…"` | 只把一条零散需求追加进唯一入口（不归类，脚本/调试用） |
 | `python3 "$PLUGIN/ops/kgctl.py" tick` | 主循环：路由 inbox → 刷新真相 → 收拢冲突 → 刷看板/上下文 → 推真相层 |
 | `python3 "$PLUGIN/ops/kgctl.py" converge [--go]` | 把几十个冲突分支收成少数几个 convergence 任务（默认预演） |
+| `python3 "$PLUGIN/ops/kgctl.py" replan [--go]` | 把过时的超级合并按当前 `main` 重盘：解散成逐支流水线，worktree/分支一起清理，且不再被 `tick` 重建（默认预演） |
 | `python3 "$PLUGIN/ops/kgctl.py" supersede [--fast] [--go]` | 归档「独有内容已全部在 `main`」的重复分支，不再占用冲突队列（`--fast` 只跑 patch-id，秒级） |
 | `python3 "$PLUGIN/ops/kgctl.py" port <分支> \| --auto [--max-unlanded N] [--go]` | 把冲突分支「只差几个提交」的未落改动 cherry-pick 到当前 `main`，过同一道门禁就落盘，冲突即整体放弃 |
 | `python3 "$PLUGIN/ops/kgctl.py" context <分支>` | 给分支写一份版本化 Context Pack（主线/决策/相关未决/DoD） |
@@ -209,6 +210,8 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 - 每个 convergence 任务建一条 `codex/converge-<hash>` 分支和独立 worktree，把源分支相继并进去；冲突**原样保留**成 marker（JSONL 另做行级并集），`main` 和源分支都不动。
 - 未解干净的 convergence 分支不会进 `queue`，`land` 也会硬拒绝。它只能回到 convergence worktree 里解完、提交，再重新排队。
 - 在收拢之前，先做两道**不用人判断**的过滤：`kgctl supersede` 用 patch-id 判「分支想表达的内容是否已全部在 `main`」——命中即归档，不再算冲突；`kgctl port` 把「只差 1–N 个提交」的未落改动按序 cherry-pick 到当前 `main`，冲突即整体 `--abort`，跑通就走同一道门禁落盘。两者都不猜语义：一个断言「已在 main」，一个让 git 自己判断「能不能干净套用」。
+- **过时的超级合并不再啃。** 一个 convergence 组是在某个历史 `main` 上收拢几十支生成的；`main` 一走远，它就烂成几百文件、几千 marker 的不可解大杂烩。`kgctl replan --go` 把它按**当前** `main` 重盘：成员分支各自回到 `supersede / port / land` 的逐支流水线，超级合并的 worktree 和分支一起删掉，并且记录标 `replanned`，`tick` 不会再把它重建。经验值：一个 218 文件 / 7000+ marker 的大组解散后，59 个成员里 19 支只需解 ≤8 个冲突文件——真正难解的大杂烩，多数是旧基线造成的假象。
+- `auto_port` 现在带**体量闸门**：不再只看「只差几个提交」，还看未落改动相对当前 `main` 的文件数（默认 ≤15）和行数（默认 ≤600）。一个「1 提交」但单提交上千行的分支，cherry-pick 必然文本冲突，会被直接判 `too_big` 并记 `port_blocked`，不再白烧一轮构建门禁。`kgctl status` 还会给出「冲突可解度」：59 支里有多少支只需解 ≤8 个冲突文件、最轻的是哪支。
 - 于是交给一个 agent 的是「去解这一族的冲突」，不是「你告诉我该合哪个」。`kgctl tick` 已自动包含收拢与归档；`auto_port` 打开后移植也自动。
 
 ## 参考了什么
