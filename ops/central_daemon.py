@@ -51,6 +51,7 @@ import plistlib
 import re
 import shlex
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -63,6 +64,7 @@ KGCTL = HERE / "kgctl.py"
 
 from plugin_binding import apply_plugin_env  # noqa: E402
 
+import central_config  # noqa: E402
 import control_state  # noqa: E402
 
 # KG_REPO（账本）/ KG_TRUNK（落盘主干）优先取显式环境变量，其次读插件 .mcp.json。
@@ -92,6 +94,10 @@ PORT_MAX_ATTEMPTS = 6
 # 一个周期最多拆几条冲突分支。每条先做确定性并集（只 jsonl）或留下一个可执行
 # 任务书；拆不动 / 门禁没过记进 resolve_blocked，后续周期跳过，不再反复骚扰。
 RESOLVE_MAX_ATTEMPTS = 1
+# 自动实现（auto_exec）：把台账里还没做的待办派给一个真实 codex 会话，在独立 worktree
+# 里实现 -> 门禁 -> 落盘 -> 收口。默认关闭；打开后每周期最多派一条，避免一次开一堆会话。
+EXEC_DEFAULT_TIMEOUT = 3600
+EXEC_MAX_PER_CYCLE = 1
 
 _stop = False
 
@@ -345,6 +351,350 @@ def classify_land(out: str, rc: int) -> str:
     return "noop"
 
 
+# ------------------------------------------------------------------ 自动实现（auto_exec）
+
+def auto_exec_config() -> dict:
+    """状态根 ops/central.config.json 的 auto_exec 段。
+
+    默认「代码层开启、用户层关闭」——真正开关是面板 / `control.json` 里的 `auto_exec`，
+    默认 False。派真实 codex 会话改代码比自动合分支风险高，所以必须由用户显式打开；
+    项目配置可以关掉、收紧沙箱或换模型，但用户开关拥有最终否决权。
+    """
+    out = {"enabled": True, "max_per_cycle": EXEC_MAX_PER_CYCLE,
+           "timeout": EXEC_DEFAULT_TIMEOUT, "sandbox": "workspace-write", "model": None}
+    repo = _state_repo()
+    if repo:
+        try:
+            data = json.loads((repo / "ops" / "central.config.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        cfg = data.get("auto_exec")
+        if isinstance(cfg, bool):
+            out["enabled"] = cfg
+        elif isinstance(cfg, dict):
+            out["enabled"] = bool(cfg.get("enabled", True))
+            for key in ("max_per_cycle", "timeout"):
+                try:
+                    out[key] = max(1, int(cfg.get(key, out[key])))
+                except (TypeError, ValueError):
+                    pass
+            if cfg.get("sandbox"):
+                out["sandbox"] = str(cfg["sandbox"])
+            if cfg.get("model"):
+                out["model"] = str(cfg["model"])
+    # 用户级开关拥有最终否决权（默认关）。
+    if not control_state.load().get("auto_exec", False):
+        out["enabled"] = False
+    return out
+
+
+def _git(repo, *args, timeout=300):
+    """跑一条 git 命令，返回 (rc, stdout, stderr)。"""
+    try:
+        r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True,
+                           text=True, errors="replace", timeout=timeout)
+        return r.returncode, (r.stdout or "").strip(), (r.stderr or "").strip()
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, "", str(exc)
+
+
+def _exec_slug(text: str, limit: int = 40) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (text or "").strip().lower()).strip("-")
+    return (slug or "item")[:limit].strip("-") or "item"
+
+
+def _codex_bin():
+    """找到 codex 可执行文件。KG_EXEC_CMD 可整体覆盖（如带 wrapper 的场景）。"""
+    custom = os.environ.get("KG_EXEC_CMD")
+    if custom:
+        return shlex.split(custom)
+    found = shutil.which("codex")
+    if found:
+        return [found]
+    for cand in (Path.home() / ".local/bin/codex",
+                 Path("/opt/homebrew/bin/codex"), Path("/usr/local/bin/codex")):
+        if cand.exists():
+            return [str(cand)]
+    return None
+
+
+def _truth_dir():
+    repo = _state_repo()
+    return (Path(repo) / "ops" / "truth") if repo else None
+
+
+def _ledger_open_items(limit=20):
+    """台账里还没关闭、也还没派过的待办。排序：bug / gate 优先，其次按时间。"""
+    tdir = _truth_dir()
+    if not tdir:
+        return []
+    try:
+        raw = (tdir / "ledger.jsonl").read_text(encoding="utf-8")
+    except OSError:
+        return []
+    latest = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if rec.get("id"):
+            latest[rec["id"]] = rec
+    opens = [r for r in latest.values() if r.get("status") in ("open", "doing")]
+    opens.sort(key=lambda r: (0 if r.get("kind") in ("bug", "gate") else 1, r.get("ts", "")))
+    return opens[:limit]
+
+
+def _run_truthctl(args, extra_env=None, timeout=120):
+    cmd = [sys.executable, str(HERE / "truthctl.py"), *args]
+    env = {**os.environ, **extra_env} if extra_env else None
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+                           cwd=str(CODE_ROOT), timeout=timeout, env=env)
+        return r.returncode, (r.stdout or "") + (r.stderr or "")
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 124, f"调用 truthctl 失败/超时: {exc}"
+
+
+def _link_side_dirs(wt: Path, cfg: dict) -> None:
+    """给执行 worktree 软链 node_modules，省掉重复安装。"""
+    repo = _state_repo()
+    shared = None
+    if cfg.get("shared_dir"):
+        shared = Path(cfg["shared_dir"]).expanduser()
+    elif repo:
+        try:
+            main_wt = subprocess.run(["git", "-C", str(repo), "worktree", "list", "--porcelain"],
+                                     capture_output=True, text=True, timeout=30)
+            for line in (main_wt.stdout or "").splitlines():
+                if line.startswith("worktree "):
+                    shared = Path(line[len("worktree "):].strip())
+                    break
+        except (OSError, subprocess.TimeoutExpired):
+            shared = None
+    for side in (cfg.get("link_dirs") or ["frontend", "backend"]):
+        dst = wt / side / "node_modules"
+        if dst.exists():
+            continue
+        for src in ([shared / side / "node_modules"] if shared else []) + \
+                   ([repo / side / "node_modules"] if repo else []):
+            if src and src.exists():
+                try:
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    dst.symlink_to(src, target_is_directory=True)
+                except OSError:
+                    pass
+                break
+
+
+def _exec_prompt(item: dict) -> str:
+    files = item.get("files") or []
+    lines = [
+        "你是 Codex 自动挡的执行者。下面是一条用户抛出的零散需求，已经在唯一入口归好类、",
+        "排好序。请在这个工作区里把它实现掉，并自证做完。",
+        "",
+        f"需求 [{item.get('id')}]（{item.get('kind') or 'item'}）：{item.get('title') or ''}",
+    ]
+    if item.get("detail"):
+        lines += ["", "补充说明：", str(item["detail"])]
+    if files:
+        lines += ["", "相关文件线索：" + "、".join(str(f) for f in files)]
+    lines += [
+        "",
+        "硬规则（必须遵守）：",
+        "- 只做非破坏性、正向的改动：不要 `git checkout .` / `git reset --hard` / `git stash` / `git add -A`。",
+        "- 目标只有两个：(1) 击穿产品预期——前后端真正闭环生效；(2) 保证现有体验——功能、",
+        "  性能不能因为这次改动变差或更难用。不达标的实现不如不做。",
+        "- 动手前先读仓库里的 AGENTS.md 和相关上下文（如 AI_SESSION_CONTEXT.md、产品决策文件）。",
+        "- 改完跑与改动相关的验证（如 `npx tsc --noEmit`、`npm run build`、相关 `verify:*` 脚本）；",
+        "  失败就继续修，直到通过或有明确的外部阻塞。",
+        "- 不要 `git commit`、不要 `git push`、不要合并分支：把改动留在工作区即可，落盘由自动挡统一走门禁。",
+        "- 做完用一句话总结：改了什么、跑了什么验证、结果如何。",
+    ]
+    return "\n".join(lines)
+
+
+def _changed_paths(wt: Path) -> list:
+    """列出 worktree 里非忽略的改动路径，供显式 git add，绝不使用 git add -A。"""
+    _, status_out, _ = _git(wt, "status", "--porcelain")
+    changed = []
+    for line in status_out.splitlines():
+        if len(line) < 4:
+            continue
+        path = line[3:].strip()
+        if " -> " in path:          # 重命名：两边都要 add
+            for part in path.split(" -> "):
+                changed.append(part.strip())
+        else:
+            changed.append(path)
+    return changed
+
+
+def _preserve_exec(repo, wt: Path, branch: str, rid: str, reason: str, blocked: dict) -> dict:
+    """保留一个执行 worktree：有改动就提交成 WIP，绝不因为失败删掉在途工作。"""
+    changed = _changed_paths(wt)
+    commit = None
+    if changed:
+        # add/commit 失败也必须保留 worktree；工作区里的改动本身就是最后的现场。
+        if _git(wt, "add", "--", *changed)[0] == 0:
+            git_rc, _, _ = _git(
+                wt, "commit", "-m", f"wip({rid}): {reason}, partial work preserved")
+            if git_rc == 0:
+                _, commit, _ = _git(wt, "rev-parse", "HEAD")
+    blocked[rid] = {"reason": reason, "branch": branch, "worktree": str(wt),
+                    "commit": commit, "preserve": bool(changed), "ts": _now()}
+    return {"id": rid, "outcome": reason, "branch": branch,
+            "worktree": str(wt), "commit": commit, "preserve": bool(changed)}
+
+
+def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
+    """把一条台账待办派给一个真实 codex 会话：独立 worktree 实现 -> 门禁落盘 -> 收口。"""
+    rid = item.get("id") or "?"
+    repo = _state_repo()
+    if not repo:
+        return {"id": rid, "outcome": "no_repo"}
+    conf = central_config.load(repo)
+    main_branch = conf.get("main_branch", "main")
+    prefix = conf.get("branch_prefix", "codex/")
+    slug = f"{_exec_slug(rid)}-{_exec_slug(item.get('title') or '')}"
+    branch = f"{prefix}exec-{slug}"
+    wt = Path(repo).parent / f"{Path(repo).name}-exec-{slug}"
+    if _git(repo, "rev-parse", "--verify", branch)[0] == 0 or wt.exists():
+        blocked[rid] = {"reason": "leftover", "ts": _now()}
+        return {"id": rid, "outcome": "leftover"}
+    _git(repo, "fetch", "origin", main_branch)
+    _, base, _ = _git(repo, "rev-parse", f"origin/{main_branch}")
+    if not base:
+        _, base, _ = _git(repo, "rev-parse", main_branch)
+    rc, out, err = _git(repo, "worktree", "add", "-b", branch, str(wt), base)
+    if rc != 0:
+        log(f"[exec] 建 worktree 失败 {rid}: {err[:300]}")
+        blocked[rid] = {"reason": "worktree_fail", "ts": _now()}
+        return {"id": rid, "outcome": "worktree_fail"}
+    _link_side_dirs(wt, conf)
+
+    codex = _codex_bin()
+    result = {"id": rid, "branch": branch, "worktree": str(wt)}
+    if not codex:
+        log("[exec] 找不到 codex 可执行文件（设 KG_EXEC_CMD 或把 codex 放进 PATH）")
+        blocked[rid] = {"reason": "no_codex", "ts": _now()}
+        _git(repo, "worktree", "remove", "--force", str(wt))
+        _git(repo, "branch", "-D", branch)
+        return {"id": rid, "outcome": "no_codex"}
+
+    cmd = [*codex, "exec", "-C", str(wt), "-s", cfg["sandbox"],
+           "--skip-git-repo-check"]
+    if cfg.get("model"):
+        cmd += ["-m", cfg["model"]]
+    cmd += [ _exec_prompt(item) ]
+    log_path = _exec_dir() / f"{slug}.log"
+    log(f"[exec] 派发 {rid} -> {branch}（worktree={wt}, codex={codex[0]}）")
+    try:
+        with log_path.open("w", encoding="utf-8") as fh:
+            r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=fh, stderr=subprocess.STDOUT,
+                               cwd=str(wt), timeout=cfg["timeout"])
+        code = r.returncode
+    except subprocess.TimeoutExpired:
+        code = 124
+    except OSError as exc:
+        log(f"[exec] 无法启动 codex: {exc}")
+        code = 125
+    result["exit"] = code
+    log(f"[exec] {rid} codex 退出码={code}（日志 {log_path}）")
+    if code != 0:
+        preserved = _preserve_exec(repo, wt, branch, rid, f"codex_exit_{code}", blocked)
+        if preserved.get("preserve"):
+            result.update({"outcome": "codex_fail_preserved",
+                           "commit": preserved.get("commit"),
+                           "worktree": preserved.get("worktree")})
+        else:
+            blocked[rid] = {"reason": f"codex_exit_{code}", "ts": _now()}
+            _cleanup_exec(repo, wt, branch)
+            result["outcome"] = "codex_fail"
+        return result
+
+    # 把 codex 留下的改动显式提交（不 git add -A；只加 status 里列出的、非忽略的路径）。
+    changed = _changed_paths(wt)
+    if not changed:
+        log(f"[exec] {rid} 没有产生改动，记为无变化")
+        blocked[rid] = {"reason": "no_changes", "ts": _now()}
+        _cleanup_exec(repo, wt, branch)
+        result["outcome"] = "no_changes"
+        return result
+    if _git(wt, "add", "--", *changed)[0] != 0:
+        return _preserve_exec(repo, wt, branch, rid, "add_fail", blocked)
+    title = (item.get("title") or "").strip().replace("\n", " ")[:60]
+    msg = f"exec({item.get('id')}): {title}".rstrip()
+    if _git(wt, "commit", "-m", msg)[0] != 0:
+        return _preserve_exec(repo, wt, branch, rid, "commit_fail", blocked)
+    _, commit, _ = _git(wt, "rev-parse", "HEAD")
+    result["commit"] = commit
+
+    lrc, lout = run_kgctl(["land", branch], timeout=LAND_TIMEOUT)
+    kind = classify_land(lout, lrc)
+    log_block(f"exec land {branch} -> {kind}", lrc, lout)
+    result["land"] = kind
+    if kind == "landed":
+        evidence = lout.strip()[-800:]
+        trc, tout = _run_truthctl(["close", rid, "auto-exec 已实现并落盘"],
+                                  extra_env={"KG_TRUTH_COMMIT": commit,
+                                             "KG_TRUTH_EVIDENCE": evidence})
+        log(f"[exec] close {rid} rc={trc}: {tout.strip()[:200]}")
+        if trc != 0:
+            # 代码已经在 main，但台账没收口。此时删掉 worktree/分支再派一次，等于
+            # 重复实现同一条并可能覆盖他人工作；保留现场并登记，等待人工处理。
+            blocked[rid] = {"reason": "landed_close_fail", "branch": branch,
+                            "worktree": str(wt), "commit": commit,
+                            "close_rc": trc, "ts": _now()}
+            result["outcome"] = "landed_close_fail"
+            return result
+        _cleanup_exec(repo, wt, branch)
+        result["outcome"] = "landed"
+        return result
+    # 执行者已经交付了提交，任何落盘失败都保留 worktree 和分支，避免丢掉在途工作。
+    blocked[rid] = {"reason": f"land_{kind}", "branch": branch,
+                    "worktree": str(wt), "commit": commit, "ts": _now()}
+    result["outcome"] = f"land_{kind}"
+    return result
+
+
+def _cleanup_exec(repo, wt: Path, branch: str) -> None:
+    _git(repo, "worktree", "remove", "--force", str(wt))
+    _git(repo, "branch", "-D", branch)
+
+
+def dispatch_exec(dry: bool, blocked: dict) -> list:
+    """每周期派最多 max_per_cycle 条待办。返回本轮结果列表。"""
+    cfg = auto_exec_config()
+    if not cfg["enabled"]:
+        return []
+    codex = _codex_bin()
+    if not codex:
+        log("[exec] auto_exec 已开，但找不到 codex 可执行文件，跳过")
+        return []
+    results = []
+    for item in _ledger_open_items():
+        rid = item.get("id")
+        if rid in blocked:
+            continue
+        if dry:
+            log(f"[dry] 会派发 {rid}（{item.get('kind')}）{item.get('title')}")
+            break
+        results.append(_dispatch_one(item, cfg, blocked))
+        if len(results) >= cfg["max_per_cycle"]:
+            break
+    return results
+
+
+def _exec_dir() -> Path:
+    d = RUNTIME / "exec"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 def run_cycle(dry: bool, max_land: int) -> dict:
     """用户可见的一轮：先过「暂停」闸门，再调用真正的周期实现。
 
@@ -498,8 +848,21 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     elif not resolve_cfg["enabled"]:
         log("[resolve] auto_resolve 未开启（ops/central.config.json），跳过冲突拆分")
 
+    # 自动实现：把台账里还没做的待办派给一个真实 codex 会话，在独立 worktree 里
+    # 实现 -> 门禁 -> 落盘 -> 收口。默认关闭（面板「自动实现需求」开关 / control.json）。
+    exec_results, exec_landed = [], []
+    exec_blocked = dict(load_state().get("exec_blocked") or {})
+    exec_cfg = auto_exec_config()
+    if dry:
+        dispatch_exec(True, exec_blocked)
+    elif exec_cfg["enabled"] and not (rc != 0 and not out.strip()):
+        exec_results = dispatch_exec(False, exec_blocked)
+        exec_landed = [r for r in exec_results if r.get("outcome") == "landed"]
+    elif not exec_cfg["enabled"]:
+        log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
+
     # 落过盘就再刷一次控制面，让看板/快照反映新 main。
-    if (landed or ported or resolve_landed_any) and not dry:
+    if (landed or ported or resolve_landed_any or exec_landed) and not dry:
         rc2, out2 = run_kgctl(["tick"])
         log_block("tick(post-land)", rc2, out2)
 
@@ -509,6 +872,7 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
               "ported": ported,
               "resolved_tasks": resolved_tasks,
               "resolve_gate_fail": resolve_gate_fail,
+              "exec_results": exec_results,
               "convergence": convergence}
 
     # ---- 通知：只在「完成 / 失败 / 新收拢出族」时出声，且去重 ----
@@ -539,6 +903,16 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
         notify("自动挡：冲突任务门禁没过",
                f"{', '.join(resolve_gate_fail[:3])} 留在独立 worktree 里，"
                "已登记 gate_fail，修到过门禁再收口")
+    if exec_landed:
+        notify("自动挡：已自己做完并落盘",
+               f"{len(exec_landed)} 条需求由独立会话实现、过门禁并合进 main："
+               f"{', '.join(str(r.get('id', '')) for r in exec_landed[:3])}")
+    exec_failed = [r for r in exec_results if r.get("outcome") != "landed"]
+    if exec_failed:
+        r0 = exec_failed[0]
+        notify("自动挡：自动实现没走完",
+               f"{r0.get('id')} 卡在 {r0.get('outcome')}，已记进 exec_blocked，不再重复派"
+               "（修好对应条件后可重开该条目）")
     fail_sig = _sig(failures) if failures else None
     if failures and fail_sig != state.get("last_failure_sig"):
         target, kind = failures[0]
@@ -566,6 +940,10 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     state["last_resolved_tasks"] = resolved_tasks or state.get("last_resolved_tasks", [])
     state["resolve_blocked"] = resolve_blocked
     state["port_blocked"] = port_blocked
+    state["exec_blocked"] = exec_blocked
+    state["last_exec"] = ([{"id": r.get("id"), "outcome": r.get("outcome")}
+                           for r in exec_results] or state.get("last_exec", []))
+    state["total_exec"] = int(state.get("total_exec", 0)) + len(exec_landed)
     save_state(state)
 
     log(f"--- cycle done: landed={len(landed)} failures={len(failures)} "
@@ -577,6 +955,7 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
         superseded=superseded,
         resolved_tasks=list(resolved_tasks),
         resolve_gate_fail=list(resolve_gate_fail),
+        exec=[{"id": r.get("id"), "outcome": r.get("outcome")} for r in exec_results],
         failures=[{"target": t, "kind": k} for t, k in failures],
         conflict=summary.get("conflict"),
         merged=summary.get("merged"),
@@ -832,12 +1211,16 @@ def show_status() -> int:
         print(f"累计归档重复   {state.get('total_superseded', 0)} 个分支")
         print(f"累计自动移植   {state.get('total_ported', 0)} 个分支")
         print(f"累计冲突拆分   {state.get('total_resolved', 0)} 条（含确定性并集落盘）")
+        print(f"累计自动实现   {state.get('total_exec', 0)} 条需求（独立会话实现并落盘）")
         blocked = state.get("port_blocked") or {}
         if blocked:
             print(f"移植暂缓       {len(blocked)} 个分支（冲突/门禁不过，等 converge）")
         rblocked = state.get("resolve_blocked") or {}
         if rblocked:
             print(f"冲突暂缓       {len(rblocked)} 个分支（拆不动/门禁不过，已跳过）")
+        eblocked = state.get("exec_blocked") or {}
+        if eblocked:
+            print(f"实现暂缓       {len(eblocked)} 条（无改动/门禁不过，已跳过，不再重复派）")
         rtasks = open_resolve_tasks()
         if rtasks:
             shown = ", ".join(f"{t.get('slug')} [{t.get('status')}]" for t in rtasks[:5])

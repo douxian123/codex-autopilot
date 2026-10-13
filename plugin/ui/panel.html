@@ -71,6 +71,26 @@
   .callout{margin-top:12px;border:1px dashed var(--line);border-radius:9px;padding:10px 12px;background:#fafbfc}
   .callout .quote{font-size:13px;color:var(--ink)}
   .callout .hint{font-size:12px;color:var(--ink3);margin-top:6px}
+  /* roadmap */
+  .road{display:grid;gap:2px;margin:2px 0 0;padding:0;list-style:none}
+  .road li{display:grid;grid-template-columns:22px 1fr;gap:10px;align-items:start;padding:6px 0}
+  .road .mk{width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:700;background:var(--line2);color:var(--ink3);flex:0 0 auto}
+  .road .done .mk{background:var(--ok-soft);color:var(--ok)}
+  .road .doing .mk,.road .next .mk{background:var(--brand-soft);color:var(--brand)}
+  .road .sb{display:flex;gap:8px;align-items:baseline}
+  .road .nm{font-size:13px}
+  .road .now .nm{font-weight:600;color:var(--ink)}
+  .road .st{font-size:11.5px;color:var(--ink3);white-space:nowrap;margin-left:auto}
+  .road .ex{font-size:12px;color:var(--ink3);margin-top:1px}
+  /* acceptance */
+  .acc{display:grid;gap:10px;margin:0;padding:0;list-style:none}
+  .acc li{border:1px solid var(--line2);border-radius:10px;padding:11px 13px;background:#fafbfc}
+  .acc .t{font-size:13px;font-weight:600;display:flex;gap:8px;align-items:baseline}
+  .acc .lv{font-size:11.5px;border-radius:6px;padding:1px 7px;background:var(--warn-soft);color:var(--warn);font-weight:600;flex:0 0 auto}
+  .acc ol{margin:8px 0 0;padding-left:22px;font-size:12.5px;color:var(--ink2)}
+  .acc ol li{border:0;background:none;border-radius:0;padding:2px 0;list-style:decimal}
+  .subhead{font-size:12px;font-weight:600;color:var(--ink2);margin:12px 0 2px}
+  .subhead:first-child{margin-top:0}
   /* counters */
   .counters{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
   .metric{background:#fafbfc;border:1px solid var(--line2);border-radius:10px;padding:11px 12px}
@@ -170,9 +190,27 @@
     <p class="tiny" style="margin-top:10px">没有让新手去选分支、等合并、一个个点验收——这些由它自己串起来。</p>
   </section>
 
-  <!-- 3.5) 主线与未决问题：一页看清现在到哪、还差什么 -->
+  <!-- 3.5) 产品路线：AI 拆解出来的路线，每一步到哪了 -->
   <section class="card">
-    <h2>现在到哪了 · 还差什么</h2>
+    <h2>产品路线 · 现在走到哪了</h2>
+    <div id="roadmapBox"></div>
+  </section>
+
+  <!-- 3.6) 需要你验收：只有必须人拍板的才出现，附复核步骤 -->
+  <section class="card" id="acceptCard">
+    <h2>需要你验收</h2>
+    <div id="acceptBox"></div>
+  </section>
+
+  <!-- 3.7) 当前在做什么 / 还差什么 / 已机器验收 -->
+  <section class="card">
+    <h2>当前在做什么 · 还差什么</h2>
+    <div id="progressBox"></div>
+  </section>
+
+  <!-- 3.8) 产品主线：方向与焦点 -->
+  <section class="card">
+    <h2>产品主线</h2>
     <div id="mainlineBox"></div>
   </section>
 
@@ -202,6 +240,10 @@
       <div class="switchrow">
         <div><div class="t">自动移植小改动</div><div class="d">把只差一两个提交的分支挑进主线（默认关）</div></div>
         <button class="sw" data-key="auto_port" aria-label="自动移植"></button>
+      </div>
+      <div class="switchrow">
+        <div><div class="t">自动实现需求</div><div class="d">把台账里还没做的待办派给独立会话：自己实现、跑门禁、收口（默认关）</div></div>
+        <button class="sw" data-key="auto_exec" aria-label="自动实现需求"></button>
       </div>
       <div class="switchrow">
         <div><div class="t">后台常驻</div><div class="d">关掉 Codex 也按节奏推进，无需一直开着对话</div></div>
@@ -361,6 +403,9 @@
     renderProduct(s.product_state || {});
     renderJudgments(s.judgments || []);
     renderVerify(s.last_verification);
+    renderRoadmap(s.roadmap || []);
+    renderAcceptance(s.human_acceptance || [], s.machine_verified || []);
+    renderProgress(s.doing_items || [], s.todo_items || [], s.todo_count || 0);
     renderMainline(s.mainline || {});
   }
 
@@ -428,6 +473,133 @@
     box.appendChild(note);
   }
 
+  var ROAD_LABEL = {done:"已完成", doing:"进行中", next:"下一步", todo:"未开始"};
+  var ROAD_CLASS = {done:"done", doing:"doing", next:"next", todo:"todo"};
+  var MARK = {done:"\u2713", doing:"\u25cf", next:"\u25cf", todo:"\u25cb"};
+  function renderRoadmap(road){
+    var box = el("roadmapBox"); if (!box) return; box.innerHTML = "";
+    if (!road.length){
+      box.innerHTML = '<div class="empty">AI 还没拆出产品路线。等它把讨论综合进 mainline.json 的 roadmap 后，这里会显示「这条路线怎么走、每一步到哪了」。</div>';
+      return;
+    }
+    var ul = document.createElement("ul"); ul.className = "road";
+    road.forEach(function(r){
+      var st = r.status || "todo";
+      var li = document.createElement("li"); li.className = ROAD_CLASS[st] || "todo";
+      var mk = document.createElement("span"); mk.className = "mk"; mk.textContent = MARK[st] || "\u25cb";
+      var body = document.createElement("div");
+      var sb = document.createElement("div"); sb.className = "sb";
+      var nm = document.createElement("span"); nm.className = "nm"; nm.textContent = r.step || "";
+      var stat = document.createElement("span"); stat.className = "st"; stat.textContent = ROAD_LABEL[st] || st;
+      sb.appendChild(nm); sb.appendChild(stat); body.appendChild(sb);
+      if (r.expected){
+        var ex = document.createElement("div"); ex.className = "ex"; ex.textContent = "达到：" + r.expected;
+        body.appendChild(ex);
+      }
+      li.appendChild(mk); li.appendChild(body); ul.appendChild(li);
+    });
+    box.appendChild(ul);
+    var foot = document.createElement("div"); foot.className = "meta";
+    foot.textContent = "这条路线走完，就达到产品预期；每步当前到哪了都从项目真相里读出来。";
+    box.appendChild(foot);
+  }
+
+  function stripStepNum(s){ return String(s).replace(/^\s*\d+\s*[\).\u3001]\s*/, "").trim(); }
+  function parseSteps(text){
+    if (!text) return [];
+    var t = String(text).trim();
+    if (!t) return [];
+    var lines = t.split(/\r?\n/).map(function(x){return x.trim();}).filter(Boolean);
+    if (lines.length > 1) return lines.map(stripStepNum);
+    var parts = t.split(/(?:^|\s)(?=\d+\s*[\).\u3001]\s?)/).map(function(x){return x.trim();}).filter(Boolean);
+    if (parts.length > 1) return parts.map(stripStepNum);
+    return [t];
+  }
+
+  var ITEM_LABEL = {bug:"bug", gate:"门禁", visual:"视觉", ux:"体验", arch:"架构", idea:"想法", reprocess:"待重排"};
+  function itemList(items){
+    var ul = document.createElement("ul"); ul.className = "list";
+    items.forEach(function(it){
+      var li = document.createElement("li");
+      var warn = (it.kind === "bug" || it.kind === "gate");
+      var tag = document.createElement("span"); tag.className = "tag" + (warn ? " warn" : "");
+      tag.textContent = ITEM_LABEL[it.kind] || (it.kind || "item");
+      var g = document.createElement("span"); g.className = "grow"; g.textContent = it.title || it.id || "";
+      li.appendChild(tag); li.appendChild(g);
+      if (it.id){ var w = document.createElement("span"); w.className = "when"; w.textContent = it.id; li.appendChild(w); }
+      ul.appendChild(li);
+    });
+    return ul;
+  }
+
+  function renderProgress(doing, todo, todoCount){
+    var box = el("progressBox"); if (!box) return; box.innerHTML = "";
+    if (!doing.length && !todo.length){
+      box.innerHTML = '<div class="empty">当前没有未决的工作项。你提的需求会先进问题台账，再从这里被推进到收口。</div>';
+      return;
+    }
+    if (doing.length){
+      var h = document.createElement("div"); h.className = "subhead"; h.textContent = "正在做";
+      box.appendChild(h); box.appendChild(itemList(doing));
+    }
+    if (todo.length){
+      var rest = (todoCount && todoCount > todo.length) ? "（共 " + todoCount + " 条，显示前 " + todo.length + "）" : "";
+      var h2 = document.createElement("div"); h2.className = "subhead"; h2.textContent = "还差这些" + rest;
+      box.appendChild(h2); box.appendChild(itemList(todo));
+    }
+    var foot = document.createElement("div"); foot.className = "meta";
+    foot.textContent = "修完、验完的条目会自动从「还差这些」里消失，不用你手动划掉。";
+    box.appendChild(foot);
+  }
+
+  function renderAcceptance(human, machine){
+    var box = el("acceptBox"); if (!box) return; box.innerHTML = "";
+    if (!human.length){
+      box.innerHTML = '<div class="empty">现在没有需要你亲自验收的项。功能改完后，只有必须人看（审美/手感/真实产品里点一下）的才会出现在这里。</div>';
+    } else {
+      var ul = document.createElement("ul"); ul.className = "acc";
+      human.forEach(function(a){
+        var li = document.createElement("li");
+        var t = document.createElement("div"); t.className = "t";
+        var lv = document.createElement("span"); lv.className = "lv"; lv.textContent = a.level || "P1";
+        var tt = document.createElement("span"); tt.className = "grow"; tt.textContent = a.title || "";
+        t.appendChild(lv); t.appendChild(tt); li.appendChild(t);
+        var steps = parseSteps(a.steps);
+        if (steps.length){
+          var ol = document.createElement("ol");
+          steps.forEach(function(st){ var x = document.createElement("li"); x.textContent = st; ol.appendChild(x); });
+          li.appendChild(ol);
+        } else {
+          var hint = document.createElement("div"); hint.className = "ex";
+          hint.style.cssText = "font-size:12px;color:var(--ink3);margin-top:6px";
+          hint.textContent = "（还没写明复核步骤）";
+          li.appendChild(hint);
+        }
+        ul.appendChild(li);
+      });
+      box.appendChild(ul);
+    }
+    var hasMachine = machine && machine.length;
+    var sub = document.createElement("div"); sub.className = "subhead";
+    sub.textContent = hasMachine ? ("机器已自证 · 不需要你动手（" + machine.length + " 项）")
+                                 : "机器已自证 · 不需要你动手";
+    box.appendChild(sub);
+    if (hasMachine){
+      var mu = document.createElement("ul"); mu.className = "list";
+      machine.forEach(function(a){
+        var li = document.createElement("li");
+        var tag = document.createElement("span"); tag.className = "tag"; tag.textContent = "\u2713";
+        var g = document.createElement("span"); g.className = "grow"; g.textContent = a.title || "";
+        li.appendChild(tag); li.appendChild(g); mu.appendChild(li);
+      });
+      box.appendChild(mu);
+    } else {
+      var e = document.createElement("div"); e.className = "empty";
+      e.textContent = "还没有机器自证的项。机器能跑命令验证的改动会自动归到这里，不占你注意力。";
+      box.appendChild(e);
+    }
+  }
+
   function renderMainline(ml){
     var box = el("mainlineBox"); if (!box) return; box.innerHTML = "";
     var stage = ml.stage || "";
@@ -493,6 +665,7 @@
       if (e.failures && e.failures.length) bits.push("有 " + e.failures.length + " 处卡住");
       if (!bits.length) bits.push("检查一轮，无需合入");
       if (e.conflict != null) bits.push("冲突剩 " + e.conflict);
+      if (e.exec && e.exec.length) bits.push("自动实现 " + e.exec.length + " 条");
       return bits.join("，");
     }
     if (e.kind === "switch") return (e.name||"") + " -> " + (e.value ? "开" : "关");
@@ -520,6 +693,8 @@
     f.forEach(function(x){ items.push({tag:"需拍板", cls:"warn", text:x.target + " · " + x.kind}); });
     var r = (s.blocked && s.blocked.resolve) || [];
     r.forEach(function(x){ items.push({tag:"冲突暂缓", cls:"", text:x.branch + (x.reason? " · "+x.reason : "")}); });
+    var xe = (s.blocked && s.blocked.exec) || [];
+    xe.forEach(function(x){ items.push({tag:"实现暂缓", cls:"", text:(x.id||"") + (x.reason? " · "+x.reason : "")}); });
     if (s.error) items.unshift({tag:"异常", cls:"err", text:s.error});
     if (!items.length){ ul.innerHTML = '<div class="empty">没有需要你决策的，也没有异常。</div>'; return; }
     items.forEach(function(it){

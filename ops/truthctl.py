@@ -26,6 +26,7 @@ truthctl 管「这个项目现在到底是什么状态」。
   truthctl distill add "<判断>"  把判断背后的判断逻辑写回（why/scope 走环境变量）
   truthctl close <L-id> "<结论>"  把问题台账里的一条标成 done，并追加进展
   truthctl reopen <L-id> "<原因>"  把已关闭的问题重新打开
+  truthctl accept "<标题>" [--human --steps "..."]  登记验收项，分清机器自证/人工验收
   truthctl synthesize          把决策/进展/问题/验收综合成 docs/PRODUCT_MAINLINE.md
 
 add 的环境变量：
@@ -182,6 +183,8 @@ def cmd_add(args):
     elif t == 'acceptance':
         rec.update(level=os.environ.get('KG_TRUTH_LEVEL', 'P1'),
                    status=os.environ.get('KG_TRUTH_STATUS', 'todo'),
+                   needs_human=os.environ.get('KG_TRUTH_NEEDS_HUMAN', '') == '1',
+                   steps=os.environ.get('KG_TRUTH_STEPS', ''),
                    evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''))
     elif t == 'judgment':
         rec.update(statement=os.environ.get('KG_TRUTH_STATEMENT', '') or title,
@@ -190,6 +193,65 @@ def cmd_add(args):
                    status='active')
     _append(rec)
     print(f"已记入真相 [{rec['id']}] {t}：{title[:70]}")
+
+
+def cmd_accept(args):
+    """登记一个验收项，并分清楚「机器能自证」还是「必须人看」。
+
+    机器能自证的（改完跑门禁、命令 + 退出码写进证据）：走 add acceptance，落盘时
+    `kgctl land` 会自动写成 verified，面板归到「已机器验收」。
+
+    需要人拍板的（审美、手感、真实产品里点一下才算）：加 --human，并把「人要怎么
+    复核」用 --steps 写清楚。面板会把它单列成「需要你验收」，原样展示这些步骤——
+    这样用户不用读代码、不用猜要怎么看。
+
+    用法：
+      truthctl accept "<标题>" [--human] [--steps "1) 打开X 2) 点Y 3) 看到Z"]
+                                [--level P0] [--lane <分支>] [--status todo]
+    """
+    if not args:
+        sys.exit('用法: truthctl accept "<标题>" [--human --steps "..."] [--level P1]')
+    human = '--human' in args
+    title_parts, steps, level, lane, status = [], '', None, None, None
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == '--human':
+            i += 1
+        elif a == '--steps' and i + 1 < len(args):
+            steps = args[i + 1]
+            i += 2
+        elif a == '--level' and i + 1 < len(args):
+            level = args[i + 1]
+            i += 2
+        elif a == '--lane' and i + 1 < len(args):
+            lane = args[i + 1]
+            i += 2
+        elif a == '--status' and i + 1 < len(args):
+            status = args[i + 1]
+            i += 2
+        else:
+            title_parts.append(a)
+            i += 1
+    title = ' '.join(title_parts)
+    if not title:
+        sys.exit('accept 需要一句标题：truthctl accept "<标题>"')
+    rec = {'id': _next_id('acceptance'), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
+           'type': 'acceptance', 'title': title,
+           'level': level or os.environ.get('KG_TRUTH_LEVEL', 'P1'),
+           'status': status or os.environ.get('KG_TRUTH_STATUS', 'todo'),
+           'needs_human': human or os.environ.get('KG_TRUTH_NEEDS_HUMAN', '') == '1',
+           'steps': steps or os.environ.get('KG_TRUTH_STEPS', ''),
+           'evidence': os.environ.get('KG_TRUTH_EVIDENCE', ''),
+           'lane': lane or os.environ.get('KG_TRUTH_LANE') or None,
+           'files': _files(),
+           'source': os.environ.get('KG_TRUTH_SOURCE', 'agent')}
+    _append(rec)
+    who = '需要人工验收' if rec['needs_human'] else '机器自证'
+    print(f"已登记验收 [{rec['id']}]（{who}）{title[:70]}")
+    if rec['needs_human'] and not rec['steps']:
+        print('  提示：这是人工验收项，但没写 --steps。面板会展示步骤，建议补一句'
+              '「人要怎么复核」。')
 
 
 def cmd_promote(args):
@@ -657,6 +719,27 @@ def cmd_open(args):
     print('已重新打开 [%s] %s' % (rid, rec.get('title', '')))
 
 
+def _roadmap_rows(ml):
+    """mainline.json 的 roadmap 归一成 [{step, expected, status}]。
+
+    每一项可为字符串（只有步骤名）或 {step, expected, status}；
+    status 属于 done | doing | next | todo，缺省按 todo。
+    """
+    rows = []
+    for it in (ml.get('roadmap') or []):
+        if isinstance(it, str):
+            rows.append({'step': it, 'expected': '', 'status': 'todo'})
+        elif isinstance(it, dict):
+            rows.append({'step': it.get('step', ''), 'expected': it.get('expected', ''),
+                         'status': it.get('status') or 'todo'})
+    return rows
+
+
+ROADMAP_MARK = {'done': '✓', 'doing': '●', 'next': '●', 'todo': '○'}
+ROADMAP_LABEL = {'done': '已完成', 'doing': '进行中',
+                 'next': '下一步', 'todo': '未开始'}
+
+
 def cmd_synthesize(args):
     """综合：把决策/进展/问题/验收/产品状态合成一页产品主线。
 
@@ -690,6 +773,18 @@ def cmd_synthesize(args):
         L.append('')
     else:
         L += ['## 产品主线', '', '（mainline.json 还没填，先由人拍板产品名/阶段/北极星）', '']
+
+    road = _roadmap_rows(ml)
+    if road:
+        L += ['## 产品路线（每一步到哪了）', '']
+        for r in road:
+            st = r['status']
+            line = '- %s %s' % (ROADMAP_MARK.get(st, '○'), r['step'])
+            if r.get('expected'):
+                line += '：%s' % r['expected']
+            line += '　（%s）' % ROADMAP_LABEL.get(st, st)
+            L.append(line)
+        L.append('')
 
     L += ['## 现在是什么样', '']
     if modules:
@@ -739,13 +834,34 @@ def cmd_synthesize(args):
             L.append('- `%s` %s' % (r['id'], r.get('title', '')))
         L.append('')
 
-    L += ['## 已验收', '']
-    if verified:
-        for r in verified:
+    human_pending = [r for r in acc
+                    if r.get('needs_human') and r.get('status') in ('todo', 'wip', 'blocked')]
+    machine_verified = [r for r in verified if not r.get('needs_human')]
+    human_verified = [r for r in verified if r.get('needs_human')]
+
+    L += ['## 需要你验收', '']
+    if human_pending:
+        for r in human_pending:
+            L.append('- `%s` [%s] %s' % (r['id'], r.get('level', ''), r.get('title', '')))
+            for step in re.split(r'[\n;\uff1b]+', (r.get('steps') or '').strip()):
+                if step.strip():
+                    L.append('  - %s' % step.strip())
+    else:
+        L.append('- （当前没有需要你人工拍板的验收项）')
+    L.append('')
+
+    L += ['## 已机器验收', '']
+    if machine_verified:
+        for r in machine_verified:
             L.append('- `%s` [%s] %s' % (r['id'], r.get('level', ''), r.get('title', '')))
     else:
-        L.append('- （还没有带真实证据的验收项）')
+        L.append('- （还没有机器自证的验收项）')
     L.append('')
+    if human_verified:
+        L += ['## 你已确认', '']
+        for r in human_verified:
+            L.append('- `%s` [%s] %s' % (r['id'], r.get('level', ''), r.get('title', '')))
+        L.append('')
 
     L += ['## 进度概览', '',
           '- 累计关闭问题：%d 条' % len(done_led),
@@ -783,6 +899,18 @@ def cmd_snapshot(args):
               f"- 明确不做：{'；'.join(ml.get('not_doing', []))}",
               f"- 最后更新：{ml.get('updated','')}", '']
 
+    road = _roadmap_rows(ml)
+    if road:
+        L.append('**产品路线（每一步到哪了）**')
+        for r in road:
+            st = r['status']
+            line = f"- {ROADMAP_MARK.get(st, '○')} {r['step']}"
+            if r.get('expected'):
+                line += f"：{r['expected']}"
+            line += f"　（{ROADMAP_LABEL.get(st, st)}）"
+            L.append(line)
+        L.append('')
+
     L += ['## 二、需要你注意', '']
     if p0_open:
         L.append('**待修的问题（bug / 架构）**')
@@ -818,13 +946,34 @@ def cmd_snapshot(args):
     L.append('')
 
     L += ['## 五、验收进度', '']
-    for st in ('blocked', 'wip', 'todo', 'verified'):
-        rows = [r for r in acc if r.get('status') == st]
-        if rows:
-            L.append(f'**{st}（{len(rows)}）**')
-            for r in rows:
-                L.append(f"- `{r['id']}` [{r.get('level','')}] {r.get('title','')}")
-            L.append('')
+    human_pending = [r for r in acc
+                     if r.get('needs_human') and r.get('status') in ('todo', 'wip', 'blocked')]
+    machine_done = [r for r in acc if r.get('status') == 'verified' and not r.get('needs_human')]
+    human_done = [r for r in acc if r.get('status') == 'verified' and r.get('needs_human')]
+    L.append(f'**需要你验收（{len(human_pending)}）**')
+    if human_pending:
+        for r in human_pending:
+            L.append(f"- `{r['id']}` [{r.get('level','')}] {r.get('title','')}")
+            steps = (r.get('steps') or '').strip()
+            if steps:
+                for step in re.split(r'[\n;\uff1b]+', steps):
+                    if step.strip():
+                        L.append(f"  - {step.strip()}")
+    else:
+        L.append('- （当前没有需要你人工拍板的验收项）')
+    L.append('')
+    L.append(f'**已机器验收（{len(machine_done)}）**')
+    if machine_done:
+        for r in machine_done:
+            L.append(f"- `{r['id']}` [{r.get('level','')}] {r.get('title','')}")
+    else:
+        L.append('- （还没有机器自证的验收项）')
+    L.append('')
+    if human_done:
+        L.append(f'**你已确认（{len(human_done)}）**')
+        for r in human_done:
+            L.append(f"- `{r['id']}` [{r.get('level','')}] {r.get('title','')}")
+        L.append('')
 
     L += ['## 六、决策记录', '']
     for r in dec:
@@ -864,7 +1013,8 @@ def cmd_snapshot(args):
 CMDS = {'add': cmd_add, 'ls': cmd_ls, 'snapshot': cmd_snapshot, 'promote': cmd_promote,
         'route': cmd_route, 'lanes': cmd_lanes, 'next': cmd_next,
         'product': cmd_product, 'distill': cmd_distill,
-        'close': cmd_close, 'open': cmd_open, 'synthesize': cmd_synthesize}
+        'close': cmd_close, 'open': cmd_open, 'synthesize': cmd_synthesize,
+        'accept': cmd_accept}
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:

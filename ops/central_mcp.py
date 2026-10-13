@@ -208,6 +208,24 @@ TOOLS = [
         },
     },
     {
+        "name": "register_acceptance",
+        "description": "登记一个验收项，并分清「机器能自证」还是「必须人拍板」。机器自证的写清楚命令+结果，面板归到「已机器验收」；需要人看的用 needs_human=true，并把「人要怎么复核」写进 steps，面板会单列成「需要你验收」，原样展示步骤。改完一个功能、准备让人确认时用它，别让用户自己去猜要怎么验。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "验收项标题，一句话"},
+                "needs_human": {"type": "boolean", "description": "true=必须人拍板（审美/手感/真实产品里点一下）；false=机器自证"},
+                "steps": {"type": "string", "description": "人要怎么复核，如“1) 打开面板 2) 看第一屏 3) 确认不挤”"},
+                "level": {"type": "string", "description": "优先级，默认 P1"},
+                "lane": {"type": "string", "description": "归属分支，可选"},
+                "status": {"type": "string", "description": "todo / wip / verified，默认 todo"},
+                "evidence": {"type": "string", "description": "机器自证的真实命令+结果，可选"},
+            },
+            "required": ["title"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "suggest_branch",
         "description": "按文件重叠给“该并进哪个既有分支”的只读建议，不落账。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
@@ -326,7 +344,7 @@ TOOLS = [
                 "action": {
                     "type": "string",
                     "enum": ["pause", "resume", "run_once", "set_auto_land",
-                             "set_auto_resolve", "set_auto_port",
+                             "set_auto_resolve", "set_auto_port", "set_auto_exec",
                              "enable_daemon", "disable_daemon"],
                 },
                 "enabled": {"type": "boolean", "description": "set_auto_* 的目标值"},
@@ -428,6 +446,76 @@ def _truth_dir():
     return Path(repo) / "ops" / "truth"
 
 
+def _roadmap():
+    """mainline.json 的产品路线：每一步到哪了。只读、秒级。"""
+    ml = _json_file(_truth_dir() / "mainline.json")
+    rows = []
+    for it in (ml.get("roadmap") or []):
+        if isinstance(it, str):
+            rows.append({"step": it, "expected": "", "status": "todo"})
+        elif isinstance(it, dict):
+            rows.append({"step": it.get("step", ""), "expected": it.get("expected", ""),
+                         "status": it.get("status") or "todo"})
+    return rows
+
+
+def _read_jsonl(path):
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return []
+    out = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except ValueError:
+            continue
+    return out
+
+
+def _acceptance_board():
+    """验收分两堆：需要人拍板的、机器已自证的。顺带分出未决问题的 doing/todo。"""
+    latest = {}
+    for r in _read_jsonl(_truth_dir() / "ledger.jsonl"):
+        if r.get("id"):
+            latest[r["id"]] = r
+    opens = [r for r in latest.values() if r.get("status") in ("open", "doing")]
+    opens.sort(key=lambda r: (0 if r.get("kind") in ("bug", "gate") else 1, r.get("ts", "")))
+    doing = [r for r in opens if r.get("status") == "doing"]
+    todo = [r for r in opens if r.get("status") != "doing"]
+
+    acc_latest = {}
+    for r in _read_jsonl(_truth_dir() / "acceptance.jsonl"):
+        if r.get("id"):
+            acc_latest[r["id"]] = r
+    acc = list(acc_latest.values())
+    human = [r for r in acc
+             if r.get("needs_human") and r.get("status") in ("todo", "wip", "blocked")]
+    machine = [r for r in acc if r.get("status") == "verified" and not r.get("needs_human")]
+    human_done = [r for r in acc if r.get("status") == "verified" and r.get("needs_human")]
+
+    def brief(r):
+        return {"id": r.get("id"), "kind": r.get("kind"), "title": r.get("title", ""),
+                "status": r.get("status"), "lane": r.get("lane")}
+
+    def acc_brief(r):
+        return {"id": r.get("id"), "title": r.get("title", ""), "level": r.get("level"),
+                "status": r.get("status"), "steps": r.get("steps") or "", "lane": r.get("lane")}
+
+    return {
+        "doing": [brief(r) for r in doing[:8]],
+        "todo": [brief(r) for r in todo[:8]],
+        "todo_count": len(todo),
+        "human": [acc_brief(r) for r in human[:8]],
+        "machine": [acc_brief(r) for r in machine[:8]],
+        "human_done_count": len(human_done),
+        "machine_count": len(machine),
+    }
+
+
 def _mainline_summary(limit=6):
     """产品主线摘要：方向来自 mainline.json，未决问题来自台账。只读、秒级。"""
     base = _truth_dir().parent.parent
@@ -452,11 +540,15 @@ def _mainline_summary(limit=6):
     doc = base / "docs" / "PRODUCT_MAINLINE.md"
     return {
         "product": ml.get("product"),
+        "one_liner": ml.get("one_liner"),
         "stage": ml.get("stage"),
+        "north_star": ml.get("north_star"),
         "focus": (ml.get("current_focus") or [])[:4],
+        "roadmap": _roadmap(),
         "doc": str(doc.relative_to(base)) if doc.exists() else None,
         "open_count": len(opens),
-        "open_items": [{"id": r.get("id"), "kind": r.get("kind"), "title": r.get("title", "")}
+        "open_items": [{"id": r.get("id"), "kind": r.get("kind"),
+                        "title": r.get("title", ""), "status": r.get("status")}
                        for r in opens[:limit]],
     }
 
@@ -539,6 +631,7 @@ def _status_payload(fast=True):
     st = _daemon_state()
     live, pid = _daemon_live()
     summary = st.get("last_summary") or {}
+    board = _acceptance_board()
     failures = [{"target": t, "kind": k} for t, k in (st.get("last_failures") or [])]
     rtasks = _active_resolve_tasks()
     blocked = st.get("resolve_blocked") or {}
@@ -606,6 +699,7 @@ def _status_payload(fast=True):
             "auto_land": bool(ctrl.get("auto_land", True)),
             "auto_resolve": bool(ctrl.get("auto_resolve", True)),
             "auto_port": bool(ctrl.get("auto_port", False)),
+            "auto_exec": bool(ctrl.get("auto_exec", False)),
             "daemon_enabled": bool(ctrl.get("daemon_enabled", True)),
         },
         "daemon": {
@@ -634,6 +728,8 @@ def _status_payload(fast=True):
                         for b, v in list(blocked.items())[:20]],
             "port": [{"branch": b, "reason": (v or {}).get("reason")}
                      for b, v in list(port_blocked.items())[:20]],
+            "exec": [{"id": k, "reason": (v or {}).get("reason")}
+                     for k, v in list((st.get("exec_blocked") or {}).items())[:20]],
         },
         "resolve_tasks": rtasks[:20],
         "events": control_state.read_events(30),
@@ -641,6 +737,13 @@ def _status_payload(fast=True):
         "judgments": _active_judgments(),
         "last_verification": _last_verification(),
         "mainline": _mainline_summary(),
+        "roadmap": _roadmap(),
+        "doing_items": board["doing"],
+        "todo_items": board["todo"],
+        "todo_count": board["todo_count"],
+        "human_acceptance": board["human"],
+        "machine_verified": board["machine"],
+        "human_accepted_count": board["human_done_count"],
     }
     payload["__text__"] = _status_text(payload)
     return payload
@@ -682,6 +785,16 @@ def _status_text(payload):
         first = (lv.get("evidence") or "").splitlines()
         lines.append("最近验证：%s（%s）" % (lv.get("title", ""),
                                             first[0] if first else "无证据"))
+    road = payload.get("roadmap") or []
+    if road:
+        mark = {"done": "\u2713", "doing": "\u25cf", "next": "\u25cf", "todo": "\u25cb"}
+        seg = " ".join("%s%s" % (mark.get(r.get("status"), "\u25cb"), r.get("step", ""))
+                       for r in road[:6])
+        lines.append("产品路线：" + seg)
+    hum = payload.get("human_acceptance") or []
+    if hum:
+        lines.append("需要你验收：%s 项（如 %s）"
+                     % (len(hum), hum[0].get("title", "")))
     return "\n".join(lines)
 
 
@@ -711,7 +824,8 @@ def control_action(action, enabled=None):
         control_state.append_event("run_once")
         out, rc = _run([str(daemon), "--once"], timeout=2400)
         return _with_status("已跑完一轮：\n" + out), rc
-    if action in ("set_auto_land", "set_auto_resolve", "set_auto_port"):
+    if action in ("set_auto_land", "set_auto_resolve", "set_auto_port",
+                   "set_auto_exec"):
         if not isinstance(enabled, bool):
             return "%s 需要 enabled（true/false）" % action, 2
         key = action[len("set_"):]
@@ -775,6 +889,19 @@ def call_tool(name, args):
         env = {"KG_TRUTH_COMMIT": args.get("commit") or None,
                "KG_TRUTH_EVIDENCE": args.get("evidence") or None}
         return truthctl("close", rid, args.get("note") or "", extra_env=env)
+    if name in ("register_acceptance", "accept_item"):
+        title = (args.get("title") or "").strip()
+        if not title:
+            return "register_acceptance 需要 title", 2
+        argv = ["accept", title]
+        if args.get("needs_human"):
+            argv.append("--human")
+        env = {"KG_TRUTH_STEPS": args.get("steps") or None,
+               "KG_TRUTH_LEVEL": args.get("level") or None,
+               "KG_TRUTH_LANE": args.get("lane") or None,
+               "KG_TRUTH_STATUS": args.get("status") or None,
+               "KG_TRUTH_EVIDENCE": args.get("evidence") or None}
+        return truthctl(*argv, extra_env=env)
     if name == "reopen_item":
         rid = (args.get("id") or "").strip()
         if not rid:
@@ -880,6 +1007,14 @@ def handle(msg):
                 "验收综合成一页产品主线（docs/PRODUCT_MAINLINE.md）。用户报的 bug 修完、"
                 "验收过后用 close_item 关闭台账条目（带 commit/证据），别让它一直挂在 open。"
                 "落盘证据看 last_verification（真实命令 + cwd + 结果）。"
+                "改完一个功能、准备让人确认时用 register_acceptance 登记验收项：机器能"
+                "自证的给证据，需要人拍板的（审美/手感/真实产品里点一下）用 "
+                "needs_human=true 并把「人要怎么复核」写进 steps，面板会把人工项原样"
+                "列成「需要你验收」——用户不用读代码、不用猜怎么看。产品路线看 "
+                "mainline.json 的 roadmap（每步 done/doing/next/todo），autopilot_status "
+                "会把它和「当前在做什么 / 还差什么 / 可验收项」一起返回。用户只想提一次"
+                "：收到零散需求就用 intake_request 收口，系统自己负责归类、落账、推进到"
+                "验收，不要把「该放哪个对话/分支/角色」反过来问用户。"
                 "用户问“自动挡在哪看 / 怎么用 / 现在开着吗 / 做了什么”时，调用 "
                 "render_autopilot_panel 打开面板（含小白说明与开关）；要看纯文本状态用 "
                 "autopilot_status；要暂停/恢复/开关自动动作或后台常驻用 autopilot_control。"

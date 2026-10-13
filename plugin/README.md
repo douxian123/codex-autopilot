@@ -38,10 +38,13 @@
 - **判断逻辑**（`ops/truth/judgments.jsonl`）：每轮收口后蒸馏一次，只记「为什么这么判断」，下次换个地方也不用重新讲。
 - **问题闭环**（`ops/truth/ledger.jsonl`）：用户报的 bug/视觉/体验/架构收进台账，agent 推进到 `close`（带 commit 与证据），回归了再 `open`。
 - **主线综合**（`docs/PRODUCT_MAINLINE.md`）：每轮 `synthesize` 把决策/进展/问题/验收综合成产品主线，零散讨论自动成体系。
+- **产品路线**（`ops/truth/mainline.json` 的 `roadmap`）：方向不是一句口号，而是一步步走到产品预期的路线；每一步标 `done / doing / next / todo`，面板直接显示走到哪了。
+- **验收分堆**（`ops/truth/acceptance.jsonl`）：机器能跑命令验证的归到「已机器验收」；审美、手感、真实产品里点一下这类必须人拍板的归到「需要你验收」，并原样显示 `steps`，用户不用猜怎么看。
+- **自动实现需求**（`auto_exec`，默认关闭）：用户显式打开后，自动挡把未关闭的台账条目派给独立 worktree 里的真实 `codex exec` 会话，自己实现、自己提交，过同一道门禁后落盘并收口；失败保留分支与 worktree，不丢在途工作。
 
-面板第一屏就能看到「现在到哪了 · 还差什么」，点「高级」还能看到产品状态、判断逻辑、最近一次自验证。对应的 MCP 工具是
+面板第一屏就能看到「产品路线 · 需要你验收 · 当前在做什么 · 还差什么」，点「高级」还能看到产品状态、判断逻辑、最近一次自验证和自动实现开关。对应的 MCP 工具是
 `product_state` / `product_update` / `distill_review` / `distill_add` /
-`synthesize_mainline` / `close_item` / `reopen_item`。
+`synthesize_mainline` / `register_acceptance` / `close_item` / `reopen_item`。
 
 ## 安装
 
@@ -80,3 +83,6 @@
   一遇文本冲突即整体放弃；移植失败的分支记进 `port_blocked` 不再重试。未解干净的
   convergence 分支也不会被 `queue` 列为可落盘，而是留在 convergence worktree 里交给
   agent 逐族解。
+- **`auto_exec` 默认关闭**：打开后每轮最多启动一个真实 `codex exec` 会话，在独立 worktree
+  里实现台账条目；完成走同一道 land 门禁，失败保留 WIP 分支和 worktree。它不会改产品方向、
+  不会删数据、不会发布。

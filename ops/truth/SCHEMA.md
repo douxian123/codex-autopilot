@@ -16,13 +16,13 @@
 
 ```text
 ops/truth/
-  mainline.json      # 产品主线：阶段 / 北极星 / 当前焦点 / 明确不做（单对象，人工维护）
+  mainline.json      # 产品主线：阶段 / 北极星 / 当前焦点 / 产品路线 / 明确不做（单对象，人工维护）
   product_state.json # 产品状态：产品今天实际是怎么工作的（按模块，随代码同步）
   decisions.jsonl    # 决策台账：做过哪些决定、为什么、备选是什么（追加式）
   judgments.jsonl    # 判断逻辑台账：人为什么这么判断（每轮蒸馏回写，追加式）
   ledger.jsonl       # 问题台账：bug / 视觉 / 体验 / 架构问题（追加式，带状态与泳道）
   progress.jsonl     # 进展台账：每条泳道最近干了什么、是否落盘（追加式）
-  acceptance.jsonl   # 验收台账：实现模块 / 验收项 / 状态 / 证据（追加式）
+  acceptance.jsonl   # 验收台账：实现模块 / 验收项 / 状态 / 证据 / 人工复核步骤（追加式）
 
 生成物：
   docs/PRODUCT_MAINLINE.md  # 由 truthctl synthesize 从以上台账综合出的产品主线
@@ -72,13 +72,32 @@ judgment 记「以后遇到同类情况该怎么判断」——记的是判断�
 
 ### acceptance.jsonl
 
-额外字段：`level` ∈ `P0` | `P1` | `P2`、`evidence`（可复核的验收证据）。
+额外字段：`level` ∈ `P0` | `P1` | `P2`、`needs_human`（bool）、`steps`（人工复核步骤）、
+`evidence`（可复核的验收证据）。
 `status` ∈ `todo` | `wip` | `verified` | `blocked`。
 
 **验收证据必须可复核**：`kgctl land` 落盘时会把每一道验证门禁的
 `name: cmd (cwd=...) -> exit N` 写进 `evidence`，不允许写「通过构建」这类泛化文案。
 没有配置验证门禁时，状态写 `todo` 并注明「未配置验证门禁」，不伪造 `verified`。
 也就是说：`verified` 一定对应真实跑过的命令和退出码，而不是一句结论。
+
+**人和机器不能互相冒充**：`needs_human=true` 表示审美、手感、真实产品里点一下这类
+必须由人拍板的验收项；`steps` 写清楚人要怎么复核，面板会原样展示。机器能自证的项目
+保持 `needs_human=false`，不得把机器跑过命令当成人工验收，也不得把人工验收写成
+`verified` 直到人真的确认。`verified` 只表示对应类型的验收真的完成。
+
+## 产品路线
+
+`mainline.json` 的 `roadmap` 是产品预期的实现路线，不是任务清单。每一项写成：
+
+```json
+{"step": "唯一入口收需求", "expected": "用户只在一个输入框里提需求", "status": "done"}
+```
+
+`status` ∈ `done` | `doing` | `next` | `todo`。路线由人拍板；面板和
+`truthctl synthesize` 只读它，并把「每一步到哪了」显示出来。路线下的具体工作、
+未决问题和验收证据分别落在 `ledger.jsonl` / `progress.jsonl` / `acceptance.jsonl`，
+不要把这些细节塞回 `roadmap`。
 
 ## 与 inbox / 泳道 / 合并队列的关系
 

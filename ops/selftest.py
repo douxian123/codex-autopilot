@@ -624,6 +624,13 @@ def test_control_state():
         control_state.set_keys(auto_resolve=True)
         assert central_daemon.auto_resolve_config()["enabled"] is True
 
+        # auto_exec 默认关闭；只有用户显式打开才可能派真实会话。
+        assert d["auto_exec"] is False, "auto_exec 不该默认打开"
+        control_state.set_keys(auto_exec=False)
+        assert central_daemon.auto_exec_config()["enabled"] is False
+        control_state.set_keys(auto_exec=True)
+        assert central_daemon.auto_exec_config()["enabled"] is True
+
         # control.json 损坏 -> 安全暂停 + error 可见。
         control_state.path().write_text("{ this is not json", encoding="utf-8")
         bad = control_state.load()
@@ -792,7 +799,193 @@ def test_verify_and_truth():
         text = mainline_doc.read_text(encoding="utf-8")
         if "现在是什么样" not in text or "还差什么" not in text:
             raise AssertionError(f"产品主线缺少关键段落:\n{text[:400]}")
+
+        # 验收分堆：机器自证 vs 需要人拍板，steps 原样写回。
+        a1 = truthctl(repo, "accept", "首页第一屏不挤", "--human",
+                      "--steps", "1) 打开首页 2) 看第一屏 3) 确认不挤",
+                      extra_env={"KG_TRUTH_LEVEL": "P0"})
+        if a1.returncode != 0:
+            raise AssertionError(f"accept --human 失败:\n{a1.stdout}\n{a1.stderr}")
+        a2 = truthctl(repo, "accept", "tsc 通过",
+                      extra_env={"KG_TRUTH_EVIDENCE": "npx tsc --noEmit -> exit 0"})
+        if a2.returncode != 0:
+            raise AssertionError(f"accept 失败:\n{a2.stdout}\n{a2.stderr}")
+        arecs = [ _json.loads(x) for x in
+                  (repo / "ops" / "truth" / "acceptance.jsonl").read_text(
+                      encoding="utf-8").splitlines() if x.strip() ]
+        human = [r for r in arecs if r.get("needs_human")]
+        if not human or human[0].get("steps", "").find("打开首页") < 0:
+            raise AssertionError(f"人工验收项或步骤没写回: {human}")
+        if not any(r.get("evidence") for r in arecs):
+            raise AssertionError("机器自证项没有证据")
+
+        # 产品路线：mainline.json 写 roadmap，synthesize 要渲染出每一步到哪了。
+        (repo / "ops" / "truth" / "mainline.json").write_text(_json.dumps({
+            "product": "自动挡", "stage": "v0.5",
+            "roadmap": [
+                {"step": "唯一入口收需求", "expected": "不再分对话/分支", "status": "done"},
+                {"step": "自动实现并收口", "expected": "提一次就闭环", "status": "doing"},
+            ]}), encoding="utf-8")
+        syn2 = truthctl(repo, "synthesize")
+        if syn2.returncode != 0:
+            raise AssertionError(f"synthesize(roadmap) 失败:\n{syn2.stdout}\n{syn2.stderr}")
+        text2 = mainline_doc.read_text(encoding="utf-8")
+        if "产品路线" not in text2 or "唯一入口收需求" not in text2 or "自动实现并收口" not in text2:
+            raise AssertionError(f"产品主线缺少路线渲染:\n{text2[:600]}")
+        if "需要你验收" not in text2:
+            raise AssertionError("产品主线没有拆出「需要你验收」段")
     print("selftest ok: 验证门禁真跑真写真拦；产品状态与判断逻辑可回写；问题可闭环；主线可综合。")
+
+
+def test_auto_exec():
+    """自动实现闭环：台账待办 -> 独立 worktree 真跑 -> 显式提交 -> 落盘 -> 收口。
+
+    用 KG_EXEC_CMD 指向一个假的 codex 脚本，把「真起会话」这一段确定性化。
+    锁住三件曾经只能靠人盯的事：
+      1. 成功后台账真的变成 done，且 main 里真的有它写的文件；
+      2. 失败但产生了改动时，分支和 worktree 被保留（wip 提交 + codex_exit_N），不丢在途工作；
+      3. 落盘成功但收口失败时，不删现场、不重复派同一条（防止覆盖他人工作）。
+    """
+    import importlib
+    import json as _json
+
+    sys.path.insert(0, str(OPS))
+
+    def fixture(base, item_status="open"):
+        """一个能跑 land 的最小状态根：裸远端 + main + 空门禁 + 一条台账待办。"""
+        base.mkdir(parents=True, exist_ok=True)
+        repo = base / "state"
+        trunk = base / "state-trunk"
+        home = base / "home"
+        repo.mkdir()
+        home.mkdir()
+        (home / "control.json").write_text(
+            _json.dumps({"auto_exec": True, "paused": False}), encoding="utf-8")
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for f in ("progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{f}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        (repo / "ops" / "truth" / "ledger.jsonl").write_text(
+            _json.dumps({"id": "L-0001", "type": "ledger", "kind": "bug",
+                         "title": "面板按钮点着没反应", "status": item_status,
+                         "ts": "2026-01-01T00:00:00+08:00"},
+                        ensure_ascii=False) + "\n", encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(
+            _json.dumps({"build": {"cmd": "", "cwd": "."}, "verify": []}),
+            encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "app.txt").write_text("main\n", encoding="utf-8")
+        git(repo, "add", "app.txt", "ops/central.config.json", "ops/truth/mainline.json",
+            "ops/truth/ledger.jsonl", "ops/truth/progress.jsonl",
+            "ops/truth/decisions.jsonl", "ops/truth/acceptance.jsonl",
+            "ops/tasks/inbox.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = base / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+        return repo, trunk, home
+
+    def fake_codex(base, name, exit_code):
+        """一个最小的 codex exec 替身：写一个文件后按指定码退出。"""
+        path = base / name
+        path.write_text(
+            "#!/bin/sh\n"
+            "wt=\"\"\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
+            "done\n"
+            "printf 'fake codex\\n' > \"$wt/fake.txt\"\n"
+            f"exit {exit_code}\n",
+            encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
+    def load_daemon(repo, trunk, home, exec_cmd):
+        """把环境切到本 fixture，并重载读取环境变量的那几个模块。"""
+        os.environ["KG_REPO"] = str(repo)
+        os.environ["KG_TRUNK"] = str(trunk)
+        os.environ["KG_DAEMON_HOME"] = str(home)
+        os.environ["KG_EXEC_CMD"] = str(exec_cmd)
+        import control_state
+        import central_config
+        import central_daemon
+        importlib.reload(control_state)
+        importlib.reload(central_config)
+        importlib.reload(central_daemon)
+        return central_daemon
+
+    def ledger_latest(repo):
+        recs = {}
+        for line in (repo / "ops" / "truth" / "ledger.jsonl").read_text(
+                encoding="utf-8").splitlines():
+            if line.strip():
+                r = _json.loads(line)
+                recs[r["id"]] = r
+        return recs
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-exec-") as tmp:
+        base = Path(tmp)
+
+        # --- 成功路径：实现 -> 提交 -> 落盘 -> 收口，台账变 done，main 里有产物 ---
+        repo, trunk, home = fixture(base / "ok")
+        daemon = load_daemon(repo, trunk, home, fake_codex(base, "fake-ok.sh", 0))
+        blocked = {}
+        results = daemon.dispatch_exec(False, blocked)
+        if len(results) != 1 or results[0].get("outcome") != "landed":
+            raise AssertionError(f"成功路径没有落成 landed: {results}\nblocked={blocked}")
+        if ledger_latest(repo)["L-0001"].get("status") != "done":
+            raise AssertionError(f"落盘后台账没有收口: {ledger_latest(repo)}")
+        if git(repo, "show", "main:fake.txt").stdout.strip() != "fake codex":
+            raise AssertionError("main 里没有执行器写下的产物")
+        if blocked:
+            raise AssertionError(f"成功路径不应留下 blocked: {blocked}")
+        if git(repo, "branch", "--list", "codex/exec-*").stdout.strip():
+            raise AssertionError("成功路径应回收执行分支")
+
+        # --- 失败路径：写了一半就崩，必须保留分支和 worktree，绝不能丢在途工作 ---
+        repo_f, trunk_f, home_f = fixture(base / "fail")
+        daemon_f = load_daemon(repo_f, trunk_f, home_f,
+                               fake_codex(base, "fake-fail.sh", 7))
+        blocked_f = {}
+        results_f = daemon_f.dispatch_exec(False, blocked_f)
+        if results_f[0].get("outcome") != "codex_fail_preserved":
+            raise AssertionError(f"失败路径没有保留成果: {results_f}")
+        if blocked_f.get("L-0001", {}).get("reason") != "codex_exit_7":
+            raise AssertionError(f"失败原因登记不正确: {blocked_f}")
+        wt_f = Path(blocked_f["L-0001"]["worktree"])
+        if not wt_f.exists():
+            raise AssertionError("失败路径删掉了 worktree，丢了在途工作")
+        if not git(repo_f, "branch", "--list", "codex/exec-*").stdout.strip():
+            raise AssertionError("失败路径删掉了 WIP 分支")
+        if ledger_latest(repo_f)["L-0001"].get("status") != "open":
+            raise AssertionError("失败路径不应把台账标成 done")
+
+        # --- 收口失败路径：落盘成功、truthctl close 挂了，保留现场且不再重复派 ---
+        repo_c, trunk_c, home_c = fixture(base / "closefail")
+        daemon_c = load_daemon(repo_c, trunk_c, home_c,
+                               fake_codex(base, "fake-close.sh", 0))
+        daemon_c._run_truthctl = lambda args, extra_env=None, timeout=120: (
+            1, "forced close failure")
+        blocked_c = {}
+        results_c = daemon_c.dispatch_exec(False, blocked_c)
+        if results_c[0].get("outcome") != "landed_close_fail":
+            raise AssertionError(f"收口失败被误报成成功: {results_c}")
+        if blocked_c.get("L-0001", {}).get("reason") != "landed_close_fail":
+            raise AssertionError(f"收口失败原因登记不正确: {blocked_c}")
+        if not Path(blocked_c["L-0001"]["worktree"]).exists():
+            raise AssertionError("收口失败删掉了现场，无法复核")
+        if ledger_latest(repo_c)["L-0001"].get("status") == "done":
+            raise AssertionError("收口失败却把台账标成 done")
+        again = daemon_c.dispatch_exec(False, blocked_c)
+        if again:
+            raise AssertionError(f"收口失败后台账项被重复派发: {again}")
+
+    print("selftest ok: 自动实现真跑并落盘、失败保留现场、收口失败不重复派。")
 
 
 def test_mcp_contract():
@@ -832,14 +1025,16 @@ def test_mcp_contract():
         contents = recv()["result"]["contents"][0]
         assert contents["mimeType"] == "text/html;profile=mcp-app"
         assert "总输入框" in contents["text"], "面板没讲清「总输入框」"
-        for anchor in ("productList", "judgmentList", "verifyBox", "mainlineBox"):
-            assert anchor in contents["text"], f"面板高级区缺少 {anchor}"
+        for anchor in ("productList", "judgmentList", "verifyBox", "mainlineBox",
+                       "roadmapBox", "acceptBox", "progressBox"):
+            assert anchor in contents["text"], f"面板缺少 {anchor}"
+        assert 'data-key="auto_exec"' in contents["text"], "面板缺少 auto_exec 开关"
 
         send({"jsonrpc": "2.0", "id": 30, "method": "tools/list", "params": {}})
         tool_names = {t["name"] for t in recv()["result"]["tools"]}
         missing = {"product_state", "product_update", "distill_review",
                    "distill_add", "synthesize_mainline", "close_item",
-                   "reopen_item"} - tool_names
+                   "reopen_item", "register_acceptance"} - tool_names
         assert not missing, f"缺少自动挡工具: {sorted(missing)}"
 
         send({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
@@ -849,6 +1044,9 @@ def test_mcp_contract():
         assert "product_state" in sc and "judgments" in sc and "last_verification" in sc, \
             "状态快照缺少产品状态/判断逻辑/最近验证"
         assert "mainline" in sc, "状态快照缺少产品主线摘要"
+        for key in ("roadmap", "doing_items", "todo_items", "todo_count",
+                    "human_acceptance", "machine_verified"):
+            assert key in sc, f"状态快照缺少 {key}"
 
         send({"jsonrpc": "2.0", "id": 31, "method": "tools/call",
               "params": {"name": "product_update",
@@ -863,6 +1061,16 @@ def test_mcp_contract():
               "params": {"name": "distill_add",
                          "arguments": {"statement": "落盘默认合入", "scope": "process"}}})
         assert not recv()["result"].get("isError"), "distill_add 调用失败"
+
+        send({"jsonrpc": "2.0", "id": 34, "method": "tools/call",
+              "params": {"name": "register_acceptance",
+                         "arguments": {"title": "首页第一屏不挤", "needs_human": True,
+                                       "steps": "1) 打开首页 2) 看第一屏", "level": "P0"}}})
+        assert not recv()["result"].get("isError"), "register_acceptance 调用失败"
+        send({"jsonrpc": "2.0", "id": 35, "method": "tools/call",
+              "params": {"name": "autopilot_status", "arguments": {"fast": True}}})
+        hum = recv()["result"]["structuredContent"].get("human_acceptance") or []
+        assert hum and hum[0].get("title") == "首页第一屏不挤", f"人工验收没进状态: {hum}"
 
         send({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
               "params": {"name": "autopilot_control", "arguments": {"action": "pause"}}})
@@ -896,4 +1104,5 @@ if __name__ == "__main__":
     test_reset_trunk_truth_conflict()
     test_control_state()
     test_verify_and_truth()
+    test_auto_exec()
     test_mcp_contract()

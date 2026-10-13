@@ -27,5 +27,12 @@
     "enabled": false,
     "max_unlanded": 2
   },
-  "default_lane": "bug"
+  "default_lane": "bug",
+  "auto_exec": {
+    "enabled": true,
+    "max_per_cycle": 1,
+    "timeout": 3600,
+    "sandbox": "workspace-write",
+    "model": null
+  }
 }

@@ -59,7 +59,9 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 - **自验证**：合入前逐条真跑配置里的验证门禁，把 `命令 + cwd + 退出码` 写进 `acceptance.jsonl`。没配门禁就标 `todo`，不伪造 `verified`——所以「已验证」永远对应一条能照着复核的证据。
 - **判断逻辑蒸馏**：每轮收口后回看人额外说了什么，只把「为什么这么判断」写进 `judgments.jsonl`（`truthctl distill add`）。记的是判断逻辑，不是一次性细节——下次换个地方也不用重新讲。
 - **问题闭环**：用户报的 bug / 视觉 / 体验 / 架构问题收进 `ledger.jsonl` 后，由 agent 推进修复 -> 验证 -> `truthctl close <L-id> "<结论>"`。关闭时带 commit、证据，并自动追加一条进展；回归了用 `truthctl open` 重开。问题不会一直挂在 `open`，也不靠用户自己记。
+- **自动实现需求**（`auto_exec`，默认关闭）：打开后，没关闭的台账条目会由自动挡在独立 worktree 里启动一个真实 `codex exec` 会话去实现；实现完显式提交，过 `kgctl land` 的同一道验证门禁后落盘，再自动 `truthctl close` 收口。每轮最多派一条；超时、门禁失败会保留分支和 worktree，不丢在途工作。它仍然遵守三条边界：不改产品方向、不删数据、不发布。
 - **主线综合**：每轮收口跑一次 `truthctl synthesize`，把决策 / 进展 / 问题 / 验收 / 产品状态综合成 `docs/PRODUCT_MAINLINE.md`。产品讨论和零散需求自动长成产品叙事，人只读这一页就知道现状、最近在推什么、还差什么。
+- **产品路线与验收分堆**：`mainline.json` 里的 `roadmap` 记录产品预期怎么一步步走完；验收台账分出「需要人拍板」和「机器已自证」。人只需要看人工项，并照着 `steps` 复核，不用从实现和日志里倒推。
 
 它们一起形成「做完 → 验证 → 收口 → 综合 → 蒸馏」的闭环：产品行为可 diff、验收可复核、问题可闭环、主线可综合、判断可累积。
 
@@ -105,6 +107,7 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 - 项目里 `ops/tasks/inbox.jsonl` 多一条你的原话，`ops/truth/ledger.jsonl` 多一条带 `L-000n` 编号的台账项。
 - `docs/PROJECT_STATUS.md`（快照）和 `docs/CONTROL_PLANE.html`（驾驶舱）跟着刷新：最近干了什么、还差什么、哪些分支能合、哪些在冲突。
 - 自动挡面板点「高级」：产品状态（它现在为你做什么）、判断逻辑（同一个判断只做一次）、最近一次自验证（真跑过的命令与退出码）。
+- 面板第一屏还会显示三条关键线：产品路线到哪了、当前在做什么 / 还差什么、哪些必须你验收（附复核步骤）以及哪些机器已经自证。
 
 ### 什么时候开、什么时候关
 
@@ -112,7 +115,7 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 - **常驻（可选）**：装一个 launchd 守护，没开会话时也按周期推进安全子集。开是 `--install`，关是 `--uninstall`。
 - **彻底关掉**：在 Plugins 页禁用 / 卸载插件即可。账本还留在项目里，随时能再装回来。
 
-也可以让对话直接调 MCP 工具：`intake_request`（一句话走完整条链，首选）/ `sync_control_plane` / `next_actions` / `project_status` / `route_inbox` / `resolve_list` / `resolve_plan` / `resolve_start` / `resolve_finish` / `convergence_plan` / `generate_context` / `dashboard` / `capture_request` / `suggest_branch` / `product_state` / `product_update` / `distill_review` / `distill_add` / `synthesize_mainline` / `close_item` / `reopen_item`。
+也可以让对话直接调 MCP 工具：`intake_request`（一句话走完整条链，首选）/ `sync_control_plane` / `next_actions` / `project_status` / `route_inbox` / `resolve_list` / `resolve_plan` / `resolve_start` / `resolve_finish` / `convergence_plan` / `generate_context` / `dashboard` / `capture_request` / `suggest_branch` / `product_state` / `product_update` / `distill_review` / `distill_add` / `synthesize_mainline` / `register_acceptance` / `close_item` / `reopen_item`。
 
 想手敲命令：
 
@@ -155,6 +158,7 @@ python3 "$PLUGIN/ops/kgctl.py" dash --open
 | `python3 "$PLUGIN/ops/truthctl.py" ls` / `next` | 看台账 / 看优先级（同 `kgctl next`） |
 | `python3 "$PLUGIN/ops/truthctl.py" product` / `distill` | 看产品状态 / 蒸馏判断逻辑（细节见下节） |
 | `python3 "$PLUGIN/ops/truthctl.py" close <L-id> "<结论>"` / `open <L-id> "<原因>"` | 问题收口 / 重开（自动写进展、带 commit 与证据） |
+| `python3 "$PLUGIN/ops/truthctl.py" accept "<标题>" --human --steps "1) 打开X 2) 点Y"` | 登记人工验收项和复核步骤；不加 `--human` 就是机器自证项 |
 | `python3 "$PLUGIN/ops/truthctl.py" synthesize` | 把决策/进展/问题/验收综合成 `docs/PRODUCT_MAINLINE.md` |
 
 ## 常驻 vs 非常驻
@@ -173,7 +177,9 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 
 守护从插件目录的 `.mcp.json` 读绑定（`KG_REPO` / `KG_TRUNK`），不用再手动 export 环境变量。代价说清楚：它会真的在后台跑 `tick` / `land`，也就是会自己推进 `main`——走的是和手动一样的护栏，但确实不需要你在场。
 
-常驻自动做五件事：路由唯一入口里的散需求、把与 `main` 无冲突的分支串行落盘、归档「内容其实早进 `main`」的重复分支（`supersede --fast`）、把真冲突分支**拆成单个可执行任务（`resolve`，默认开）**，冲突量大且分散时再收拢成族（`converge`）。每个落盘分支仍走 `kgctl land` 的全部护栏（真实验证、`origin/main` 对齐、失败即丢弃）。**真正需要判断语义的冲突不会自动合**：`resolve` 只做确定性并集（append-only JSONL 行级并集），其余冲突原样保留 marker 写成任务书，交给一个 agent 逐条解干净后走同一道门禁落盘。你不再需要回答「这 60 个分支要不要合」，也不再需要自己把它们塞进几十个对话。
+常驻自动做六件事：路由唯一入口里的散需求、把与 `main` 无冲突的分支串行落盘、归档「内容其实早进 `main`」的重复分支（`supersede --fast`）、把真冲突分支**拆成单个可执行任务（`resolve`，默认开）**，冲突量大且分散时再收拢成族（`converge`），以及可选的 `auto_exec` 自动实现台账条目。每个落盘分支仍走 `kgctl land` 的全部护栏（真实验证、`origin/main` 对齐、失败即保留现场）。**真正需要判断语义的冲突不会自动合**：`resolve` 只做确定性并集（append-only JSONL 行级并集），其余冲突原样保留 marker 写成任务书，交给一个 agent 逐条解干净后走同一道门禁落盘。你不再需要回答「这 60 个分支要不要合」，也不再需要自己把它们塞进几十个对话。
+
+`auto_exec` 默认关闭，因为会真的启动会话改代码、消耗额度。打开后每轮最多一条，在 `<状态根>-exec-<id>` 独立 worktree 里跑，结束后显式提交（绝不 `git add -A`），再走 `kgctl land` 的门禁落盘并关闭台账项。`codex exec` 非零退出、超时或落盘失败时，已产生的改动会先提交成 WIP，分支和 worktree 保留，并在面板「实现暂缓」里登记原因；只有完全没产生改动才回收 worktree。
 
 另有一档可选动作 `auto_port`（默认关闭）：守护一个周期里把「只差 1–N 个提交」的冲突分支逐条试一遍（上限 6 条），把未落提交 cherry-pick 到当前 `main` 上的一条新分支，跑同一道验证门禁，过了才落盘；cherry-pick 一撞文本冲突就整体 `--abort` 放弃，绝不猜「谁对」。它只消灭「基线旧、实际只差几个提交」这种假冲突，把冲突队列从几十条压到真正需要人判断的少数。在项目里 `ops/central.config.json` 写：
 
@@ -212,6 +218,7 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
             │  常驻（可选）  launchd 每 15 分钟：路由散需求 + land 无冲突   │
             │  分支 + 归档重复分支（supersede）+ 拆冲突为任务（resolve）    │
             │  + 收拢冲突族（converge）。                                  │
+            │  + 可选 auto_exec：实现台账 → 门禁 → 落盘 → 自动收口。       │
             │  打开 auto_port 还会自动移植「只差几个提交」的冲突分支。      │
             │  状态没变化就静默。                                          │
             └────────────────────────────────────────────────────────────┘
@@ -256,7 +263,7 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 ## 能力边界（诚实版）
 
 - 它**不保证**全自动。改产品方向、删数据、发布仍然要停下来问你，并给出「选 A 会怎样 / 选 B 会怎样」。
-- 常驻守护只做**安全子集**：路由散需求 + land 与 `main` 无冲突、且树里没有残留冲突标记的分支 + 归档「已全部在 main」的重复分支 + 把轻冲突分支拆成独立任务（`resolve`）/ 收拢成族（`converge`）。真正的语义冲突不自动合：`resolve` 只做 append-only JSONL 的行级并集，其余保留 marker 留成任务；`auto_port` 打开时先试一次无冲突 cherry-pick，冲突即放弃。
+- 常驻守护只做**安全子集**：路由散需求 + land 与 `main` 无冲突、且树里没有残留冲突标记的分支 + 归档「已全部在 main」的重复分支 + 把轻冲突分支拆成独立任务（`resolve`）/ 收拢成族（`converge`）。真正的语义冲突不自动合：`resolve` 只做 append-only JSONL 的行级并集，其余保留 marker 留成任务；`auto_port` 打开时先试一次无冲突 cherry-pick，冲突即放弃。`auto_exec` 也必须用户显式打开，并且只能在独立 worktree 里写代码，落盘仍受同一道门禁约束。
 - 本机 stdio MCP 是面向**本机** Codex 的形态；官方插件市场的 MCP 要求 HTTPS 端点，所以这里用的是本机 compat 布局。
 - 归类基于关键词 + 文件路径重叠 + 代码标识匹配，**是启发式，不是语义理解**。它可能判错泳道；判错不致命（只影响优先级和归属），你可以在 `ops/central.config.json` 里覆盖规则，或手工改台账。
 - 冲突收拢（`converge`）只做**机械合并**：建分支、并入源分支、保留冲突 marker。真正解冲突仍需一个 agent 在 convergence worktree 里做，它不假装能替你判断「谁对」。

@@ -32,6 +32,9 @@ DEFAULTS = {
     "auto_land": True,
     "auto_resolve": True,
     "auto_port": False,
+    # 执行闭环：按台账里的未决问题，真的起一个 codex 会话去实现->验证->落盘。
+    # 默认关闭。会花钱、会动代码，必须用户显式打开，且随时可暂停。
+    "auto_exec": False,
     "daemon_enabled": True,
 }
 
