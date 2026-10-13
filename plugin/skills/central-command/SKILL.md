@@ -50,17 +50,23 @@ python3 "$KGCTL" dash --open            # 生成并打开 docs/CONTROL_PLANE.htm
 冲突分支不要逐条问用户。先收拢成族，再逐族解：
 
 ```bash
+python3 "$KGCTL" supersede --fast      # 归档「内容已全部在 main」的重复分支（不动代码）
+python3 "$KGCTL" port --auto --go      # 把「只差 1–2 个提交」的冲突分支移植到 main，冲突即整体放弃
 python3 "$KGCTL" converge          # 预演：把抢同一批文件的冲突分支收成几个 convergence 任务
 python3 "$KGCTL" converge --go     # 建 convergence 分支/worktree（不改 main、不改源分支）
 python3 "$KGCTL" context <分支>    # 给该分支写一份版本化 Context Pack
 ```
 
-`converge` 只新建 WIP 工作区，冲突原样保留（JSONL 走行级并集）；一个 agent 面对的是
-少数几个 convergence 分支，而不是几十条“要不要合”。`tick` 已自动包含这一步。
+先用 `supersede` 摘掉「内容其实早进 main」的假冲突（patch-id 判据，只写台账、不动代码、
+不动源分支），再用 `port` 把「只差几个提交」的分支 cherry-pick 到当前 main（冲突即
+`--abort` 整体放弃，成功也走同一道构建门禁）。剩下的才是真需要语义判断的冲突：`converge`
+把它们合并成少数几个 WIP 工作区，冲突原样保留（JSONL 走行级并集）；一个 agent 面对的是
+少数几个 convergence 分支，而不是几十条“要不要合”。`tick` 已自动包含收拢与归档。
 
 ## 执行路径
 - `intake` / `tick` 之后，按 `next` 给出的优先级挑一条，在独立 worktree 里做；不碰别人在途文件。
 - 改完提交到该泳道分支；能干净合并、相关门禁通过就直接 `kgctl land <分支>`，不要把“能不能合”当问题回报给用户。
+- 分支冲突先别急着问用户：`supersede` 归档已落内容，`port` 自动移植只差几个提交的分支；只有真语义冲突才进 `converge` 逐族解。
 - 接手一条陌生分支前先 `kgctl context <分支>`，读它写出的主线/决策/相关未决问题/DoD，而不是靠聊天记忆。
 - 落盘后把进展写进真相层：`truthctl add progress "..."`（`KG_TRUTH_COMMIT=<sha>`、`KG_TRUTH_LANDED=1`）。
 - 问题修完写一条状态变更：`truthctl add ledger` 或直接更新对应条目的 `status=done`。

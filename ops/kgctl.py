@@ -19,9 +19,12 @@ kgctl —— 自动挡的唯一执行入口（stdlib only）
   5. 上下文不靠聊天记忆 -> `kgctl context <分支>`（版本化 Context Pack）
   6. 项目状态一眼可见   -> `kgctl dash`（docs/CONTROL_PLANE.html）/ `kgctl status`
   7. 工作区不靠人记忆   -> `kgctl reap --go` / `kgctl sync`
+  8. 假冲突不推给人     -> `kgctl supersede --go`（内容已全在 main）/ `kgctl port --go`
+                           （只差几个提交，移植到当前 main 后走同一道门禁）
 
 安全约定（硬编码，不可关）
   * `reap` 默认只预演，必须显式 `--go`。
+  * `port` 默认只预演；cherry-pick 冲突即整体放弃并回滚，不留半成品分支。
   * `land` 任何一步失败都丢弃，main 与源分支都不动；从不 force push、从不改写源分支历史。
   * `matrix/queue/status/sync/clash/inbox 读` 全部只读。
 """
@@ -366,15 +369,49 @@ def branch_net_zero(branch):
     return (not notes), notes
 
 
+def unlanded_commits(branch):
+    """分支上「main 里找不到等价改动」的提交（`git cherry` 的 `+` 行）。
+
+    判据是 patch-id，不是 commit sha：同一个改动只要在 main 上以任何形式落过
+    （cherry-pick / 手工重打 / squash），patch-id 就对得上，算已落。这正是
+    「分支基线太旧、内容其实早进 main」这类假冲突的判别器——它不被基线新旧干扰，
+    只看改动本身在不在 main。
+    """
+    out = git("cherry", MAIN, branch)
+    return [parts[1] for line in out.split("\n")
+            for parts in [line.split()]
+            if len(parts) > 1 and line.startswith("+")]
+
+
+def branch_content_landed(branch):
+    """分支想表达的内容，是不是已经全部在 main 里了。
+
+    两条独立判据，命中任意一条都算已落（都只读、都不动任何分支）：
+      * patch-id 等价：`git cherry` 里没有 `+` —— 每个提交都在 main 找到等价改动；
+      * 逐文件净零：分支相对自身 base 的增删行都能在 main 找到（见 branch_net_zero）。
+
+    第一条对「分支带着旧基线、文件内容整体落后于 main」更稳，第二条对「分支提交
+    被重排或拆分」更稳。取并集意味着判据更宽，所以只用于归档（不产生任何代码改动、
+    不改任何分支），不参与 land 的放行判断。
+    """
+    if not unlanded_commits(branch):
+        return True, ["patch-id 等价：分支的每个提交都能在 main 找到等价改动"]
+    return branch_net_zero(branch)
+
+
 def cmd_supersede(args):
     """把「独有内容已全部在 main」的分支自动归档，不再当作冲突推给用户。
 
     默认只预演；`kgctl supersede --go` 才写进展台账并推送 main。
     只处理 ahead>0 的分支（ahead==0 的走 `kgctl reap`）。
+    `--fast` 只跑 patch-id 判据（秒级），适合守护进程每个周期跑一遍；不带它则额外
+    做逐文件比对（分钟级，能多捞出「提交被重排/拆分」的分支）。
     """
     go = "--go" in args
+    fast = "--fast" in args
     rows = [r for r in scan() if r["kind"] != "MERGED"]
-    print("扫描「分支独有内容是否已全部在 main」……（逐文件比对，几十秒到几分钟）\n")
+    mode = "patch-id" if fast else "patch-id + 逐文件比对"
+    print(f"扫描「分支独有内容是否已全部在 main」……（{mode}）\n")
     done = already_superseded()
     if done:
         print(f"（真相台账里已有 {len(done)} 条 superseded 记录，将跳过）\n")
@@ -382,7 +419,11 @@ def cmd_supersede(args):
     for r in sorted(rows, key=lambda x: (x["nfiles"], x["ahead"])):
         if r["branch"] in done:
             continue
-        ok, notes = branch_net_zero(r["branch"])
+        if fast:
+            ok = not unlanded_commits(r["branch"])
+            notes = ["patch-id 等价"] if ok else []
+        else:
+            ok, notes = branch_content_landed(r["branch"])
         if ok:
             cands.append(r)
     if not cands:
@@ -450,6 +491,152 @@ def cmd_supersede(args):
 
 
 # ---------------------------------------------------------------- 输入：唯一入口
+
+def cmd_port(args):
+    """把冲突分支的「未落提交」移植到当前 main，能过同一道门禁就直接落盘。
+
+    为什么需要它：分支多起来以后，冲突队列真正的组成是两种——
+      (a) 分支只差一两个提交没进 main，但基线太旧，于是 merge-tree 报冲突；
+      (b) 分支真的和 main 改了同一处，需要人判断语义。
+    (a) 不需要人。把那几条未落提交按序 cherry-pick 到当前 main 上，遇到冲突就停手
+    放弃，跑通就交给 land 的同一道门禁。这样冲突队列只留下 (b)，用户要看的条目从
+    几十条降到真正需要判断的那几条。
+
+    安全约定：
+      * 只在独立 worktree（`<state>-port-<slug>`）里操作，main 与源分支都不动；
+      * cherry-pick 任一提交冲突就整体 --abort 并放弃，不猜、不用 ours/theirs；
+      * 移植完成仍走 `kgctl land` 的完整门禁（merge-tree 预检 + 真实构建 +
+        冲突标记扫描），门禁不过就丢弃，main 一动不动。
+    默认只预演，`--go` 才真做。
+    """
+    if not args:
+        sys.exit("用法: kgctl port <分支>|--auto [--max N] [--max-unlanded N] [--go]")
+    go = "--go" in args
+    auto = "--auto" in args
+    limit = 4
+    unlanded_max = 2
+    for i, a in enumerate(args):
+        if a == "--max" and i + 1 < len(args):
+            try:
+                limit = int(args[i + 1])
+            except ValueError:
+                pass
+        if a == "--max-unlanded" and i + 1 < len(args):
+            try:
+                unlanded_max = int(args[i + 1])
+            except ValueError:
+                pass
+    if auto:
+        # 自动挑一条「只差 1..unlanded_max 个提交」的冲突分支——这是最安全的一类：
+        # 改动面小，cherry-pick 若语义撞车会直接文本冲突并整体放弃，不去猜。
+        # KG_PORT_SKIP（冒号分隔的分支名）由守护进程传入：上一轮移植失败的分支本轮跳过，
+        # 不重复烧一次 cherry-pick + build 门禁。
+        skip = {b for b in os.environ.get("KG_PORT_SKIP", "").split(":") if b}
+        done = already_superseded()
+        cands = []
+        for r in scan():
+            if r["kind"] != "CONFLICT" or r["branch"] in done or r["branch"] in skip:
+                continue
+            n = len(unlanded_commits(r["branch"]))
+            if 1 <= n <= unlanded_max:
+                cands.append((n, r["nfiles"], r["branch"]))
+        if not cands:
+            skipped = f"（已跳过 {len(skip)} 个暂缓分支）" if skip else ""
+            print(f"auto-port：没有「只差 1–{unlanded_max} 个提交」的冲突分支。{skipped}")
+            return
+        n, nf, branch = sorted(cands)[0]
+        print(f"auto-port：选中 {branch}（未落 {n} 提交，{nf} 文件）")
+    else:
+        branch = args[0]
+        if not branch.startswith(BRANCH_PREFIX):
+            sys.exit(f"只允许 port {BRANCH_PREFIX}* 分支")
+    plus = unlanded_commits(branch)
+    if not plus:
+        print(f"{branch} 没有未落提交（内容已全部在 main）：用 supersede --go 归档即可。")
+        print(f"PORT_RESULT branch={branch} outcome=already")
+        return
+    print(f"{branch} 未落提交 {len(plus)} 条（main 里没有等价改动）：")
+    for sha in plus:
+        print(f"  {sha[:10]} {git('log', '-1', '--format=%s', sha)}")
+    if len(plus) > limit:
+        print(f"超过 --max {limit}：改动面太大，自动移植容易把「并集」猜成「二选一」。")
+        print(f"  需要时显式加 --max {len(plus)}，或先用 converge 让它和同族分支一起收口。")
+        print(f"PORT_RESULT branch={branch} outcome=too_big")
+        return
+    if not go:
+        print("预演结束。加 --go 会把这些提交移植到当前 main 上的一条新分支，"
+              "跑同一道构建门禁，过了才 land。")
+        return
+    if LOCK.exists():
+        sys.exit(f"已有 land/port/converge 在进行（{LOCK}）")
+    _align_main()
+    base = git("rev-parse", f"origin/{MAIN}") or git("rev-parse", MAIN)
+    slug = slugify(branch[len(BRANCH_PREFIX):])
+    new_branch = f"{BRANCH_PREFIX}port-{slug}"
+    wt = REPO.parent / f"{REPO.name}-port-{slug}"
+    if git("rev-parse", "--verify", new_branch):
+        print(f"× {new_branch} 已存在（可能是上一次移植留下的）。先确认/清理它再重跑。")
+        print(f"PORT_RESULT branch={branch} outcome=blocked")
+        return
+    if wt.exists():
+        print(f"× {wt} 已存在但不是本命令的产出，跳过。")
+        print(f"PORT_RESULT branch={branch} outcome=blocked")
+        return
+    add = subprocess.run(["git", "-C", str(REPO), "worktree", "add", "-b", new_branch,
+                          str(wt), base], capture_output=True, text=True)
+    if add.returncode != 0:
+        sys.exit(f"建 worktree 失败: {(add.stdout + add.stderr).strip()[:400]}")
+    _link_side_dirs(wt)
+    picked = 0
+    for sha in plus:
+        res = subprocess.run(["git", "-C", str(wt), "cherry-pick", "-x", sha],
+                             capture_output=True, text=True)
+        if res.returncode != 0:
+            subprocess.run(["git", "-C", str(wt), "cherry-pick", "--abort"],
+                           capture_output=True, text=True)
+            print(f"× 移植 {sha[:10]} 时冲突，已 abort："
+                  f"{(res.stdout + res.stderr).strip()[:400]}")
+            picked = -1
+            break
+        picked += 1
+        print(f"  picked {sha[:10]} {git('log', '-1', '--format=%s', sha)}")
+    if picked < 0:
+        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
+                       capture_output=True, text=True)
+        subprocess.run(["git", "-C", str(REPO), "branch", "-D", new_branch],
+                       capture_output=True, text=True)
+        print(f"  已回滚：{new_branch} 与它的 worktree 都不留，{branch} 原样不动。")
+        print(f"PORT_RESULT branch={branch} outcome=conflict")
+        return
+    # 移植后树和 base 一致 = 这些改动其实已经在 main 里（只是 patch-id 不同）。
+    # 这时不能交给 land：--no-ff 会产生一个空合并提交，污染历史。直接判重复。
+    tree_diff = subprocess.run(["git", "-C", str(wt), "diff", "--stat", base, new_branch],
+                               capture_output=True, text=True).stdout.strip()
+    if not tree_diff:
+        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
+                       capture_output=True, text=True)
+        subprocess.run(["git", "-C", str(REPO), "branch", "-D", new_branch],
+                       capture_output=True, text=True)
+        print(f"  移植后树与 {base[:8]} 完全一致：改动已在 main（patch-id 不同而已）。")
+        print(f"  已回滚 {new_branch}；用 supersede --go 归档 {branch} 即可。")
+        print(f"PORT_RESULT branch={branch} outcome=already")
+        return
+    print(f"→ 移植完成：{new_branch}（{picked} 提交，基于 {base[:8]}）。交给 land 跑门禁。")
+    # 用子进程跑 land：门禁失败时 land 会 sys.exit(1)，必须由本函数接住，
+    # 才能把移植分支与它的 worktree 一起回滚——不留无人认领的 codex/port-* 残留。
+    res = subprocess.run([sys.executable, str(Path(__file__).resolve()), "land", new_branch],
+                         capture_output=True, text=True)
+    print((res.stdout or "").rstrip())
+    if res.returncode != 0:
+        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
+                       capture_output=True, text=True)
+        subprocess.run(["git", "-C", str(REPO), "branch", "-D", new_branch],
+                       capture_output=True, text=True)
+        print(f"  land 未通过，已回滚 {new_branch} 与它的 worktree；{branch} 原样不动，main 未动。")
+        print(f"PORT_RESULT branch={branch} outcome=failed")
+        return
+    print(f"✓ {new_branch} 已通过门禁并落盘。源分支 {branch} 未改动。")
+    print(f"PORT_RESULT branch={branch} outcome=landed")
 
 def load_lanes():
     """泳道的物理含义 = 它认领哪些文件（默认实现；把分支换成 PR 后仍成立）。"""
@@ -1849,7 +2036,7 @@ CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route, "suggest":
         "matrix": cmd_matrix, "queue": cmd_queue, "converge": cmd_converge,
         "context": cmd_context, "dash": cmd_dash,
         "clash": cmd_clash, "reap": cmd_reap, "land": cmd_land, "supersede": cmd_supersede,
-        "sync": cmd_sync,
+        "port": cmd_port, "sync": cmd_sync,
         "status": cmd_status, "board": cmd_board, "next": cmd_next, "tick": cmd_tick}
 
 if __name__ == "__main__":

@@ -11,9 +11,15 @@
 
 安全子集（硬编码，不可关）
   * 只 land `kgctl queue` 列出的 CLEAN 分支（与 main 无冲突，且树里没有残留
-    conflict markers）。冲突分支**不自动合**。冲突不丢给你逐条裁决，而是由
+    conflict markers）。真正的语义冲突**不自动合**：冲突不丢给你逐条裁决，而是由
     `tick` 里的 `kgctl converge` 收拢成少数几个 convergence 任务（保留 markers），
     交给一个 agent 逐族解干净。
+  * 归档与移植（`auto_port`，默认关闭）：`supersede` 只把「独有内容已全部在
+    main」的分支标记为重复（只写台账、不动代码、不动源分支）；`port` 只把「只差
+    1..N 个提交」的冲突分支 cherry-pick 到当前 main，任何文本冲突即整体 abort，
+    成功也仍走同一道 build 门禁。两者都不猜语义、都不删数据；移植失败的分支记进
+    `port_blocked`，之后不再重复尝试。要在项目里打开，写
+    `ops/central.config.json` 的 `{"auto_port": {"enabled": true, "max_unlanded": 2}}`。
   * 每个分支仍走 `kgctl land` 的全部护栏：真实 build 门禁、origin/main 对齐、
     失败即丢弃、从不 force push。
   * 单实例锁 + 复用 kgctl 自己的 land 锁：不会和手动 land 抢。
@@ -69,6 +75,8 @@ DEFAULT_INTERVAL_MIN = 15
 DEFAULT_MAX_LAND = 3
 LAND_TIMEOUT = 1800
 TICK_TIMEOUT = 1800
+SUPERSEDE_TIMEOUT = 900
+PORT_TIMEOUT = 1800
 
 _stop = False
 
@@ -108,12 +116,13 @@ def log_block(title: str, rc: int, out: str) -> None:
         log("    " + line)
 
 
-def run_kgctl(args, timeout=TICK_TIMEOUT):
+def run_kgctl(args, timeout=TICK_TIMEOUT, env_extra=None):
     """调用 kgctl，返回 (rc, 合并后的 stdout+stderr)。"""
     cmd = [sys.executable, str(KGCTL), *args]
+    env = {**os.environ, **env_extra} if env_extra else None
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
-                           cwd=str(CODE_ROOT), timeout=timeout)
+                           cwd=str(CODE_ROOT), timeout=timeout, env=env)
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except subprocess.TimeoutExpired:
         return 124, f"kgctl {' '.join(args)} 超时（>{timeout}s）"
@@ -133,6 +142,47 @@ def save_state(state: dict) -> None:
     tmp = STATE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(STATE)
+
+
+def _state_repo():
+    """守护要读哪个项目的 ops/central.config.json：显式 KG_REPO 优先，其次插件 .mcp.json。"""
+    repo = os.environ.get("KG_REPO")
+    if repo:
+        return Path(repo).expanduser()
+    try:
+        data = json.loads((HERE.parent / ".mcp.json").read_text(encoding="utf-8"))
+        env = (data.get("mcpServers") or {}).get("codex-autopilot", {}).get("env") or {}
+        if env.get("KG_REPO"):
+            return Path(env["KG_REPO"]).expanduser()
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def auto_port_config() -> dict:
+    """状态根 ops/central.config.json 的 auto_port 段。
+
+    默认**关闭**：把「只差几个提交」的冲突分支自动 cherry-pick 到 main 属于契约扩展，
+    必须由项目在配置里显式打开。打开后每轮最多移植 1 条，任何文本冲突即整体放弃。
+    """
+    out = {"enabled": False, "max_unlanded": 2}
+    repo = _state_repo()
+    if not repo:
+        return out
+    try:
+        data = json.loads((repo / "ops" / "central.config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return out
+    cfg = data.get("auto_port")
+    if isinstance(cfg, bool):
+        out["enabled"] = cfg
+    elif isinstance(cfg, dict):
+        out["enabled"] = bool(cfg.get("enabled", False))
+        try:
+            out["max_unlanded"] = max(1, int(cfg.get("max_unlanded", 2)))
+        except (TypeError, ValueError):
+            pass
+    return out
 
 
 # ------------------------------------------------------------------ 通知
@@ -181,6 +231,8 @@ SUMMARY_RE = re.compile(r"其余 (\d+) 个：(\d+) 个已合并待回收、(\d+)
 UNRESOLVED_RE = re.compile(r"另有 (\d+) 个分支残留冲突标记")
 CONVERGE_PLAN_RE = re.compile(r"可收成 (\d+) 个 convergence 任务")
 CONVERGE_MADE_RE = re.compile(r"已生成 (\d+) 个 convergence 分支")
+SUPERSEDE_DONE_RE = re.compile(r"已归档 (\d+) 个重复分支")
+PORT_RESULT_RE = re.compile(r"PORT_RESULT branch=(\S+) outcome=(\w+)")
 
 
 def parse_queue(out: str):
@@ -254,6 +306,15 @@ def run_cycle(dry: bool, max_land: int) -> dict:
     convergence = parse_convergence(out)
     log(f"[converge] 可收拢族 {convergence['families']}，本轮新建 {convergence['made']}")
 
+    # 归档「内容已全部在 main」的重复分支。这一步只写台账（加法），不动任何代码，
+    # 也不动任何源分支，所以放进守护的安全子集。用 --fast（patch-id）保证秒级返回。
+    superseded = 0
+    src, sout = run_kgctl(["supersede", "--go", "--fast"], timeout=SUPERSEDE_TIMEOUT)
+    log_block("supersede", src, sout)
+    m = SUPERSEDE_DONE_RE.search(sout)
+    if m:
+        superseded = int(m.group(1))
+
     landed, failures = [], []
     if rc != 0 and not out.strip():
         failures.append(("(tick)", "tick_error"))
@@ -289,13 +350,38 @@ def run_cycle(dry: bool, max_land: int) -> dict:
         failures.append((target, kind))
         break
 
+    # 自动移植「只差几个提交」的冲突分支：cherry-pick 到当前 main，过门禁才落盘，
+    # 冲突即整体放弃。默认关闭，由状态根 ops/central.config.json 的 auto_port 打开。
+    # 试过且不行的分支记进 port_blocked，后续周期不再重复烧一次构建。
+    ported = []
+    port_blocked = dict(load_state().get("port_blocked") or {})
+    port_cfg = auto_port_config()
+    if not dry and port_cfg["enabled"] and not (rc != 0 and not out.strip()):
+        prc, pout = run_kgctl(["port", "--auto", "--go",
+                               "--max-unlanded", str(port_cfg["max_unlanded"])],
+                              timeout=PORT_TIMEOUT,
+                              env_extra={"KG_PORT_SKIP": ":".join(port_blocked)})
+        log_block("port(auto)", prc, pout)
+        pm = PORT_RESULT_RE.search(pout)
+        if pm:
+            pb, po = pm.group(1), pm.group(2)
+            if po == "landed":
+                ported.append(pb)
+                port_blocked.pop(pb, None)
+            else:
+                port_blocked[pb] = {"reason": po, "ts": _now()}
+    elif not port_cfg["enabled"]:
+        log("[port] auto_port 未开启（ops/central.config.json），跳过自动移植")
+
     # 落过盘就再刷一次控制面，让看板/快照反映新 main。
-    if landed and not dry:
+    if (landed or ported) and not dry:
         rc2, out2 = run_kgctl(["tick"])
         log_block("tick(post-land)", rc2, out2)
 
     result = {"ts": time.time(), "iso": _now(), "dry": dry,
               "summary": summary, "landed": landed, "failures": failures,
+              "superseded": superseded,
+              "ported": ported,
               "convergence": convergence}
 
     # ---- 通知：只在「完成 / 失败 / 新收拢出族」时出声，且去重 ----
@@ -308,6 +394,13 @@ def run_cycle(dry: bool, max_land: int) -> dict:
         notify("自动挡：已自动落盘",
                f"自动合入 {len(landed)} 个分支：{', '.join(landed[:3])}"
                + (" 等" if len(landed) > 3 else ""))
+    if superseded:
+        notify("自动挡：已归档重复分支",
+               f"{superseded} 个分支的改动已全部在 main，已归档，不再占用冲突队列")
+    if ported:
+        notify("自动挡：已自动移植落盘",
+               f"{len(ported)} 个「只差几个提交」的冲突分支已移植并落盘："
+               f"{', '.join(ported[:3])}")
     fail_sig = _sig(failures) if failures else None
     if failures and fail_sig != state.get("last_failure_sig"):
         target, kind = failures[0]
@@ -328,6 +421,9 @@ def run_cycle(dry: bool, max_land: int) -> dict:
     state["last_failure_sig"] = fail_sig
     state["convergence_families"] = convergence["families"]
     state["total_landed"] = int(state.get("total_landed", 0)) + len(landed)
+    state["total_superseded"] = int(state.get("total_superseded", 0)) + superseded
+    state["total_ported"] = int(state.get("total_ported", 0)) + len(ported)
+    state["port_blocked"] = port_blocked
     save_state(state)
 
     log(f"--- cycle done: landed={len(landed)} failures={len(failures)} "
@@ -557,6 +653,11 @@ def show_status() -> int:
         print(f"上一轮         {state.get('last_cycle_iso', '?')}"
               f"{'（dry-run）' if state.get('dry') else ''}")
         print(f"累计自动落盘   {state.get('total_landed', 0)} 个分支")
+        print(f"累计归档重复   {state.get('total_superseded', 0)} 个分支")
+        print(f"累计自动移植   {state.get('total_ported', 0)} 个分支")
+        blocked = state.get("port_blocked") or {}
+        if blocked:
+            print(f"移植暂缓       {len(blocked)} 个分支（冲突/门禁不过，等 converge）")
         last = state.get("last_landed") or []
         if last:
             print(f"最近落盘       {', '.join(last[:5])}")

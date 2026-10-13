@@ -11,5 +11,9 @@
     "cmd": "npm run build",
     "cwd": "frontend"
   },
+  "auto_port": {
+    "enabled": false,
+    "max_unlanded": 2
+  },
   "default_lane": "bug"
 }

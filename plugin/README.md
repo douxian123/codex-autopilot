@@ -59,6 +59,10 @@
 - 本机 stdio MCP **不是官方可移植形态**：官方插件市场的 MCP 要求 HTTPS 端点。本插件面向
   本机的 Codex（桌面 / CLI），用 compat 布局挂本机 stdio server。
 - **长期常驻调度**（关掉对话也自己跑）由 `ops/central_daemon.py` 承担。它只做安全子集：
-  路由 inbox + 自动 land 与 main 无冲突、且树里没有残留冲突标记的分支 + 把冲突分支
-  收拢成族（`converge`）。冲突分支不会自动合；未解干净的 convergence 分支也不会被
-  `queue` 列为可落盘，而是留在 convergence worktree 里交给 agent 逐族解。
+  路由 inbox + 自动 land 与 main 无冲突、且树里没有残留冲突标记的分支 + 归档「内容早已
+  全部在 main」的重复分支（`supersede --fast`）+ 把真冲突分支收拢成族（`converge`）。
+  真正的语义冲突不会自动合。可选打开 `auto_port`（`ops/central.config.json`）后，每轮会
+  把「只差 1–N 个提交」的冲突分支 cherry-pick 到当前 main，跑同一道构建门禁后落盘，
+  一遇文本冲突即整体放弃；移植失败的分支记进 `port_blocked` 不再重试。未解干净的
+  convergence 分支也不会被 `queue` 列为可落盘，而是留在 convergence worktree 里交给
+  agent 逐族解。

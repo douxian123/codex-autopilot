@@ -123,6 +123,8 @@ python3 "$PLUGIN/ops/kgctl.py" dash --open
 | `python3 "$PLUGIN/ops/kgctl.py" inbox "…"` | 只把一条零散需求追加进唯一入口（不归类，脚本/调试用） |
 | `python3 "$PLUGIN/ops/kgctl.py" tick` | 主循环：路由 inbox → 刷新真相 → 收拢冲突 → 刷看板/上下文 → 推真相层 |
 | `python3 "$PLUGIN/ops/kgctl.py" converge [--go]` | 把几十个冲突分支收成少数几个 convergence 任务（默认预演） |
+| `python3 "$PLUGIN/ops/kgctl.py" supersede [--fast] [--go]` | 归档「独有内容已全部在 `main`」的重复分支，不再占用冲突队列（`--fast` 只跑 patch-id，秒级） |
+| `python3 "$PLUGIN/ops/kgctl.py" port <分支> \| --auto [--max-unlanded N] [--go]` | 把冲突分支「只差几个提交」的未落改动 cherry-pick 到当前 `main`，过同一道门禁就落盘，冲突即整体放弃 |
 | `python3 "$PLUGIN/ops/kgctl.py" context <分支>` | 给分支写一份版本化 Context Pack（主线/决策/相关未决/DoD） |
 | `python3 "$PLUGIN/ops/kgctl.py" dash [--open]` | 生成（可打开）驾驶舱 `docs/CONTROL_PLANE.html` |
 | `python3 "$PLUGIN/ops/kgctl.py" next` | 只回答一个问题：现在最该动哪几条 |
@@ -148,7 +150,15 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 
 守护从插件目录的 `.mcp.json` 读绑定（`KG_REPO` / `KG_TRUNK`），不用再手动 export 环境变量。代价说清楚：它会真的在后台跑 `tick` / `land`，也就是会自己推进 `main`——走的是和手动一样的护栏，但确实不需要你在场。
 
-常驻自动做三件事：路由唯一入口里的散需求、把与 `main` 无冲突的分支串行落盘、把冲突分支收拢成族（`converge`）。每个落盘分支仍走 `kgctl land` 的全部护栏（真实构建、`origin/main` 对齐、失败即丢弃）。**有冲突的分支不会自动合**，而是被收进少数几个 convergence 分支，交给一个 agent 逐族解，不再让你逐条回答「这 60 个分支要不要合」。通知是去重的，只有「有分支落盘 / 有分支卡住 / 新收拢出冲突族」时才打扰你。运行目录 `~/.codex-autopilot/`。
+常驻自动做四件事：路由唯一入口里的散需求、把与 `main` 无冲突的分支串行落盘、**归档「内容其实早进 `main`」的重复分支（`supersede --fast`）**、把真冲突分支收拢成族（`converge`）。每个落盘分支仍走 `kgctl land` 的全部护栏（真实构建、`origin/main` 对齐、失败即丢弃）。**真正需要判断语义的冲突不会自动合**，而是被收进少数几个 convergence 分支，交给一个 agent 逐族解，不再让你逐条回答「这 60 个分支要不要合」。
+
+另有一档可选动作 `auto_port`（默认关闭）：守护每轮挑一条「只差 1–N 个提交」的冲突分支，把那几条未落提交 cherry-pick 到当前 `main` 上的一条新分支，跑同一道构建门禁，过了才落盘；cherry-pick 一撞文本冲突就整体 `--abort` 放弃，绝不猜「谁对」。它只消灭「基线旧、实际只差几个提交」这种假冲突，把冲突队列从几十条压到真正需要人判断的少数。在项目里 `ops/central.config.json` 写：
+
+```json
+{ "auto_port": { "enabled": true, "max_unlanded": 2 } }
+```
+
+移植失败的分支记进 `port_blocked`，后续周期不再重复烧一次门禁。通知是去重的，只有「有分支落盘 / 有重复分支被归档 / 有分支卡住 / 新收拢出冲突族」时才打扰你。运行目录 `~/.codex-autopilot/`。
 
 ## 运行机制
 
@@ -177,7 +187,9 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
                             v
             ┌────────────────────────────────────────────────────────────┐
             │  常驻（可选）  launchd 每 15 分钟：路由散需求 + land 无冲突   │
-            │  分支；冲突分支不碰。状态没变化就静默。                      │
+            │  分支 + 归档重复分支（supersede）+ 收拢冲突族（converge）。   │
+            │  打开 auto_port 还会自动移植「只差几个提交」的冲突分支。      │
+            │  状态没变化就静默。                                          │
             └────────────────────────────────────────────────────────────┘
 ```
 
@@ -187,7 +199,7 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 - **只追加，不改历史**。台账是 JSONL，状态变化写新记录；快照和看板都是自动生成物。
 - **合并串行**。`land` 一次只推一个分支，用 `git merge-tree --write-tree` 在**写之前**先模拟合并，再扫描分支自己的树里是否残留 `<<<<<<<` / `>>>>>>>`；任一命中都不动，能合才走构建门禁，构建失败就丢弃、`main` 一动不动。
 - **永远不动别人的工作区**。推进 `main` 引用用 `git update-ref`，从不 `checkout` / `reset` / `stash` 任何人的在途改动。
-- **项目相关的旋钮集中在一处**。主干分支名、分支前缀、落盘用的主干 worktree、构建门禁命令、泳道定义，全在 `ops/central.config.json`（环境变量可覆盖）；不配就用对「单仓 + `frontend` 子目录 + `npm run build`」开箱即用的默认值。
+- **项目相关的旋钮集中在一处**。主干分支名、分支前缀、落盘用的主干 worktree、构建门禁命令、泳道定义，全在 `ops/central.config.json`（环境变量可覆盖）；不配就用对「单仓 + `frontend` 子目录 + `npm run build`」开箱即用的默认值。自动移植是显式开关 `auto_port`（默认关闭）——把「只差几个提交的冲突分支自动 cherry-pick」当成契约扩展，要项目自己点头才开。
 
 ## 冲突怎么收口
 
@@ -196,7 +208,8 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 - `kgctl converge` 按「抢同一批文件」把冲突分支收成**少数几个 convergence 任务**（一个连通族 = 一个任务），而不是几十条待裁决项。
 - 每个 convergence 任务建一条 `codex/converge-<hash>` 分支和独立 worktree，把源分支相继并进去；冲突**原样保留**成 marker（JSONL 另做行级并集），`main` 和源分支都不动。
 - 未解干净的 convergence 分支不会进 `queue`，`land` 也会硬拒绝。它只能回到 convergence worktree 里解完、提交，再重新排队。
-- 于是交给一个 agent 的是「去解这一族的冲突」，不是「你告诉我该合哪个」。`kgctl tick` 已自动包含这一步。
+- 在收拢之前，先做两道**不用人判断**的过滤：`kgctl supersede` 用 patch-id 判「分支想表达的内容是否已全部在 `main`」——命中即归档，不再算冲突；`kgctl port` 把「只差 1–N 个提交」的未落改动按序 cherry-pick 到当前 `main`，冲突即整体 `--abort`，跑通就走同一道门禁落盘。两者都不猜语义：一个断言「已在 main」，一个让 git 自己判断「能不能干净套用」。
+- 于是交给一个 agent 的是「去解这一族的冲突」，不是「你告诉我该合哪个」。`kgctl tick` 已自动包含收拢与归档；`auto_port` 打开后移植也自动。
 
 ## 参考了什么
 
@@ -214,10 +227,11 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 ## 能力边界（诚实版）
 
 - 它**不保证**全自动。改产品方向、删数据、发布仍然要停下来问你，并给出「选 A 会怎样 / 选 B 会怎样」。
-- 常驻守护只做**安全子集**：路由散需求 + land 与 `main` 无冲突、且树里没有残留冲突标记的分支。其余分支不碰。
+- 常驻守护只做**安全子集**：路由散需求 + land 与 `main` 无冲突、且树里没有残留冲突标记的分支 + 归档「已全部在 main」的重复分支。真正的语义冲突不自动合：要么被收拢成族，要么（`auto_port` 打开时）先试一次无冲突 cherry-pick，冲突即放弃。
 - 本机 stdio MCP 是面向**本机** Codex 的形态；官方插件市场的 MCP 要求 HTTPS 端点，所以这里用的是本机 compat 布局。
 - 归类基于关键词 + 文件路径重叠 + 代码标识匹配，**是启发式，不是语义理解**。它可能判错泳道；判错不致命（只影响优先级和归属），你可以在 `ops/central.config.json` 里覆盖规则，或手工改台账。
 - 冲突收拢（`converge`）只做**机械合并**：建分支、并入源分支、保留冲突 marker。真正解冲突仍需一个 agent 在 convergence worktree 里做，它不假装能替你判断「谁对」。
+- 自动移植（`port` / `auto_port`）只保证「git 能干净套用且有等价判据」这一层，**不替你做语义合并**：只要 cherry-pick 有文本冲突或超出 `max_unlanded`，它就放弃，把分支留给 `converge` 或留给你。
 
 ## 目录
 
