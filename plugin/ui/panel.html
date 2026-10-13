@@ -711,11 +711,16 @@
     if (!text) return [];
     var t = String(text).trim();
     if (!t) return [];
-    var lines = t.split(/\r?\n/).map(function(x){return x.trim();}).filter(Boolean);
-    if (lines.length > 1) return lines.map(stripStepNum);
-    var parts = t.split(/(?:^|\s)(?=\d+\s*[\).\u3001]\s?)/).map(function(x){return x.trim();}).filter(Boolean);
-    if (parts.length > 1) return parts.map(stripStepNum);
-    return [t];
+    // 步骤可能写成换行分行，也可能是一行里用「；/;」或「1) 2)」串起来，统一拆干净再剥掉行首编号。
+    var chunks = t.split(/\r?\n|[；;]/).map(function(x){return x.trim();}).filter(Boolean);
+    var out = [];
+    chunks.forEach(function(ch){
+      ch.split(/(?:^|\s)(?=\d+\s*[\).\u3001]\s?)/).forEach(function(seg){
+        var v = stripStepNum(seg);
+        if (v) out.push(v);
+      });
+    });
+    return out.length ? out : [stripStepNum(t)];
   }
 
   var ITEM_LABEL = {bug:"bug", gate:"门禁", visual:"视觉", ux:"体验", arch:"架构", idea:"想法", reprocess:"待重排"};
