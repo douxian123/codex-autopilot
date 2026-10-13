@@ -533,19 +533,39 @@ def _changed_paths(wt: Path) -> list:
     return changed
 
 
-def _preserve_exec(repo, wt: Path, branch: str, rid: str, reason: str, blocked: dict) -> dict:
+def _git_add_retry(wt: Path, paths: list, attempts: int = 3, delay: float = 2.0):
+    """显式 git add；对 index.lock / 瞬时锁竞争重试几次，并返回最后一次 stderr。
+
+    2026-10-13 出现过一次「codex 退出码=0，git add 却失败」的落盘丢弃：
+    当时 add_fail 没留下任何 stderr，事后无法诊断（重跑又正常）。这里加上
+    重试 + 保留 stderr：既扛住瞬时锁竞争，也让下次真失败有据可查。
+    """
+    err = ""
+    for i in range(attempts):
+        rc, _, err = _git(wt, "add", "--", *paths)
+        if rc == 0:
+            return 0, ""
+        if i < attempts - 1:
+            log(f"[exec] git add 第 {i+1} 次失败（{(err or '')[:160]}），{delay:.0f}s 后重试")
+            time.sleep(delay)
+    return 1, err
+
+
+def _preserve_exec(repo, wt: Path, branch: str, rid: str, reason: str, blocked: dict,
+                   detail: str = "") -> dict:
     """保留一个执行 worktree：有改动就提交成 WIP，绝不因为失败删掉在途工作。"""
     changed = _changed_paths(wt)
     commit = None
     if changed:
         # add/commit 失败也必须保留 worktree；工作区里的改动本身就是最后的现场。
-        if _git(wt, "add", "--", *changed)[0] == 0:
+        if _git_add_retry(wt, changed)[0] == 0:
             git_rc, _, _ = _git(
                 wt, "commit", "-m", f"wip({rid}): {reason}, partial work preserved")
             if git_rc == 0:
                 _, commit, _ = _git(wt, "rev-parse", "HEAD")
     blocked[rid] = {"reason": reason, "branch": branch, "worktree": str(wt),
-                    "commit": commit, "preserve": bool(changed), "ts": _now()}
+                    "commit": commit, "preserve": bool(changed),
+                    "detail": (detail or "")[:400], "ts": _now()}
     return {"id": rid, "outcome": reason, "branch": branch,
             "worktree": str(wt), "commit": commit, "preserve": bool(changed)}
 
@@ -624,8 +644,10 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
         _cleanup_exec(repo, wt, branch)
         result["outcome"] = "no_changes"
         return result
-    if _git(wt, "add", "--", *changed)[0] != 0:
-        return _preserve_exec(repo, wt, branch, rid, "add_fail", blocked)
+    add_rc, add_err = _git_add_retry(wt, changed)
+    if add_rc != 0:
+        log(f"[exec] {rid} git add 失败，重试后仍失败：{(add_err or '')[:300]}")
+        return _preserve_exec(repo, wt, branch, rid, "add_fail", blocked, detail=add_err)
     title = (item.get("title") or "").strip().replace("\n", " ")[:60]
     msg = f"exec({item.get('id')}): {title}".rstrip()
     if _git(wt, "commit", "-m", msg)[0] != 0:
