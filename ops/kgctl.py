@@ -588,14 +588,25 @@ def cmd_port(args):
         sys.exit(f"建 worktree 失败: {(add.stdout + add.stderr).strip()[:400]}")
     _link_side_dirs(wt)
     picked = 0
+    already = 0
     for sha in plus:
         res = subprocess.run(["git", "-C", str(wt), "cherry-pick", "-x", sha],
                              capture_output=True, text=True)
         if res.returncode != 0:
+            blob = res.stdout + res.stderr
+            # 分支提交可能已被 hand 落地、或本身就是 `index on main:` / `WIP on`
+            # 这类备份提交，cherry-pick 后变成 empty —— 这不是语义冲突，别拿它污染
+            # 冲突队列，也不能 abort 掉前面已经 pick 成功的提交。就地 skip 继续。
+            if "previous cherry-pick is now empty" in blob or "nothing to commit" in blob:
+                subprocess.run(["git", "-C", str(wt), "cherry-pick", "--skip"],
+                               capture_output=True, text=True)
+                already += 1
+                print(f"  skip  {sha[:10]}（empty，等价改动已在 main）")
+                continue
             subprocess.run(["git", "-C", str(wt), "cherry-pick", "--abort"],
                            capture_output=True, text=True)
             print(f"× 移植 {sha[:10]} 时冲突，已 abort："
-                  f"{(res.stdout + res.stderr).strip()[:400]}")
+                  f"{blob.strip()[:400]}")
             picked = -1
             break
         picked += 1
@@ -617,7 +628,10 @@ def cmd_port(args):
                        capture_output=True, text=True)
         subprocess.run(["git", "-C", str(REPO), "branch", "-D", new_branch],
                        capture_output=True, text=True)
-        print(f"  移植后树与 {base[:8]} 完全一致：改动已在 main（patch-id 不同而已）。")
+        if picked == 0 and already:
+            print(f"  分支全部 {already} 条提交 cherry-pick 后为空：内容已在 main。")
+        else:
+            print(f"  移植后树与 {base[:8]} 完全一致：改动已在 main（patch-id 不同而已）。")
         print(f"  已回滚 {new_branch}；用 supersede --go 归档 {branch} 即可。")
         print(f"PORT_RESULT branch={branch} outcome=already")
         return

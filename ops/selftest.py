@@ -57,6 +57,12 @@ def main():
         (repo / "app.txt").write_text("main\n", encoding="utf-8")
         git(repo, "add", "app.txt")
         git(repo, "commit", "-q", "-m", "init")
+        # port --go 会 _align_main()，需要一个 origin/main 才能跑；给 fixture 配一个裸远端，
+        # 否则测试本身会因为「没有 origin」而失败，测不到目标行为。
+        origin = root / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
 
         git(repo, "checkout", "-q", "-b", "codex/good")
         (repo / "good.txt").write_text("clean\n", encoding="utf-8")
@@ -83,6 +89,34 @@ def main():
         good = kgctl(repo, trunk, "land", "codex/good", "--dry")
         if good.returncode != 0 or "无冲突" not in good.stdout:
             raise AssertionError(f"干净分支 dry-run 失败:\n{good.stdout}\n{good.stderr}")
+
+        # 回归：分支提交的等价内容已在 main，git cherry 因 patch-id 不同仍报 +。
+        # port --go 必须自决：无论判 already 还是 conflict，都不能留下 port 分支/worktree，
+        # 也不能把源分支或 main 弄脏。锁住「失败即整体回滚」这条底线。
+        git(repo, "checkout", "-q", "main")
+        doc_first = git(repo, "rev-parse", "HEAD").stdout.strip()
+        (repo / "doc.txt").write_text("L1\nL2\n", encoding="utf-8")
+        git(repo, "add", "doc.txt")
+        git(repo, "commit", "-q", "-m", "main adds superset doc")
+        # 从 doc.txt 存在之前的 main 拉分支，只加 main 已有内容的子集：patch-id 不同，
+        # 但 cherry-pick 到当前 main 是空操作。
+        git(repo, "checkout", "-q", "-b", "codex/dup", doc_first)
+        (repo / "doc.txt").write_text("L1\n", encoding="utf-8")
+        git(repo, "add", "doc.txt")
+        git(repo, "commit", "-q", "-m", "backup: doc subset already on main")
+        git(repo, "checkout", "-q", "main")
+        git(repo, "push", "-q", "origin", "main")
+        port_dup = kgctl(repo, trunk, "port", "codex/dup", "--go")
+        if "未落提交 1 条" not in port_dup.stdout:
+            raise AssertionError(f"fixture 没造出 patch-id 不匹配的未落提交:\n{port_dup.stdout}")
+        if "PORT_RESULT" not in (port_dup.stdout + port_dup.stderr):
+            raise AssertionError(f"port 没有给出可判定的 PORT_RESULT:\n{port_dup.stdout}\n{port_dup.stderr}")
+        if "outcome=conflict" in (port_dup.stdout + port_dup.stderr) and "已回滚" not in port_dup.stdout:
+            raise AssertionError(f"conflict 未整体回滚:\n{port_dup.stdout}")
+        leftover = [q.name for q in root.iterdir()
+                    if q.is_dir() and "-port-" in q.name]
+        if leftover:
+            raise AssertionError(f"already 判定未清理 port worktree: {leftover}")
 
 
         # 回归：冲突路径落在被 ignore 的目录里。目录整体被 .gitignore 命中、但文件是
