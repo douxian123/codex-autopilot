@@ -759,8 +759,12 @@ def open_resolve_tasks():
         data = json.loads((repo / "ops" / "tasks" / "resolve.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
-    done = {"landed", "abandoned"}
-    return [t for t in (data.get("tasks") or []) if t.get("status") not in done]
+    tasks = data.get("tasks") or []
+    settled = {t.get("slug") for t in tasks if t.get("status") in ("landed", "abandoned")}
+    settled |= {t.get("branch") for t in tasks if t.get("status") in ("landed", "abandoned")}
+    return [t for t in tasks
+            if t.get("status") in ("needs_agent", "gate_fail")
+            and t.get("slug") not in settled and t.get("branch") not in settled]
 
 
 def show_status() -> int:
