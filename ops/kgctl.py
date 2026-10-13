@@ -2112,7 +2112,8 @@ def _align_main_ref_to_origin(new: str = "") -> str:
 # supersede 先提交它们再落盘，而不是因为「主干有未提交改动」直接拒绝执行——
 # 后者曾经让每一次 `kgctl tick` 都顺手把 land 锁死。
 TRUTH_PATHS = ("ops/truth", "ops/tasks", "ops/context", "docs/PROJECT_STATUS.md",
-               "docs/CONTROL_BOARD.md", "docs/CONTROL_PLANE.html")
+               "docs/CONTROL_BOARD.md", "docs/CONTROL_PLANE.html",
+               "docs/PRODUCT_MAINLINE.md")
 TRUTH_COMMIT_RE = re.compile(r"^(chore\(truth\)|train: (sync|merge))")
 
 
