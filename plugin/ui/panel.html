@@ -403,7 +403,7 @@
     renderProduct(s.product_state || {});
     renderJudgments(s.judgments || []);
     renderVerify(s.last_verification);
-    renderRoadmap(s.roadmap || []);
+    renderRoadmap(s.roadmap || [], s.mainline || {});
     renderAcceptance(s.human_acceptance || [], s.machine_verified || []);
     renderProgress(s.doing_items || [], s.todo_items || [], s.todo_count || 0);
     renderMainline(s.mainline || {});
@@ -476,9 +476,32 @@
   var ROAD_LABEL = {done:"已完成", doing:"进行中", next:"下一步", todo:"未开始"};
   var ROAD_CLASS = {done:"done", doing:"doing", next:"next", todo:"todo"};
   var MARK = {done:"\u2713", doing:"\u25cf", next:"\u25cf", todo:"\u25cb"};
-  function renderRoadmap(road){
+  function renderRoadmap(road, ml){
+    ml = ml || {};
     var box = el("roadmapBox"); if (!box) return; box.innerHTML = "";
     if (!road.length){
+      var path = ml.path || [];
+      if (path.length){
+        // 主线已声明阶段，但还没拆成带状态的实现路线：先把阶段如实列出来，不留空箱。
+        var stage = document.createElement("div"); stage.className = "meta";
+        stage.textContent = ml.stage ? ("当前阶段：" + ml.stage) : "";
+        if (stage.textContent) box.appendChild(stage);
+        var ulp = document.createElement("ul"); ulp.className = "road";
+        path.forEach(function(p){
+          var li = document.createElement("li"); li.className = "todo";
+          var mk = document.createElement("span"); mk.className = "mk"; mk.textContent = "\u25cb";
+          var body = document.createElement("div");
+          var sb = document.createElement("div"); sb.className = "sb";
+          var nm = document.createElement("span"); nm.className = "nm"; nm.textContent = (p && p.step) ? p.step : String(p);
+          sb.appendChild(nm); body.appendChild(sb);
+          li.appendChild(mk); li.appendChild(body); ulp.appendChild(li);
+        });
+        box.appendChild(ulp);
+        var f = document.createElement("div"); f.className = "meta";
+        f.textContent = "这是主线声明的产品阶段；等 AI 把它拆成带状态的实现路线后，每一步到哪了都会显示在这里。";
+        box.appendChild(f);
+        return;
+      }
       box.innerHTML = '<div class="empty">AI 还没拆出产品路线。等它把讨论综合进 mainline.json 的 roadmap 后，这里会显示「这条路线怎么走、每一步到哪了」。</div>';
       return;
     }

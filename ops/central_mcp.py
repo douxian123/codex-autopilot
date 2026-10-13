@@ -544,6 +544,7 @@ def _mainline_summary(limit=6):
         "stage": ml.get("stage"),
         "north_star": ml.get("north_star"),
         "focus": (ml.get("current_focus") or [])[:4],
+        "path": ml.get("path") or [],
         "roadmap": _roadmap(),
         "doc": str(doc.relative_to(base)) if doc.exists() else None,
         "open_count": len(opens),
