@@ -63,6 +63,8 @@ KGCTL = HERE / "kgctl.py"
 
 from plugin_binding import apply_plugin_env  # noqa: E402
 
+import control_state  # noqa: E402
+
 # KG_REPO（账本）/ KG_TRUNK（落盘主干）优先取显式环境变量，其次读插件 .mcp.json。
 apply_plugin_env()
 
@@ -182,10 +184,13 @@ def auto_port_config() -> dict:
     out = {"enabled": False, "max_unlanded": 2}
     repo = _state_repo()
     if not repo:
+        out["enabled"] = bool(control_state.load().get("auto_port", False))
         return out
+    ctrl_port = control_state.load().get("auto_port", False)
     try:
         data = json.loads((repo / "ops" / "central.config.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        out["enabled"] = bool(ctrl_port)
         return out
     cfg = data.get("auto_port")
     if isinstance(cfg, bool):
@@ -196,6 +201,9 @@ def auto_port_config() -> dict:
             out["max_unlanded"] = max(1, int(cfg.get("max_unlanded", 2)))
         except (TypeError, ValueError):
             pass
+    # 用户级开关拥有最终否决权：面板上关掉 auto_port，项目配置打开也不生效。
+    if not control_state.load().get("auto_port", False):
+        out["enabled"] = False
     return out
 
 
@@ -210,10 +218,12 @@ def auto_resolve_config() -> dict:
     out = {"enabled": True, "max_files": 8, "max_lines": 1200}
     repo = _state_repo()
     if not repo:
+        out["enabled"] = bool(control_state.load().get("auto_resolve", True))
         return out
     try:
         data = json.loads((repo / "ops" / "central.config.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        out["enabled"] = bool(control_state.load().get("auto_resolve", True))
         return out
     cfg = data.get("auto_resolve")
     if isinstance(cfg, bool):
@@ -225,6 +235,9 @@ def auto_resolve_config() -> dict:
                 out[key] = max(1, int(cfg.get(key, out[key])))
             except (TypeError, ValueError):
                 pass
+    # 用户级开关拥有最终否决权：面板上关掉 auto_resolve，项目配置打开也不生效。
+    if not control_state.load().get("auto_resolve", True):
+        out["enabled"] = False
     return out
 
 
@@ -332,6 +345,22 @@ def classify_land(out: str, rc: int) -> str:
 
 
 def run_cycle(dry: bool, max_land: int) -> dict:
+    """用户可见的一轮：先过「暂停」闸门，再调用真正的周期实现。
+
+    暂停语义（面板「暂停」按钮就是写这个开关）：
+      * 暂停时**不启动任何新周期** —— 不 tick、不 land、不 resolve。
+      * 正在跑的周期允许安全收尾，不会被从中间砍断（land 自带完整门禁）。
+      * 因此这里是最外层也最可靠的闸门；`_run_cycle` 里的逐子系统闸门是第二道保险，
+        防止别的调用方绕过本函数直接进内部实现。
+    """
+    if control_state.is_paused():
+        log("[pause] 已暂停：本轮不启动任何新工作（面板可恢复）")
+        return {"ts": time.time(), "iso": _now(), "dry": dry,
+                "paused": True, "summary": {}, "landed": [], "failures": []}
+    return _run_cycle(dry, max_land)
+
+
+def _run_cycle(dry: bool, max_land: int) -> dict:
     """一个周期：刷新控制面 -> 串行落盘安全子集 -> 按需通知。返回本轮结果。"""
     if dry:
         # 真预演：只问队列，不 tick（tick 会提交并推送真相层）、不 land、不通知。
@@ -345,6 +374,10 @@ def run_cycle(dry: bool, max_land: int) -> dict:
                 "summary": summary, "landed": [], "failures": []}
 
     log("--- cycle start (live) ---")
+    if control_state.is_paused():
+        log("[pause] 周期开始前被暂停：只刷新状态，不做路由/落盘")
+        return {"ts": time.time(), "iso": _now(), "dry": dry,
+                "paused": True, "summary": {}, "landed": [], "failures": []}
     rc, out = run_kgctl(["tick"])
     log_block("tick", rc, out)
     convergence = parse_convergence(out)
@@ -363,9 +396,10 @@ def run_cycle(dry: bool, max_land: int) -> dict:
     if rc != 0 and not out.strip():
         failures.append(("(tick)", "tick_error"))
 
+    auto_land = control_state.load().get("auto_land", True)
     summary = {"other": 0, "merged": 0, "conflict": 0, "unresolved": 0}
     attempts = 0
-    while attempts < max_land:
+    while auto_land and attempts < max_land:
         rc, qout = run_kgctl(["queue"])
         clean, summary = parse_queue(qout)
         if rc != 0:
@@ -535,6 +569,17 @@ def run_cycle(dry: bool, max_land: int) -> dict:
 
     log(f"--- cycle done: landed={len(landed)} failures={len(failures)} "
         f"conflict={summary['conflict']} converge_families={convergence['families']} ---")
+    control_state.append_event(
+        "cycle_done",
+        landed=list(landed),
+        ported=list(ported),
+        superseded=superseded,
+        resolved_tasks=list(resolved_tasks),
+        resolve_gate_fail=list(resolve_gate_fail),
+        failures=[{"target": t, "kind": k} for t, k in failures],
+        conflict=summary.get("conflict"),
+        merged=summary.get("merged"),
+    )
     return result
 
 
@@ -841,12 +886,18 @@ def loop(interval_min: int, max_land: int, dry: bool) -> int:
                 log(f"× 本轮异常（已吞掉，下轮继续）：{exc!r}")
             if _stop:
                 break
+            was_paused = control_state.is_paused()
             sleep_for = max(5, interval_min * 60 - (time.time() - started))
-            log(f"下一轮 {sleep_for/60:.1f} 分钟后")
+            log(f"下一轮 {sleep_for/60:.1f} 分钟后"
+                f"{'（当前暂停中）' if was_paused else ''}")
             slept = 0.0
             while slept < sleep_for and not _stop:
                 time.sleep(min(5.0, sleep_for - slept))
                 slept += 5.0
+                # 面板里恢复运行后，最多 5 秒就重新进入下一轮，不必等满整个周期。
+                if was_paused and not control_state.is_paused():
+                    log("[pause] 已恢复运行，提前进入下一轮")
+                    break
     finally:
         release_lock()
         log("常驻退出")

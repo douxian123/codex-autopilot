@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Codex 自动挡</title>
+<style>
+  :root{
+    --bg:#f4f5f7; --card:#ffffff; --ink:#15181d; --ink2:#5b6472; --ink3:#8b93a1;
+    --line:#e4e7ec; --line2:#eef0f4;
+    --brand:#2f6df6; --brand-soft:#eaf1ff;
+    --ok:#1f9d63; --ok-soft:#e7f7ef;
+    --warn:#c9770a; --warn-soft:#fdf1df;
+    --pause:#5b6472; --pause-soft:#eef0f4;
+    --err:#c0392b; --err-soft:#fdeceb;
+    --radius:12px;
+    --font:-apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{font-family:var(--font);background:var(--bg);color:var(--ink);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:720px;margin:0 auto;padding:16px 16px 28px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;margin-bottom:12px}
+  h1{font-size:16px;margin:0}
+  h2{font-size:13px;margin:0 0 10px;color:var(--ink2);font-weight:600;letter-spacing:0}
+  p{margin:0 0 8px}
+  .muted{color:var(--ink2)}
+  .small{font-size:12.5px}
+  .tiny{font-size:12px;color:var(--ink3)}
+  /* header */
+  .top{display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+  .brandmark{width:26px;height:26px;border-radius:8px;background:linear-gradient(160deg,#2f6df6,#5b93ff);display:grid;place-items:center;color:#fff;font-size:13px;font-weight:700;flex:0 0 auto}
+  .top .grow{flex:1 1 120px;min-width:0}
+  .top .sub{font-size:12px;color:var(--ink3)}
+  a.textlink{color:var(--brand);text-decoration:none;font-size:12.5px}
+  a.textlink:hover{text-decoration:underline}
+  button{font-family:inherit}
+  .btn{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:9px;padding:8px 13px;font-size:13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+  .btn:hover{background:#f8f9fb}
+  .btn:disabled{opacity:.55;cursor:default}
+  .btn-primary{background:var(--brand);border-color:var(--brand);color:#fff}
+  .btn-primary:hover{background:#2158d6}
+  .btn-danger{color:var(--err);border-color:#f0c9c4;background:#fff}
+  .btn-danger:hover{background:var(--err-soft)}
+  .btn-ghost{border-color:transparent;background:transparent;color:var(--ink2);padding:6px 8px}
+  .btn-ghost:hover{background:var(--line2)}
+  /* status */
+  .statusrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto;background:var(--ok)}
+  .s-working .dot{background:var(--brand)}
+  .s-paused .dot{background:var(--pause)}
+  .s-blocked .dot{background:var(--warn)}
+  .s-error .dot{background:var(--err)}
+  .s-session_only .dot{background:var(--warn)}
+  .badge{border-radius:999px;padding:2px 9px;font-size:12px;font-weight:600;background:var(--ok-soft);color:var(--ok)}
+  .s-working .badge{background:var(--brand-soft);color:var(--brand)}
+  .s-paused .badge{background:var(--pause-soft);color:var(--pause)}
+  .s-blocked .badge,.s-session_only .badge{background:var(--warn-soft);color:var(--warn)}
+  .s-error .badge{background:var(--err-soft);color:var(--err)}
+  .status-time{margin-left:auto;color:var(--ink3);font-size:12px}
+  .explain{margin-top:12px;border-top:1px solid var(--line2);padding-top:12px;display:grid;gap:8px}
+  .explain .row{display:grid;grid-template-columns:64px 1fr;gap:10px}
+  .explain .k{color:var(--ink3);font-size:12.5px}
+  .need{margin-top:10px;border-radius:9px;padding:9px 12px;background:var(--brand-soft);color:#1f4fd0;font-size:12.5px}
+  .need.warn{background:var(--warn-soft);color:var(--warn)}
+  /* used guide */
+  .steps{display:grid;gap:10px;margin:2px 0 0;padding:0;list-style:none}
+  .steps li{display:grid;grid-template-columns:24px 1fr;gap:10px;align-items:start}
+  .stepn{width:24px;height:24px;border-radius:50%;background:var(--brand-soft);color:var(--brand);display:grid;place-items:center;font-size:12.5px;font-weight:700;flex:0 0 auto}
+  .steps b{font-weight:600}
+  .callout{margin-top:12px;border:1px dashed var(--line);border-radius:9px;padding:10px 12px;background:#fafbfc}
+  .callout .quote{font-size:13px;color:var(--ink)}
+  .callout .hint{font-size:12px;color:var(--ink3);margin-top:6px}
+  /* counters */
+  .counters{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .metric{background:#fafbfc;border:1px solid var(--line2);border-radius:10px;padding:11px 12px}
+  .metric .n{font-size:20px;font-weight:700;font-variant-numeric:tabular-nums}
+  .metric .l{font-size:12px;color:var(--ink2);margin-top:1px}
+  /* actions */
+  .actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .actions .grow{flex:1 1 auto}
+  .toast{margin-top:10px;font-size:12.5px;color:var(--ink2);min-height:18px}
+  .toast.ok{color:var(--ok)}
+  .toast.err{color:var(--err)}
+  /* advanced */
+  #advanced{display:none}
+  body.adv #advanced{display:block}
+  .switchrow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line2)}
+  .switchrow:last-child{border-bottom:0}
+  .switchrow .t{font-size:13px}
+  .switchrow .d{font-size:12px;color:var(--ink3);margin-top:2px}
+  .sw{position:relative;width:40px;height:23px;border-radius:999px;background:#cfd5de;border:0;cursor:pointer;flex:0 0 auto;transition:background .15s}
+  .sw::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
+  .sw.on{background:var(--brand)}
+  .sw.on::after{left:19px}
+  .sw:disabled{opacity:.5;cursor:default}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}
+  .kv{background:#fafbfc;border:1px solid var(--line2);border-radius:9px;padding:9px 11px}
+  .kv .l{font-size:12px;color:var(--ink3)}
+  .kv .v{font-size:14px;font-weight:600;font-variant-numeric:tabular-nums;margin-top:1px}
+  .list{margin:0;padding:0;list-style:none}
+  .list li{padding:9px 0;border-bottom:1px solid var(--line2);font-size:12.5px;display:flex;gap:8px;align-items:baseline}
+  .list li:last-child{border-bottom:0}
+  .list .tag{font-size:11.5px;border-radius:6px;padding:1px 7px;background:var(--brand-soft);color:var(--brand);white-space:nowrap}
+  .list .tag.warn{background:var(--warn-soft);color:var(--warn)}
+  .list .tag.err{background:var(--err-soft);color:var(--err)}
+  .list .grow{flex:1 1 auto;min-width:0;word-break:break-word}
+  .list .when{color:var(--ink3);font-size:11.5px;white-space:nowrap}
+  .empty{color:var(--ink3);font-size:12.5px;padding:6px 0}
+  .foot{margin-top:4px;text-align:center}
+  .sep{height:1px;background:var(--line2);margin:12px 0}
+  @media (max-width:460px){ .counters{grid-template-columns:1fr 1fr} .status-time{margin-left:0;width:100%} }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div class="brandmark">自</div>
+    <div class="grow">
+      <h1>Codex 自动挡</h1>
+      <div class="sub" id="subtitle">正在读取状态…</div>
+    </div>
+    <a href="#" class="textlink" id="refresh">刷新</a>
+  </div>
+
+  <!-- 1) 怎么用：小白第一眼就懂 -->
+  <section class="card" id="guide">
+    <h2>怎么用</h2>
+    <p style="margin-bottom:10px">你平时打字的那个 <b>Codex 输入框，就是总输入框</b>。不用新建对话，也不用挑分支、挑角色。</p>
+    <ol class="steps">
+      <li><span class="stepn">1</span><div>把看到的零散问题<b>原样说出来</b>就行——视觉不对、体验别扭、冒出一个 bug，都可以一起丢过来。</div></li>
+      <li><span class="stepn">2</span><div>自动挡负责<b>归类、记录、追踪</b>，并把和主线不冲突、检查通过的改动<b>自己合好</b>。</div></li>
+      <li><span class="stepn">3</span><div>只有<b>改产品方向、删数据、发布</b>这类要拍板的事，它才会停下来问你。</div></li>
+    </ol>
+    <div class="callout">
+      <div class="quote">“左边导航排版坏了，顺便这个按钮点着没反应，另外首页有点慢。”</div>
+      <div class="hint">就这样一句话全发出去，不用分类，也不用想它该进哪个对话或分支。</div>
+    </div>
+  </section>
+
+  <!-- 2) 当前状态 -->
+  <section class="card" id="statusCard">
+    <div class="statusrow">
+      <span class="dot"></span>
+      <span class="badge" id="stateLabel">读取中</span>
+      <span class="status-time" id="statusTime"></span>
+    </div>
+    <div class="explain">
+      <div class="row"><div class="k">正在做</div><div id="doing">—</div></div>
+      <div class="row"><div class="k">为什么</div><div id="why">—</div></div>
+      <div class="row"><div class="k">最近</div><div id="recent">—</div></div>
+    </div>
+    <div class="need" id="need">—</div>
+  </section>
+
+  <!-- 3) 替你做了什么 -->
+  <section class="card">
+    <h2>它替你做了这些</h2>
+    <div class="counters">
+      <div class="metric"><div class="n" id="cReceived">0</div><div class="l">收到的零散反馈</div></div>
+      <div class="metric"><div class="n" id="cLanded">0</div><div class="l">自动合入的分支</div></div>
+      <div class="metric"><div class="n" id="cResolved">0</div><div class="l">拆解/收口的冲突</div></div>
+    </div>
+    <p class="tiny" style="margin-top:10px">没有让新手去选分支、等合并、一个个点验收——这些由它自己串起来。</p>
+  </section>
+
+  <!-- 4) 控制 -->
+  <section class="card">
+    <div class="actions">
+      <button class="btn btn-danger" id="pauseBtn">暂停</button>
+      <button class="btn" id="runBtn">立即检查一轮</button>
+      <span class="grow"></span>
+      <button class="btn btn-ghost" id="advBtn">高级 ▾</button>
+    </div>
+    <div class="toast" id="toast"></div>
+  </section>
+
+  <!-- 5) 高级（默认折叠） -->
+  <div id="advanced">
+    <section class="card">
+      <h2>自动动作</h2>
+      <div class="switchrow">
+        <div><div class="t">自动合入安全改动</div><div class="d">只合和主线无冲突、且门禁通过的分支</div></div>
+        <button class="sw" data-key="auto_land" aria-label="自动合入"></button>
+      </div>
+      <div class="switchrow">
+        <div><div class="t">自动拆解冲突</div><div class="d">把冲突分支拆成可执行任务，逐条收口，不丢给你裁决</div></div>
+        <button class="sw" data-key="auto_resolve" aria-label="自动拆解冲突"></button>
+      </div>
+      <div class="switchrow">
+        <div><div class="t">自动移植小改动</div><div class="d">把只差一两个提交的分支挑进主线（默认关）</div></div>
+        <button class="sw" data-key="auto_port" aria-label="自动移植"></button>
+      </div>
+      <div class="switchrow">
+        <div><div class="t">后台常驻</div><div class="d">关掉 Codex 也按节奏推进，无需一直开着对话</div></div>
+        <button class="sw" data-key="daemon_enabled" aria-label="后台常驻"></button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>运行信息</h2>
+      <div class="grid2">
+        <div class="kv"><div class="l">后台常驻进程</div><div class="v" id="daemonLive">—</div></div>
+        <div class="kv"><div class="l">上一轮时间</div><div class="v" id="lastCycle">—</div></div>
+        <div class="kv"><div class="l">可合入队列</div><div class="v" id="qClean">—</div></div>
+        <div class="kv"><div class="l">已合待回收</div><div class="v" id="qMerged">—</div></div>
+        <div class="kv"><div class="l">冲突队列</div><div class="v" id="qConflict">—</div></div>
+        <div class="kv"><div class="l">移植暂缓</div><div class="v" id="qPorted">—</div></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>进行中的冲突任务</h2>
+      <ul class="list" id="resolveList"></ul>
+    </section>
+
+    <section class="card">
+      <h2>需要你拍板 / 异常</h2>
+      <ul class="list" id="blockedList"></ul>
+    </section>
+
+    <section class="card">
+      <h2>最近发生了什么</h2>
+      <ul class="list" id="eventList"></ul>
+      <p class="tiny" style="margin-top:10px">完整日志：<span id="logPath">~/.codex-autopilot/daemon.log</span></p>
+      <p><button class="btn" id="exportBtn">导出离线面板（HTML）</button> <a class="textlink" href="#" id="dashboardLink">打开驾驶舱</a></p>
+    </section>
+  </div>
+
+  <div class="foot tiny">Codex 自动挡 · 平时无感运行，需要时这里能看、能停、能改。</div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var pending = {};
+  var nextId = 1;
+  var state = null;
+
+  function request(method, params){
+    var id = nextId++;
+    try { window.parent.postMessage({jsonrpc:"2.0", id:id, method:method, params:params||{}}, "*"); }
+    catch(e){}
+    return new Promise(function(resolve, reject){ pending[id] = {resolve:resolve, reject:reject}; });
+  }
+
+  window.addEventListener("message", function(ev){
+    if (ev.source !== window.parent) return;
+    var msg = ev.data;
+    if (!msg || msg.jsonrpc !== "2.0") return;
+    if (msg.id !== undefined && pending[msg.id]) {
+      var p = pending[msg.id]; delete pending[msg.id];
+      if (msg.error) p.reject(msg.error); else p.resolve(msg.result);
+      return;
+    }
+    if (msg.method === "ui/notifications/tool-result") {
+      var sc = msg.params && msg.params.structuredContent;
+      if (sc && sc.state) { state = sc; render(state); }
+    }
+    if (msg.method === "ui/notifications/tool-input") {
+      // 打开面板时先拿一次实时状态
+      loadStatus();
+    }
+  }, {passive:true});
+
+  function callTool(name, args){
+    return request("tools/call", {name:name, arguments:args||{}}).then(function(res){
+      if (res && res.structuredContent) return res.structuredContent;
+      var t = "";
+      if (res && res.content && res.content[0]) t = res.content[0].text || "";
+      return {__text__: t};
+    });
+  }
+
+  function loadStatus(fast){
+    return callTool("autopilot_status", {fast: fast !== false}).then(function(sc){
+      if (sc && sc.state) { state = sc; render(state); }
+      return sc;
+    }).catch(function(){});
+  }
+
+  function el(id){ return document.getElementById(id); }
+  function setText(id, v){ var n = el(id); if(n) n.textContent = (v===undefined||v===null||v==="")?"—":v; }
+
+  function fmtTime(iso){
+    if(!iso) return "—";
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString("zh-CN", {month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit"});
+  }
+
+  function render(s){
+    var wasAdv = document.body.classList.contains("adv");
+    document.body.className = "s-" + (s.state || "idle") + (wasAdv ? " adv" : "");
+    setText("stateLabel", s.state_label);
+    setText("doing", s.doing);
+    setText("why", s.why);
+    setText("recent", s.recent);
+    setText("need", s.need_action);
+    var need = el("need");
+    need.className = "need" + (s.state === "blocked" || s.state === "error" ? " warn" : "");
+    setText("statusTime", "更新于 " + fmtTime(s.generated_at));
+    var c = s.counters || {};
+    setText("cReceived", c.received); setText("cLanded", c.landed); setText("cResolved", c.resolved);
+
+    // 暂停按钮
+    var pb = el("pauseBtn");
+    if (s.paused) { pb.textContent = "恢复运行"; pb.className = "btn btn-primary"; }
+    else { pb.textContent = "暂停"; pb.className = "btn btn-danger"; }
+    if (s.error) { el("subtitle").textContent = s.error; }
+    else { el("subtitle").textContent = s.paused ? "已暂停，不再推进新工作" : "平时看不出来，需要时可查、可停、可改"; }
+
+    // 高级
+    var sw = s.switches || {};
+    var sws = document.querySelectorAll(".sw");
+    for (var i=0;i<sws.length;i++){
+      var k = sws[i].getAttribute("data-key");
+      sws[i].classList.toggle("on", !!sw[k]);
+      sws[i].setAttribute("aria-pressed", sw[k] ? "true" : "false");
+    }
+    var d = s.daemon || {};
+    setText("daemonLive", d.live ? ("运行中" + (d.pid ? " #"+d.pid : "")) : "未运行");
+    setText("lastCycle", fmtTime(d.last_cycle));
+    var q = s.queue || {};
+    setText("qClean", q.clean); setText("qMerged", q.merged); setText("qConflict", q.conflict);
+    setText("qPorted", (s.blocked && s.blocked.port ? s.blocked.port.length : 0));
+
+    renderResolve(s.resolve_tasks || []);
+    renderBlocked(s);
+    renderEvents(s.events || []);
+  }
+
+  var KIND_LABEL = {
+    cycle_done:"完成一轮", pause:"已暂停", resume:"已恢复", run_once:"手动跑了一轮",
+    switch:"切换开关", daemon:"后台常驻变更"
+  };
+  function renderEvents(events){
+    var ul = el("eventList"); ul.innerHTML = "";
+    if (!events.length) { ul.innerHTML = '<div class="empty">还没有记录。跑过一轮后这里会显示它做了什么。</div>'; return; }
+    events.slice(0,12).forEach(function(e){
+      var li = document.createElement("li");
+      var tag = document.createElement("span"); tag.className = "tag"; tag.textContent = KIND_LABEL[e.kind] || e.kind;
+      var g = document.createElement("span"); g.className = "grow"; g.textContent = describeEvent(e);
+      var w = document.createElement("span"); w.className = "when"; w.textContent = fmtTime(e.ts);
+      li.appendChild(tag); li.appendChild(g); li.appendChild(w); ul.appendChild(li);
+    });
+  }
+  function describeEvent(e){
+    if (e.kind === "cycle_done"){
+      var bits = [];
+      if (e.landed && e.landed.length) bits.push("合入 " + e.landed.length + " 个分支");
+      if (e.resolved_tasks && e.resolved_tasks.length) bits.push("拆出 " + e.resolved_tasks.length + " 个冲突任务");
+      if (e.superseded) bits.push("归档 " + e.superseded + " 个重复分支");
+      if (e.failures && e.failures.length) bits.push("有 " + e.failures.length + " 处卡住");
+      if (!bits.length) bits.push("检查一轮，无需合入");
+      if (e.conflict != null) bits.push("冲突剩 " + e.conflict);
+      return bits.join("，");
+    }
+    if (e.kind === "switch") return (e.name||"") + " -> " + (e.value ? "开" : "关");
+    if (e.kind === "daemon") return e.enabled ? "已开启后台常驻" : "已关闭后台常驻";
+    return "";
+  }
+
+  var STATUS_LABEL = {needs_agent:"待处理", gate_fail:"门禁未过", landed:"已落盘"};
+  function renderResolve(tasks){
+    var ul = el("resolveList"); ul.innerHTML = "";
+    if (!tasks.length){ ul.innerHTML = '<div class="empty">没有进行中的冲突任务。</div>'; return; }
+    tasks.forEach(function(t){
+      var li = document.createElement("li");
+      var tag = document.createElement("span"); tag.className = "tag" + (t.status==="gate_fail"?" err":"");
+      tag.textContent = STATUS_LABEL[t.status] || t.status;
+      var g = document.createElement("span"); g.className="grow";
+      g.textContent = (t.branch || t.slug) + (t.files && t.files.length ? " · " + t.files.length + " 个文件" : "");
+      li.appendChild(tag); li.appendChild(g); ul.appendChild(li);
+    });
+  }
+  function renderBlocked(s){
+    var ul = el("blockedList"); ul.innerHTML = "";
+    var items = [];
+    var f = (s.blocked && s.blocked.failures) || [];
+    f.forEach(function(x){ items.push({tag:"需拍板", cls:"warn", text:x.target + " · " + x.kind}); });
+    var r = (s.blocked && s.blocked.resolve) || [];
+    r.forEach(function(x){ items.push({tag:"冲突暂缓", cls:"", text:x.branch + (x.reason? " · "+x.reason : "")}); });
+    if (s.error) items.unshift({tag:"异常", cls:"err", text:s.error});
+    if (!items.length){ ul.innerHTML = '<div class="empty">没有需要你决策的，也没有异常。</div>'; return; }
+    items.forEach(function(it){
+      var li = document.createElement("li");
+      var tag = document.createElement("span"); tag.className = "tag " + (it.cls||""); tag.textContent = it.tag;
+      var g = document.createElement("span"); g.className="grow"; g.textContent = it.text;
+      li.appendChild(tag); li.appendChild(g); ul.appendChild(li);
+    });
+  }
+
+  function toast(msg, cls){
+    var t = el("toast"); t.textContent = msg || ""; t.className = "toast " + (cls||"");
+    if (msg){ clearTimeout(toast._t); toast._t = setTimeout(function(){ t.textContent=""; t.className="toast"; }, 6000); }
+  }
+
+  el("pauseBtn").addEventListener("click", function(){
+    var pausing = !(state && state.paused);
+    var btn = this; btn.disabled = true;
+    callTool("autopilot_control", {action: pausing ? "pause" : "resume"}).then(function(sc){
+      if (sc && sc.state) { state = sc; render(state); }
+      toast(pausing ? "已暂停，不再推进新工作" : "已恢复运行", "ok");
+    }).catch(function(e){ toast("操作失败：" + (e && e.message || e), "err"); })
+      .then(function(){ btn.disabled = false; });
+  });
+
+  el("runBtn").addEventListener("click", function(){
+    var btn = this; btn.disabled = true; toast("正在检查一轮，请稍等…");
+    callTool("autopilot_control", {action:"run_once"}).then(function(res){
+      toast((res && res.__text__) ? "已跑完一轮" : "已跑完一轮", "ok");
+      return loadStatus(false);
+    }).catch(function(e){ toast("检查失败：" + (e && e.message || e), "err"); })
+      .then(function(){ btn.disabled = false; });
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll(".sw"), function(sw){
+    sw.addEventListener("click", function(){
+      var key = sw.getAttribute("data-key");
+      var target = !(state && state.switches && state.switches[key]);
+      sw.disabled = true;
+      var action = key === "daemon_enabled" ? (target ? "enable_daemon" : "disable_daemon") : ("set_" + key);
+      var args = key === "daemon_enabled" ? {action:action} : {action:action, enabled:target};
+      callTool("autopilot_control", args).then(function(sc){
+        if (sc && sc.state) { state = sc; render(state); }
+        else { return loadStatus(); }
+        toast("已" + (target ? "打开" : "关闭") + " " + key, "ok");
+      }).catch(function(e){ toast("操作失败：" + (e && e.message || e), "err"); })
+        .then(function(){ sw.disabled = false; });
+    });
+  });
+
+  el("advBtn").addEventListener("click", function(){
+    var btn = this;
+    var on = document.body.classList.toggle("adv");
+    btn.textContent = on ? "收起 ▴" : "高级 ▾";
+    if (on) loadStatus();
+  });
+
+  el("refresh").addEventListener("click", function(e){
+    e.preventDefault(); toast("已刷新");
+    loadStatus();
+  });
+
+  el("exportBtn").addEventListener("click", function(){
+    var blob = new Blob([document.documentElement.outerHTML], {type:"text/html"});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a"); a.href = url; a.download = "autopilot-panel.html"; a.click();
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+  });
+
+  el("dashboardLink").addEventListener("click", function(e){
+    e.preventDefault();
+    callTool("dashboard", {open:false}).then(function(res){ toast((res && res.__text__) || "已生成驾驶舱"); });
+  });
+
+  // 初始：等 host 发 tool-result；若 1.5 秒没等到，主动拉一次状态（全屏/侧栏入口常见）。
+  setTimeout(function(){ if (!state) loadStatus(); }, 1500);
+  setInterval(function(){ if (state && !document.body.classList.contains("adv")) loadStatus(); }, 20000);
+})();
+</script>
+</body>
+</html>

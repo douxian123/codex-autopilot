@@ -587,8 +587,120 @@ def test_reset_trunk_truth_conflict():
     print("selftest ok: 失败 land 留下的真相层残留不再锁死后续落盘，JSONL 并集、main 正常推进。")
 
 
+def test_control_state():
+    """用户级开关：暂停闸门、开关持久化、损坏即安全暂停。"""
+    import importlib
+    sys.path.insert(0, str(OPS))
+    home = tempfile.mkdtemp(prefix="kg-ctl-")
+    os.environ["KG_DAEMON_HOME"] = home
+    try:
+        import control_state
+        importlib.reload(control_state)
+        import central_daemon
+        importlib.reload(central_daemon)
+
+        # 默认不暂停，三个动作开关按设计默认值。
+        d = control_state.load()
+        assert d["paused"] is False and d["auto_land"] is True
+        assert d["auto_resolve"] is True and d["auto_port"] is False
+
+        # 暂停后 run_cycle 必须秒返回且不启动任何工作。
+        control_state.set_keys(paused=True)
+        result = central_daemon.run_cycle(dry=False, max_land=1)
+        assert result.get("paused") is True, f"暂停后 run_cycle 仍启动工作: {result}"
+
+        # 用户开关拥有最终否决权：项目开着 auto_resolve，用户关掉也不生效。
+        control_state.set_keys(paused=False, auto_resolve=False)
+        assert central_daemon.auto_resolve_config()["enabled"] is False
+        control_state.set_keys(auto_resolve=True)
+        assert central_daemon.auto_resolve_config()["enabled"] is True
+
+        # control.json 损坏 -> 安全暂停 + error 可见。
+        control_state.path().write_text("{ this is not json", encoding="utf-8")
+        bad = control_state.load()
+        assert bad["paused"] is True and bad["error"], "损坏的 control.json 没有安全暂停"
+
+        # 事件流水可写可读。
+        control_state.save(dict(control_state.DEFAULTS))
+        control_state.append_event("pause")
+        control_state.append_event("cycle_done", landed=["x"], conflict=3)
+        ev = control_state.read_events(5)
+        assert ev and ev[0]["kind"] == "cycle_done" and ev[0]["conflict"] == 3
+    finally:
+        os.environ.pop("KG_DAEMON_HOME", None)
+        import shutil
+        shutil.rmtree(home, ignore_errors=True)
+    print("selftest ok: 用户级开关生效，暂停闸门拦住新工作，损坏即安全暂停。")
+
+
+def test_mcp_contract():
+    """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
+    import json as _json
+    home = tempfile.mkdtemp(prefix="kg-mcp-")
+    env = os.environ.copy()
+    env["KG_DAEMON_HOME"] = home
+    env["KG_REPO"] = str(OPS.parent)
+    proc = subprocess.Popen([sys.executable, str(OPS / "central_mcp.py")],
+                            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, env=env,
+                            cwd=str(OPS.parent))
+    try:
+        def send(o):
+            proc.stdin.write(_json.dumps(o, ensure_ascii=False) + "\n")
+            proc.stdin.flush()
+
+        def recv():
+            return _json.loads(proc.stdout.readline())
+
+        send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+              "params": {"protocolVersion": "2025-06-18"}})
+        init = recv()["result"]
+        assert "resources" in init["capabilities"], "initialize 未声明 resources"
+
+        send({"jsonrpc": "2.0", "id": 2, "method": "resources/list", "params": {}})
+        resources = recv()["result"]["resources"]
+        uri = resources[0]["uri"]
+        assert uri == "ui://autopilot/panel-v2.html"
+
+        send({"jsonrpc": "2.0", "id": 3, "method": "resources/read",
+              "params": {"uri": uri}})
+        contents = recv()["result"]["contents"][0]
+        assert contents["mimeType"] == "text/html;profile=mcp-app"
+        assert "总输入框" in contents["text"], "面板没讲清「总输入框」"
+
+        send({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+              "params": {"name": "autopilot_status", "arguments": {"fast": True}}})
+        sc = recv()["result"]["structuredContent"]
+        assert "state" in sc and "switches" in sc
+
+        send({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
+              "params": {"name": "autopilot_control", "arguments": {"action": "pause"}}})
+        assert recv()["result"]["structuredContent"]["paused"] is True
+
+        send({"jsonrpc": "2.0", "id": 6, "method": "tools/call",
+              "params": {"name": "autopilot_control",
+                         "arguments": {"action": "run_once"}}})
+        assert recv()["result"]["isError"] is True, "暂停时 run_once 不应放行"
+
+        send({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
+              "params": {"name": "autopilot_control", "arguments": {"action": "resume"}}})
+        assert recv()["result"]["structuredContent"]["paused"] is False
+        proc.stdin.close()
+    finally:
+        try:
+            proc.wait(timeout=10)
+        except Exception:
+            proc.kill()
+        proc.stderr.close()
+        import shutil
+        shutil.rmtree(home, ignore_errors=True)
+    print("selftest ok: MCP resources 合约、暂停闸门、状态/控制工具全部通过。")
+
+
 if __name__ == "__main__":
     main()
     test_replan()
     test_resolve()
     test_reset_trunk_truth_conflict()
+    test_control_state()
+    test_mcp_contract()
