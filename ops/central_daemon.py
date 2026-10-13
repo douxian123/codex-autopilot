@@ -77,6 +77,9 @@ LAND_TIMEOUT = 1800
 TICK_TIMEOUT = 1800
 SUPERSEDE_TIMEOUT = 900
 PORT_TIMEOUT = 1800
+# 一个周期里最多尝试移植几条候选。每条候选要么落盘（走完整 build 门禁），要么撞
+# 冲突被记进 port_blocked 后跳过；两种都会让下一轮候选集变小，所以循环会自然收敛。
+PORT_MAX_ATTEMPTS = 6
 
 _stop = False
 
@@ -163,7 +166,8 @@ def auto_port_config() -> dict:
     """状态根 ops/central.config.json 的 auto_port 段。
 
     默认**关闭**：把「只差几个提交」的冲突分支自动 cherry-pick 到 main 属于契约扩展，
-    必须由项目在配置里显式打开。打开后每轮最多移植 1 条，任何文本冲突即整体放弃。
+    必须由项目在配置里显式打开。打开后一个周期把候选逐条试一遍（上限见
+    PORT_MAX_ATTEMPTS），任何文本冲突即整体放弃并记进 port_blocked。
     """
     out = {"enabled": False, "max_unlanded": 2}
     repo = _state_repo()
@@ -352,24 +356,34 @@ def run_cycle(dry: bool, max_land: int) -> dict:
 
     # 自动移植「只差几个提交」的冲突分支：cherry-pick 到当前 main，过门禁才落盘，
     # 冲突即整体放弃。默认关闭，由状态根 ops/central.config.json 的 auto_port 打开。
-    # 试过且不行的分支记进 port_blocked，后续周期不再重复烧一次构建。
+    # 一周期内把所有候选试一遍：成功的落盘并继续，冲突的进 port_blocked 后跳过，
+    # 于是循环不断收窄，直到没有候选或达到上限。试过且不行的分支后续周期不再重试。
     ported = []
     port_blocked = dict(load_state().get("port_blocked") or {})
     port_cfg = auto_port_config()
     if not dry and port_cfg["enabled"] and not (rc != 0 and not out.strip()):
-        prc, pout = run_kgctl(["port", "--auto", "--go",
-                               "--max-unlanded", str(port_cfg["max_unlanded"])],
-                              timeout=PORT_TIMEOUT,
-                              env_extra={"KG_PORT_SKIP": ":".join(port_blocked)})
-        log_block("port(auto)", prc, pout)
-        pm = PORT_RESULT_RE.search(pout)
-        if pm:
+        for _ in range(PORT_MAX_ATTEMPTS):
+            prc, pout = run_kgctl(["port", "--auto", "--go",
+                                   "--max-unlanded", str(port_cfg["max_unlanded"])],
+                                  timeout=PORT_TIMEOUT,
+                                  env_extra={"KG_PORT_SKIP": ":".join(port_blocked)})
+            log_block("port(auto)", prc, pout)
+            pm = PORT_RESULT_RE.search(pout)
+            if not pm:
+                break  # 没有候选了
             pb, po = pm.group(1), pm.group(2)
             if po == "landed":
                 ported.append(pb)
                 port_blocked.pop(pb, None)
-            else:
-                port_blocked[pb] = {"reason": po, "ts": _now()}
+                continue  # main 已前进，下一轮重新挑
+            port_blocked[pb] = {"reason": po, "ts": _now()}
+        # 移植推进了 main，可能让别的分支的改动「现在全部在 main 了」——再扫一次归档。
+        if ported:
+            src2, sout2 = run_kgctl(["supersede", "--go", "--fast"], timeout=SUPERSEDE_TIMEOUT)
+            log_block("supersede(post-port)", src2, sout2)
+            m2 = SUPERSEDE_DONE_RE.search(sout2)
+            if m2:
+                superseded += int(m2.group(1))
     elif not port_cfg["enabled"]:
         log("[port] auto_port 未开启（ops/central.config.json），跳过自动移植")
 

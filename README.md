@@ -152,7 +152,7 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 
 常驻自动做四件事：路由唯一入口里的散需求、把与 `main` 无冲突的分支串行落盘、**归档「内容其实早进 `main`」的重复分支（`supersede --fast`）**、把真冲突分支收拢成族（`converge`）。每个落盘分支仍走 `kgctl land` 的全部护栏（真实构建、`origin/main` 对齐、失败即丢弃）。**真正需要判断语义的冲突不会自动合**，而是被收进少数几个 convergence 分支，交给一个 agent 逐族解，不再让你逐条回答「这 60 个分支要不要合」。
 
-另有一档可选动作 `auto_port`（默认关闭）：守护每轮挑一条「只差 1–N 个提交」的冲突分支，把那几条未落提交 cherry-pick 到当前 `main` 上的一条新分支，跑同一道构建门禁，过了才落盘；cherry-pick 一撞文本冲突就整体 `--abort` 放弃，绝不猜「谁对」。它只消灭「基线旧、实际只差几个提交」这种假冲突，把冲突队列从几十条压到真正需要人判断的少数。在项目里 `ops/central.config.json` 写：
+另有一档可选动作 `auto_port`（默认关闭）：守护一个周期里把「只差 1–N 个提交」的冲突分支逐条试一遍（上限 6 条），把未落提交 cherry-pick 到当前 `main` 上的一条新分支，跑同一道构建门禁，过了才落盘；cherry-pick 一撞文本冲突就整体 `--abort` 放弃，绝不猜「谁对」。它只消灭「基线旧、实际只差几个提交」这种假冲突，把冲突队列从几十条压到真正需要人判断的少数。在项目里 `ops/central.config.json` 写：
 
 ```json
 { "auto_port": { "enabled": true, "max_unlanded": 2 } }
