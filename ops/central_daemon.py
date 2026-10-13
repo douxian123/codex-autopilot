@@ -744,6 +744,25 @@ def uninstall() -> int:
 
 # ------------------------------------------------------------------ 状态
 
+def open_resolve_tasks():
+    """从状态根的 ops/tasks/resolve.json 读出**还没落地**的冲突任务。
+
+    以前这里显示的是守护进程上一轮拆过谁（`state.last_resolved_tasks`），它一旦写进去
+    就永不清空：一条冲突任务已经 `landed` 了，`--status` 还会一直把它列成「冲突任务」，
+    看着像还有活没干完——这正是"状态信号不可信"的来源。改成实时读任务账本，只列
+    status 还在进行中的（needs_agent / gate_fail 等），落盘或放弃的不再出现。
+    """
+    repo = _state_repo()
+    if not repo:
+        return []
+    try:
+        data = json.loads((repo / "ops" / "tasks" / "resolve.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    done = {"landed", "abandoned"}
+    return [t for t in (data.get("tasks") or []) if t.get("status") not in done]
+
+
 def show_status() -> int:
     state = load_state()
     uid = os.getuid()
@@ -769,9 +788,10 @@ def show_status() -> int:
         rblocked = state.get("resolve_blocked") or {}
         if rblocked:
             print(f"冲突暂缓       {len(rblocked)} 个分支（拆不动/门禁不过，已跳过）")
-        rtasks = state.get("last_resolved_tasks") or []
+        rtasks = open_resolve_tasks()
         if rtasks:
-            print(f"冲突任务       {', '.join(rtasks[:5])}")
+            shown = ", ".join(f"{t.get('slug')} [{t.get('status')}]" for t in rtasks[:5])
+            print(f"冲突任务       {shown}")
         last = state.get("last_landed") or []
         if last:
             print(f"最近落盘       {', '.join(last[:5])}")
