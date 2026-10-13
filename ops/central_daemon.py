@@ -423,15 +423,19 @@ def _truth_dir():
     return (Path(repo) / "ops" / "truth") if repo else None
 
 
-def _ledger_open_items(limit=20):
-    """台账里还没关闭、也还没派过的待办。排序：bug / gate 优先，其次按时间。"""
+def _ledger_latest():
+    """台账里每个 id 的最后一条记录。目录/文件不可读时返回 None。
+
+    返回 None 与返回 {} 语义不同：None 表示「读不到真相」，调用方不应据此清理
+    任何暂缓记录；{} 表示「台账确实为空」。
+    """
     tdir = _truth_dir()
     if not tdir:
-        return []
+        return None
     try:
         raw = (tdir / "ledger.jsonl").read_text(encoding="utf-8")
     except OSError:
-        return []
+        return None
     latest = {}
     for line in raw.splitlines():
         line = line.strip()
@@ -443,9 +447,34 @@ def _ledger_open_items(limit=20):
             continue
         if rec.get("id"):
             latest[rec["id"]] = rec
+    return latest
+
+
+def _ledger_open_items(limit=20):
+    """台账里还没关闭、也还没派过的待办。排序：bug / gate 优先，其次按时间。"""
+    latest = _ledger_latest() or {}
     opens = [r for r in latest.values() if r.get("status") in ("open", "doing")]
     opens.sort(key=lambda r: (0 if r.get("kind") in ("bug", "gate") else 1, r.get("ts", "")))
     return opens[:limit]
+
+
+def _prune_exec_blocked(blocked: dict) -> list:
+    """丢掉已经不在台账 open/doing 里的「实现暂缓」。
+
+    一条需求被实现并收口（done/superseded）后，它的 blocked 记录就不再代表任何
+    真实阻塞；留着只会让面板一直显示一条不存在的暂缓。这里按台账真实状态自愈。
+    台账读不到（None）时直接返回空，绝不误清真实的暂缓记录。
+    """
+    if not blocked:
+        return []
+    latest = _ledger_latest()
+    if latest is None:
+        return []
+    open_ids = {i for i, r in latest.items() if r.get("status") in ("open", "doing")}
+    stale = [k for k in list(blocked) if k not in open_ids]
+    for k in stale:
+        blocked.pop(k, None)
+    return stale
 
 
 def _run_truthctl(args, extra_env=None, timeout=120):
@@ -874,6 +903,9 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     # 实现 -> 门禁 -> 落盘 -> 收口。默认关闭（面板「自动实现需求」开关 / control.json）。
     exec_results, exec_landed = [], []
     exec_blocked = dict(load_state().get("exec_blocked") or {})
+    # 已收口的需求不该继续挂在「实现暂缓」名单里（代码/台账都已落定）。
+    for _stale in _prune_exec_blocked(exec_blocked):
+        log(f"[exec] 台账已收口，清掉实现暂缓：{_stale}")
     exec_cfg = auto_exec_config()
     if dry:
         dispatch_exec(True, exec_blocked)

@@ -985,7 +985,28 @@ def test_auto_exec():
         if again:
             raise AssertionError(f"收口失败后台账项被重复派发: {again}")
 
-    print("selftest ok: 自动实现真跑并落盘、失败保留现场、收口失败不重复派。")
+        # --- 已收口的条目不占「实现暂缓」：台账变 done 后自愈清掉 ---
+        with (repo_c / "ops" / "truth" / "ledger.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(_json.dumps({"id": "L-0001", "type": "ledger", "kind": "bug",
+                                  "title": "面板按钮点着没反应", "status": "done",
+                                  "ts": "2026-01-02T00:00:00+08:00"},
+                                 ensure_ascii=False) + "\n")
+        stale = daemon_c._prune_exec_blocked(blocked_c)
+        if "L-0001" not in stale:
+            raise AssertionError(f"台账已收口却没清掉实现暂缓: stale={stale}")
+        if blocked_c:
+            raise AssertionError(f"台账已收口后 blocked 应为空: {blocked_c}")
+
+        # --- 台账读不到时绝不误清真实的暂缓 ---
+        blocked_keep = {"L-9999": {"reason": "gate_fail"}}
+        orig_truth_dir = daemon_c._truth_dir
+        daemon_c._truth_dir = lambda: None
+        kept = daemon_c._prune_exec_blocked(blocked_keep)
+        daemon_c._truth_dir = orig_truth_dir
+        if kept or "L-9999" not in blocked_keep:
+            raise AssertionError("台账读不到时误清了真实暂缓记录")
+
+    print("selftest ok: 自动实现真跑并落盘、失败保留现场、收口失败不重复派、收口后清掉实现暂缓。")
 
 
 def test_mcp_contract():
