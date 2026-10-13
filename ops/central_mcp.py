@@ -153,6 +153,51 @@ TOOLS = [
         },
     },
     {
+        "name": "resolve_list",
+        "description": "列出正在进行的冲突执行任务：每条对应一个独立 worktree + 任务书，含待解文件。用户问“还有哪些冲突没解 / 冲突现在什么状态”时用它。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "resolve_plan",
+        "description": "预演：挑一条「冲突文件少、未落改动小」的冲突分支，说明它有几个冲突文件、多大，拆了会怎样。只读，不建 worktree、不动 main。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "branch": {"type": "string", "description": "指定分支；不填则按体量自动挑一条"},
+                "max_files": {"type": "integer", "description": "冲突文件数闸门（默认 8）"},
+                "max_lines": {"type": "integer", "description": "未落改动行数闸门（默认 1200）"},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "resolve_start",
+        "description": "把一条冲突分支拆成独立可执行单元：在 origin/main 上开独立 worktree，append-only JSONL 自动行级并集，其余保留 marker 并写任务书。main 与源分支都不动。用户说“继续处理冲突 / 把冲突跑完”时用。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "branch": {"type": "string", "description": "指定分支；不填则按体量自动挑一条"},
+                "max_files": {"type": "integer", "description": "冲突文件数闸门（默认 8）"},
+                "max_lines": {"type": "integer", "description": "未落改动行数闸门（默认 1200）"},
+                "confirm": {"type": "boolean", "description": "true 才真正建 worktree / 任务；默认只预演"},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "resolve_finish",
+        "description": "把已解干净的任务走 land 的完整门禁后落盘并回收 worktree。只在 worktree 无 marker、无未提交改动时通过。用户说“冲突解完了，收口”时用。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "target": {"type": "string", "description": "任务 slug 或源分支名"},
+                "confirm": {"type": "boolean", "description": "true 才真正落盘；默认只检查"},
+            },
+            "required": ["target"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "generate_context",
         "description": "为分支生成版本化 Context Pack（主线/决策/相关未决问题/验收 DoD/归属/收拢任务），写进 ops/context/。让接手任务不靠聊天记忆。",
         "inputSchema": {
@@ -211,6 +256,30 @@ def call_tool(name, args):
         if args.get("limit"):
             argv += ["--limit", str(args["limit"])]
         return kgctl(*argv)
+    if name == "resolve_list":
+        return kgctl("resolve", "--list")
+    if name in ("resolve_plan", "resolve_start"):
+        branch = (args.get("branch") or "").strip()
+        argv = ["resolve"]
+        if branch:
+            argv.append(branch)
+        else:
+            argv.append("--auto")
+        if args.get("max_files"):
+            argv += ["--max-files", str(args["max_files"])]
+        if args.get("max_lines"):
+            argv += ["--max-lines", str(args["max_lines"])]
+        if name == "resolve_start" and args.get("confirm"):
+            argv.append("--go")
+        return kgctl(*argv)
+    if name == "resolve_finish":
+        target = (args.get("target") or "").strip()
+        if not target:
+            return "resolve_finish 需要 target（slug 或分支名）", 2
+        argv = ["resolve", "--finish", target]
+        if args.get("confirm"):
+            argv.append("--go")
+        return kgctl(*argv)
     if name == "generate_context":
         branch = (args.get("branch") or "").strip()
         if not branch:
@@ -248,7 +317,10 @@ def handle(msg):
                 "门禁红灯/多分支要不要合/该在哪继续）时：直接调用 intake_request 把原话"
                 "收进唯一入口并归类落账，再按 next_actions 的优先级执行；多条需求汇聚或"
                 "需要重扫时用 sync_control_plane。冲突分支不要再逐条问用户，用 "
-                "convergence_plan 收成族处理。不要要求用户自己选对话、分支或角色。"
+                "resolve_list / resolve_plan / resolve_start / resolve_finish 逐条拆成可执行"
+                "任务并收口；只有冲突量大且分散时才用 convergence_plan 收成族。用户说"
+                "“继续 / 处理冲突 / 把冲突跑完”时优先走 resolve_start（确认后），解完用 "
+                "resolve_finish 走门禁落盘。不要要求用户自己选对话、分支或角色。"
             ),
         })
         return

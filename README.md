@@ -1,6 +1,8 @@
-# Codex Autopilot
+# Codex Autopilot（Codex 自动挡）
 
 给 Codex 装一个总输入框。你把零散、即时的感受丢进去——「这里视觉不对」「这个流程别扭」「又冒出个 bug」——归类、排期、追踪、收口由它接手。你不用再想这条需求发哪个对话、开哪个分支。
+
+> 你现在大概也这样：一个复杂项目要同时开几十个对话、几十个分支，每个对话结尾还都追问你「这个分支要不要合、等谁先合」。做了左边忘了右边，共享检出越来越脏，人成了整条链路里唯一被反复打断的那一环。Codex 自动挡要干掉的就是这一环：散需求只有一个入口，分支由它自己串行收口，真需要你拍板的只剩改方向、删数据、发布。
 
 ## 它是什么
 
@@ -97,7 +99,7 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 - **常驻（可选）**：装一个 launchd 守护，没开会话时也按周期推进安全子集。开是 `--install`，关是 `--uninstall`。
 - **彻底关掉**：在 Plugins 页禁用 / 卸载插件即可。账本还留在项目里，随时能再装回来。
 
-也可以让对话直接调 MCP 工具：`intake_request`（一句话走完整条链，首选）/ `sync_control_plane` / `next_actions` / `project_status` / `route_inbox` / `convergence_plan` / `generate_context` / `dashboard` / `capture_request` / `suggest_branch`。
+也可以让对话直接调 MCP 工具：`intake_request`（一句话走完整条链，首选）/ `sync_control_plane` / `next_actions` / `project_status` / `route_inbox` / `resolve_list` / `resolve_plan` / `resolve_start` / `resolve_finish` / `convergence_plan` / `generate_context` / `dashboard` / `capture_request` / `suggest_branch`。
 
 想手敲命令：
 
@@ -126,6 +128,10 @@ python3 "$PLUGIN/ops/kgctl.py" dash --open
 | `python3 "$PLUGIN/ops/kgctl.py" replan [--go]` | 把过时的超级合并按当前 `main` 重盘：解散成逐支流水线，worktree/分支一起清理，且不再被 `tick` 重建（默认预演） |
 | `python3 "$PLUGIN/ops/kgctl.py" supersede [--fast] [--go]` | 归档「独有内容已全部在 `main`」的重复分支，不再占用冲突队列（`--fast` 只跑 patch-id，秒级） |
 | `python3 "$PLUGIN/ops/kgctl.py" port <分支> \| --auto [--max-unlanded N] [--go]` | 把冲突分支「只差几个提交」的未落改动 cherry-pick 到当前 `main`，过同一道门禁就落盘，冲突即整体放弃 |
+| `python3 "$PLUGIN/ops/kgctl.py" resolve --auto [--go] \| <分支> [--go]` | 把一条轻冲突分支拆成单个可执行任务：append-only JSONL 自动行级并集，其余保留 marker + 任务书，独立 worktree 里解 |
+| `python3 "$PLUGIN/ops/kgctl.py" resolve --list` | 列出正在进行的冲突任务：slug、源分支、worktree、待解文件 |
+| `python3 "$PLUGIN/ops/kgctl.py" resolve --finish <slug\|分支> [--go]` | 解干净、显式提交后，走 land 的完整门禁落盘并回收 worktree |
+| `python3 "$PLUGIN/ops/kgctl.py" resolve --abandon <slug\|分支> [--go]` | 放弃一条冲突任务：清 worktree 与容器分支，源分支原样不动 |
 | `python3 "$PLUGIN/ops/kgctl.py" context <分支>` | 给分支写一份版本化 Context Pack（主线/决策/相关未决/DoD） |
 | `python3 "$PLUGIN/ops/kgctl.py" dash [--open]` | 生成（可打开）驾驶舱 `docs/CONTROL_PLANE.html` |
 | `python3 "$PLUGIN/ops/kgctl.py" next` | 只回答一个问题：现在最该动哪几条 |
@@ -151,7 +157,7 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 
 守护从插件目录的 `.mcp.json` 读绑定（`KG_REPO` / `KG_TRUNK`），不用再手动 export 环境变量。代价说清楚：它会真的在后台跑 `tick` / `land`，也就是会自己推进 `main`——走的是和手动一样的护栏，但确实不需要你在场。
 
-常驻自动做四件事：路由唯一入口里的散需求、把与 `main` 无冲突的分支串行落盘、**归档「内容其实早进 `main`」的重复分支（`supersede --fast`）**、把真冲突分支收拢成族（`converge`）。每个落盘分支仍走 `kgctl land` 的全部护栏（真实构建、`origin/main` 对齐、失败即丢弃）。**真正需要判断语义的冲突不会自动合**，而是被收进少数几个 convergence 分支，交给一个 agent 逐族解，不再让你逐条回答「这 60 个分支要不要合」。
+常驻自动做五件事：路由唯一入口里的散需求、把与 `main` 无冲突的分支串行落盘、归档「内容其实早进 `main`」的重复分支（`supersede --fast`）、把真冲突分支**拆成单个可执行任务（`resolve`，默认开）**，冲突量大且分散时再收拢成族（`converge`）。每个落盘分支仍走 `kgctl land` 的全部护栏（真实构建、`origin/main` 对齐、失败即丢弃）。**真正需要判断语义的冲突不会自动合**：`resolve` 只做确定性并集（append-only JSONL 行级并集），其余冲突原样保留 marker 写成任务书，交给一个 agent 逐条解干净后走同一道门禁落盘。你不再需要回答「这 60 个分支要不要合」，也不再需要自己把它们塞进几十个对话。
 
 另有一档可选动作 `auto_port`（默认关闭）：守护一个周期里把「只差 1–N 个提交」的冲突分支逐条试一遍（上限 6 条），把未落提交 cherry-pick 到当前 `main` 上的一条新分支，跑同一道构建门禁，过了才落盘；cherry-pick 一撞文本冲突就整体 `--abort` 放弃，绝不猜「谁对」。它只消灭「基线旧、实际只差几个提交」这种假冲突，把冲突队列从几十条压到真正需要人判断的少数。在项目里 `ops/central.config.json` 写：
 
@@ -188,7 +194,8 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
                             v
             ┌────────────────────────────────────────────────────────────┐
             │  常驻（可选）  launchd 每 15 分钟：路由散需求 + land 无冲突   │
-            │  分支 + 归档重复分支（supersede）+ 收拢冲突族（converge）。   │
+            │  分支 + 归档重复分支（supersede）+ 拆冲突为任务（resolve）    │
+            │  + 收拢冲突族（converge）。                                  │
             │  打开 auto_port 还会自动移植「只差几个提交」的冲突分支。      │
             │  状态没变化就静默。                                          │
             └────────────────────────────────────────────────────────────┘
@@ -206,6 +213,8 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 
 这是它和「一沓规范」最不一样的地方。分支多起来之后，最容易把人反复打断的不是写代码，是「这 60 个分支谁跟谁冲突、谁先合」。自动挡不把这个问题丢回给你：
 
+- **一条冲突 = 一个可执行任务。** `kgctl resolve --auto --go` 挑一条「冲突文件少、未落改动小」的分支，在 `origin/main` 上开一个独立 worktree（`<状态根>-resolve-<slug>`）把源分支合进来。append-only 的 `.jsonl` 冲突就地做**行级并集**（两边记录都保住），其余冲突**原样保留 marker**，再写一份任务书 `ops/tasks/resolve/<slug>.md`。main 和源分支都不动。守护每轮最多拆一条，拆不动 / 门禁没过的记进 `resolve_blocked`，之后跳过，不会反复拆同一条。
+- **解完就收口。** agent 在任务 worktree 里把 marker 改成正确的最终代码、显式 `git add` + `commit`，再 `kgctl resolve --finish <slug> --go`：无 marker、无未提交改动才进入 `land` 的完整门禁，过了才落盘并回收 worktree，不过就留在原地标 `gate_fail`。`kgctl resolve --list` 随时看还有哪些任务、待解哪些文件；不想要了 `resolve --abandon` 清掉容器，源分支不动。
 - `kgctl converge` 按「抢同一批文件」把冲突分支收成**少数几个 convergence 任务**（一个连通族 = 一个任务），而不是几十条待裁决项。
 - 每个 convergence 任务建一条 `codex/converge-<hash>` 分支和独立 worktree，把源分支相继并进去；冲突**原样保留**成 marker（JSONL 另做行级并集），`main` 和源分支都不动。
 - 未解干净的 convergence 分支不会进 `queue`，`land` 也会硬拒绝。它只能回到 convergence worktree 里解完、提交，再重新排队。
@@ -218,7 +227,7 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 
 **同类开源做法（设计参考，无代码复用）** —— 做架构调研时，这类问题在开源里已经攒出一套共识：每个任务一个独立 worktree 隔离、输入先进收件箱再分诊、spec 先于执行、合并走串行队列、issue/task 图当唯一事实来源。代表项目：`max-sixty/worktrunk`、`automazeio/ccpm`、`smtg-ai/claude-squad`、`BloopAI/vibe-kanban`、`github/spec-kit`、`aviator-co/av`。
 
-它们各解决一块（worktree 隔离 / 看板 / spec / merge queue），没有一个是「单入口 → 分类 → 路由 → 隔离执行 → 串行收口 → 项目真相」的完整总装。
+它们各解决一块（worktree 隔离 / 看板 / spec / merge queue），没有一个是「单入口 → 分类 → 路由 → 隔离执行 → 串行收口 → 项目真相」的完整总装。冲突拆分（`resolve`）这一层也没有现成轮子可复用：它依赖 git 的 `merge-tree` 预检、独立 worktree 和「append-only 文件行级并集」这套本机约定，属于这一层自己长出来的执行细节，不是一个能直接引入的第三方库。
 
 为什么没直接拿它们当底座：这些项目都是各自独立的产品面（Web 应用、带自己数据库的服务、或要求你换一套 CLI 工作流），而这里要的是一层长在 Codex 原生输入框里的薄编排。嵌一个外部运行时进来，成本和摩擦都比复用自己的标准库大。所以这里复用它们的**做法**（每个任务一个 worktree、输入先进收件箱再分诊、spec 先于执行、合并走串行队列），不复用它们的代码。
 
@@ -230,7 +239,7 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 ## 能力边界（诚实版）
 
 - 它**不保证**全自动。改产品方向、删数据、发布仍然要停下来问你，并给出「选 A 会怎样 / 选 B 会怎样」。
-- 常驻守护只做**安全子集**：路由散需求 + land 与 `main` 无冲突、且树里没有残留冲突标记的分支 + 归档「已全部在 main」的重复分支。真正的语义冲突不自动合：要么被收拢成族，要么（`auto_port` 打开时）先试一次无冲突 cherry-pick，冲突即放弃。
+- 常驻守护只做**安全子集**：路由散需求 + land 与 `main` 无冲突、且树里没有残留冲突标记的分支 + 归档「已全部在 main」的重复分支 + 把轻冲突分支拆成独立任务（`resolve`）/ 收拢成族（`converge`）。真正的语义冲突不自动合：`resolve` 只做 append-only JSONL 的行级并集，其余保留 marker 留成任务；`auto_port` 打开时先试一次无冲突 cherry-pick，冲突即放弃。
 - 本机 stdio MCP 是面向**本机** Codex 的形态；官方插件市场的 MCP 要求 HTTPS 端点，所以这里用的是本机 compat 布局。
 - 归类基于关键词 + 文件路径重叠 + 代码标识匹配，**是启发式，不是语义理解**。它可能判错泳道；判错不致命（只影响优先级和归属），你可以在 `ops/central.config.json` 里覆盖规则，或手工改台账。
 - 冲突收拢（`converge`）只做**机械合并**：建分支、并入源分支、保留冲突 marker。真正解冲突仍需一个 agent 在 convergence worktree 里做，它不假装能替你判断「谁对」。

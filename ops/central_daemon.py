@@ -20,6 +20,12 @@
     成功也仍走同一道 build 门禁。两者都不猜语义、都不删数据；移植失败的分支记进
     `port_blocked`，之后不再重复尝试。要在项目里打开，写
     `ops/central.config.json` 的 `{"auto_port": {"enabled": true, "max_unlanded": 2}}`。
+  * 冲突拆分（`auto_resolve`，默认开启）：每周期挑一条「冲突文件少、未落改动小」的
+    冲突分支，在独立 worktree 里合并；append-only 的 `.jsonl` 冲突就地做行级并集，
+    其余保留 marker 写成任务书（`ops/tasks/resolve/<slug>.md`），交给 agent 解开后走
+    同一道 land 门禁。不改 main、不改源分支；拆不动 / 门禁没过的分支记进
+    `resolve_blocked`，之后不再重复拆。要关就写
+    `{"auto_resolve": {"enabled": false}}`，或用 `max_files` / `max_lines` 收紧闸门。
   * 每个分支仍走 `kgctl land` 的全部护栏：真实 build 门禁、origin/main 对齐、
     失败即丢弃、从不 force push。
   * 单实例锁 + 复用 kgctl 自己的 land 锁：不会和手动 land 抢。
@@ -77,9 +83,13 @@ LAND_TIMEOUT = 1800
 TICK_TIMEOUT = 1800
 SUPERSEDE_TIMEOUT = 900
 PORT_TIMEOUT = 1800
+RESOLVE_TIMEOUT = 1800
 # 一个周期里最多尝试移植几条候选。每条候选要么落盘（走完整 build 门禁），要么撞
 # 冲突被记进 port_blocked 后跳过；两种都会让下一轮候选集变小，所以循环会自然收敛。
 PORT_MAX_ATTEMPTS = 6
+# 一个周期最多拆几条冲突分支。每条先做确定性并集（只 jsonl）或留下一个可执行
+# 任务书；拆不动 / 门禁没过记进 resolve_blocked，后续周期跳过，不再反复骚扰。
+RESOLVE_MAX_ATTEMPTS = 1
 
 _stop = False
 
@@ -189,6 +199,35 @@ def auto_port_config() -> dict:
     return out
 
 
+def auto_resolve_config() -> dict:
+    """状态根 ops/central.config.json 的 auto_resolve 段。
+
+    默认**开启**：冲突分支不再推给用户逐条裁决，而是每周期挑一条「文件少、未落
+    改动小」的，拆成确定性并集或一个可执行任务书。它只在独立 worktree 里动，
+    不改 main、不改源分支，落盘仍走完整门禁。项目可用
+    `{"auto_resolve": {"enabled": false}}` 关掉，或调 max_files / max_lines 收紧闸门。
+    """
+    out = {"enabled": True, "max_files": 8, "max_lines": 1200}
+    repo = _state_repo()
+    if not repo:
+        return out
+    try:
+        data = json.loads((repo / "ops" / "central.config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return out
+    cfg = data.get("auto_resolve")
+    if isinstance(cfg, bool):
+        out["enabled"] = cfg
+    elif isinstance(cfg, dict):
+        out["enabled"] = bool(cfg.get("enabled", True))
+        for key in ("max_files", "max_lines"):
+            try:
+                out[key] = max(1, int(cfg.get(key, out[key])))
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
 # ------------------------------------------------------------------ 通知
 
 def _osa_string(s: str) -> str:
@@ -237,6 +276,7 @@ CONVERGE_PLAN_RE = re.compile(r"可收成 (\d+) 个 convergence 任务")
 CONVERGE_MADE_RE = re.compile(r"已生成 (\d+) 个 convergence 分支")
 SUPERSEDE_DONE_RE = re.compile(r"已归档 (\d+) 个重复分支")
 PORT_RESULT_RE = re.compile(r"PORT_RESULT branch=(\S+) outcome=(\w+)")
+RESOLVE_RESULT_RE = re.compile(r"RESOLVE_RESULT branch=(\S+) outcome=(\w+)")
 
 
 def parse_queue(out: str):
@@ -387,8 +427,44 @@ def run_cycle(dry: bool, max_land: int) -> dict:
     elif not port_cfg["enabled"]:
         log("[port] auto_port 未开启（ops/central.config.json），跳过自动移植")
 
+    # 冲突分支不再推给用户逐条裁决：每周期把一条「文件少、未落改动小」的冲突拆成
+    # 独立可执行单元。能被确定性解掉的（append-only jsonl 行级并集）直接走门禁落盘；
+    # 其余保留 marker，写出一份任务书 + 独立 worktree，交给 agent 按 slug 收口。
+    # 拆不动 / 门禁没过的分支记进 resolve_blocked，后续周期跳过，不反复拆同一条。
+    resolved_tasks, resolve_gate_fail = [], []
+    resolve_blocked = dict(load_state().get("resolve_blocked") or {})
+    resolve_cfg = auto_resolve_config()
+    resolve_landed_any = False
+    if not dry and resolve_cfg["enabled"] and not (rc != 0 and not out.strip()):
+        for _ in range(RESOLVE_MAX_ATTEMPTS):
+            skip = ":".join(b for b in resolve_blocked if b)
+            rrc, rout = run_kgctl(["resolve", "--auto", "--go",
+                                   "--max-files", str(resolve_cfg["max_files"]),
+                                   "--max-lines", str(resolve_cfg["max_lines"])],
+                                  timeout=RESOLVE_TIMEOUT,
+                                  env_extra={"KG_RESOLVE_SKIP": skip})
+            log_block("resolve(auto)", rrc, rout)
+            rm = RESOLVE_RESULT_RE.search(rout)
+            if not rm:
+                break  # 没有候选了
+            rb, ro = rm.group(1), rm.group(2)
+            if ro == "landed":
+                resolve_landed_any = True
+            elif ro == "needs_agent":
+                resolved_tasks.append(rb)
+            elif ro in ("too_big", "blocked", "clean"):
+                resolve_blocked[rb] = {"reason": ro, "ts": _now()}
+            elif ro == "gate_fail":
+                resolve_gate_fail.append(rb)
+                resolve_blocked[rb] = {"reason": ro, "ts": _now()}
+            # 每条结果都让候选集变小（落盘 / 占用 / 跳过），继续拆下一条。
+            if resolve_landed_any:
+                break  # 落盘推进了 main，下一周期基于新 main 重挑
+    elif not resolve_cfg["enabled"]:
+        log("[resolve] auto_resolve 未开启（ops/central.config.json），跳过冲突拆分")
+
     # 落过盘就再刷一次控制面，让看板/快照反映新 main。
-    if (landed or ported) and not dry:
+    if (landed or ported or resolve_landed_any) and not dry:
         rc2, out2 = run_kgctl(["tick"])
         log_block("tick(post-land)", rc2, out2)
 
@@ -396,6 +472,8 @@ def run_cycle(dry: bool, max_land: int) -> dict:
               "summary": summary, "landed": landed, "failures": failures,
               "superseded": superseded,
               "ported": ported,
+              "resolved_tasks": resolved_tasks,
+              "resolve_gate_fail": resolve_gate_fail,
               "convergence": convergence}
 
     # ---- 通知：只在「完成 / 失败 / 新收拢出族」时出声，且去重 ----
@@ -415,6 +493,17 @@ def run_cycle(dry: bool, max_land: int) -> dict:
         notify("自动挡：已自动移植落盘",
                f"{len(ported)} 个「只差几个提交」的冲突分支已移植并落盘："
                f"{', '.join(ported[:3])}")
+    if resolve_landed_any:
+        notify("自动挡：冲突已自动解掉并落盘",
+               "一条冲突分支的确定性部分已并集、过了门禁并合进 main")
+    if resolved_tasks:
+        notify("自动挡：冲突已拆成可执行任务",
+               f"{len(resolved_tasks)} 条冲突分支已拆成独立任务书（保留冲突文件），"
+               "agent 按任务书解开后走同一道门禁落盘，不用你逐条裁决")
+    if resolve_gate_fail:
+        notify("自动挡：冲突任务门禁没过",
+               f"{', '.join(resolve_gate_fail[:3])} 留在独立 worktree 里，"
+               "已登记 gate_fail，修到过门禁再收口")
     fail_sig = _sig(failures) if failures else None
     if failures and fail_sig != state.get("last_failure_sig"):
         target, kind = failures[0]
@@ -437,6 +526,10 @@ def run_cycle(dry: bool, max_land: int) -> dict:
     state["total_landed"] = int(state.get("total_landed", 0)) + len(landed)
     state["total_superseded"] = int(state.get("total_superseded", 0)) + superseded
     state["total_ported"] = int(state.get("total_ported", 0)) + len(ported)
+    state["total_resolved"] = int(state.get("total_resolved", 0)) + (
+        1 if resolve_landed_any else 0) + len(resolved_tasks)
+    state["last_resolved_tasks"] = resolved_tasks or state.get("last_resolved_tasks", [])
+    state["resolve_blocked"] = resolve_blocked
     state["port_blocked"] = port_blocked
     save_state(state)
 
@@ -669,9 +762,16 @@ def show_status() -> int:
         print(f"累计自动落盘   {state.get('total_landed', 0)} 个分支")
         print(f"累计归档重复   {state.get('total_superseded', 0)} 个分支")
         print(f"累计自动移植   {state.get('total_ported', 0)} 个分支")
+        print(f"累计冲突拆分   {state.get('total_resolved', 0)} 条（含确定性并集落盘）")
         blocked = state.get("port_blocked") or {}
         if blocked:
             print(f"移植暂缓       {len(blocked)} 个分支（冲突/门禁不过，等 converge）")
+        rblocked = state.get("resolve_blocked") or {}
+        if rblocked:
+            print(f"冲突暂缓       {len(rblocked)} 个分支（拆不动/门禁不过，已跳过）")
+        rtasks = state.get("last_resolved_tasks") or []
+        if rtasks:
+            print(f"冲突任务       {', '.join(rtasks[:5])}")
         last = state.get("last_landed") or []
         if last:
             print(f"最近落盘       {', '.join(last[:5])}")
@@ -731,7 +831,7 @@ def loop(interval_min: int, max_land: int, dry: bool) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="自动挡常驻执行器（安全子集：只自动合无冲突分支）")
+        description="自动挡常驻执行器（安全子集：合无冲突分支 + 移植小改动 + 拆冲突为任务）")
     ap.add_argument("--once", action="store_true", help="跑一个周期就退出")
     ap.add_argument("--loop", action="store_true", help="常驻，按 --interval 循环")
     ap.add_argument("--dry-run", action="store_true", help="只预演，不真的 land")

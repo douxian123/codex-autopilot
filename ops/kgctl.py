@@ -21,10 +21,15 @@ kgctl —— 自动挡的唯一执行入口（stdlib only）
   7. 工作区不靠人记忆   -> `kgctl reap --go` / `kgctl sync`
   8. 假冲突不推给人     -> `kgctl supersede --go`（内容已全在 main）/ `kgctl port --go`
                            （只差几个提交，移植到当前 main 后走同一道门禁）
+  9. 真冲突拆成单任务   -> `kgctl resolve --auto --go`（每条冲突分支一个独立 worktree，
+                            只自动并集 append-only JSONL，其余保留 marker 写任务书；
+                           解完 `resolve --finish` 走同一道门禁后自动落盘）
 
 安全约定（硬编码，不可关）
   * `reap` 默认只预演，必须显式 `--go`。
   * `port` 默认只预演；cherry-pick 冲突即整体放弃并回滚，不留半成品分支。
+  * `resolve` 默认只预演；只自动解 .jsonl，其余冲突保留 marker、绝不 ours/theirs；
+    落盘走 `land` 的全部门禁，不过就留在工作树里。
   * `land` 任何一步失败都丢弃，main 与源分支都不动；从不 force push、从不改写源分支历史。
   * `matrix/queue/status/sync/clash/inbox 读` 全部只读。
 """
@@ -86,6 +91,10 @@ BOARD = REPO / "docs" / "CONTROL_BOARD.md"
 DASHBOARD = REPO / "docs" / "CONTROL_PLANE.html"
 CONTEXT_DIR = REPO / "ops" / "context"
 CONVERGENCE = OPS / "convergence.json"
+# 冲突任务的登记与任务书：JSON 记账 + 每任务一份 Markdown 交给 agent。都在 ops/tasks
+# 之下，所以自动随真相层提交/推送，不靠聊天记忆。
+RESOLVE = OPS / "resolve.json"
+RESOLVE_DIR = OPS / "resolve"
 
 
 def git(*args, check=False):
@@ -212,6 +221,16 @@ def _is_convergence_branch(branch: str) -> bool:
     return bool(branch) and branch.startswith(f"{BRANCH_PREFIX}converge-")
 
 
+def _is_resolve_branch(branch: str) -> bool:
+    """codex/resolve-* 是自动挡为单条冲突分支准备的执行分支，不是用户的源分支。"""
+    return bool(branch) and branch.startswith(f"{BRANCH_PREFIX}resolve-")
+
+
+def _is_generated_branch(branch: str) -> bool:
+    """自动挡生成的任务容器（converge / resolve），一律不算待裁决的源分支。"""
+    return _is_convergence_branch(branch) or _is_resolve_branch(branch)
+
+
 def conflict_groups(rows=None) -> list:
     """把冲突分支按「抢同一批文件」收成少数几个冲突族。
 
@@ -224,7 +243,7 @@ def conflict_groups(rows=None) -> list:
     # codex/converge-055ddd5718 被当成源分支后，族成员 59→60，id 重算成
     # 39836fb2a8，055 卡死）。所以先把 codex/converge-* 从源集合里剔除。
     conflicts = [r for r in rows if r["kind"] == "CONFLICT"
-                 and not _is_convergence_branch(r["branch"])]
+                 and not _is_generated_branch(r["branch"])]
     parent = {r["branch"]: r["branch"] for r in conflicts}
 
     def find(x):
@@ -388,6 +407,12 @@ def unlanded_commits(branch):
 # 按「未落改动相对 main 的真实规模和文件数」放行，才符合「只差一点点」的本意。
 PORT_MAX_FILES = int(os.environ.get("KG_PORT_MAX_FILES", "15"))
 PORT_MAX_LINES = int(os.environ.get("KG_PORT_MAX_LINES", "600"))
+
+# 冲突任务执行器的闸门。它把一个「冲突文件数」和「未落改动行数」都比较小的冲突分支
+# 拆成单个、可验收、可回退的任务；太大的先收拢（converge）或人工判断，避免一次把
+# 几十个文件的语义冲突塞给一个 agent。
+RESOLVE_MAX_FILES = int(os.environ.get("KG_RESOLVE_MAX_FILES", "8"))
+RESOLVE_MAX_LINES = int(os.environ.get("KG_RESOLVE_MAX_LINES", "1200"))
 
 
 def unlanded_diff_size(branch):
@@ -848,7 +873,7 @@ def scan():
         # 收拢分支是自动挡生成的任务容器，不是待裁决的用户分支。把它排除在一屏 /
         # matrix / queue 之外，否则它自己带 conflict markers 时会被当成“残留冲突
         # 标记”反复报出来，用户会误以为还有一条工作没收拾。
-        if _is_convergence_branch(b):
+        if _is_generated_branch(b):
             continue
         ahead, behind = counts(b)
         ts = int(git("log", "-1", "--format=%ct", b) or 0)
@@ -1839,6 +1864,14 @@ def reset_trunk_head(wt: Path) -> None:
                                  "-m", "train: sync origin/main over truth state"],
                                 capture_output=True, text=True)
         if merged.returncode != 0:
+            # 冲突通常全部落在真相层：生成视图（CONTROL_BOARD/CONTROL_PLANE/
+            # PROJECT_STATUS）与追加式台账。这些正是 _resolve_truth_merge 会确定性
+            # 合并的东西——生成视图以远端为底、JSONL 做行级并集、JSON 递归并集。
+            # 不在这里复用，就会把上一次失败 land 留下的真相提交当死结，永久锁死落盘。
+            if _resolve_truth_merge(wt):
+                print(f"  保留主干工作树上 {len(trunk_truth_commits(wt))} 条真相提交"
+                      f"并同步 origin/{MAIN}")
+                return
             subprocess.run(["git", "-C", str(wt), "merge", "--abort"],
                            capture_output=True, text=True)
             print("× 真相层提交与 origin/main 合并冲突，已放弃：", merged.stderr.strip()[:300])
@@ -1992,6 +2025,394 @@ def push_truth_state() -> None:
     print(f"  真相层 {ahead} 条提交已推送 origin/{MAIN}")
 
 
+def load_resolve() -> dict:
+    if not RESOLVE.exists():
+        return {"tasks": []}
+    try:
+        data = json.loads(RESOLVE.read_text(encoding="utf-8"))
+    except Exception:
+        return {"tasks": []}
+    if not isinstance(data, dict):
+        return {"tasks": []}
+    data.setdefault("tasks", [])
+    return data
+
+
+def _write_resolve_record(rec: dict) -> None:
+    data = load_resolve()
+    data["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    # 一条源分支只保留一条当前记录：按 slug 或源分支去重。否则早期留下的
+    # needs_agent 会和后面的 landed 并存，--list 把已收口的分支继续报成待解。
+    key = rec.get("slug")
+    branch = rec.get("branch")
+    tasks = [t for t in data.get("tasks", [])
+             if t.get("slug") != key and (not branch or t.get("branch") != branch)]
+    tasks.append(rec)
+    tasks.sort(key=lambda t: t.get("updated") or "", reverse=True)
+    data["tasks"] = tasks
+    write_json(RESOLVE, data)
+
+
+def _landed_resolve_branches() -> set:
+    """已经 resolve 落盘过的源分支集合。用来防止同一条冲突被重复拆。"""
+    return {t.get("branch") for t in load_resolve().get("tasks", [])
+            if t.get("status") == "landed" and t.get("branch")}
+
+
+def _open_resolve_sources() -> set:
+    """仍在进行（未落盘、未放弃）的冲突任务对应的源分支集合。"""
+    return {t.get("branch") for t in load_resolve().get("tasks", [])
+            if t.get("status") in ("needs_agent", "gate_fail") and t.get("branch")}
+
+
+def _find_resolve_task(target: str):
+    tasks = load_resolve().get("tasks", [])
+    settled = {t.get("slug") for t in tasks if t.get("status") in ("landed", "abandoned")}
+    settled |= {t.get("branch") for t in tasks if t.get("status") in ("landed", "abandoned")}
+    for t in tasks:
+        if t.get("status") not in ("needs_agent", "gate_fail"):
+            continue
+        if t.get("slug") in settled or t.get("branch") in settled:
+            continue
+        if target in (t.get("slug"), t.get("branch"), t.get("resolve_branch")):
+            return t
+    return None
+
+
+def _resolve_slug(branch: str) -> str:
+    return slugify(branch[len(BRANCH_PREFIX):])
+
+
+def _resolve_worktree_path(slug: str) -> Path:
+    return REPO.parent / f"{REPO.name}-resolve-{slug}"
+
+
+def _resolve_branch_name(slug: str) -> str:
+    return f"{BRANCH_PREFIX}resolve-{slug}"
+
+
+def _pick_resolve_candidate(max_files: int, max_lines: int):
+    """挑一条「冲突文件少、未落改动也小」的冲突分支。返回 (候选, 超体量的)。"""
+    rows = scan()
+    open_src = _open_resolve_sources()
+    landed_src = _landed_resolve_branches()
+    # 守护进程把「拆不动 / 门禁没过」的分支名放进 KG_RESOLVE_SKIP，避免每个周期
+    # 反复拆同一条。手动执行不带该环境变量，行为不变。
+    skip = {b for b in os.environ.get("KG_RESOLVE_SKIP", "").split(":") if b}
+    bmap = conflict_burden_map(rows)
+    cands, oversize = [], []
+    for r in rows:
+        if r["kind"] != "CONFLICT" or _is_generated_branch(r["branch"]):
+            continue
+        if r["branch"] in open_src or r["branch"] in landed_src or r["branch"] in skip:
+            continue
+        burden = bmap.get(r["branch"], len(r["conflicts"]))
+        nf, nl = unlanded_diff_size(r["branch"])
+        if burden > max_files:
+            continue
+        row = (burden, nl, nf, r["branch"])
+        (cands if nl <= max_lines else oversize).append(row)
+    cands.sort()
+    oversize.sort()
+    return cands, oversize
+
+
+def _write_resolve_task_md(rec: dict) -> None:
+    RESOLVE_DIR.mkdir(parents=True, exist_ok=True)
+    lines = [
+        f"# 冲突任务：{rec['slug']}", "",
+        f"- 源分支：`{rec['branch']}`",
+        f"- 执行分支：`{rec['resolve_branch']}`",
+        f"- 工作树：`{rec['worktree']}`",
+        f"- 基于：`{rec['base_main'][:12]}`（origin/{MAIN}）",
+        f"- 状态：`{rec.get('status')}`",
+        "",
+        "## 要解的冲突文件（保留的 marker）",
+    ]
+    uf = rec.get("unresolved_files") or []
+    lines += [f"- `{f}`" for f in uf] or ["- （无）"]
+    if rec.get("auto_resolved_jsonl"):
+        lines += ["", "## 已自动并集的 JSONL（行级并集）",
+                  *[f"- `{f}`" for f in rec["auto_resolved_jsonl"]]]
+    lines += [
+        "", "## 怎么做",
+        f"1. 进 `{rec['worktree']}`，逐个打开上面列出的文件，把 `<<<<<<<` / `=======` / "
+        "`>>>>>>>` 改成正确的最终代码——想清楚两边意图，不是机械二选一。",
+        "2. 显式 `git add <文件>`（不要 `-A`），`git commit -m \"resolve: ...\"`。",
+        f"3. `python3 ops/kgctl.py resolve --finish {rec['slug']} --go`：无 marker 且过了 "
+        "build 门禁才会落盘。",
+        "",
+        "## 硬约束",
+        "- 不 `git add -A`、不 `checkout .`、不 `stash`、不 `reset --hard`；只动本工作树里自己的文件。",
+        "- 不用 `--ours`/`--theirs` 强行盖掉一侧；两边意图都要保住，或明确取舍并写进提交信息。",
+        "- main 与源分支都不动；落盘统一交给 `resolve --finish`。",
+    ]
+    write_text(RESOLVE_DIR / f"{rec['slug']}.md", "\n".join(lines) + "\n")
+
+
+def _resolve_land(rec: dict, wt: Path) -> None:
+    """把 resolve 分支交给 land 走完整门禁；过了落盘并回收 worktree，不过则留作任务。"""
+    resolve_branch = rec["resolve_branch"]
+    res = subprocess.run([sys.executable, str(Path(__file__).resolve()), "land", resolve_branch],
+                         capture_output=True, text=True)
+    out = (res.stdout or "").rstrip()
+    print(out)
+    rec["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    if res.returncode == 0 and "已落盘并推送 origin" in out:
+        rec["status"] = "landed"
+        _write_resolve_record(rec)
+        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
+                       capture_output=True, text=True)
+        print(f"✓ {resolve_branch} 已通过门禁并落盘；worktree 已回收，源分支 {rec['branch']} 未改动。")
+        print(f"RESOLVE_RESULT branch={rec['branch']} outcome=landed")
+        return
+    rec["status"] = "gate_fail"
+    rec["gate_output"] = out[-1500:]
+    _write_resolve_record(rec)
+    _write_resolve_task_md(rec)
+    print(f"× 门禁未通过：{resolve_branch} 留在 {wt}，已登记任务 {rec['slug']}（gate_fail）。")
+    print(f"  在该工作树修到过门禁，再 kgctl resolve --finish {rec['slug']} --go。")
+    print(f"RESOLVE_RESULT branch={rec['branch']} outcome=gate_fail")
+
+
+def _resolve_prepare(args) -> None:
+    go = "--go" in args
+    auto = "--auto" in args
+    max_files, max_lines = RESOLVE_MAX_FILES, RESOLVE_MAX_LINES
+    for i, a in enumerate(args):
+        if a == "--max-files" and i + 1 < len(args):
+            try:
+                max_files = int(args[i + 1])
+            except ValueError:
+                pass
+        if a == "--max-lines" and i + 1 < len(args):
+            try:
+                max_lines = int(args[i + 1])
+            except ValueError:
+                pass
+    branch = None if auto else next((a for a in args if not a.startswith("--")), None)
+    if branch and not branch.startswith(BRANCH_PREFIX):
+        sys.exit(f"只允许 resolve {BRANCH_PREFIX}* 分支")
+    oversize = []
+    if branch:
+        if not git("rev-parse", "--verify", branch):
+            sys.exit(f"找不到分支 {branch}")
+        if branch in _landed_resolve_branches():
+            print(f"{branch} 已经 resolve 落盘过（见 ops/tasks/resolve.json），不重复拆。")
+            return
+        burden = conflict_burden(branch)
+        nf, nl = unlanded_diff_size(branch)
+        if burden == 0:
+            print(f"{branch} 其实能干净合并（merge-tree 无冲突文件）："
+                  f"用 kgctl land {branch} 即可，不需要解冲突。")
+            print(f"RESOLVE_RESULT branch={branch} outcome=clean")
+            return
+    else:
+        cands, oversize = _pick_resolve_candidate(max_files, max_lines)
+        if not cands:
+            extra = f"，另有 {len(oversize)} 条冲突文件少但改动行数超闸门" if oversize else ""
+            print(f"没有「冲突文件 <= {max_files} 且未落行数 <= {max_lines}」的冲突分支可拆{extra}。")
+            print("  这些分支先 kgctl converge 收拢，或人工判断；不要一次把几十个文件塞给一个 agent。")
+            return
+        burden, nl, nf, branch = cands[0]
+    conf = conflict_files(branch)
+    print(f"→ {branch}：冲突文件 {len(conf)} 个（闸门 {max_files}），未落改动 {nl} 行（闸门 {max_lines}）")
+    for f in conf[:12]:
+        print(f"    {f}")
+    if len(conf) > 12:
+        print(f"    ... 共 {len(conf)} 个")
+    if nl > max_lines:
+        print(f"× 未落改动 {nl} 行超过闸门 {max_lines}：先收拢或人工判断，不自动拆。")
+        print(f"RESOLVE_RESULT branch={branch} outcome=too_big")
+        return
+    if not go:
+        print("预演结束。加 --go 会在 origin/main 上开一个 resolve worktree，把该分支合进来："
+              "append-only JSONL 冲突自动行级并集，其余保留 marker 交给 agent；解完用 "
+              "kgctl resolve --finish <slug> --go 走同一道门禁后落盘。")
+        return
+    if LOCK.exists():
+        sys.exit(f"已有 land/port/converge/resolve 在进行（{LOCK}）")
+    slug = _resolve_slug(branch)
+    resolve_branch = _resolve_branch_name(slug)
+    wt = _resolve_worktree_path(slug)
+    if git("rev-parse", "--verify", resolve_branch):
+        print(f"× {resolve_branch} 已存在（可能上次留下的任务）。先 "
+              f"resolve --finish/--abandon 收口再重跑。")
+        print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
+        return
+    if wt.exists():
+        print(f"× {wt} 已存在但不是本命令登记的任务，跳过。")
+        print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
+        return
+    _align_main()
+    base = git("rev-parse", f"origin/{MAIN}") or git("rev-parse", MAIN)
+    add = subprocess.run(["git", "-C", str(REPO), "worktree", "add", "-b", resolve_branch,
+                          str(wt), base], capture_output=True, text=True)
+    if add.returncode != 0:
+        sys.exit(f"建 worktree 失败：{(add.stdout + add.stderr).strip()[:400]}")
+    _link_side_dirs(wt)
+    rec = {
+        "slug": slug, "branch": branch, "resolve_branch": resolve_branch, "worktree": str(wt),
+        "base_main": base, "source_head": git("rev-parse", branch),
+        "source_commits": unlanded_commits(branch),
+        "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "updated": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "conflict_files": conf, "unresolved_files": [], "auto_resolved_jsonl": [],
+        "status": "preparing",
+    }
+    merged = subprocess.run(["git", "-C", str(wt), "merge", "--no-ff", branch,
+                             "-m", f"resolve: merge {branch}"], capture_output=True, text=True)
+    if merged.returncode == 0:
+        print("  merge ok：源分支能直接合进 main，进入落盘门禁。")
+        return _resolve_land(rec, wt)
+    unresolved = subprocess.run(["git", "-C", str(wt), "diff", "--name-only", "--diff-filter=U"],
+                                capture_output=True, text=True).stdout.splitlines()
+    auto = []
+    for rel in unresolved:
+        if rel.endswith(".jsonl"):
+            _merge_jsonl_conflict(wt, rel)
+            auto.append(rel)
+    _stage_unmerged(wt, unresolved)
+    commit = subprocess.run(["git", "-C", str(wt), "commit", "-m",
+                             f"wip(resolve): merge {branch} into {resolve_branch}"
+                             " (conflict markers kept)"], capture_output=True, text=True)
+    if commit.returncode != 0:
+        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
+                       capture_output=True, text=True)
+        subprocess.run(["git", "-C", str(REPO), "branch", "-D", resolve_branch],
+                       capture_output=True, text=True)
+        print(f"× 提交冲突合并失败，已回滚 {resolve_branch}："
+              f"{(commit.stdout + commit.stderr).strip()[:300]}")
+        print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
+        return
+    remaining = [r for r in unresolved if r not in auto]
+    rec.update({"conflict_files": unresolved, "unresolved_files": remaining,
+                "auto_resolved_jsonl": auto})
+    if remaining:
+        rec["status"] = "needs_agent"
+        _write_resolve_record(rec)
+        _write_resolve_task_md(rec)
+        print(f"  自动并集 {len(auto)} 个 JSONL；保留 {len(remaining)} 个 marker 待解。")
+        print(f"  已登记任务 {slug}：worktree={wt}")
+        print(f"  解完 marker 后跑：kgctl resolve --finish {slug} --go")
+        print(f"RESOLVE_RESULT branch={branch} outcome=needs_agent")
+        return
+    print(f"  全部冲突已确定性解掉（{len(auto)} 个 JSONL 行级并集），进入落盘门禁。")
+    return _resolve_land(rec, wt)
+
+
+def _resolve_finish(target: str, go: bool) -> None:
+    rec = _find_resolve_task(target)
+    if not rec:
+        sys.exit(f"找不到进行中的 resolve 任务：{target}（用 kgctl resolve --list 看）")
+    wt = Path(rec["worktree"])
+    resolve_branch = rec["resolve_branch"]
+    if not wt.exists():
+        sys.exit(f"任务 {rec['slug']} 的 worktree 不存在：{wt}")
+    unresolved = subprocess.run(["git", "-C", str(wt), "diff", "--name-only", "--diff-filter=U"],
+                                capture_output=True, text=True).stdout.splitlines()
+    if unresolved:
+        print(f"× {len(unresolved)} 个文件仍是未合并状态，先解干净：{', '.join(unresolved[:6])}")
+        return
+    grep = subprocess.run(["git", "-C", str(wt), "grep", "-l", "-E", "^(<<<<<<<|>>>>>>>)"],
+                          capture_output=True, text=True)
+    markers = [x for x in grep.stdout.splitlines() if x.strip()]
+    if markers:
+        print(f"× 树里仍有 {len(markers)} 个文件带冲突标记，先解干净："
+              f"{', '.join(m.strip() for m in markers[:6])}")
+        return
+    st = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"],
+                        capture_output=True, text=True).stdout.strip()
+    if st:
+        print(f"× worktree 还有未提交改动，先显式 add + commit：\n{st[:800]}")
+        return
+    print(f"→ {rec['slug']}（{resolve_branch}）已解干净，进入落盘门禁。")
+    if not go:
+        print("  加 --go 走 land 门禁并落盘。")
+        return
+    return _resolve_land(rec, wt)
+
+
+def _resolve_abandon(target: str, go: bool) -> None:
+    rec = _find_resolve_task(target)
+    if not rec:
+        sys.exit(f"找不到进行中的 resolve 任务：{target}（用 kgctl resolve --list 看）")
+    wt = Path(rec["worktree"])
+    resolve_branch = rec["resolve_branch"]
+    print(f"放弃任务 {rec['slug']}：删 {resolve_branch} 与 {wt}，源分支 {rec['branch']} 原样不动。")
+    if not go:
+        print("  加 --go 执行。")
+        return
+    if wt.exists():
+        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
+                       capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(REPO), "branch", "-D", resolve_branch],
+                   capture_output=True, text=True)
+    rec["status"] = "abandoned"
+    rec["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _write_resolve_record(rec)
+    print("已放弃。")
+
+
+def _resolve_list() -> None:
+    tasks = load_resolve().get("tasks", [])
+    settled = {t.get("slug") for t in tasks if t.get("status") in ("landed", "abandoned")}
+    settled |= {t.get("branch") for t in tasks if t.get("status") in ("landed", "abandoned")}
+    open_tasks = [t for t in tasks if t.get("status") in ("needs_agent", "gate_fail")]
+    # 同一 slug/源分支已经 landed 的旧 needs_agent 记录不算开放任务。
+    open_tasks = [t for t in open_tasks
+                  if t.get("slug") not in settled and t.get("branch") not in settled]
+    done = [t for t in tasks if t.get("status") == "landed"]
+    print("=== 冲突执行任务 ===")
+    if not open_tasks:
+        print("  没有进行中的任务。用 kgctl resolve --auto --go 把一条冲突分支拆成单个任务。")
+    for t in open_tasks:
+        uf = t.get("unresolved_files") or []
+        print(f"  [{t.get('status')}] {t.get('slug')}  <- {t.get('branch')}")
+        print(f"       worktree: {t.get('worktree')}")
+        print(f"       待解 {len(uf)} 个：{', '.join(uf[:5])}{' ...' if len(uf) > 5 else ''}")
+    if done:
+        print(f"  （已落盘 {len(done)} 个：{', '.join(t.get('slug', '') for t in done[:6])}）")
+
+
+def cmd_resolve(args) -> None:
+    """把一条轻冲突分支拆成「单个可执行任务」：直接落盘，或留一个待解工作树给 agent。
+
+    冲突队列真正的堵点不是「要不要合」，而是 merge-tree 报冲突之后没有下一步——要么
+    人肉开几十个分支，要么全塞进一个超级收拢。本命令给每条冲突分支一个独立、可验收、
+    可回退的执行单元：在 origin/main 上开一个 resolve worktree，把源分支合进来；能被
+    确定性解掉的冲突（append-only 的 .jsonl 行级并集）就地解掉，剩下的原样保留 marker
+    写成任务书交给 agent。解完用 `kgctl resolve --finish <slug>` 走 land 的同一道门禁。
+
+    安全约定：
+      * 只在独立 worktree（`<state>-resolve-<slug>`）里操作，main 与源分支都不动；
+      * 只自动解 append-only 的 .jsonl（行级并集），其余冲突一律保留 marker，不猜；
+      * 落盘仍走 `kgctl land` 的完整门禁；不过就留在工作树里，绝不半成品进 main。
+    """
+    if not args or args[0] in ("-h", "--help"):
+        print("用法: kgctl resolve --auto [--max-files N] [--max-lines N] [--go]")
+        print("      kgctl resolve <分支> [--go]")
+        print("      kgctl resolve --list")
+        print("      kgctl resolve --finish <slug|分支> [--go]")
+        print("      kgctl resolve --abandon <slug|分支> [--go]")
+        return
+    if "--list" in args:
+        return _resolve_list()
+    if "--finish" in args:
+        i = args.index("--finish")
+        target = args[i + 1] if i + 1 < len(args) else ""
+        if not target:
+            sys.exit("用法: kgctl resolve --finish <slug|分支> [--go]")
+        return _resolve_finish(target, "--go" in args)
+    if "--abandon" in args:
+        i = args.index("--abandon")
+        target = args[i + 1] if i + 1 < len(args) else ""
+        if not target:
+            sys.exit("用法: kgctl resolve --abandon <slug|分支> [--go]")
+        return _resolve_abandon(target, "--go" in args)
+    return _resolve_prepare(args)
+
+
 def cmd_land(args):
     if not args:
         sys.exit("用法: kgctl land <分支> [--dry]")
@@ -2125,6 +2546,10 @@ def cmd_status(args):
         light = [b for n, b in burden if n <= 8]
         print(f"冲突可解度     {len(light)}/{len(conflicts)} 支只需解 <=8 个冲突文件"
               f"（最轻 {burden[0][0]} 个：{burden[0][1]}）")
+    open_tasks = [t for t in load_resolve().get("tasks", [])
+                  if t.get("status") in ("needs_agent", "gate_fail")]
+    if open_tasks:
+        print(f"冲突执行任务   {len(open_tasks)} 个待解（kgctl resolve --list）")
     wts = worktree_map()
     behind50 = [b for b in codex_branches() if counts(b)[1] > 50]
     print(f"worktree       {len(wts)} 个（其中落后 main >50 的分支 {len(behind50)} 条）")
@@ -2228,7 +2653,7 @@ CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route, "suggest":
         "replan": cmd_replan,
         "context": cmd_context, "dash": cmd_dash,
         "clash": cmd_clash, "reap": cmd_reap, "land": cmd_land, "supersede": cmd_supersede,
-        "port": cmd_port, "sync": cmd_sync,
+        "port": cmd_port, "resolve": cmd_resolve, "sync": cmd_sync,
         "status": cmd_status, "board": cmd_board, "next": cmd_next, "tick": cmd_tick}
 
 if __name__ == "__main__":

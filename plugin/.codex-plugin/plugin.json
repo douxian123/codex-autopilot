@@ -1,6 +1,6 @@
 {
   "name": "codex-autopilot",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "给 Codex 装一个总输入框：把零散的需求、bug、体验问题收进唯一入口，自动归类、追踪，并把能干净合并的分支串行合进 main。",
   "author": {
     "name": "douxian",
