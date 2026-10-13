@@ -6,43 +6,53 @@
 <title>Codex 自动挡</title>
 <style>
   :root{
-    /* neutrals */
-    --bg:#F3F4F8;
-    --surface:#FFFFFF;
-    --surface-2:#F8F9FC;
-    --surface-3:#EDEFF5;
-    --ink:#111420;
-    --ink-2:#4C5464;
-    --ink-3:#737B8C;
-    --line:#E6E9F0;
-    --line-2:#EEF1F6;
+    /* 主题：优先读宿主（Codex）注入的 CSS 变量，取不到才回落到自带浅色。
+       面板因此和 Codex 同底色、同字色、同描边、同圆角，不再是一块风格
+       独立的外挂网页；在普通浏览器里也有一套完整的兜底。 */
+    --bg:var(--color-background-secondary,#F3F4F8);
+    --surface:var(--color-background-primary,#FFFFFF);
+    --surface-2:var(--color-background-secondary,#F8F9FC);
+    --surface-3:var(--color-background-tertiary,#EDEFF5);
+    --ink:var(--color-text-primary,#111420);
+    --ink-2:var(--color-text-secondary,#4C5464);
+    --ink-3:var(--color-text-tertiary,#737B8C);
+    --line:var(--color-border-primary,#E6E9F0);
+    --line-2:var(--color-border-subtle,#EEF1F6);
 
-    /* brand · indigo */
-    --brand-50:#EFF1FE;
-    --brand-100:#E1E5FC;
-    --brand-200:#C7CCF9;
-    --brand-300:#A5ACF1;
-    --brand-400:#828BE6;
-    --brand-500:#646DD8;
-    --brand-600:#4C55C6;
-    --brand-700:#3E46A6;
-    --brand-800:#333A84;
+    /* brand · OpenAI 绿 */
+    --brand-50:#E9F6F2;
+    --brand-100:#D2EDE6;
+    --brand-200:#A6DBCB;
+    --brand-300:#6FC3AC;
+    --brand-400:#35A88A;
+    --brand-500:#109E7C;
+    --brand-600:#10A37F;
+    --brand-700:#0E8266;
+    --brand-800:#0C654F;
     --brand:var(--brand-600);
-    --brand-mark-a:#646DD8; --brand-mark-b:#3B43A0;
+    --brand-mark-a:#35A88A; --brand-mark-b:#0C654F;
 
-    /* semantic */
-    --ok:#0E7A57;   --ok-soft:#E7F4EE;   --ok-line:#CDE8DD;
-    --warn:#8F5F0B; --warn-soft:#FAF2E1; --warn-line:#EFDDBB;
-    --err:#B93A31;  --err-soft:#FAEBE9;  --err-line:#F0D1CD;
-    --neutral:#69707E; --neutral-soft:#F0F2F6; --neutral-line:#E4E7ED;
+    /* semantic · 同样优先宿主语义色 */
+    --ok:var(--color-text-success,#0E7A57);
+    --ok-soft:var(--color-background-success,#E7F4EE);
+    --ok-line:var(--color-border-success,#CDE8DD);
+    --warn:var(--color-text-warning,#8F5F0B);
+    --warn-soft:var(--color-background-warning,#FAF2E1);
+    --warn-line:var(--color-border-warning,#EFDDBB);
+    --err:var(--color-text-danger,#B93A31);
+    --err-soft:var(--color-background-danger,#FAEBE9);
+    --err-line:var(--color-border-danger,#F0D1CD);
+    --neutral:var(--color-text-secondary,#69707E);
+    --neutral-soft:var(--surface-3);
+    --neutral-line:var(--line);
 
     /* live accent, set per state */
     --acc:var(--neutral); --accsoft:var(--neutral-soft); --accline:var(--neutral-line);
 
-    --r:16px; --r-sm:11px; --r-xs:9px;
+    --r:var(--radius-lg,16px); --r-sm:var(--radius-md,11px); --r-xs:var(--radius-sm,9px);
     --shadow-1:0 1px 2px rgba(17,20,32,.05);
     --shadow-2:0 1px 2px rgba(17,20,32,.05), 0 10px 26px -16px rgba(17,20,32,.30);
-    --font:-apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --font:var(--font-sans,-apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif);
   }
   *{box-sizing:border-box}
   html,body{margin:0;padding:0}
@@ -212,7 +222,7 @@
   .btn:hover{background:var(--surface-2);border-color:var(--neutral-line)}
   .btn:disabled{opacity:.55;cursor:default}
   .btn svg{width:14px;height:14px}
-  .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 1px 2px rgba(76,85,198,.35)}
+  .btn.primary{background:var(--brand);border-color:var(--brand);color:#fff;box-shadow:0 1px 2px rgba(16,163,127,.30)}
   .btn.primary:hover{background:var(--brand-700);border-color:var(--brand-700)}
   .btn.danger{color:var(--err);border-color:var(--err-line)}
   .btn.danger:hover{background:var(--err-soft)}
@@ -226,7 +236,7 @@
   .switchrow:last-child{border-bottom:0;padding-bottom:0}
   .switchrow .t{font-size:13px;font-weight:500}
   .switchrow .d{font-size:11.5px;color:var(--ink-3);margin-top:2px}
-  .sw{position:relative;width:40px;height:23px;border-radius:999px;background:#C7CDD9;border:0;cursor:pointer;flex:0 0 auto;transition:background .15s}
+  .sw{position:relative;width:40px;height:23px;border-radius:999px;background:var(--line);border:0;cursor:pointer;flex:0 0 auto;transition:background .15s}
   .sw::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.2)}
   .sw.on{background:var(--brand)}
   .sw.on::after{left:19px}

@@ -1,6 +1,6 @@
 {
   "name": "codex-autopilot",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "description": "给 Codex 装一个总输入框：零散需求统一收口、归类、实现、验证、合并；面板分清机器验收和人工验收。",
   "author": {
     "name": "douxian",
@@ -26,6 +26,7 @@
     "shortDescription": "Codex 的自动挡：零散需求一个入口收完",
     "longDescription": "它解决的是一个问题：一个复杂项目里，零散又即时的需求不该由用户自己归类——不必再纠结发哪个对话、开哪个分支、派给哪个角色。装上它，那个普通的 Codex 输入框就是总输入框：你把“这里视觉不对 / 这个流程别扭 / 又冒出个 bug”原样说出来，它负责归类、排期、追踪，并把已经做完、能干净合并、且树里没有残留冲突标记的分支串行合进 main。打开“自动实现需求”后，它还会在独立 worktree 里启动真实会话实现未关闭的台账条目，过同一道门禁再落盘并收口；失败保留分支和 worktree。面板会把产品路线走到哪了、当前在做什么、还差什么、哪些必须你验收（附复核步骤）、哪些机器已自证，分层展示出来。它不是新模型，也不改 Codex，用的是 Codex 公开的 skill + MCP + 插件能力，外加本机一个纯 Python 的编排层。改方向、删数据、发布这类要拍板的事，仍然会停下来问你。",
     "developerName": "douxian",
+    "brandColor": "#10A37F",
     "category": "Productivity",
     "capabilities": [
       "Read",

@@ -364,14 +364,127 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         "_meta": {
             "ui": {"resourceUri": PANEL_URI},
+            # 只放 entrypoint 规范认识的键：openai/ui 下多一个未知字段，
+            # 整份 metadata 会被宿主判为 invalid 并丢掉 entrypoint（入口就不见了）。
+            # 显示模式属于资源侧（resources/read 的 contents[]._meta），不在这里写。
             "openai/ui": {
                 "entrypoints": [{"type": "global"}, {"type": "thread"}],
-                "availableDisplayModes": ["inline", "fullscreen"],
+                "preferredModelDisplayMode": "inline",
             },
             "openai/toolInvocation/invoking": "打开自动挡面板…",
             "openai/toolInvocation/invoked": "自动挡面板已打开。",
         },
     },
+    {
+        "name": "autopilot_run_once",
+        "description": "立刻检查一轮：扫描可落盘分支、已通过门禁的改动与冲突队列，该合的合、该收的收。暂停中会拒绝执行。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "autopilot_settings_read",
+        "description": "读取自动挡的设置：类型、当前值与分组。由宿主在插件设置页渲染成原生控件。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "annotations": {"readOnlyHint": True},
+        "outputSchema": {
+            "type": "object",
+            "properties": {
+                "schema": {"type": "object"},
+                "values": {"type": "object"},
+                "layout": {"type": "array", "items": {"type": "object"}},
+            },
+            "required": ["schema", "values"],
+        },
+    },
+    {
+        "name": "autopilot_settings_update",
+        "description": "更新自动挡设置。宿主只会把发生变化的项传进来。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "set": {
+                    "type": "object",
+                    "properties": {
+                        "paused": {"type": "boolean"},
+                        "auto_land": {"type": "boolean"},
+                        "auto_resolve": {"type": "boolean"},
+                        "auto_port": {"type": "boolean"},
+                        "auto_exec": {"type": "boolean"},
+                        "daemon_enabled": {"type": "boolean"},
+                    },
+                    "minProperties": 1,
+                    "additionalProperties": False,
+                },
+            },
+            "required": ["set"],
+            "additionalProperties": False,
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {"values": {"type": "object"}},
+            "required": ["values"],
+        },
+    },
+]
+
+# 设置项：宿主在插件设置页用原生控件渲染，本 server 负责读值、写值、持久化。
+# 这些开关本来就存在 control_state.json 里（用户级、不进版本库），这里只是把它们
+# 从「只有面板上那排自绘开关能改」变成「宿主设置页也能改」。
+SETTINGS_READ_TOOL = "autopilot_settings_read"
+SETTINGS_UPDATE_TOOL = "autopilot_settings_update"
+
+SETTINGS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "paused": {
+            "type": "boolean",
+            "title": "暂停自动挡",
+            "description": "暂停后不再启动新工作；正在跑的 Git 操作会安全收尾。",
+        },
+        "auto_land": {
+            "type": "boolean",
+            "title": "自动合入安全改动",
+            "description": "门禁通过且无冲突的分支，直接合进主分支并同步引用。",
+        },
+        "auto_resolve": {
+            "type": "boolean",
+            "title": "自动收拢冲突分支",
+            "description": "把有冲突的分支拆成可执行任务逐条收口，不逐条问用户。",
+        },
+        "auto_port": {
+            "type": "boolean",
+            "title": "自动移植小改动",
+            "description": "把体量很小、明显安全的在途改动搬到主干上。",
+        },
+        "auto_exec": {
+            "type": "boolean",
+            "title": "自动实现需求",
+            "description": "按台账里的未决问题，在独立 worktree 里起真实会话实现并跑门禁。会动代码、会花钱。",
+        },
+        "daemon_enabled": {
+            "type": "boolean",
+            "title": "后台常驻",
+            "description": "用系统自带的常驻机制定时检查；关掉后只在对话里手动触发。",
+        },
+    },
+    "required": ["paused", "auto_land", "auto_resolve", "auto_port", "auto_exec",
+                 "daemon_enabled"],
+}
+
+SETTINGS_LAYOUT = [
+    {"kind": "group", "title": "运行", "items": [
+        {"kind": "property", "property": "paused"},
+        {"kind": "tool", "tool": "autopilot_run_once",
+         "description": "立刻检查一轮，不改任何开关"},
+    ]},
+    {"kind": "group", "title": "自动动作", "items": [
+        {"kind": "property", "property": "auto_land"},
+        {"kind": "property", "property": "auto_resolve"},
+        {"kind": "property", "property": "auto_port"},
+        {"kind": "property", "property": "auto_exec"},
+    ]},
+    {"kind": "group", "title": "后台", "items": [
+        {"kind": "property", "property": "daemon_enabled"},
+    ]},
 ]
 
 
@@ -893,6 +1006,40 @@ def control_action(action, enabled=None):
     return "未知 action：%s" % action, 2
 
 
+def _settings_values():
+    """当前开关值（只看 6 个 boolean，滤掉 load() 附带的状态字段）。"""
+    cfg = control_state.load()
+    return {k: bool(cfg.get(k, control_state.DEFAULTS[k]))
+            for k in control_state.DEFAULTS}
+
+
+def _settings_read_payload():
+    """宿主插件设置页用原生控件渲染：schema + 当前值 + 分组布局。"""
+    values = _settings_values()
+    return {
+        "schema": SETTINGS_SCHEMA,
+        "values": values,
+        "layout": SETTINGS_LAYOUT,
+        "__text__": "自动挡设置：\n" + "\n".join(
+            "%s = %s" % (k, "开" if v else "关") for k, v in values.items()),
+    }
+
+
+def _settings_update(set_values):
+    """把宿主送来的变更落到用户级 control.json，并回读权威值。"""
+    if not isinstance(set_values, dict) or not set_values:
+        return "autopilot_settings_update 需要 set（至少一项）", 2
+    changed = {k: v for k, v in set_values.items()
+               if k in control_state.DEFAULTS and isinstance(v, bool)}
+    if not changed:
+        return "set 里没有可识别的开关项", 2
+    control_state.set_keys(**changed)
+    control_state.append_event("settings", **changed)
+    values = _settings_values()
+    desc = "、".join("%s→%s" % (k, "开" if v else "关") for k, v in changed.items())
+    return {"values": values, "__text__": "设置已更新：" + desc}, 0
+
+
 def call_tool(name, args):
     args = args or {}
     if name == "project_status":
@@ -1009,6 +1156,12 @@ def call_tool(name, args):
         return _status_payload(fast=True), 0
     if name == "autopilot_control":
         return control_action(args.get("action"), args.get("enabled"))
+    if name == "autopilot_run_once":
+        return control_action("run_once")
+    if name == "autopilot_settings_read":
+        return _settings_read_payload(), 0
+    if name == "autopilot_settings_update":
+        return _settings_update(args.get("set") or {})
     if name == "render_autopilot_panel":
         panel = _panel_html_path()
         if panel is None:
@@ -1040,6 +1193,14 @@ def handle(msg):
             "capabilities": {
                 "tools": {"listChanged": False},
                 "resources": {"listChanged": False},
+                # 插件设置页：宿主用原生控件渲染，读值走 readTool、写值走 updateTool。
+                # 挂错位置或两个工具同名/不存在，宿主会直接丢掉整页设置。
+                "experimental": {
+                    "openai/settings": {
+                        "readTool": SETTINGS_READ_TOOL,
+                        "updateTool": SETTINGS_UPDATE_TOOL,
+                    },
+                },
             },
             "serverInfo": {"name": SERVER_NAME, "version": SERVER_VERSION},
             "instructions": (
@@ -1097,7 +1258,12 @@ def handle(msg):
             "uri": PANEL_URI,
             "mimeType": "text/html;profile=mcp-app",
             "text": panel.read_text(encoding="utf-8"),
-            "_meta": {"ui": {"prefersBorder": True}},
+            # 显示模式声明在资源侧（openai/ui.availableDisplayModes），
+            # 让宿主在 app 初始化前就能选 inline / fullscreen。
+            "_meta": {
+                "ui": {"prefersBorder": True},
+                "openai/ui": {"availableDisplayModes": ["inline", "fullscreen"]},
+            },
         }]})
         return
     if method == "tools/list":
@@ -1107,9 +1273,12 @@ def handle(msg):
         params = msg.get("params") or {}
         out, code = call_tool(params.get("name"), params.get("arguments"))
         if isinstance(out, dict):
-            text = out.get("__text__") or "已更新。"
+            text = out.pop("__text__", None) or "已更新。"
+            # structuredContent 只放真正的结构化结果；__text__ 等内部键不外泄，
+            # 避免污染 openai/settings 这类带 outputSchema 的宿主校验。
+            structured = {k: v for k, v in out.items() if not k.startswith("__")}
             result = {"content": [{"type": "text", "text": text}],
-                      "structuredContent": out, "isError": code != 0}
+                      "structuredContent": structured, "isError": code != 0}
         else:
             result = {"content": [{"type": "text", "text": out}], "isError": code != 0}
         _result(rid, result)
