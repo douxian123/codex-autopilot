@@ -7,7 +7,9 @@ truthctl —— 项目真相层的唯一读写入口（stdlib only）
 truthctl 管「这个项目现在到底是什么状态」。
 
   mainline.json      产品主线（手写，改方向才动）
+  product_state.json 产品状态：产品今天是怎么工作的（随代码同步更新，人只看它的变化）
   decisions.jsonl    决策台账
+  judgments.jsonl    判断逻辑台账：人为什么这么判断（每轮蒸馏回写）
   ledger.jsonl       问题台账（bug/视觉/体验/架构）
   progress.jsonl     进展台账
   acceptance.jsonl   验收台账
@@ -18,6 +20,10 @@ truthctl 管「这个项目现在到底是什么状态」。
   truthctl ls [type]           列出台账
   truthctl add <type> "<标题>"  追加一条（细节走环境变量）
   truthctl promote <n> <kind>  把 ops/tasks/inbox.jsonl 第 n 条提升为问题台账
+  truthctl product             产品今天是怎么工作的（含相对主干的变化）
+  truthctl product set "<模块>" "<行为>"  更新一个模块（why/files 走环境变量）
+  truthctl distill             回看这一轮人额外说了什么，列候选判断
+  truthctl distill add "<判断>"  把判断背后的判断逻辑写回（why/scope 走环境变量）
 
 add 的环境变量：
   KG_TRUTH_DETAIL KG_TRUTH_STATUS KG_TRUTH_LANE KG_TRUTH_FILES
@@ -28,6 +34,7 @@ add 的环境变量：
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -48,6 +55,8 @@ CFG = central_config.load(REPO)
 TRUTH = REPO / 'ops' / 'truth'
 INBOX = REPO / 'ops' / 'tasks' / 'inbox.jsonl'
 STATUS = REPO / 'docs' / 'PROJECT_STATUS.md'
+PRODUCT_STATE = TRUTH / 'product_state.json'
+JUDGMENTS = TRUTH / 'judgments.jsonl'
 
 
 def _kgctl_cmd() -> str:
@@ -58,7 +67,8 @@ def _kgctl_cmd() -> str:
     return "ops/kgctl.py"
 
 
-PREFIX = {'decision': 'D', 'ledger': 'L', 'progress': 'P', 'acceptance': 'A'}
+PREFIX = {'decision': 'D', 'ledger': 'L', 'progress': 'P', 'acceptance': 'A',
+          'judgment': 'J'}
 LEDGER_KINDS = {'visual', 'ux', 'bug', 'arch', 'gate'}
 LANES = REPO / 'ops' / 'tasks' / 'lanes.json'
 # 从具体到泛化：第一条命中的规则就是归类结果。可用 central.config.json 的
@@ -101,7 +111,21 @@ def _read(path: Path) -> list:
 
 
 FILES = {'decision': 'decisions.jsonl', 'ledger': 'ledger.jsonl',
-         'progress': 'progress.jsonl', 'acceptance': 'acceptance.jsonl'}
+         'progress': 'progress.jsonl', 'acceptance': 'acceptance.jsonl',
+         'judgment': 'judgments.jsonl'}
+
+
+def _read_json(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=1) + '\n')
 
 
 def _append(rec: dict):
@@ -155,6 +179,11 @@ def cmd_add(args):
         rec.update(level=os.environ.get('KG_TRUTH_LEVEL', 'P1'),
                    status=os.environ.get('KG_TRUTH_STATUS', 'todo'),
                    evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''))
+    elif t == 'judgment':
+        rec.update(statement=os.environ.get('KG_TRUTH_STATEMENT', '') or title,
+                   why=os.environ.get('KG_TRUTH_WHY', ''),
+                   scope=os.environ.get('KG_TRUTH_SCOPE', 'process'),
+                   status='active')
     _append(rec)
     print(f"已记入真相 [{rec['id']}] {t}：{title[:70]}")
 
@@ -447,6 +476,116 @@ def cmd_ls(args):
             print(f"  [{r['id']}] {r.get('status',''):8s} {r.get('title','')[:70]}{lane}")
 
 
+def cmd_product(args):
+    """产品状态：产品今天是怎么工作的。
+
+    它不是又一份需求文档，而是「线上/当前这个产品实际会怎么表现」的一段可 diff 的
+    事实。Coding Agent 改完行为，在同一个改动里更新它；人验收时只看它的变化，
+    不读实现。
+    """
+    if args and args[0] in ('set', 'upsert'):
+        if len(args) < 3:
+            sys.exit('用法: truthctl product set "<模块>" "<行为>"（why/files 走环境变量）')
+        area, behavior = args[1], ' '.join(args[2:])
+        data = _read_json(PRODUCT_STATE)
+        modules = data.get('modules') if isinstance(data.get('modules'), list) else []
+        now = time.strftime('%Y-%m-%d')
+        rec = {'area': area, 'behavior': behavior,
+               'why': os.environ.get('KG_PS_WHY', ''),
+               'files': [f for f in os.environ.get('KG_PS_FILES', '').split(':') if f],
+               'updated': now}
+        replaced = False
+        for i, m in enumerate(modules):
+            if m.get('area') == area:
+                modules[i] = rec
+                replaced = True
+                break
+        if not replaced:
+            modules.append(rec)
+        data['modules'] = modules
+        data['updated'] = now
+        _write_json(PRODUCT_STATE, data)
+        print(f"{'已更新' if replaced else '已记录'}产品状态 [{area}]：{behavior[:70]}")
+        return
+
+    data = _read_json(PRODUCT_STATE)
+    modules = data.get('modules') if isinstance(data.get('modules'), list) else []
+    print('=== 产品状态 · 产品今天是怎么工作的 ===')
+    if not modules:
+        print('（还没有记录。改动的会话应在同一轮写进来：')
+        print('  truthctl product set "<模块>" "<行为>"，why/files 走 KG_PS_WHY / KG_PS_FILES）')
+    for m in modules:
+        print(f"  [{m.get('area', '')}] {m.get('behavior', '')}")
+        if m.get('why'):
+            print(f"      为什么：{m.get('why')}")
+    print(f"\n共 {len(modules)} 个模块行为，最后更新 {data.get('updated') or '—'}")
+    diff = _product_diff()
+    if diff:
+        print('\n相对主干的变化（人验收只看这一段）：')
+        print(diff)
+
+
+def _product_diff() -> str:
+    """相对主干的产品状态变化。人只需要看这一段，不需要读代码或 PR。"""
+    main = CFG.get('main_branch') or 'main'
+    rel = str(PRODUCT_STATE.relative_to(REPO))
+    p = subprocess.run(['git', '-C', str(REPO), 'diff', '--unified=1', '--no-color',
+                        main, '--', rel],
+                       capture_output=True, text=True, errors='replace')
+    if p.returncode != 0 or not p.stdout.strip():
+        return ''
+    lines = [ln for ln in p.stdout.splitlines()
+             if ln[:1] in '+-' and not ln.startswith(('+++', '---'))]
+    return '\n'.join(lines[:60])
+
+
+def cmd_distill(args):
+    """蒸馏：每轮回看人额外说了什么，只把「判断背后的判断逻辑」写回。
+
+    只记一次性细节没有用——下次换个地方还得重新说。要记的是「为什么这么判断」，
+    Agent 才能把它用到没见过的情况上。
+    """
+    if args and args[0] == 'add':
+        if len(args) < 2:
+            sys.exit('用法: truthctl distill add "<判断逻辑>"（why/scope 走环境变量）')
+        statement = ' '.join(args[1:])
+        rec = {'id': _next_id('judgment'), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
+               'type': 'judgment', 'title': statement[:80], 'statement': statement,
+               'why': os.environ.get('KG_TRUTH_WHY', ''),
+               'scope': os.environ.get('KG_TRUTH_SCOPE', 'process'),
+               'source': os.environ.get('KG_TRUTH_SOURCE', 'agent'),
+               'status': 'active'}
+        _append(rec)
+        print(f"已蒸馏 [{rec['id']}]（{rec['scope']}）：{statement[:70]}")
+        return
+
+    print('=== 蒸馏回看 ===')
+    print('这一轮人额外说了什么（原话，来自唯一入口）：')
+    inbox = _read(INBOX)
+    recent = inbox[-12:]
+    if recent:
+        for i, it in enumerate(recent, len(inbox) - len(recent) + 1):
+            print(f"  #{i:03d} {it.get('text', '')[:96]}")
+    else:
+        print('  （唯一入口还没有收到输入）')
+
+    blocked = [r for r in _read(TRUTH / FILES['acceptance'])
+               if r.get('status') == 'blocked']
+    if blocked:
+        print('\n被卡住、需要人拍板的地方：')
+        for r in blocked:
+            print(f"  {r['id']} {r.get('title', '')}")
+
+    active = [r for r in _read(TRUTH / FILES['judgment']) if r.get('status') == 'active']
+    print(f"\n已蒸馏的判断逻辑（{len(active)} 条）：")
+    if not active:
+        print('  （还没有。把「为什么这么判断」写回：truthctl distill add "<判断逻辑>"）')
+    for r in active[-10:]:
+        print(f"  [{r['id']}/{r.get('scope', '')}] {r.get('statement') or r.get('title', '')}")
+    print('\n只把「背后的判断逻辑」写回，不记一次性细节；范围用 KG_TRUTH_SCOPE'
+          '（product/design/arch/process）。')
+
+
 def cmd_snapshot(args):
     ml = json.loads((TRUTH / 'mainline.json').read_text()) if (TRUTH / 'mainline.json').exists() else {}
     dec = _read(TRUTH / 'decisions.jsonl')
@@ -520,6 +659,28 @@ def cmd_snapshot(args):
             L.append(f"- `{r['id']}` {r.get('title','')}")
     L.append('')
 
+    ps = _read_json(PRODUCT_STATE)
+    modules = ps.get('modules') if isinstance(ps.get('modules'), list) else []
+    L += ['## 七、产品状态（产品今天是怎么工作的）', '']
+    if modules:
+        for m in modules:
+            L.append(f"- **{m.get('area','')}**：{m.get('behavior','')}")
+            if m.get('why'):
+                L.append(f"  - 为什么：{m.get('why')}")
+    else:
+        L.append('（还没有记录；改动的会话应在同一轮写进来）')
+    L.append('')
+
+    jd = [r for r in _read(JUDGMENTS) if r.get('status') == 'active']
+    L += ['## 八、判断逻辑（同一个判断，人只做一次）', '']
+    if jd:
+        for r in jd[-12:]:
+            L.append(f"- `{r['id']}` [{r.get('scope','')}] "
+                     f"{r.get('statement') or r.get('title','')}")
+    else:
+        L.append('（还没有蒸馏；每轮把「为什么这么判断」写回，不记一次性细节）')
+    L.append('')
+
     STATUS.parent.mkdir(parents=True, exist_ok=True)
     STATUS.write_text('\n'.join(L) + '\n')
     if not args or '--print' in args:
@@ -528,7 +689,8 @@ def cmd_snapshot(args):
 
 
 CMDS = {'add': cmd_add, 'ls': cmd_ls, 'snapshot': cmd_snapshot, 'promote': cmd_promote,
-        'route': cmd_route, 'lanes': cmd_lanes, 'next': cmd_next}
+        'route': cmd_route, 'lanes': cmd_lanes, 'next': cmd_next,
+        'product': cmd_product, 'distill': cmd_distill}
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
@@ -537,5 +699,6 @@ if __name__ == '__main__':
         CMDS[sys.argv[1]](sys.argv[2:])
     else:
         print(__doc__)
-        print('命令：' + ' | '.join(['snapshot', 'ls', 'add', 'promote', 'route', 'lanes', 'next']))
+        print('命令：' + ' | '.join(['snapshot', 'ls', 'add', 'promote', 'route', 'lanes',
+                                     'next', 'product', 'distill']))
         sys.exit(1)

@@ -107,6 +107,11 @@
   .list .grow{flex:1 1 auto;min-width:0;word-break:break-word}
   .list .when{color:var(--ink3);font-size:11.5px;white-space:nowrap}
   .empty{color:var(--ink3);font-size:12.5px;padding:6px 0}
+  .vhead{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+  .vhead .ttl{font-size:13px;font-weight:600}
+  .vhead .when{color:var(--ink3);font-size:11.5px;margin-left:auto}
+  .code{margin-top:8px;background:#f7f8fa;border:1px solid var(--line2);border-radius:9px;padding:9px 11px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:var(--ink2);white-space:pre-wrap;word-break:break-word;max-height:190px;overflow:auto}
+  .meta{margin-top:8px;color:var(--ink3);font-size:11.5px}
   .foot{margin-top:4px;text-align:center}
   .sep{height:1px;background:var(--line2);margin:12px 0}
   @media (max-width:460px){ .counters{grid-template-columns:1fr 1fr} .status-time{margin-left:0;width:100%} }
@@ -213,6 +218,23 @@
     <section class="card">
       <h2>进行中的冲突任务</h2>
       <ul class="list" id="resolveList"></ul>
+    </section>
+
+    <section class="card">
+      <h2>产品状态 · 它现在为你做什么</h2>
+      <ul class="list" id="productList"></ul>
+      <div class="meta" id="productMeta"></div>
+    </section>
+
+    <section class="card">
+      <h2>判断逻辑 · 同一个判断只做一次</h2>
+      <ul class="list" id="judgmentList"></ul>
+      <p class="meta">每轮回看你这轮额外说了什么，只把「为什么这么判断」写回，下次不用重复说。</p>
+    </section>
+
+    <section class="card">
+      <h2>最近一次自验证 · 真跑真写真拦</h2>
+      <div id="verifyBox"></div>
     </section>
 
     <section class="card">
@@ -329,6 +351,73 @@
     renderResolve(s.resolve_tasks || []);
     renderBlocked(s);
     renderEvents(s.events || []);
+    renderProduct(s.product_state || {});
+    renderJudgments(s.judgments || []);
+    renderVerify(s.last_verification);
+  }
+
+  function renderProduct(ps){
+    var ul = el("productList"); ul.innerHTML = "";
+    var meta = el("productMeta");
+    var mods = ps.modules || [];
+    if (!mods.length){
+      ul.innerHTML = '<div class="empty">还没有记录。改动的会话会在同一轮把产品行为写进这里。</div>';
+      meta.textContent = "";
+      return;
+    }
+    mods.slice(0,8).forEach(function(m){
+      var li = document.createElement("li");
+      var tag = document.createElement("span"); tag.className = "tag"; tag.textContent = m.area || "模块";
+      var g = document.createElement("span"); g.className = "grow";
+      g.textContent = m.behavior || "";
+      li.appendChild(tag); li.appendChild(g);
+      if (m.updated){
+        var w = document.createElement("span"); w.className = "when"; w.textContent = m.updated;
+        li.appendChild(w);
+      }
+      ul.appendChild(li);
+    });
+    var bits = [];
+    if (ps.count) bits.push("共 " + ps.count + " 个模块行为");
+    if (ps.updated) bits.push("最后更新 " + ps.updated);
+    bits.push("人验收只看这里的变化，不用读代码");
+    meta.textContent = bits.join(" · ");
+  }
+
+  function renderJudgments(list){
+    var ul = el("judgmentList"); ul.innerHTML = "";
+    if (!list.length){
+      ul.innerHTML = '<div class="empty">还没有蒸馏。每轮把「为什么这么判断」写回，下次不用重复说。</div>';
+      return;
+    }
+    list.slice(0,8).forEach(function(j){
+      var li = document.createElement("li");
+      var tag = document.createElement("span"); tag.className = "tag"; tag.textContent = j.scope || "process";
+      var g = document.createElement("span"); g.className = "grow"; g.textContent = j.statement || "";
+      li.appendChild(tag); li.appendChild(g); ul.appendChild(li);
+    });
+  }
+
+  function renderVerify(lv){
+    var box = el("verifyBox"); box.innerHTML = "";
+    if (!lv){
+      box.innerHTML = '<div class="empty">还没有落盘过的验证证据。合入过一次并跑过验证后会出现。</div>';
+      return;
+    }
+    var head = document.createElement("div"); head.className = "vhead";
+    var t = document.createElement("span"); t.className = "ttl"; t.textContent = lv.title || "最近一次落盘";
+    var s = document.createElement("span");
+    s.className = "tag" + (lv.status === "verified" ? "" : " warn");
+    s.textContent = lv.status === "verified" ? "已验证" : "待验证";
+    head.appendChild(t); head.appendChild(s);
+    var when = document.createElement("span"); when.className = "when"; when.textContent = fmtTime(lv.ts);
+    head.appendChild(when);
+    box.appendChild(head);
+    var pre = document.createElement("div"); pre.className = "code"; pre.textContent = lv.evidence || "";
+    box.appendChild(pre);
+    var note = document.createElement("div"); note.className = "meta";
+    note.textContent = "上面是真实跑过的命令和工作目录，可以照着复核。";
+    box.appendChild(note);
   }
 
   var KIND_LABEL = {

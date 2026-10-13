@@ -29,6 +29,17 @@
   并声明 `KG_REPO`（账本所在项目）。安装脚本会写好这两项。
 - `.codex-plugin/plugin.json` —— 清单：声明上面几部分属于同一个插件。
 
+## 三种自动回写
+
+输入收进来只解决一半问题；另一半是「做完之后谁记得」。这三种回写补的是那一半：
+
+- **产品状态**（`ops/truth/product_state.json`）：产品今天实际怎么工作，按模块记，改到行为的会话在同一轮更新；人验收只看它的变化，不读实现。
+- **自验证**（`ops/truth/acceptance.jsonl`）：合入前逐条真跑验证门禁，把命令 + cwd + 退出码写成验收证据；没配门禁就标 `todo`，不伪造 `verified`。
+- **判断逻辑**（`ops/truth/judgments.jsonl`）：每轮收口后蒸馏一次，只记「为什么这么判断」，下次换个地方也不用重新讲。
+
+面板点「高级」就能看到这三块：产品状态、判断逻辑、最近一次自验证。对应的 MCP 工具是
+`product_state` / `product_update` / `distill_review` / `distill_add`。
+
 ## 安装
 
 在本仓库根目录跑一次：
@@ -62,7 +73,7 @@
   路由 inbox + 自动 land 与 main 无冲突、且树里没有残留冲突标记的分支 + 归档「内容早已
   全部在 main」的重复分支（`supersede --fast`）+ 把真冲突分支收拢成族（`converge`）。
   真正的语义冲突不会自动合。可选打开 `auto_port`（`ops/central.config.json`）后，一个周期
-  会把「只差 1–N 个提交」的冲突分支逐条 cherry-pick 到当前 main，跑同一道构建门禁后落盘，
+  会把「只差 1–N 个提交」的冲突分支逐条 cherry-pick 到当前 main，跑同一道验证门禁后落盘，
   一遇文本冲突即整体放弃；移植失败的分支记进 `port_blocked` 不再重试。未解干净的
   convergence 分支也不会被 `queue` 列为可落盘，而是留在 convergence worktree 里交给
   agent 逐族解。

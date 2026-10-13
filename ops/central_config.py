@@ -9,7 +9,7 @@
 
   1. 主干分支叫什么（默认 main），功能分支前缀是什么（默认 codex/）；
   2. 落盘用的「主干工作树」放在哪、共享检出（node_modules 的来源）在哪；
-  3. 落盘前的构建门禁跑什么命令、在哪个子目录跑；
+  3. 落盘前的验证门禁跑什么命令、在哪个子目录跑；
   4. 固定泳道的名字与门禁提示（design / bug / ...）。
 
 把这四处收进 `ops/central.config.json`，其余逻辑一行不用改。没有配置文件时，
@@ -33,9 +33,13 @@ DEFAULTS = {
     "shared_dir": None,
     # 需要软链 node_modules 的顶层子目录（相对仓库根）
     "link_dirs": ["frontend", "backend"],
-    # 落盘前的构建门禁。cwd 相对主干工作树；cmd 用 shell 执行。
+    # 落盘前的验证门禁。cwd 相对主干工作树；cmd 用 shell 执行。
     # 不需要门禁就设为 {"cmd": "", "cwd": "."}
     "build": {"cmd": "npm run build", "cwd": "frontend"},
+    # 自我验证门禁（可选，比 build 更细）。形如：
+    #   "verify": [{"name": "typecheck", "cmd": "npx tsc --noEmit", "cwd": "frontend"}]
+    # None = 退化成上面 build 那一条；[] = 明确表示这个项目没有可跑的验证。
+    "verify": None,
     # 归类兜底泳道：任何规则都没命中时落这里。
     "default_lane": "bug",
     # 自定义归类规则（可选）：[[泳道名, [关键词...]], ...]，第一条命中即归类。
@@ -110,3 +114,35 @@ def shared_dir(repo, cfg) -> Path:
     if cfg.get("shared_dir"):
         return Path(cfg["shared_dir"]).expanduser()
     return repo
+
+
+def verify_gates(cfg) -> list:
+    """把 verify 配置规范化成 [{name, cmd, cwd}]。
+
+    没配 verify 时退化成 build 一条，让「能构建」至少成为一道最小验证；
+    显式配成 [] 则表示这个项目没有可跑的验证，调用方不该编一条假的。
+    """
+    raw = cfg.get("verify")
+    if raw is None:
+        build = cfg.get("build") or {}
+        cmd = (build.get("cmd") or "").strip()
+        if not cmd:
+            return []
+        return [{"name": "build", "cmd": cmd, "cwd": build.get("cwd") or "."}]
+    if isinstance(raw, str):
+        raw = [raw]
+    elif isinstance(raw, dict):
+        raw = [raw]
+    out = []
+    for i, item in enumerate(raw or []):
+        if isinstance(item, str):
+            cmd = item.strip()
+            if cmd:
+                out.append({"name": "gate%d" % (i + 1), "cmd": cmd, "cwd": "."})
+        elif isinstance(item, dict):
+            cmd = (item.get("cmd") or "").strip()
+            if not cmd:
+                continue
+            out.append({"name": item.get("name") or "gate%d" % (i + 1),
+                        "cmd": cmd, "cwd": item.get("cwd") or "."})
+    return out

@@ -21,13 +21,16 @@ description: Codex 自动挡。当用户在同一项目里提出零散、即时�
 3. 先记账再动手：任何零散需求先 `inbox`，再 `tick`，再执行。
 4. 只读 + 追加：归类、快照、看板都是加法；合并前必过门禁；不进共享 checkout 写文件。
 5. 用户拍板只限三种：改产品方向、删数据、发布。其余自行路由执行。
+6. 落盘自带验证：合入走真实验证门禁，命令 + cwd + 退出码写进验收台账；没配门禁就标 `todo`，不伪造 `verified`。
+7. 每轮蒸馏：收口后回看这轮人额外说了什么，把「为什么这么判断」写回判断逻辑台账；只记判断逻辑，不记一次性细节。
 
 ## 两种调用方式
 - 有 MCP 工具时优先直接调用（读写的就是下面这套 CLI）：
   `intake_request`（一句话收进唯一入口并走完整条链，首选）、`sync_control_plane`（重扫主循环）、
   `next_actions`、`project_status`、`route_inbox`、`resolve_list`、`resolve_plan`、
   `resolve_start`、`resolve_finish`、`convergence_plan`（冲突收拢）、
-  `generate_context`、`dashboard`、`capture_request`（只追加）、`suggest_branch`。
+  `generate_context`、`dashboard`、`capture_request`（只追加）、`suggest_branch`、
+  `product_state` / `product_update`（产品状态）、`distill_review` / `distill_add`（判断逻辑蒸馏）。
 - 否则走 CLI。运行时代码在插件里（自包含安装：`~/plugins/codex-autopilot/ops/`），
   项目里只留账本；手敲时先设 `KG_REPO` 指到项目（MCP 调用时插件已自动注入）：
 
@@ -65,7 +68,7 @@ python3 "$KGCTL" context <分支>    # 给该分支写一份版本化 Context Pa
 
 先用 `supersede` 摘掉「内容其实早进 main」的假冲突（patch-id 判据，只写台账、不动代码、
 不动源分支），再用 `port` 把「只差几个提交」的分支 cherry-pick 到当前 main（冲突即
-`--abort` 整体放弃，成功也走同一道构建门禁）。剩下的才是真需要语义判断的冲突：默认
+`--abort` 整体放弃，成功也走同一道验证门禁）。剩下的才是真需要语义判断的冲突：默认
 `resolve` 把它们逐条拆成独立任务——append-only JSONL 走行级并集，其余保留 marker 写任务书，
 解完走同一道门禁，一条冲突不再需要一个对话；量大时才用 `converge` 收成族。`tick` 已自动
 包含收拢与归档。
@@ -73,10 +76,12 @@ python3 "$KGCTL" context <分支>    # 给该分支写一份版本化 Context Pa
 ## 执行路径
 - `intake` / `tick` 之后，按 `next` 给出的优先级挑一条，在独立 worktree 里做；不碰别人在途文件。
 - 改完提交到该泳道分支；能干净合并、相关门禁通过就直接 `kgctl land <分支>`，不要把“能不能合”当问题回报给用户。
+- 改到产品行为的同一轮，把它写进产品状态：`truthctl product set "<模块>" "<行为>"`（`KG_PS_WHY` / `KG_PS_FILES`）；人验收只看它相对主线的变化，不读实现。
 - 分支冲突先别急着问用户：`supersede` 归档已落内容，`port` 自动移植只差几个提交的分支；剩下真语义冲突出现在 `resolve --list` 里，逐条解完后 `resolve --finish` 收口。
 - 接手一条陌生分支前先 `kgctl context <分支>`，读它写出的主线/决策/相关未决问题/DoD，而不是靠聊天记忆。
-- 落盘后把进展写进真相层：`truthctl add progress "..."`（`KG_TRUTH_COMMIT=<sha>`、`KG_TRUTH_LANDED=1`）。
+- 落盘后把进展写进真相层：`truthctl add progress "..."`（`KG_TRUTH_COMMIT=<sha>`、`KG_TRUTH_LANDED=1`）；`land` 自身会把每道验证门禁的 `name: cmd (cwd=...) -> exit N` 写进验收台账，不写「通过构建」这类结论。
 - 问题修完写一条状态变更：`truthctl add ledger` 或直接更新对应条目的 `status=done`。
+- 一轮收口后蒸馏一次：`truthctl distill` 列出这轮人额外说了什么，用 `truthctl distill add "<判断逻辑>"`（`KG_TRUTH_WHY` / `KG_TRUTH_SCOPE`）把「为什么这么判断」写回，下次不用重复说。
 
 ## 边界
 - 这个 skill 管“怎么把散乱输入收成一个有序系统”，不代替产品判断。

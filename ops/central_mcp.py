@@ -88,8 +88,8 @@ def kgctl(*args, extra_env=None):
     return _run([str(KGCTL), *args], extra_env)
 
 
-def truthctl(*args):
-    return _run([str(TRUTHCTL), *args])
+def truthctl(*args, extra_env=None):
+    return _run([str(TRUTHCTL), *args], extra_env)
 
 
 TOOLS = [
@@ -132,6 +132,47 @@ TOOLS = [
         "name": "next_actions",
         "description": "只回答一个问题：现在最该动的是哪几条（按优先级排出待办）。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "product_state",
+        "description": "产品今天是怎么工作的：按模块列出当前产品的实际行为，以及相对主干的变化。用户问“产品现在到底怎么样了 / 这次改动对用户有什么变化 / 改完是什么样”时用它。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "product_update",
+        "description": "更新一条产品状态：某个模块今天实际会怎么表现。改完产品行为的会话应在同一轮调用它，让人只看产品变化、不读代码。why/files 可选。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "area": {"type": "string", "description": "模块名，如“自动挡面板”“落盘”"},
+                "behavior": {"type": "string", "description": "产品今天的实际行为，一句话"},
+                "why": {"type": "string", "description": "为什么这样，可选"},
+                "files": {"type": "array", "items": {"type": "string"},
+                          "description": "相关文件路径，可选"},
+            },
+            "required": ["area", "behavior"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "distill_review",
+        "description": "回看这一轮人额外说了什么，以及被卡住需要拍板的地方，列出候选判断。收口一轮后先用它，再把判断逻辑写回。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "distill_add",
+        "description": "把「为什么这么判断」写回判断逻辑台账，让同一个判断人只做一次。只记可复用的判断逻辑，不记一次性细节。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "statement": {"type": "string", "description": "判断逻辑，一句话"},
+                "why": {"type": "string", "description": "为什么这么判断，可选"},
+                "scope": {"type": "string", "enum": ["product", "design", "arch", "process"],
+                          "description": "适用范围，默认 process"},
+            },
+            "required": ["statement"],
+            "additionalProperties": False,
+        },
     },
     {
         "name": "suggest_branch",
@@ -325,6 +366,62 @@ def _ledger_count():
         return 0
 
 
+def _truth_dir():
+    repo = os.environ.get("KG_REPO") or str(REPO)
+    return Path(repo) / "ops" / "truth"
+
+
+def _product_state(limit=25):
+    """产品今天是怎么工作的：按模块读 product_state.json。"""
+    data = _json_file(_truth_dir() / "product_state.json")
+    modules = data.get("modules") if isinstance(data.get("modules"), list) else []
+    return {"updated": data.get("updated"), "count": len(modules), "modules": modules[:limit]}
+
+
+def _active_judgments(limit=12):
+    """判断逻辑台账（只取 active），供面板展示「同一个判断人只做一次」。"""
+    out = []
+    try:
+        raw = (_truth_dir() / "judgments.jsonl").read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if rec.get("status") == "active":
+            out.append({"id": rec.get("id"), "scope": rec.get("scope"),
+                        "statement": rec.get("statement") or rec.get("title", "")})
+    return out[-limit:]
+
+
+def _last_verification():
+    """最近一次落盘的真实验收证据：acceptance.jsonl 里最后一条带 evidence 的记录。"""
+    last = None
+    try:
+        raw = (_truth_dir() / "acceptance.jsonl").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if rec.get("evidence"):
+            last = rec
+    if not last:
+        return None
+    return {"id": last.get("id"), "title": last.get("title"), "status": last.get("status"),
+            "lane": last.get("lane"), "ts": last.get("ts"), "evidence": last.get("evidence")}
+
+
 def _active_resolve_tasks():
     """进行中的冲突拆解任务（needs_agent / gate_fail）。只读任务目录。"""
     repo = os.environ.get("KG_REPO")
@@ -381,7 +478,7 @@ def _status_payload(fast=True):
         why = "这类改动要么改了产品方向、要么门禁过不了，按约定不自动合"
     elif summary.get("clean"):
         doing = f"正在把 {summary.get('clean')} 个和主线无冲突的分支逐个合入"
-        why = "它们和 main 无冲突、构建门禁已过，属于可以安全自动合入的那一类"
+        why = "它们和 main 无冲突、验证门禁已过，属于可以安全自动合入的那一类"
     elif rtasks:
         doing = f"正在处理 {len(rtasks)} 条冲突，拆成可执行任务后逐条收口"
         why = "冲突不丢给你逐条裁决，先自动拆成任务，解完再走同一道门禁"
@@ -449,6 +546,9 @@ def _status_payload(fast=True):
         },
         "resolve_tasks": rtasks[:20],
         "events": control_state.read_events(30),
+        "product_state": _product_state(),
+        "judgments": _active_judgments(),
+        "last_verification": _last_verification(),
     }
     payload["__text__"] = _status_text(payload)
     return payload
@@ -475,6 +575,18 @@ def _status_text(payload):
         % (payload["counters"]["received"], payload["counters"]["landed"],
            payload["counters"]["resolved"]),
     ]
+    ps = payload.get("product_state") or {}
+    if ps.get("count"):
+        lines.append("产品状态：已记录 %s 个模块行为（最后更新 %s）"
+                     % (ps["count"], ps.get("updated") or "—"))
+    jd = payload.get("judgments") or []
+    if jd:
+        lines.append("判断逻辑：已蒸馏 %s 条（同一个判断人只做一次）" % len(jd))
+    lv = payload.get("last_verification")
+    if lv:
+        first = (lv.get("evidence") or "").splitlines()
+        lines.append("最近验证：%s（%s）" % (lv.get("title", ""),
+                                            first[0] if first else "无证据"))
     return "\n".join(lines)
 
 
@@ -540,6 +652,25 @@ def call_tool(name, args):
         return kgctl("route", *(["--go"] if args.get("confirm") else []))
     if name == "next_actions":
         return truthctl("next")
+    if name == "product_state":
+        return truthctl("product")
+    if name == "product_update":
+        area = (args.get("area") or "").strip()
+        behavior = (args.get("behavior") or "").strip()
+        if not area or not behavior:
+            return "product_update 需要 area 和 behavior", 2
+        env = {"KG_PS_WHY": args.get("why") or None,
+               "KG_PS_FILES": ":".join(args.get("files") or []) or None}
+        return truthctl("product", "set", area, behavior, extra_env=env)
+    if name == "distill_review":
+        return truthctl("distill")
+    if name == "distill_add":
+        statement = (args.get("statement") or "").strip()
+        if not statement:
+            return "distill_add 需要 statement", 2
+        env = {"KG_TRUTH_WHY": args.get("why") or None,
+               "KG_TRUTH_SCOPE": args.get("scope") or None}
+        return truthctl("distill", "add", statement, extra_env=env)
     if name == "suggest_branch":
         return kgctl("suggest")
     if name == "intake_request":
@@ -634,6 +765,9 @@ def handle(msg):
                 "任务并收口；只有冲突量大且分散时才用 convergence_plan 收成族。用户说"
                 "“继续 / 处理冲突 / 把冲突跑完”时优先走 resolve_start（确认后），解完用 "
                 "resolve_finish 走门禁落盘。不要要求用户自己选对话、分支或角色。"
+                "改完产品行为的会话要用 product_update 把「产品今天实际怎么表现」写回；"
+                "收口一轮后用 distill_review 回看、distill_add 把「为什么这么判断」写回，"
+                "让同一个判断人只做一次。落盘证据看 last_verification（真实命令 + cwd + 结果）。"
                 "用户问“自动挡在哪看 / 怎么用 / 现在开着吗 / 做了什么”时，调用 "
                 "render_autopilot_panel 打开面板（含小白说明与开关）；要看纯文本状态用 "
                 "autopilot_status；要暂停/恢复/开关自动动作或后台常驻用 autopilot_control。"

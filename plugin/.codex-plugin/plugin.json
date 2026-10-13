@@ -1,6 +1,6 @@
 {
   "name": "codex-autopilot",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "给 Codex 装一个总输入框：把零散的需求、bug、体验问题收进唯一入口，自动归类、追踪，并把能干净合并的分支串行合进 main。",
   "author": {
     "name": "douxian",
@@ -13,6 +13,8 @@
     "codex",
     "orchestration",
     "autopilot",
+    "verification",
+    "project-truth",
     "central-command",
     "control-plane",
     "workflow"
@@ -22,7 +24,7 @@
   "interface": {
     "displayName": "Codex 自动挡",
     "shortDescription": "Codex 的自动挡：零散需求一个入口收完",
-    "longDescription": "它解决的是一个问题：一个复杂项目里，零散又即时的需求不该由用户自己归类——不必再纠结发哪个对话、开哪个分支、派给哪个角色。装上它，那个普通的 Codex 输入框就是总输入框：你把“这里视觉不对 / 这个流程别扭 / 又冒出个 bug”原样说出来，它负责归类、排期、追踪，并把已经做完、能干净合并、且树里没有残留冲突标记的分支串行合进 main。它不是新模型，也不改 Codex，用的是 Codex 公开的 skill + MCP + 插件能力，外加本机一个纯 Python 的编排层。改方向、删数据、发布这类要拍板的事，仍然会停下来问你。",
+    "longDescription": "它解决的是一个问题：一个复杂项目里，零散又即时的需求不该由用户自己归类——不必再纠结发哪个对话、开哪个分支、派给哪个角色。装上它，那个普通的 Codex 输入框就是总输入框：你把“这里视觉不对 / 这个流程别扭 / 又冒出个 bug”原样说出来，它负责归类、排期、追踪，并把已经做完、能干净合并、且树里没有残留冲突标记的分支串行合进 main。做完之后它还会继续回写：改动的产品行为记进产品状态（人只看变化）、每道验证门禁的真实命令与退出码写成验收证据、每轮的判断逻辑蒸馏回写（同一个判断人只做一次）。它不是新模型，也不改 Codex，用的是 Codex 公开的 skill + MCP + 插件能力，外加本机一个纯 Python 的编排层。改方向、删数据、发布这类要拍板的事，仍然会停下来问你。",
     "developerName": "douxian",
     "category": "Productivity",
     "capabilities": [

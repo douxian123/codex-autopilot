@@ -599,7 +599,7 @@ def cmd_port(args):
     安全约定：
       * 只在独立 worktree（`<state>-port-<slug>`）里操作，main 与源分支都不动；
       * cherry-pick 任一提交冲突就整体 --abort 并放弃，不猜、不用 ours/theirs；
-      * 移植完成仍走 `kgctl land` 的完整门禁（merge-tree 预检 + 真实构建 +
+      * 移植完成仍走 `kgctl land` 的完整门禁（merge-tree 预检 + 真实验证 +
         冲突标记扫描），门禁不过就丢弃，main 一动不动。
     默认只预演，`--go` 才真做。
     """
@@ -673,7 +673,7 @@ def cmd_port(args):
         return
     if not go:
         print("预演结束。加 --go 会把这些提交移植到当前 main 上的一条新分支，"
-              "跑同一道构建门禁，过了才 land。")
+              "跑同一道验证门禁，过了才 land。")
         return
     if LOCK.exists():
         sys.exit(f"已有 land/port/converge 在进行（{LOCK}）")
@@ -1666,8 +1666,25 @@ def _align_main():
     print(f"  {MAIN} 本地引用 {local[:8]} -> {remote[:8]}（同步 origin）")
 
 
-def _record_land_progress(wt: Path, branch: str, commit: str) -> None:
-    """把真实落盘事件写进进展台账，并作为同一批 push 的一部分提交。"""
+def _verify_evidence(verify_results: list) -> str:
+    """把每一道验证门禁的「真实命令 + cwd + 结果」写成可复现的验收证据。
+
+    不接受「通过构建」这类泛化文案：没有命令名、工作目录和退出结果，证据就不可复核。
+    """
+    if not verify_results:
+        return ("未配置验证门禁：本次只做了合并与推送，没有可复现的验证命令。"
+                "请在 ops/central.config.json 的 verify 里补上。")
+    lines = []
+    for r in verify_results:
+        code = "0" if r.get("ok") else "非0"
+        lines.append(f"{r.get('name')}: {r.get('cmd')} (cwd={r.get('cwd')}) -> exit {code}")
+    return "\n".join(lines)
+
+
+def _record_land_progress(wt: Path, branch: str, commit: str, verify_results: list) -> None:
+    """把真实落盘事件和真实验收证据写进台账，并作为同一批 push 的一部分提交。"""
+    verified = bool(verify_results) and all(r.get("ok") for r in verify_results)
+    gate_note = "验证门禁通过" if verified else "未通过验证门禁"
     env = os.environ.copy()
     env.update({
         "KG_REPO": str(wt),
@@ -1675,7 +1692,7 @@ def _record_land_progress(wt: Path, branch: str, commit: str) -> None:
         "KG_TRUTH_COMMIT": commit,
         "KG_TRUTH_LANDED": "1",
         "KG_TRUTH_STATUS": "done",
-        "KG_TRUTH_SUMMARY": f"{branch} 已通过构建门禁，并落盘 {MAIN} @ {commit[:10]}",
+        "KG_TRUTH_SUMMARY": f"{branch} {gate_note}，已落盘 {MAIN} @ {commit[:10]}",
         "KG_TRUTH_SOURCE": "kgctl land",
     })
     added = subprocess.run(
@@ -1684,17 +1701,37 @@ def _record_land_progress(wt: Path, branch: str, commit: str) -> None:
         cwd=str(wt), env=env, capture_output=True, text=True)
     if added.returncode != 0:
         raise RuntimeError(f"写进展台账失败: {(added.stdout + added.stderr).strip()[:500]}")
+
+    acc_env = os.environ.copy()
+    acc_env.update({
+        "KG_REPO": str(wt),
+        "KG_TRUTH_LANE": branch,
+        "KG_TRUTH_COMMIT": commit,
+        "KG_TRUTH_STATUS": "verified" if verified else "todo",
+        "KG_TRUTH_EVIDENCE": _verify_evidence(verify_results),
+        "KG_TRUTH_SOURCE": "kgctl land",
+        "KG_TRUTH_SUMMARY": f"{branch} 的验证门禁结果",
+    })
+    accepted = subprocess.run(
+        [sys.executable, str(RUNTIME_OPS / "truthctl.py"), "add", "acceptance",
+         f"{branch} 落盘验收"],
+        cwd=str(wt), env=acc_env, capture_output=True, text=True)
+    if accepted.returncode != 0:
+        raise RuntimeError(f"写验收台账失败: {(accepted.stdout + accepted.stderr).strip()[:500]}")
+
     staged = subprocess.run(
-        ["git", "-C", str(wt), "add", "ops/truth/progress.jsonl"],
+        ["git", "-C", str(wt), "add", "ops/truth/progress.jsonl",
+         "ops/truth/acceptance.jsonl"],
         capture_output=True, text=True)
     if staged.returncode != 0:
-        raise RuntimeError(f"暂存进展台账失败: {staged.stderr.strip()[:500]}")
+        raise RuntimeError(f"暂存真相信台账失败: {staged.stderr.strip()[:500]}")
     committed = subprocess.run(
         ["git", "-C", str(wt), "commit", "-m", f"chore(truth): record landing {branch}"],
         capture_output=True, text=True)
     if committed.returncode != 0:
-        raise RuntimeError(f"提交进展台账失败: {committed.stderr.strip()[:500]}")
+        raise RuntimeError(f"提交真相台账失败: {committed.stderr.strip()[:500]}")
     print(f"  进展台账 {added.stdout.strip()}")
+    print(f"  验收台账 {accepted.stdout.strip()}")
 
 
 def _mirror_truth_into_trunk(wt: Path) -> None:
@@ -1725,19 +1762,39 @@ def _mirror_truth_into_trunk(wt: Path) -> None:
             shutil.copy2(src, dst)
 
 
-def _build_frontend(wt: Path) -> tuple:
-    """落盘前的构建门禁。命令与工作目录由 ops/central.config.json 的 build 决定。"""
-    build = CFG.get("build") or {}
-    cmd = (build.get("cmd") or "").strip()
-    if not cmd:
-        return True, "(未配置构建门禁，跳过)"
-    cwd = wt / (build.get("cwd") or ".")
-    p = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True)
-    return p.returncode == 0, (p.stdout + p.stderr)
+def _run_verify_gates(wt: Path) -> tuple:
+    """落盘前的验证门禁：逐条真实执行，返回 (ok, results, output)。
+
+    门禁清单来自 ops/central.config.json 的 verify（没配就退化成 build 那一条）。
+    每条结果保留 name/cmd/cwd/ok/output，供验收台账写「可复核的证据」，而不是一句
+    「通过构建」。工作目录不存在时按失败处理，不抛未捕获异常。
+    """
+    gates = central_config.verify_gates(CFG)
+    if not gates:
+        return True, [], "(未配置验证门禁，跳过)"
+    results, chunks, all_ok = [], [], True
+    for g in gates:
+        rel = g.get("cwd") or "."
+        cwd = wt / rel
+        if not cwd.exists():
+            results.append({"name": g.get("name"), "cmd": g.get("cmd"), "cwd": rel,
+                            "ok": False, "output": f"工作目录不存在：{cwd}"})
+            chunks.append(f"[{g.get('name')}] cwd 不存在：{cwd}")
+            all_ok = False
+            continue
+        p = subprocess.run(g["cmd"], shell=True, cwd=cwd, capture_output=True, text=True)
+        out = (p.stdout or "") + (p.stderr or "")
+        results.append({"name": g.get("name"), "cmd": g.get("cmd"), "cwd": rel,
+                        "ok": p.returncode == 0, "output": out[-4000:]})
+        chunks.append(f"[{g.get('name')}] $ {g.get('cmd')} (cwd={rel}) "
+                      f"-> exit {p.returncode}\n{out[-1500:]}")
+        if p.returncode != 0:
+            all_ok = False
+    return all_ok, results, "\n".join(chunks)
 
 
 def _push_main_with_one_retry(wt: Path) -> str:
-    """推送 trunk HEAD 到 main；若远端前进则同步一次、重验 build 后重试一次。"""
+    """推送 trunk HEAD 到 main；若远端前进则同步一次、重跑同一批验证门禁后重试一次。"""
     last = ""
     for attempt in range(2):
         pushed = subprocess.run(["git", "-C", str(wt), "push", "origin", "HEAD:main"],
@@ -1761,9 +1818,9 @@ def _push_main_with_one_retry(wt: Path) -> str:
                            capture_output=True, text=True)
             raise RuntimeError(
                 f"远端 main 前进且自动同步出现冲突，未推送：{(synced.stdout + synced.stderr).strip()[:500]}")
-        ok, out = _build_frontend(wt)
+        ok, _results, out = _run_verify_gates(wt)
         if not ok:
-            raise RuntimeError(f"同步远端 main 后 build 失败，未推送：{out[-800:]}")
+            raise RuntimeError(f"同步远端 main 后验证门禁失败，未推送：{out[-800:]}")
     raise RuntimeError(f"push origin HEAD:main 失败：{last[:800]}")
 
 
@@ -2442,7 +2499,7 @@ def cmd_land(args):
         return
 
     print(f"→ {branch}: {ahead} 提交、落后 {behind}、无冲突")
-    print("  步骤：主干工作树 merge → 真实 build → 写进展台账 → push origin/main → 同步 main")
+    print("  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main")
     if dry:
         print("  （--dry：到此为止）")
         return
@@ -2468,15 +2525,15 @@ def cmd_land(args):
             print("× 合并失败，已丢弃：", m.stderr.strip()[:300])
             sys.exit(1)
         print("  merge ok（main 未动）")
-        gate_ok, gate_out = _build_frontend(wt)
-        print(f"  build 门禁 {'ok' if gate_ok else '× 失败 → 丢弃，main 不动'}")
+        gate_ok, gate_results, gate_out = _run_verify_gates(wt)
+        print(f"  验证门禁 {'ok' if gate_ok else '× 失败 → 丢弃，main 不动'}")
         if not gate_ok:
             print(gate_out[-800:])
             print(f"  main 仍是 {pre[:10]}，源分支 {branch} 未受影响")
             sys.exit(1)
         merge_commit = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
                                       capture_output=True, text=True).stdout.strip()
-        _record_land_progress(wt, branch, merge_commit)
+        _record_land_progress(wt, branch, merge_commit, gate_results)
         pushed = _push_main_with_one_retry(wt)
         if pushed:
             print("  " + pushed.replace("\n", "\n  "))

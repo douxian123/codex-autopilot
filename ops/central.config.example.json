@@ -11,6 +11,18 @@
     "cmd": "npm run build",
     "cwd": "frontend"
   },
+  "verify": [
+    {
+      "name": "tsc",
+      "cmd": "npx tsc --noEmit",
+      "cwd": "frontend"
+    },
+    {
+      "name": "build",
+      "cmd": "npm run build",
+      "cwd": "frontend"
+    }
+  ],
   "auto_port": {
     "enabled": false,
     "max_unlanded": 2

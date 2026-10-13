@@ -38,6 +38,15 @@ def kgctl(repo, trunk, *args, extra_env=None):
     return run([sys.executable, str(KGCTL), *args], cwd=str(OPS.parent), env=env, check=False)
 
 
+def truthctl(repo, *args, extra_env=None):
+    env = os.environ.copy()
+    env["KG_REPO"] = str(repo)
+    if extra_env:
+        env.update({k: str(v) for k, v in extra_env.items()})
+    return run([sys.executable, str(OPS / "truthctl.py"), *args],
+               cwd=str(OPS.parent), env=env, check=False)
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="codex-autopilot-selftest-") as tmp:
         root = Path(tmp)
@@ -633,13 +642,132 @@ def test_control_state():
     print("selftest ok: 用户级开关生效，暂停闸门拦住新工作，损坏即安全暂停。")
 
 
+def test_verify_and_truth():
+    """验证门禁与真相层：门禁真跑、证据真写、失败真拦；产品状态/判断逻辑可累积。"""
+    import json as _json
+    sys.path.insert(0, str(OPS))
+    import central_config
+
+    # verify 配置解析：None 退化 build，[] 明确无门禁，list/dict/字符串都要能接。
+    assert central_config.verify_gates({"verify": [], "build": {"cmd": "npm run build"}}) == []
+    assert central_config.verify_gates({"verify": None, "build": {"cmd": ""}}) == []
+    assert central_config.verify_gates(
+        {"verify": None, "build": {"cmd": "npm run build", "cwd": "frontend"}}) == [
+        {"name": "build", "cmd": "npm run build", "cwd": "frontend"}]
+    assert central_config.verify_gates({"verify": "echo hi"}) == [
+        {"name": "gate1", "cmd": "echo hi", "cwd": "."}]
+    assert central_config.verify_gates(
+        {"verify": {"name": "t", "cmd": "true", "cwd": "."}}) == [
+        {"name": "t", "cmd": "true", "cwd": "."}]
+    assert central_config.verify_gates({"verify": [
+        {"name": "typecheck", "cmd": "npx tsc --noEmit", "cwd": "frontend"},
+        "npm run build"]}) == [
+        {"name": "typecheck", "cmd": "npx tsc --noEmit", "cwd": "frontend"},
+        {"name": "gate2", "cmd": "npm run build", "cwd": "."}]
+
+    def fresh_fixture(base, verify):
+        base.mkdir(parents=True, exist_ok=True)
+        repo = base / "state"
+        trunk = base / "state-trunk"
+        repo.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for f in ("ledger", "progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{f}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(
+            _json.dumps({"build": {"cmd": "", "cwd": "."}, "verify": verify}),
+            encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "app.txt").write_text("main\n", encoding="utf-8")
+        git(repo, "add", "app.txt", "ops/central.config.json",
+            "ops/truth/mainline.json", "ops/truth/ledger.jsonl",
+            "ops/truth/progress.jsonl", "ops/truth/decisions.jsonl",
+            "ops/truth/acceptance.jsonl", "ops/tasks/inbox.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = base / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+        git(repo, "checkout", "-q", "-b", "codex/good")
+        (repo / "good.txt").write_text("clean\n", encoding="utf-8")
+        git(repo, "add", "good.txt")
+        git(repo, "commit", "-q", "-m", "clean branch")
+        git(repo, "checkout", "-q", "main")
+        return repo, trunk
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-verify-") as tmp:
+        base = Path(tmp)
+        repo, trunk = fresh_fixture(
+            base / "ok", [{"name": "unit", "cmd": "echo verify-ok", "cwd": "."}])
+        land = kgctl(repo, trunk, "land", "codex/good")
+        if land.returncode != 0 or "已落盘并推送 origin" not in land.stdout:
+            raise AssertionError(f"验证通过的分支未落盘:\n{land.stdout}\n{land.stderr}")
+        if "验证门禁 ok" not in land.stdout:
+            raise AssertionError(f"land 未报告验证门禁:\n{land.stdout}")
+        acc = git(repo, "show", "main:ops/truth/acceptance.jsonl").stdout.strip()
+        if not acc:
+            raise AssertionError("落盘后验收台账为空")
+        rec = _json.loads(acc.splitlines()[-1])
+        if rec.get("status") != "verified":
+            raise AssertionError(f"验收状态不是 verified: {rec.get('status')}")
+        if "echo verify-ok" not in rec.get("evidence", "") or "exit 0" not in rec.get("evidence", ""):
+            raise AssertionError(f"验收证据缺少真实命令/结果: {rec.get('evidence')}")
+        prog = git(repo, "show", "main:ops/truth/progress.jsonl").stdout.strip()
+        if not _json.loads(prog.splitlines()[-1]).get("landed"):
+            raise AssertionError("进展台账没有 landed 记录")
+
+        repo2, trunk2 = fresh_fixture(
+            base / "bad", [{"name": "unit", "cmd": "echo boom && exit 3", "cwd": "."}])
+        main_before = git(repo2, "rev-parse", "main").stdout.strip()
+        land2 = kgctl(repo2, trunk2, "land", "codex/good")
+        if "验证门禁 × 失败" not in land2.stdout:
+            raise AssertionError(f"失败门禁没有被拦下:\n{land2.stdout}\n{land2.stderr}")
+        if git(repo2, "rev-parse", "main").stdout.strip() != main_before:
+            raise AssertionError("门禁失败后 main 仍被推进")
+        if git(repo2, "show", "main:ops/truth/acceptance.jsonl").stdout.strip():
+            raise AssertionError("门禁失败却写了验收台账")
+
+        # 产品状态与判断逻辑：写入后 snapshot 里必须能看到。
+        ps = truthctl(repo, "product", "set", "自动挡面板", "默认面板一眼看懂在做什么",
+                      extra_env={"KG_PS_WHY": "小白先要能感知",
+                                 "KG_PS_FILES": "plugin/ui/panel.html"})
+        if ps.returncode != 0:
+            raise AssertionError(f"product set 失败:\n{ps.stdout}\n{ps.stderr}")
+        data = _json.loads((repo / "ops" / "truth" / "product_state.json").read_text(encoding="utf-8"))
+        if data["modules"][0]["area"] != "自动挡面板":
+            raise AssertionError(f"产品状态未写入: {data}")
+        snap = truthctl(repo, "snapshot", "--print")
+        if "产品状态" not in snap.stdout or "自动挡面板" not in snap.stdout:
+            raise AssertionError(f"snapshot 没有渲染产品状态:\n{snap.stdout}")
+
+        dj = truthctl(repo, "distill", "add", "落盘默认合入，不把合并决策推回用户",
+                      extra_env={"KG_TRUTH_WHY": "用户没有现场信息",
+                                 "KG_TRUTH_SCOPE": "process"})
+        if dj.returncode != 0:
+            raise AssertionError(f"distill add 失败:\n{dj.stdout}\n{dj.stderr}")
+        jd = (repo / "ops" / "truth" / "judgments.jsonl").read_text(encoding="utf-8")
+        if "J-0001" not in jd:
+            raise AssertionError(f"判断逻辑未写回: {jd}")
+        snap2 = truthctl(repo, "snapshot", "--print")
+        if "判断逻辑" not in snap2.stdout or "J-0001" not in snap2.stdout:
+            raise AssertionError(f"snapshot 没有渲染判断逻辑:\n{snap2.stdout}")
+    print("selftest ok: 验证门禁真跑真写真拦；产品状态与判断逻辑可回写、可渲染。")
+
+
 def test_mcp_contract():
     """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
     import json as _json
     home = tempfile.mkdtemp(prefix="kg-mcp-")
+    project = Path(tempfile.mkdtemp(prefix="kg-mcp-proj-"))
+    (project / "ops" / "truth").mkdir(parents=True)
+    (project / "ops" / "truth" / "ledger.jsonl").write_text("", encoding="utf-8")
     env = os.environ.copy()
     env["KG_DAEMON_HOME"] = home
-    env["KG_REPO"] = str(OPS.parent)
+    env["KG_REPO"] = str(project)
     proc = subprocess.Popen([sys.executable, str(OPS / "central_mcp.py")],
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, env=env,
@@ -667,11 +795,35 @@ def test_mcp_contract():
         contents = recv()["result"]["contents"][0]
         assert contents["mimeType"] == "text/html;profile=mcp-app"
         assert "总输入框" in contents["text"], "面板没讲清「总输入框」"
+        for anchor in ("productList", "judgmentList", "verifyBox"):
+            assert anchor in contents["text"], f"面板高级区缺少 {anchor}"
+
+        send({"jsonrpc": "2.0", "id": 30, "method": "tools/list", "params": {}})
+        tool_names = {t["name"] for t in recv()["result"]["tools"]}
+        missing = {"product_state", "product_update", "distill_review",
+                   "distill_add"} - tool_names
+        assert not missing, f"缺少自动挡工具: {sorted(missing)}"
 
         send({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
               "params": {"name": "autopilot_status", "arguments": {"fast": True}}})
         sc = recv()["result"]["structuredContent"]
         assert "state" in sc and "switches" in sc
+        assert "product_state" in sc and "judgments" in sc and "last_verification" in sc, \
+            "状态快照缺少产品状态/判断逻辑/最近验证"
+
+        send({"jsonrpc": "2.0", "id": 31, "method": "tools/call",
+              "params": {"name": "product_update",
+                         "arguments": {"area": "面板", "behavior": "一眼看懂在做什么",
+                                       "why": "小白先要能感知",
+                                       "files": ["plugin/ui/panel.html"]}}})
+        assert not recv()["result"].get("isError"), "product_update 调用失败"
+        send({"jsonrpc": "2.0", "id": 32, "method": "tools/call",
+              "params": {"name": "product_state", "arguments": {}}})
+        assert "面板" in recv()["result"]["content"][0]["text"], "product_state 读不到刚写入的行为"
+        send({"jsonrpc": "2.0", "id": 33, "method": "tools/call",
+              "params": {"name": "distill_add",
+                         "arguments": {"statement": "落盘默认合入", "scope": "process"}}})
+        assert not recv()["result"].get("isError"), "distill_add 调用失败"
 
         send({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
               "params": {"name": "autopilot_control", "arguments": {"action": "pause"}}})
@@ -694,6 +846,7 @@ def test_mcp_contract():
         proc.stderr.close()
         import shutil
         shutil.rmtree(home, ignore_errors=True)
+        shutil.rmtree(project, ignore_errors=True)
     print("selftest ok: MCP resources 合约、暂停闸门、状态/控制工具全部通过。")
 
 
@@ -703,4 +856,5 @@ if __name__ == "__main__":
     test_resolve()
     test_reset_trunk_truth_conflict()
     test_control_state()
+    test_verify_and_truth()
     test_mcp_contract()

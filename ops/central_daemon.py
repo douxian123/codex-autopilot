@@ -331,7 +331,8 @@ def classify_land(out: str, rc: int) -> str:
         if "残留" in out or "冲突标记" in out:
             return "unresolved_markers"
         return "conflict"
-    if "× 失败 → 丢弃" in out or "build × 失败" in out or "构建门禁 × 失败" in out:
+    if ("× 失败 → 丢弃" in out or "build × 失败" in out
+            or "构建门禁 × 失败" in out or "验证门禁 × 失败" in out):
         return "gate_fail"
     if "合并失败，已丢弃" in out:
         return "merge_fail"

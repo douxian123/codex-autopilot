@@ -51,6 +51,16 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 
 传统解法是写一沓规范（`AGENTS.md`、workflow 文档）。但规范不会自己动手：再多文字，也不会主动把一句「这里视觉坏了」记进台账、判断该进哪条泳道、在没有冲突时把它落进 `main`。这套东西把最贵的几个动作做成了命令和守护进程，而不是又一份文档。
 
+## 三种自动回写
+
+上面说的都是「输入怎么进来」。用户还有一半痛点在「事情做完之后没人记得」。这三种回写补的是那一半：
+
+- **产品状态**：产品今天实际怎么工作。改到行为的会话在同一轮写进 `ops/truth/product_state.json`（`truthctl product set`），人验收只看它相对主线的变化，不读实现。
+- **自验证**：合入前逐条真跑配置里的验证门禁，把 `命令 + cwd + 退出码` 写进 `acceptance.jsonl`。没配门禁就标 `todo`，不伪造 `verified`——所以「已验证」永远对应一条能照着复核的证据。
+- **判断逻辑蒸馏**：每轮收口后回看人额外说了什么，只把「为什么这么判断」写进 `judgments.jsonl`（`truthctl distill add`）。记的是判断逻辑，不是一次性细节——下次换个地方也不用重新讲。
+
+三者一起形成「做完 → 验证 → 蒸馏」的闭环：产品行为可 diff、验收可复核、判断可累积。
+
 ## 怎么装
 
 两步。在插件仓库里跑一次：
@@ -92,6 +102,7 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 - 它回你的不是「好的」，而是「已记入唯一入口 + 落到哪条泳道 + 现在最该动哪条」。
 - 项目里 `ops/tasks/inbox.jsonl` 多一条你的原话，`ops/truth/ledger.jsonl` 多一条带 `L-000n` 编号的台账项。
 - `docs/PROJECT_STATUS.md`（快照）和 `docs/CONTROL_PLANE.html`（驾驶舱）跟着刷新：最近干了什么、还差什么、哪些分支能合、哪些在冲突。
+- 自动挡面板点「高级」：产品状态（它现在为你做什么）、判断逻辑（同一个判断只做一次）、最近一次自验证（真跑过的命令与退出码）。
 
 ### 什么时候开、什么时候关
 
@@ -99,7 +110,7 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 - **常驻（可选）**：装一个 launchd 守护，没开会话时也按周期推进安全子集。开是 `--install`，关是 `--uninstall`。
 - **彻底关掉**：在 Plugins 页禁用 / 卸载插件即可。账本还留在项目里，随时能再装回来。
 
-也可以让对话直接调 MCP 工具：`intake_request`（一句话走完整条链，首选）/ `sync_control_plane` / `next_actions` / `project_status` / `route_inbox` / `resolve_list` / `resolve_plan` / `resolve_start` / `resolve_finish` / `convergence_plan` / `generate_context` / `dashboard` / `capture_request` / `suggest_branch`。
+也可以让对话直接调 MCP 工具：`intake_request`（一句话走完整条链，首选）/ `sync_control_plane` / `next_actions` / `project_status` / `route_inbox` / `resolve_list` / `resolve_plan` / `resolve_start` / `resolve_finish` / `convergence_plan` / `generate_context` / `dashboard` / `capture_request` / `suggest_branch` / `product_state` / `product_update` / `distill_review` / `distill_add`。
 
 想手敲命令：
 
@@ -137,9 +148,10 @@ python3 "$PLUGIN/ops/kgctl.py" dash --open
 | `python3 "$PLUGIN/ops/kgctl.py" next` | 只回答一个问题：现在最该动哪几条 |
 | `python3 "$PLUGIN/ops/kgctl.py" status` | 一屏看清：待路由、分支可合/冲突/残留冲突标记、冲突收拢族、共享检出脏度 |
 | `python3 "$PLUGIN/ops/kgctl.py" queue` / `matrix` | 盘点分支：哪些能干净合、哪些在抢同一个文件、哪些树里还残留冲突标记 |
-| `python3 "$PLUGIN/ops/kgctl.py" land <分支>` | 串行落盘：冲突标记扫描 → 合并 → 真实构建门禁 → 写进展 → 推 `main` |
+| `python3 "$PLUGIN/ops/kgctl.py" land <分支>` | 串行落盘：冲突标记扫描 → 合并 → 真实验证门禁 → 写进展 → 推 `main` |
 | `python3 "$PLUGIN/ops/kgctl.py" reap --go` | 回收已合并的分支（默认只预演） |
 | `python3 "$PLUGIN/ops/truthctl.py" ls` / `next` | 看台账 / 看优先级（同 `kgctl next`） |
+| `python3 "$PLUGIN/ops/truthctl.py" product` / `distill` | 看产品状态 / 蒸馏判断逻辑（细节见下节） |
 
 ## 常驻 vs 非常驻
 
@@ -157,9 +169,9 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 
 守护从插件目录的 `.mcp.json` 读绑定（`KG_REPO` / `KG_TRUNK`），不用再手动 export 环境变量。代价说清楚：它会真的在后台跑 `tick` / `land`，也就是会自己推进 `main`——走的是和手动一样的护栏，但确实不需要你在场。
 
-常驻自动做五件事：路由唯一入口里的散需求、把与 `main` 无冲突的分支串行落盘、归档「内容其实早进 `main`」的重复分支（`supersede --fast`）、把真冲突分支**拆成单个可执行任务（`resolve`，默认开）**，冲突量大且分散时再收拢成族（`converge`）。每个落盘分支仍走 `kgctl land` 的全部护栏（真实构建、`origin/main` 对齐、失败即丢弃）。**真正需要判断语义的冲突不会自动合**：`resolve` 只做确定性并集（append-only JSONL 行级并集），其余冲突原样保留 marker 写成任务书，交给一个 agent 逐条解干净后走同一道门禁落盘。你不再需要回答「这 60 个分支要不要合」，也不再需要自己把它们塞进几十个对话。
+常驻自动做五件事：路由唯一入口里的散需求、把与 `main` 无冲突的分支串行落盘、归档「内容其实早进 `main`」的重复分支（`supersede --fast`）、把真冲突分支**拆成单个可执行任务（`resolve`，默认开）**，冲突量大且分散时再收拢成族（`converge`）。每个落盘分支仍走 `kgctl land` 的全部护栏（真实验证、`origin/main` 对齐、失败即丢弃）。**真正需要判断语义的冲突不会自动合**：`resolve` 只做确定性并集（append-only JSONL 行级并集），其余冲突原样保留 marker 写成任务书，交给一个 agent 逐条解干净后走同一道门禁落盘。你不再需要回答「这 60 个分支要不要合」，也不再需要自己把它们塞进几十个对话。
 
-另有一档可选动作 `auto_port`（默认关闭）：守护一个周期里把「只差 1–N 个提交」的冲突分支逐条试一遍（上限 6 条），把未落提交 cherry-pick 到当前 `main` 上的一条新分支，跑同一道构建门禁，过了才落盘；cherry-pick 一撞文本冲突就整体 `--abort` 放弃，绝不猜「谁对」。它只消灭「基线旧、实际只差几个提交」这种假冲突，把冲突队列从几十条压到真正需要人判断的少数。在项目里 `ops/central.config.json` 写：
+另有一档可选动作 `auto_port`（默认关闭）：守护一个周期里把「只差 1–N 个提交」的冲突分支逐条试一遍（上限 6 条），把未落提交 cherry-pick 到当前 `main` 上的一条新分支，跑同一道验证门禁，过了才落盘；cherry-pick 一撞文本冲突就整体 `--abort` 放弃，绝不猜「谁对」。它只消灭「基线旧、实际只差几个提交」这种假冲突，把冲突队列从几十条压到真正需要人判断的少数。在项目里 `ops/central.config.json` 写：
 
 ```json
 { "auto_port": { "enabled": true, "max_unlanded": 2 } }
@@ -188,7 +200,7 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
             └───────────────┬────────────────────────────────────────────┘
                             v
             ┌────────────────────────────────────────────────────────────┐
-            │  串行落盘  kgctl land：merge-tree 预检 → 构建门禁 →          │
+            │  串行落盘  kgctl land：merge-tree 预检 → 验证门禁 →          │
             │  写进展 → 推 main → update-ref 同步所有 worktree 的 main     │
             └───────────────┬────────────────────────────────────────────┘
                             v
@@ -205,9 +217,10 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 
 - **一本账、一处根**。状态根由 `ops/state_root.py` 统一解析（`KG_REPO` > 主干 worktree > 主工作树 > 当前 worktree），不会出现「这个 worktree 说待办 10 条、那个说没有」。
 - **只追加，不改历史**。台账是 JSONL，状态变化写新记录；快照和看板都是自动生成物。
-- **合并串行**。`land` 一次只推一个分支，用 `git merge-tree --write-tree` 在**写之前**先模拟合并，再扫描分支自己的树里是否残留 `<<<<<<<` / `>>>>>>>`；任一命中都不动，能合才走构建门禁，构建失败就丢弃、`main` 一动不动。
+- **做完继续回写三样东西**。产品行为进 `product_state.json`（人验收只看它的变化）、验证证据进 `acceptance.jsonl`（命令 + cwd + 退出码）、判断逻辑进 `judgments.jsonl`（同一个判断人只做一次）。三者都是纯文本，可 diff、可累积。
+- **合并串行**。`land` 一次只推一个分支，用 `git merge-tree --write-tree` 在**写之前**先模拟合并，再扫描分支自己的树里是否残留 `<<<<<<<` / `>>>>>>>`；任一命中都不动，能合才走验证门禁，验证失败就丢弃、`main` 一动不动。
 - **永远不动别人的工作区**。推进 `main` 引用用 `git update-ref`，从不 `checkout` / `reset` / `stash` 任何人的在途改动。
-- **项目相关的旋钮集中在一处**。主干分支名、分支前缀、落盘用的主干 worktree、构建门禁命令、泳道定义，全在 `ops/central.config.json`（环境变量可覆盖）；不配就用对「单仓 + `frontend` 子目录 + `npm run build`」开箱即用的默认值。自动移植是显式开关 `auto_port`（默认关闭）——把「只差几个提交的冲突分支自动 cherry-pick」当成契约扩展，要项目自己点头才开。
+- **项目相关的旋钮集中在一处**。主干分支名、分支前缀、落盘用的主干 worktree、验证门禁命令、泳道定义，全在 `ops/central.config.json`（环境变量可覆盖）；不配就用对「单仓 + `frontend` 子目录 + `npm run build`」开箱即用的默认值。自动移植是显式开关 `auto_port`（默认关闭）——把「只差几个提交的冲突分支自动 cherry-pick」当成契约扩展，要项目自己点头才开。
 
 ## 冲突怎么收口
 
@@ -220,7 +233,7 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 - 未解干净的 convergence 分支不会进 `queue`，`land` 也会硬拒绝。它只能回到 convergence worktree 里解完、提交，再重新排队。
 - 在收拢之前，先做两道**不用人判断**的过滤：`kgctl supersede` 用 patch-id 判「分支想表达的内容是否已全部在 `main`」——命中即归档，不再算冲突；`kgctl port` 把「只差 1–N 个提交」的未落改动按序 cherry-pick 到当前 `main`，冲突即整体 `--abort`，跑通就走同一道门禁落盘。两者都不猜语义：一个断言「已在 main」，一个让 git 自己判断「能不能干净套用」。
 - **过时的超级合并不再啃。** 一个 convergence 组是在某个历史 `main` 上收拢几十支生成的；`main` 一走远，它就烂成几百文件、几千 marker 的不可解大杂烩。`kgctl replan --go` 把它按**当前** `main` 重盘：成员分支各自回到 `supersede / port / land` 的逐支流水线，超级合并的 worktree 和分支一起删掉，并且记录标 `replanned`，`tick` 不会再把它重建。经验值：一个 218 文件 / 7000+ marker 的大组解散后，59 个成员里 19 支只需解 ≤8 个冲突文件——真正难解的大杂烩，多数是旧基线造成的假象。
-- `auto_port` 现在带**体量闸门**：不再只看「只差几个提交」，还看未落改动相对当前 `main` 的文件数（默认 ≤15）和行数（默认 ≤600）。一个「1 提交」但单提交上千行的分支，cherry-pick 必然文本冲突，会被直接判 `too_big` 并记 `port_blocked`，不再白烧一轮构建门禁。`kgctl status` 还会给出「冲突可解度」：59 支里有多少支只需解 ≤8 个冲突文件、最轻的是哪支。
+- `auto_port` 现在带**体量闸门**：不再只看「只差几个提交」，还看未落改动相对当前 `main` 的文件数（默认 ≤15）和行数（默认 ≤600）。一个「1 提交」但单提交上千行的分支，cherry-pick 必然文本冲突，会被直接判 `too_big` 并记 `port_blocked`，不再白烧一轮验证门禁。`kgctl status` 还会给出「冲突可解度」：59 支里有多少支只需解 ≤8 个冲突文件、最轻的是哪支。
 - 于是交给一个 agent 的是「去解这一族的冲突」，不是「你告诉我该合哪个」。`kgctl tick` 已自动包含收拢与归档；`auto_port` 打开后移植也自动。
 
 ## 参考了什么
@@ -254,11 +267,11 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
   central_mcp.py      把 CLI 暴露成 MCP 工具（stdio）
   central_daemon.py   常驻执行器（安全子集）
   state_root.py       状态根统一解析（避免多本账）
-  central_config.py   项目相关旋钮：主干/前缀/worktree/构建门禁/泳道
+  central_config.py   项目相关旋钮：主干/前缀/worktree/验证门禁/泳道
 
 账本（留在你项目里，可提交、可 diff）
   ops/tasks/          inbox.jsonl（唯一入口）· lanes.json（固定泳道）· convergence.json（收拢记录）
-  ops/truth/          mainline.json · decisions/ledger/progress/acceptance.jsonl
+  ops/truth/          mainline.json · product_state.json · decisions/judgments/ledger/progress/acceptance.jsonl
   ops/context/        每分支的 Context Pack（.json / .md）
   docs/CONTROL_PLANE.html  驾驶舱（kgctl dash 生成）
 
