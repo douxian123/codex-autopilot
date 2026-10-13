@@ -575,9 +575,7 @@ def cmd_supersede(args):
         if pushed:
             print("  " + pushed.replace("\n", "\n  "))
         new = git("rev-parse", "HEAD")
-        subprocess.run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}", new], check=True)
-        subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
-                       capture_output=True, text=True)
+        _align_main_ref_to_origin(new)
         print(f'  已归档 {len(cands)} 个重复分支并推送 origin/main @ {new[:8]}')
     finally:
         if LOCK.exists():
@@ -1495,7 +1493,13 @@ def cmd_context(args):
 
 
 def cmd_dash(args):
-    """生成一个可直接打开的驾驶舱 HTML；信息源仍是同一份台账和分支扫描。"""
+    """生成可直接打开的驾驶舱 HTML。
+
+    这是「自动挡」对普通用户的窗口，不是运维控制台：第一屏先说清它是什么、怎么用、
+    现在替你做了什么；分支/合并这些工程细节收进默认折叠的「高级视图」，不想看就不用看。
+    """
+    import html as _html
+
     rows = scan()
     groups = conflict_groups(rows)
     led = read_jsonl(REPO / "ops" / "truth" / "ledger.jsonl")
@@ -1505,76 +1509,332 @@ def cmd_dash(args):
     prog = read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")[-8:]
     inbox = read_jsonl(INBOX)
     pending = [x for x in inbox if not x.get("routed")]
-    import html as _html
 
     def esc(x):
         return _html.escape(str(x or ""), quote=True)
+
+    def jfile(name):
+        try:
+            return json.loads((REPO / "ops" / "truth" / name).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    def latest(records):
+        out = {}
+        for rec in records:
+            if isinstance(rec, dict) and rec.get("id"):
+                out[rec["id"]] = rec
+        return out
+
+    try:
+        import control_state
+        ctrl = control_state.load()
+    except Exception:
+        ctrl = {}
+
+    ml = jfile("mainline.json")
+    road = []
+    for it in (ml.get("roadmap") or []):
+        if isinstance(it, str):
+            road.append({"step": it, "expected": "", "status": "todo"})
+        elif isinstance(it, dict):
+            road.append({"step": it.get("step", ""), "expected": it.get("expected", ""),
+                         "status": it.get("status") or "todo"})
+    ps = jfile("product_state.json")
+    modules = ps.get("modules") if isinstance(ps.get("modules"), list) else []
+    acc = latest(read_jsonl(REPO / "ops" / "truth" / "acceptance.jsonl"))
+    human = [r for r in acc.values()
+             if r.get("needs_human") and r.get("status") in ("todo", "wip", "blocked")]
+    machine = [r for r in acc.values()
+               if r.get("status") == "verified" and not r.get("needs_human")]
 
     clean = [r for r in rows if r["kind"] == "CLEAN"]
     conflict = [r for r in rows if r["kind"] == "CONFLICT"]
     unresolved = [r for r in rows if r["kind"] == "UNRESOLVED"]
     merged = [r for r in rows if r["kind"] == "MERGED"]
-    html_rows = []
-    for r in open_led[:20]:
-        html_rows.append(
-            f"<tr><td>{esc(r.get('id'))}</td><td>{esc(r.get('kind'))}</td>"
-            f"<td>{esc(r.get('lane'))}</td><td>{esc(r.get('title'))}</td></tr>")
-    group_rows = []
-    for g in groups:
-        group_rows.append(
-            f"<tr><td><code>{esc(_convergence_branch(g))}</code></td>"
-            f"<td>{len(g['branches'])}</td><td>{len(g['files'])}</td>"
-            f"<td>{esc(', '.join(g['files'][:3]))}</td></tr>")
-    branch_rows = []
-    for r in sorted(clean + conflict + unresolved, key=lambda x: (x["kind"], -x["ahead"]))[:30]:
-        branch_rows.append(
-            f"<tr><td>{esc(r['kind'])}</td><td><code>{esc(r['branch'])}</code></td>"
-            f"<td>{r['ahead']}</td><td>{r['behind']}</td>"
-            f"<td>{len(r['conflicts'])}</td><td>{esc(r['subject'])}</td></tr>")
-    progress_rows = [
+
+    paused = bool(ctrl.get("paused"))
+    state_txt = "已暂停" if paused else "运行中"
+    state_cls = "paused" if paused else "live"
+    ts_str = time.strftime("%Y-%m-%d %H:%M:%S")
+    head = git("log", "-1", "--format=%h %s", MAIN)
+
+    KIND_LABEL = {"bug": "bug", "gate": "门禁", "visual": "视觉", "ux": "体验",
+                  "arch": "架构", "idea": "想法", "reprocess": "待重排"}
+    ROAD_LABEL = {"done": "已完成", "doing": "进行中", "next": "下一步", "todo": "未开始"}
+    ROAD_MARK = {"done": "✓", "doing": "●", "next": "●", "todo": "○"}
+
+    def kind_tag(kind):
+        warn = " warn" if kind in ("bug", "gate") else ""
+        return f'<span class="tag{warn}">{esc(KIND_LABEL.get(kind, kind or "item"))}</span>'
+
+    # 产品路线：有实现级 roadmap 就逐步显示状态，否则如实列出主线声明的阶段。
+    if road:
+        items = []
+        for r in road:
+            ex = f'<div class="ex">达到：{esc(r["expected"])}</div>' if r["expected"] else ""
+            items.append(
+                f'<li class="road-{esc(r["status"])}"><span class="mk">'
+                f'{ROAD_MARK.get(r["status"], "○")}</span><div><div class="sb">'
+                f'<span class="nm">{esc(r["step"])}</span>'
+                f'<span class="st">{esc(ROAD_LABEL.get(r["status"], r["status"]))}</span></div>'
+                f'{ex}</div></li>')
+        road_html = ('<ul class="road">' + "".join(items) + "</ul>"
+                     '<div class="note">这条路线走完，就达到产品预期；每一步到哪了都从项目真相里读出来。</div>')
+    elif ml.get("path"):
+        items = []
+        for p in ml.get("path"):
+            step = p if isinstance(p, str) else p.get("step", "")
+            items.append('<li class="road-todo"><span class="mk">○</span><div><div class="sb">'
+                         f'<span class="nm">{esc(step)}</span></div></div></li>')
+        stage = f'<div class="note">当前阶段：{esc(ml.get("stage"))}</div>' if ml.get("stage") else ""
+        road_html = (stage + '<ul class="road">' + "".join(items) + "</ul>"
+                     '<div class="note">这是主线声明的产品阶段；等自动挡把它拆成带状态的实现路线后，'
+                     '每一步到哪了都会显示在这里。</div>')
+    else:
+        road_html = '<div class="empty">还没拆出产品路线。</div>'
+
+    # 需要你验收：只有必须人拍板的才出现，附复核步骤。
+    if human:
+        items = []
+        for a in human:
+            steps = (f'<div class="accsteps">{esc(a.get("steps"))}</div>' if a.get("steps")
+                     else '<div class="ex">（还没写明复核步骤）</div>')
+            items.append(f'<li><div class="t"><span class="lv">{esc(a.get("level") or "P1")}</span>'
+                         f'<span class="grow">{esc(a.get("title"))}</span></div>{steps}</li>')
+        human_html = '<ul class="acc">' + "".join(items) + "</ul>"
+    else:
+        human_html = ('<div class="empty">现在没有需要你亲自验收的项。功能改完后，'
+                      '只有必须人看（审美、手感、在真实产品里点一下）的才会出现在这里。</div>')
+    if machine:
+        items = "".join(f'<li><span class="tag ok">✓</span>'
+                        f'<span class="grow">{esc(a.get("title"))}</span></li>' for a in machine)
+        machine_html = (f'<div class="note">机器已自证 · 不需要你动手（{len(machine)} 项）</div>'
+                        f'<ul class="list">{items}</ul>')
+    else:
+        machine_html = '<div class="note">机器已自证 · 不需要你动手</div>'
+
+    # 当前在做什么 / 还差什么
+    doing = [r for r in open_led if r.get("status") == "doing"]
+    todo = [r for r in open_led if r.get("status") != "doing"]
+
+    def item_ul(items):
+        return "".join(
+            f'<li>{kind_tag(r.get("kind"))}<span class="grow">{esc(r.get("title"))}</span>'
+            f'<span class="when">{esc(r.get("id"))}</span></li>' for r in items)
+
+    if doing or todo:
+        parts = []
+        if doing:
+            parts.append('<div class="subhead">正在做</div><ul class="list">' + item_ul(doing) + "</ul>")
+        if todo:
+            more = f"（共 {len(todo)} 条，显示前 {min(len(todo), 20)}）" if len(todo) > 20 else ""
+            parts.append(f'<div class="subhead">还差这些{more}</div>'
+                         '<ul class="list">' + item_ul(todo[:20]) + "</ul>")
+        parts.append('<div class="note">修完、验完的条目会自动从「还差这些」里消失，不用你手动划掉。</div>')
+        progress_html = "".join(parts)
+    else:
+        progress_html = ('<div class="empty">当前没有未决的工作项。你提的需求会先进问题台账，'
+                         '再从这里被推进到收口。</div>')
+
+    # 产品主线
+    focus = ml.get("current_focus") or []
+    focus_html = "".join(f"<li>{esc(f)}</li>" for f in focus) if focus else "<li>（未声明）</li>"
+    mainline_html = (
+        f'<div class="row"><span class="k">产品</span><span>{esc(ml.get("product"))}</span></div>'
+        f'<div class="row"><span class="k">阶段</span><span>{esc(ml.get("stage"))}</span></div>'
+        f'<div class="row"><span class="k">北极星</span><span>{esc(ml.get("north_star"))}</span></div>'
+        '<div class="subhead">当前焦点</div><ul class="list plain">' + focus_html + "</ul>")
+
+    # 产品状态：它现在为你做什么（按模块读 product_state.json）
+    if modules:
+        items = []
+        for m in modules[:12]:
+            items.append(f'<li><span class="tag">{esc(m.get("area") or "模块")}</span>'
+                         f'<span class="grow">{esc(m.get("behavior"))}</span>'
+                         f'<span class="when">{esc(m.get("updated"))}</span></li>')
+        meta_bits = []
+        if ps.get("count"):
+            meta_bits.append(f"共 {ps['count']} 项")
+        if ps.get("updated"):
+            meta_bits.append(f"最后更新 {ps['updated']}")
+        meta_bits.append("人验收只看这里的变化")
+        product_html = ('<ul class="list">' + "".join(items) + "</ul>"
+                        f'<div class="note">{" · ".join(meta_bits)}</div>')
+    else:
+        product_html = ('<div class="empty">还没有记录。改动落盘时会把产品行为写进这里，'
+                        '让你不用读代码就知道它现在是什么样。</div>')
+
+    # ---- 高级视图：运维表（保持原有信息，一字不少） ----
+    ops_need = "".join(
+        f"<tr><td>{esc(r.get('id'))}</td><td>{esc(r.get('kind'))}</td>"
+        f"<td>{esc(r.get('lane'))}</td><td>{esc(r.get('title'))}</td></tr>"
+        for r in open_led[:20]) or '<tr><td colspan="4">没有未决问题</td></tr>'
+    ops_group = "".join(
+        f"<tr><td><code>{esc(_convergence_branch(g))}</code></td>"
+        f"<td>{len(g['branches'])}</td><td>{len(g['files'])}</td>"
+        f"<td>{esc(', '.join(g['files'][:3]))}</td></tr>"
+        for g in groups) or '<tr><td colspan="4">没有需要收拢的冲突</td></tr>'
+    ops_branch = "".join(
+        f"<tr><td>{esc(r['kind'])}</td><td><code>{esc(r['branch'])}</code></td>"
+        f"<td>{r['ahead']}</td><td>{r['behind']}</td>"
+        f"<td>{len(r['conflicts'])}</td><td>{esc(r['subject'])}</td></tr>"
+        for r in sorted(clean + conflict + unresolved, key=lambda x: (x["kind"], -x["ahead"]))[:30]
+    ) or '<tr><td colspan="6">没有待处理分支</td></tr>'
+    ops_prog = "".join(
         f"<li><code>{esc(r.get('id'))}</code> {esc(r.get('summary') or r.get('title'))}</li>"
-        for r in reversed(prog)]
-    doc = f"""<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Codex Autopilot 驾驶舱</title>
-<style>
-:root{{color-scheme:light;--ink:#18212f;--muted:#667085;--line:#d7dce3;--bg:#f7f8fa;--accent:#0f766e}}
-*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}}
-main{{max-width:1180px;margin:0 auto;padding:24px}}h1{{font-size:24px;margin:0 0 4px}}h2{{font-size:16px;margin:24px 0 8px}}
-.meta{{color:var(--muted)}}table{{width:100%;border-collapse:collapse;background:white;border:1px solid var(--line)}}th,td{{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}}th{{background:#eef1f4;font-size:12px;color:#475467}}
-code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}}ul{{background:white;border:1px solid var(--line);margin:0;padding:12px 12px 12px 30px}}
-.stats{{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}}.stat{{background:white;border:1px solid var(--line);padding:12px}}.num{{font-size:22px;font-weight:650;color:var(--accent)}}
-@media(max-width:760px){{.stats{{grid-template-columns:repeat(2,minmax(0,1fr))}}main{{padding:14px}}table{{display:block;overflow:auto}}}}
-</style></head><body><main>
-<h1>Codex Autopilot 驾驶舱</h1>
-<div class="meta">生成 {esc(time.strftime('%Y-%m-%d %H:%M:%S'))} · 主干 <code>{esc(MAIN)}</code> @ <code>{esc(git('log','-1','--format=%h %s',MAIN))}</code></div>
-<div class="stats">
-<div class="stat"><div class="num">{len(pending)}</div><div>待路由输入</div></div>
-<div class="stat"><div class="num">{len(clean)}</div><div>可落盘</div></div>
-<div class="stat"><div class="num">{len(conflict)}</div><div>冲突分支</div></div>
-<div class="stat"><div class="num">{len(unresolved)}</div><div>残留冲突标记</div></div>
-<div class="stat"><div class="num">{len(groups)}</div><div>可收拢冲突族</div></div>
-<div class="stat"><div class="num">{len(open_led)}</div><div>未决问题</div></div>
+        for r in reversed(prog)) or "<li>暂无进展记录</li>"
+
+    css = """
+:root{--ink:#1b2330;--ink2:#5b6472;--ink3:#8a93a1;--line:#e4e8ef;--bg:#f6f7f9;--card:#fff;--accent:#0f766e;--accent-soft:#e6f2f0;--warn:#b42318;--warn-soft:#fef3f2}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}
+main{max-width:900px;margin:0 auto;padding:30px 20px 64px}
+.top{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+.brand{width:34px;height:34px;border-radius:9px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;flex:none}
+.grow{flex:1}
+h1{font-size:22px;margin:0;letter-spacing:0}
+h2{font-size:15.5px;margin:0 0 12px;letter-spacing:0}
+h3{font-size:13px;margin:18px 0 8px;color:var(--ink2)}
+.meta{color:var(--ink3);font-size:12.5px;margin-top:3px}
+.meta code{background:#eef1f5;padding:1px 5px;border-radius:5px;color:var(--ink2)}
+.lede{color:var(--ink2);font-size:14.5px;margin:10px 0 18px;max-width:690px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin-bottom:13px}
+.card p{margin:0 0 12px}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:2px 9px;border-radius:999px;vertical-align:middle}
+.pill.live{background:var(--accent-soft);color:var(--accent)}
+.pill.paused{background:var(--warn-soft);color:var(--warn)}
+.dot{width:7px;height:7px;border-radius:50%;background:currentColor}
+.steps{list-style:none;padding:0;margin:0}
+.steps li{display:flex;gap:11px;padding:6px 0;align-items:flex-start}
+.stepn{flex:none;width:22px;height:22px;border-radius:50%;background:var(--accent-soft);color:var(--accent);font-size:12.5px;font-weight:600;display:flex;align-items:center;justify-content:center;margin-top:1px}
+.callout{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:10px}
+.quote{color:var(--ink);font-size:14px}
+.hint{color:var(--ink3);font-size:12.5px;margin-top:6px}
+.counters{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.metric{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.metric .n{font-size:24px;font-weight:650;color:var(--accent);line-height:1.2}
+.metric .l{font-size:12.5px;color:var(--ink2)}
+.note{color:var(--ink3);font-size:12.5px;margin-top:10px}
+.empty{color:var(--ink2);font-size:13.5px;background:var(--bg);border:1px dashed var(--line);border-radius:10px;padding:12px 14px}
+.road{list-style:none;padding:0;margin:0}
+.road li{display:flex;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)}
+.road li:last-child{border-bottom:none}
+.mk{flex:none;width:18px;text-align:center;color:var(--accent);font-size:13px;margin-top:2px}
+.road-todo .mk{color:var(--ink3)}
+.sb{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.nm{font-weight:550}
+.st{font-size:11.5px;color:var(--ink3)}
+.road-done .nm{color:var(--ink2)}
+.ex{color:var(--ink2);font-size:12.5px;margin-top:2px}
+.list{list-style:none;padding:0;margin:0}
+.list li{display:flex;gap:10px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line)}
+.list li:last-child{border-bottom:none}
+.list.plain li{border-bottom:none;padding:4px 0;color:var(--ink2);display:list-item;list-style:disc;margin-left:18px}
+.tag{flex:none;font-size:11.5px;background:#eef1f5;color:var(--ink2);padding:1px 8px;border-radius:999px}
+.tag.warn{background:var(--warn-soft);color:var(--warn)}
+.tag.ok{background:var(--accent-soft);color:var(--accent)}
+.when{color:var(--ink3);font-size:11.5px;white-space:nowrap}
+.subhead{font-size:12.5px;font-weight:600;color:var(--ink2);margin:14px 0 4px}
+.subhead:first-child{margin-top:0}
+.acc{list-style:none;padding:0;margin:0}
+.acc li{padding:9px 0;border-bottom:1px solid var(--line)}
+.acc li:last-child{border-bottom:none}
+.acc .t{display:flex;gap:8px;align-items:baseline}
+.lv{flex:none;font-size:11px;background:var(--accent-soft);color:var(--accent);padding:1px 7px;border-radius:5px}
+.accsteps{color:var(--ink2);font-size:12.5px;margin-top:4px;white-space:pre-line}
+.row{display:flex;gap:12px;padding:3px 0}
+.row .k{flex:none;width:64px;color:var(--ink3);font-size:12.5px}
+.adv{margin-top:6px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+.adv>summary{cursor:pointer;padding:14px 20px;font-size:13.5px;font-weight:600;color:var(--ink2);list-style:none}
+.adv>summary::-webkit-details-marker{display:none}
+.adv>summary:before{content:"\\25B8  "}
+.adv[open]>summary:before{content:"\\25BE  "}
+.advbody{padding:0 20px 18px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:6px}
+.stat{background:var(--bg);border:1px solid var(--line);border-radius:9px;padding:10px 12px}
+.stat .num{font-size:20px;font-weight:650;color:var(--accent)}
+.stat .lab{font-size:12px;color:var(--ink2)}
+table{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--line);border-radius:9px;overflow:hidden;font-size:12.5px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:#eef1f4;font-size:11.5px;color:#475467;font-weight:600}
+tr:last-child td{border-bottom:none}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+.foot{color:var(--ink3);font-size:12.5px;text-align:center;margin-top:20px}
+@media(max-width:640px){.counters,.stats{grid-template-columns:repeat(2,1fr)}main{padding:20px 14px 48px}table{display:block;overflow:auto}}
+"""
+    body = f"""<main>
+<div class="top">
+  <div class="brand">自</div>
+  <div class="grow">
+    <h1>Codex 自动挡</h1>
+    <div class="meta">生成 {ts_str} · 主干 <code>{esc(MAIN)}</code> @ <code>{esc(head)}</code>
+      · <span class="pill {state_cls}"><span class="dot"></span>{state_txt}</span></div>
+  </div>
 </div>
-<h2>现在最该做什么</h2>
-<table><thead><tr><th>ID</th><th>类型</th><th>泳道</th><th>问题</th></tr></thead><tbody>
-{''.join(html_rows) or '<tr><td colspan="4">没有未决问题</td></tr>'}
-</tbody></table>
-<h2>冲突收拢</h2>
-<table><thead><tr><th>Convergence 分支</th><th>源分支</th><th>冲突文件</th><th>示例</th></tr></thead><tbody>
-{''.join(group_rows) or '<tr><td colspan="4">没有需要收拢的冲突</td></tr>'}
-</tbody></table>
-<h2>分支队列</h2>
-<table><thead><tr><th>状态</th><th>分支</th><th>领先</th><th>落后</th><th>冲突</th><th>标题</th></tr></thead><tbody>
-{''.join(branch_rows) or '<tr><td colspan="6">没有待处理分支</td></tr>'}
-</tbody></table>
-<h2>最近进展</h2><ul>{''.join(progress_rows) or '<li>暂无进展记录</li>'}</ul>
-</main></body></html>"""
+<p class="lede">它接管你零散的需求——归类、记录、追踪，把和主线不冲突、检查通过的改动自己合好；你只在必须拍板时出现。</p>
+
+<section class="card">
+  <h2>怎么用</h2>
+  <p>你平时打字的那个 <b>Codex 输入框，就是总输入框</b>。不用新建对话，也不用挑分支、挑角色。</p>
+  <ol class="steps">
+    <li><span class="stepn">1</span><div>把看到的零散问题<b>原样说出来</b>就行——视觉不对、体验别扭、冒出一个 bug，都可以一起丢过来。</div></li>
+    <li><span class="stepn">2</span><div>自动挡负责<b>归类、记录、追踪</b>，并把和主线不冲突、检查通过的改动<b>自己合好</b>。</div></li>
+    <li><span class="stepn">3</span><div>只有<b>改产品方向、删数据、发布</b>这类要拍板的事，它才会停下来问你。</div></li>
+  </ol>
+  <div class="callout">
+    <div class="quote">“左边导航排版坏了，顺便这个按钮点着没反应，另外首页有点慢。”</div>
+    <div class="hint">就这样一句话全发出去，不用分类，也不用想它该进哪个对话或分支。</div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>它替你做了这些</h2>
+  <div class="counters">
+    <div class="metric"><div class="n">{len(latest(led))}</div><div class="l">收到的零散反馈</div></div>
+    <div class="metric"><div class="n">{len(merged)}</div><div class="l">自动合入的分支</div></div>
+    <div class="metric"><div class="n">{len(open_led)}</div><div class="l">未决问题</div></div>
+  </div>
+  <div class="note">没有让新手去选分支、等合并、一个个点验收——这些由它自己串起来。</div>
+</section>
+
+<section class="card"><h2>产品路线 · 现在走到哪了</h2>{road_html}</section>
+<section class="card"><h2>需要你验收</h2>{human_html}{machine_html}</section>
+<section class="card"><h2>当前在做什么 · 还差什么</h2>{progress_html}</section>
+<section class="card"><h2>产品主线</h2>{mainline_html}</section>
+<section class="card"><h2>产品状态 · 它现在为你做什么</h2>{product_html}</section>
+
+<details class="adv">
+  <summary>高级视图 · 分支与合并（运维）</summary>
+  <div class="advbody">
+    <div class="stats">
+      <div class="stat"><div class="num">{len(pending)}</div><div class="lab">待路由输入</div></div>
+      <div class="stat"><div class="num">{len(clean)}</div><div class="lab">可落盘</div></div>
+      <div class="stat"><div class="num">{len(conflict)}</div><div class="lab">冲突分支</div></div>
+      <div class="stat"><div class="num">{len(unresolved)}</div><div class="lab">残留冲突标记</div></div>
+      <div class="stat"><div class="num">{len(groups)}</div><div class="lab">可收拢冲突族</div></div>
+      <div class="stat"><div class="num">{len(open_led)}</div><div class="lab">未决问题</div></div>
+    </div>
+    <h3>现在最该做什么</h3>
+    <table><thead><tr><th>ID</th><th>类型</th><th>泳道</th><th>问题</th></tr></thead><tbody>{ops_need}</tbody></table>
+    <h3>冲突收拢</h3>
+    <table><thead><tr><th>Convergence 分支</th><th>源分支</th><th>冲突文件</th><th>示例</th></tr></thead><tbody>{ops_group}</tbody></table>
+    <h3>分支队列</h3>
+    <table><thead><tr><th>状态</th><th>分支</th><th>领先</th><th>落后</th><th>冲突</th><th>标题</th></tr></thead><tbody>{ops_branch}</tbody></table>
+    <h3>最近进展</h3><ul class="list plain">{ops_prog}</ul>
+  </div>
+</details>
+
+<div class="foot">Codex 自动挡 · 平时无感运行，需要时这里能看、能停、能改。</div>
+</main>"""
+    doc = ('<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8">\n'
+           '<meta name="viewport" content="width=device-width,initial-scale=1">\n'
+           '<title>Codex 自动挡 · 驾驶舱</title>\n<style>\n' + css + '\n</style></head><body>\n'
+           + body + '\n</body></html>')
     write_text(DASHBOARD, doc)
-    print(f"已写出 {DASHBOARD.relative_to(REPO)}（待路由 {len(pending)}，可落盘 {len(clean)}，"
-          f"冲突 {len(conflict)}，残留标记 {len(unresolved)}，收拢族 {len(groups)}，"
-          f"已合并 {len(merged)}）")
+    print(f"已写出 {DASHBOARD.relative_to(REPO)}（用户视图：反馈 {len(latest(led))}、"
+          f"已合入 {len(merged)}、未决 {len(open_led)}；运维：待路由 {len(pending)}、"
+          f"可落盘 {len(clean)}、冲突 {len(conflict)}、收拢族 {len(groups)}）")
     if "--open" in args and sys.platform == "darwin":
         subprocess.run(["open", str(DASHBOARD)], check=False)
 
@@ -1822,6 +2082,30 @@ def _push_main_with_one_retry(wt: Path) -> str:
         if not ok:
             raise RuntimeError(f"同步远端 main 后验证门禁失败，未推送：{out[-800:]}")
     raise RuntimeError(f"push origin HEAD:main 失败：{last[:800]}")
+
+
+def _align_main_ref_to_origin(new: str = "") -> str:
+    """把本地 main 引用对齐到 origin/main（push 成功后调用）。
+
+    并发下绝不能用 CAS 从抓取时的旧 `pre` 推进 main：daemon 的 tick / supersede /
+    land 都会推 main，任何一次 CAS 都可能撞上「cannot lock ref 'refs/heads/main':
+    is at X but expected Y」，把一次已经 push 成功的落盘误判成失败（实测在 kg-trunk
+    反复出现）。push 成功后 origin/main 才是真相，本地引用只需对齐它。
+    """
+    subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
+                   capture_output=True, text=True)
+    remote = git("rev-parse", f"origin/{MAIN}") or new
+    local = git("rev-parse", MAIN)
+    if local == remote or not remote:
+        return local
+    anc = subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
+                          local, remote], capture_output=True, text=True)
+    if anc.returncode == 0:
+        subprocess.run(["git", "-C", str(REPO), "update-ref",
+                        f"refs/heads/{MAIN}", remote], check=False)
+        return remote
+    # 本地领先或分叉：保留本地引用，绝不因为一次引用竞争回退或丢提交。
+    return local
 
 
 # 真相层与生成视图：它们本来就该落在主干工作树上，所以不算「污染」。land /
@@ -2539,10 +2823,9 @@ def cmd_land(args):
             print("  " + pushed.replace("\n", "\n  "))
         new = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
                              capture_output=True, text=True).stdout.strip()
-        subprocess.run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}", new, pre],
-                       check=True)
-        subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
-                       capture_output=True, text=True)
+        # 并发下不用 CAS 从旧 pre 推进（会撞 cannot lock ref）；push 已成功，以
+        # origin/main 为准对齐本地引用，避免把已落盘误判成失败。
+        _align_main_ref_to_origin(new)
         print(f"  main 推进 {pre[:8]} → {new[:8]}（{branch} 已落盘并推送 origin）")
     finally:
         if LOCK.exists():
