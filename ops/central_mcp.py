@@ -175,6 +175,39 @@ TOOLS = [
         },
     },
     {
+        "name": "synthesize_mainline",
+        "description": "把决策/进展/问题/验收/产品状态综合成一页产品主线（docs/PRODUCT_MAINLINE.md）。产品讨论和零散需求会自动长成产品叙事，人只读这一页就知道现状、最近在推什么、还差什么。每轮收口或用户问“产品主线/PRD/到哪了”时调用。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "close_item",
+        "description": "关闭问题台账里的一条（bug/视觉/体验/架构）：标 done 并把结论追加成进展；可带 commit 与证据。用户报的 bug 修完、验收过之后调用，让它从「收到」走到「已关闭」，不再依赖用户自己记。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "问题台账 id，如 L-0003"},
+                "note": {"type": "string", "description": "结论/证据，一句话"},
+                "commit": {"type": "string", "description": "落盘 commit sha，可选"},
+                "evidence": {"type": "string", "description": "可复核的验证证据，可选"},
+            },
+            "required": ["id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "reopen_item",
+        "description": "把已关闭的问题重新打开（回归/证据不足/用户再次复现）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "问题台账 id"},
+                "reason": {"type": "string", "description": "为什么重新打开"},
+            },
+            "required": ["id"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "suggest_branch",
         "description": "按文件重叠给“该并进哪个既有分支”的只读建议，不落账。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
@@ -366,9 +399,66 @@ def _ledger_count():
         return 0
 
 
+def _open_ledger_count():
+    """还没关闭的问题数（bug/视觉/体验/架构），按 id 取最新状态。"""
+    repo = os.environ.get("KG_REPO")
+    if not repo:
+        return 0
+    ledger = Path(repo) / "ops" / "truth" / "ledger.jsonl"
+    latest = {}
+    try:
+        lines = ledger.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return 0
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if rec.get("id"):
+            latest[rec["id"]] = rec
+    return sum(1 for r in latest.values() if r.get("status") in ("open", "doing"))
+
+
 def _truth_dir():
     repo = os.environ.get("KG_REPO") or str(REPO)
     return Path(repo) / "ops" / "truth"
+
+
+def _mainline_summary(limit=6):
+    """产品主线摘要：方向来自 mainline.json，未决问题来自台账。只读、秒级。"""
+    base = _truth_dir().parent.parent
+    ml = _json_file(_truth_dir() / "mainline.json")
+    latest = {}
+    try:
+        raw = (_truth_dir() / "ledger.jsonl").read_text(encoding="utf-8")
+    except OSError:
+        raw = ""
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        if rec.get("id"):
+            latest[rec["id"]] = rec
+    opens = [r for r in latest.values() if r.get("status") in ("open", "doing")]
+    opens.sort(key=lambda r: (0 if r.get("kind") in ("bug", "gate") else 1, r.get("ts", "")))
+    doc = base / "docs" / "PRODUCT_MAINLINE.md"
+    return {
+        "product": ml.get("product"),
+        "stage": ml.get("stage"),
+        "focus": (ml.get("current_focus") or [])[:4],
+        "doc": str(doc.relative_to(base)) if doc.exists() else None,
+        "open_count": len(opens),
+        "open_items": [{"id": r.get("id"), "kind": r.get("kind"), "title": r.get("title", "")}
+                       for r in opens[:limit]],
+    }
 
 
 def _product_state(limit=25):
@@ -526,6 +616,7 @@ def _status_payload(fast=True):
         },
         "counters": {
             "received": _ledger_count(),
+            "open_items": _open_ledger_count(),
             "landed": int(st.get("total_landed", 0)),
             "resolved": int(st.get("total_resolved", 0)),
             "superseded": int(st.get("total_superseded", 0)),
@@ -549,6 +640,7 @@ def _status_payload(fast=True):
         "product_state": _product_state(),
         "judgments": _active_judgments(),
         "last_verification": _last_verification(),
+        "mainline": _mainline_summary(),
     }
     payload["__text__"] = _status_text(payload)
     return payload
@@ -579,6 +671,9 @@ def _status_text(payload):
     if ps.get("count"):
         lines.append("产品状态：已记录 %s 个模块行为（最后更新 %s）"
                      % (ps["count"], ps.get("updated") or "—"))
+    counters = payload.get("counters") or {}
+    if counters.get("open_items") is not None:
+        lines.append("未关闭问题：%s 条（修完会自动从台账里收口）" % counters.get("open_items"))
     jd = payload.get("judgments") or []
     if jd:
         lines.append("判断逻辑：已蒸馏 %s 条（同一个判断人只做一次）" % len(jd))
@@ -671,6 +766,20 @@ def call_tool(name, args):
         env = {"KG_TRUTH_WHY": args.get("why") or None,
                "KG_TRUTH_SCOPE": args.get("scope") or None}
         return truthctl("distill", "add", statement, extra_env=env)
+    if name == "synthesize_mainline":
+        return truthctl("synthesize")
+    if name == "close_item":
+        rid = (args.get("id") or "").strip()
+        if not rid:
+            return "close_item 需要 id（如 L-0003）", 2
+        env = {"KG_TRUTH_COMMIT": args.get("commit") or None,
+               "KG_TRUTH_EVIDENCE": args.get("evidence") or None}
+        return truthctl("close", rid, args.get("note") or "", extra_env=env)
+    if name == "reopen_item":
+        rid = (args.get("id") or "").strip()
+        if not rid:
+            return "reopen_item 需要 id（如 L-0003）", 2
+        return truthctl("open", rid, args.get("reason") or "")
     if name == "suggest_branch":
         return kgctl("suggest")
     if name == "intake_request":
@@ -767,7 +876,10 @@ def handle(msg):
                 "resolve_finish 走门禁落盘。不要要求用户自己选对话、分支或角色。"
                 "改完产品行为的会话要用 product_update 把「产品今天实际怎么表现」写回；"
                 "收口一轮后用 distill_review 回看、distill_add 把「为什么这么判断」写回，"
-                "让同一个判断人只做一次。落盘证据看 last_verification（真实命令 + cwd + 结果）。"
+                "让同一个判断人只做一次；每轮收口用 synthesize_mainline 把决策/进展/问题/"
+                "验收综合成一页产品主线（docs/PRODUCT_MAINLINE.md）。用户报的 bug 修完、"
+                "验收过后用 close_item 关闭台账条目（带 commit/证据），别让它一直挂在 open。"
+                "落盘证据看 last_verification（真实命令 + cwd + 结果）。"
                 "用户问“自动挡在哪看 / 怎么用 / 现在开着吗 / 做了什么”时，调用 "
                 "render_autopilot_panel 打开面板（含小白说明与开关）；要看纯文本状态用 "
                 "autopilot_status；要暂停/恢复/开关自动动作或后台常驻用 autopilot_control。"

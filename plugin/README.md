@@ -29,16 +29,19 @@
   并声明 `KG_REPO`（账本所在项目）。安装脚本会写好这两项。
 - `.codex-plugin/plugin.json` —— 清单：声明上面几部分属于同一个插件。
 
-## 三种自动回写
+## 自动回写
 
-输入收进来只解决一半问题；另一半是「做完之后谁记得」。这三种回写补的是那一半：
+输入收进来只解决一半问题；另一半是「做完之后谁记得、谁把零散讨论长成主线」。这些回写补的是那一半：
 
 - **产品状态**（`ops/truth/product_state.json`）：产品今天实际怎么工作，按模块记，改到行为的会话在同一轮更新；人验收只看它的变化，不读实现。
 - **自验证**（`ops/truth/acceptance.jsonl`）：合入前逐条真跑验证门禁，把命令 + cwd + 退出码写成验收证据；没配门禁就标 `todo`，不伪造 `verified`。
 - **判断逻辑**（`ops/truth/judgments.jsonl`）：每轮收口后蒸馏一次，只记「为什么这么判断」，下次换个地方也不用重新讲。
+- **问题闭环**（`ops/truth/ledger.jsonl`）：用户报的 bug/视觉/体验/架构收进台账，agent 推进到 `close`（带 commit 与证据），回归了再 `open`。
+- **主线综合**（`docs/PRODUCT_MAINLINE.md`）：每轮 `synthesize` 把决策/进展/问题/验收综合成产品主线，零散讨论自动成体系。
 
-面板点「高级」就能看到这三块：产品状态、判断逻辑、最近一次自验证。对应的 MCP 工具是
-`product_state` / `product_update` / `distill_review` / `distill_add`。
+面板第一屏就能看到「现在到哪了 · 还差什么」，点「高级」还能看到产品状态、判断逻辑、最近一次自验证。对应的 MCP 工具是
+`product_state` / `product_update` / `distill_review` / `distill_add` /
+`synthesize_mainline` / `close_item` / `reopen_item`。
 
 ## 安装
 

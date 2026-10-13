@@ -24,6 +24,9 @@ truthctl 管「这个项目现在到底是什么状态」。
   truthctl product set "<模块>" "<行为>"  更新一个模块（why/files 走环境变量）
   truthctl distill             回看这一轮人额外说了什么，列候选判断
   truthctl distill add "<判断>"  把判断背后的判断逻辑写回（why/scope 走环境变量）
+  truthctl close <L-id> "<结论>"  把问题台账里的一条标成 done，并追加进展
+  truthctl reopen <L-id> "<原因>"  把已关闭的问题重新打开
+  truthctl synthesize          把决策/进展/问题/验收综合成 docs/PRODUCT_MAINLINE.md
 
 add 的环境变量：
   KG_TRUTH_DETAIL KG_TRUTH_STATUS KG_TRUTH_LANE KG_TRUTH_FILES
@@ -57,6 +60,7 @@ INBOX = REPO / 'ops' / 'tasks' / 'inbox.jsonl'
 STATUS = REPO / 'docs' / 'PROJECT_STATUS.md'
 PRODUCT_STATE = TRUTH / 'product_state.json'
 JUDGMENTS = TRUTH / 'judgments.jsonl'
+PRODUCT_MAINLINE = REPO / 'docs' / 'PRODUCT_MAINLINE.md'
 
 
 def _kgctl_cmd() -> str:
@@ -215,6 +219,27 @@ def cmd_promote(args):
 
 def _next_ledger_id() -> str:
     return next_free_id('ledger', len(_read(TRUTH / 'ledger.jsonl')) + 1)
+
+
+def _latest_by_id(rows: list) -> dict:
+    """JSONL 只追加，id 不变：同 id 的后续记录覆盖前一条，得到当前状态。"""
+    out = {}
+    for r in rows:
+        rid = r.get('id')
+        if rid:
+            out[rid] = r
+    return out
+
+
+def _find_ledger(rid: str) -> dict:
+    return _latest_by_id(_read(TRUTH / FILES['ledger'])).get(rid)
+
+
+def _rewrite_jsonl(path: Path, rows: list) -> None:
+    """就地重写台账：只用于状态翻转，把同 id 记录收敛成一条。"""
+    with path.open('w') as fh:
+        for r in rows:
+            fh.write(json.dumps(r, ensure_ascii=False) + '\n')
 
 
 def _tokens(text: str) -> set:
@@ -586,6 +611,154 @@ def cmd_distill(args):
           '（product/design/arch/process）。')
 
 
+def _set_ledger_status(rid, status, note, evidence=''):
+    # JSONL 只追加：同 id 的新记录覆盖旧记录，得到当前状态
+    rows = _read(TRUTH / FILES['ledger'])
+    rec = _latest_by_id(rows).get(rid)
+    if rec is None:
+        sys.exit('问题台账里没有 %s（先 truthctl ls ledger 看现有条目）' % rid)
+    merged = dict(rec)
+    merged['status'] = status
+    merged['ts'] = time.strftime('%Y-%m-%d %H:%M:%S')
+    if note:
+        merged['detail'] = (merged.get('detail', '') + '\n' if merged.get('detail') else '') + note
+    if evidence:
+        merged['evidence'] = evidence
+    if status == 'done':
+        merged['closed'] = merged['ts']
+    _append(merged)
+    return merged
+
+
+def cmd_close(args):
+    """把一条问题台账标成 done，并追加一条进展：从「收到」走到「已关闭」。"""
+    if not args:
+        sys.exit('用法: truthctl close <L-id> "<结论/证据>"（KG_TRUTH_COMMIT 可选）')
+    rid = args[0]
+    note = ' '.join(args[1:]) if len(args) > 1 else ''
+    rec = _set_ledger_status(rid, 'done', note, os.environ.get('KG_TRUTH_EVIDENCE', ''))
+    commit = os.environ.get('KG_TRUTH_COMMIT') or None
+    prog = {'id': _next_id('progress'), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'type': 'progress', 'title': '关闭 %s：%s' % (rid, rec.get('title', '')),
+            'summary': note, 'commit': commit, 'landed': bool(commit),
+            'lane': rec.get('lane'), 'files': rec.get('files') or [],
+            'source': os.environ.get('KG_TRUTH_SOURCE', 'agent'), 'status': 'done'}
+    _append(prog)
+    print('已关闭 [%s] %s（同时记入进展 %s）' % (rid, rec.get('title', ''), prog['id']))
+
+
+def cmd_open(args):
+    """把已关闭的问题重新打开（回归 / 证据不足 / 用户再次复现）。"""
+    if not args:
+        sys.exit('用法: truthctl open <L-id> "<原因>"')
+    rid = args[0]
+    note = ' '.join(args[1:]) if len(args) > 1 else ''
+    rec = _set_ledger_status(rid, 'open', note or '重新打开')
+    print('已重新打开 [%s] %s' % (rid, rec.get('title', '')))
+
+
+def cmd_synthesize(args):
+    """综合：把决策/进展/问题/验收/产品状态合成一页产品主线。
+
+    mainline.json 是人拍板的方向，不改；这份是 Agent 从台账里综合出来的现状。
+    人只读这一页，就知道产品现在是什么样、最近在推什么、还差什么。
+    """
+    ml = _read_json(TRUTH / 'mainline.json')
+    dec = [r for r in _read(TRUTH / 'decisions.jsonl') if r.get('status') == 'active']
+    led = list(_latest_by_id(_read(TRUTH / 'ledger.jsonl')).values())
+    prg = _read(TRUTH / 'progress.jsonl')
+    acc = _read(TRUTH / 'acceptance.jsonl')
+    ps = _read_json(PRODUCT_STATE)
+    modules = ps.get('modules') if isinstance(ps.get('modules'), list) else []
+    open_led = [r for r in led if r.get('status') in ('open', 'doing')]
+    done_led = [r for r in led if r.get('status') == 'done']
+    landed = [r for r in prg if r.get('landed')]
+    verified = [r for r in acc if r.get('status') == 'verified']
+
+    L = ['# 产品主线（自动综合，勿手改）', '',
+         '> 生成时间 %s　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合' % time.strftime('%Y-%m-%d %H:%M:%S'),
+         '> 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。', '']
+    if ml:
+        L += ['## %s' % ml.get('product', '产品'), '',
+              ml.get('one_liner', ''), '',
+              '- 阶段：%s' % ml.get('stage', ''),
+              '- 北极星：%s' % ml.get('north_star', ''),
+              '- 路径：%s' % ' → '.join(ml.get('path', [])),
+              '- 当前焦点：%s' % '；'.join(ml.get('current_focus', []))]
+        if ml.get('not_doing'):
+            L.append('- 本阶段不做：%s' % '；'.join(ml.get('not_doing', [])))
+        L.append('')
+    else:
+        L += ['## 产品主线', '', '（mainline.json 还没填，先由人拍板产品名/阶段/北极星）', '']
+
+    L += ['## 现在是什么样', '']
+    if modules:
+        for m in modules:
+            L.append('- **%s**：%s' % (m.get('area', ''), m.get('behavior', '')))
+    else:
+        L.append('- （还没有产品状态记录；改产品行为的会话应写 product_state）')
+    L.append('')
+
+    L += ['## 决策脉络', '']
+    if dec:
+        for r in dec[-12:]:
+            why = ' —— %s' % r.get('why') if r.get('why') else ''
+            L.append('- %s%s' % (r.get('title', ''), why))
+    else:
+        L.append('- （还没有决策记录）')
+    L.append('')
+
+    L += ['## 最近在推进', '']
+    if prg[-10:]:
+        for r in prg[-10:]:
+            mark = '已落盘' if r.get('landed') else '在途'
+            c = ' @ %s' % r['commit'][:10] if r.get('commit') else ''
+            L.append('- [%s]%s %s' % (mark, c, r.get('summary') or r.get('title', '')))
+    else:
+        L.append('- （还没有进展记录）')
+    L.append('')
+
+    L += ['## 还差什么', '']
+    by_kind = {}
+    for r in open_led:
+        by_kind.setdefault(r.get('kind', 'other'), []).append(r)
+    if by_kind:
+        for kind in ('bug', 'gate', 'visual', 'ux', 'arch', 'other'):
+            rows = by_kind.get(kind)
+            if rows:
+                L.append('**%s（%d 待处理）**' % (kind, len(rows)))
+                for r in rows:
+                    L.append('- `%s` %s' % (r['id'], r.get('title', '')))
+                L.append('')
+    else:
+        L += ['- 台账里没有未决问题', '']
+    blocked = [r for r in acc if r.get('status') == 'blocked']
+    if blocked:
+        L.append('**被卡住的验收项**')
+        for r in blocked:
+            L.append('- `%s` %s' % (r['id'], r.get('title', '')))
+        L.append('')
+
+    L += ['## 已验收', '']
+    if verified:
+        for r in verified:
+            L.append('- `%s` [%s] %s' % (r['id'], r.get('level', ''), r.get('title', '')))
+    else:
+        L.append('- （还没有带真实证据的验收项）')
+    L.append('')
+
+    L += ['## 进度概览', '',
+          '- 累计关闭问题：%d 条' % len(done_led),
+          '- 累计落盘：%d 条' % len(landed),
+          '- 未决问题：%d 条' % len(open_led),
+          '- 已验收：%d 条' % len(verified), '']
+
+    PRODUCT_MAINLINE.parent.mkdir(parents=True, exist_ok=True)
+    PRODUCT_MAINLINE.write_text('\n'.join(L) + '\n')
+    print('\n'.join(L))
+    print('\n已写出 %s' % PRODUCT_MAINLINE.relative_to(REPO), file=sys.stderr)
+
+
 def cmd_snapshot(args):
     ml = json.loads((TRUTH / 'mainline.json').read_text()) if (TRUTH / 'mainline.json').exists() else {}
     dec = _read(TRUTH / 'decisions.jsonl')
@@ -690,7 +863,8 @@ def cmd_snapshot(args):
 
 CMDS = {'add': cmd_add, 'ls': cmd_ls, 'snapshot': cmd_snapshot, 'promote': cmd_promote,
         'route': cmd_route, 'lanes': cmd_lanes, 'next': cmd_next,
-        'product': cmd_product, 'distill': cmd_distill}
+        'product': cmd_product, 'distill': cmd_distill,
+        'close': cmd_close, 'open': cmd_open, 'synthesize': cmd_synthesize}
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
@@ -700,5 +874,6 @@ if __name__ == '__main__':
     else:
         print(__doc__)
         print('命令：' + ' | '.join(['snapshot', 'ls', 'add', 'promote', 'route', 'lanes',
-                                     'next', 'product', 'distill']))
+                                     'next', 'product', 'distill', 'close', 'open',
+                                     'synthesize']))
         sys.exit(1)

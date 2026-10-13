@@ -23,6 +23,16 @@ description: Codex 自动挡。当用户在同一项目里提出零散、即时�
 5. 用户拍板只限三种：改产品方向、删数据、发布。其余自行路由执行。
 6. 落盘自带验证：合入走真实验证门禁，命令 + cwd + 退出码写进验收台账；没配门禁就标 `todo`，不伪造 `verified`。
 7. 每轮蒸馏：收口后回看这轮人额外说了什么，把「为什么这么判断」写回判断逻辑台账；只记判断逻辑，不记一次性细节。
+8. 产品讨论自动成主线：每轮收口 `truthctl synthesize`，把决策/进展/问题/验收综合成 `docs/PRODUCT_MAINLINE.md`。人只读这一页，就知道现状、最近在推什么、还差什么；不用人肉把零散对话归类成 PRD。
+9. 问题一次提出就闭环：bug/视觉/体验/架构收进台账后，由你主动推进修复 -> 验证 -> `truthctl close <L-id> "<结论>"`。关闭要带 commit/证据；不许修完了还挂在 `open`，也不许没验证就标 `done`。
+
+## 做产品视觉/设计时的硬规则
+改任何界面/视觉/体验之前，先把自己当这个产品的产品经理 + 产品设计师，按下面判断再动手：
+- 尊重用户，保护注意力：显示在面板上的每一条信息都必须值得用户看，是最核心、最有利于理解的信息。层级、优先级、视觉秩序是第一位。
+- 一眼看懂：用户扫一眼就知道「这是什么、现在怎么样、要我做什么」。用最浓缩、最克制、最有秩序的篇幅，把必要信息优雅地塞进用户脑子，不堆废信息。
+- 先截图再改：动手改视觉前先跑起来截图，判断现状是否符合预期和设计规范。改完再截一次对比。
+- 只允许正向改动：明显更清晰、更符合注意力秩序才改；不能比现在更丑、更乱、更难读。宁可不动，也不做负向改动。
+- 拿不准就先不改，把判断写成一条 `truthctl distill add "<判断>"`（`KG_TRUTH_SCOPE=design`），下次不用重复讲。
 
 ## 两种调用方式
 - 有 MCP 工具时优先直接调用（读写的就是下面这套 CLI）：
@@ -30,7 +40,8 @@ description: Codex 自动挡。当用户在同一项目里提出零散、即时�
   `next_actions`、`project_status`、`route_inbox`、`resolve_list`、`resolve_plan`、
   `resolve_start`、`resolve_finish`、`convergence_plan`（冲突收拢）、
   `generate_context`、`dashboard`、`capture_request`（只追加）、`suggest_branch`、
-  `product_state` / `product_update`（产品状态）、`distill_review` / `distill_add`（判断逻辑蒸馏）。
+  `product_state` / `product_update`（产品状态）、`distill_review` / `distill_add`（判断逻辑蒸馏）、
+  `synthesize_mainline`（综合成产品主线）、`close_item` / `reopen_item`（问题收口）。
 - 否则走 CLI。运行时代码在插件里（自包含安装：`~/plugins/codex-autopilot/ops/`），
   项目里只留账本；手敲时先设 `KG_REPO` 指到项目（MCP 调用时插件已自动注入）：
 
@@ -82,6 +93,8 @@ python3 "$KGCTL" context <分支>    # 给该分支写一份版本化 Context Pa
 - 落盘后把进展写进真相层：`truthctl add progress "..."`（`KG_TRUTH_COMMIT=<sha>`、`KG_TRUTH_LANDED=1`）；`land` 自身会把每道验证门禁的 `name: cmd (cwd=...) -> exit N` 写进验收台账，不写「通过构建」这类结论。
 - 问题修完写一条状态变更：`truthctl add ledger` 或直接更新对应条目的 `status=done`。
 - 一轮收口后蒸馏一次：`truthctl distill` 列出这轮人额外说了什么，用 `truthctl distill add "<判断逻辑>"`（`KG_TRUTH_WHY` / `KG_TRUTH_SCOPE`）把「为什么这么判断」写回，下次不用重复说。
+- 问题修完、验收过就收口：`truthctl close <L-id> "<结论>"`（`KG_TRUTH_COMMIT`、`KG_TRUTH_EVIDENCE` 可选），把台账从 `open` 翻到 `done` 并追加进展；回归了用 `truthctl open <L-id> "<原因>"`。
+- 每轮收口综合一次：`truthctl synthesize` 把决策/进展/问题/验收写成 `docs/PRODUCT_MAINLINE.md`，产品讨论自动长成主线，人只读这一页。
 
 ## 边界
 - 这个 skill 管“怎么把散乱输入收成一个有序系统”，不代替产品判断。

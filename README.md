@@ -51,15 +51,17 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 
 传统解法是写一沓规范（`AGENTS.md`、workflow 文档）。但规范不会自己动手：再多文字，也不会主动把一句「这里视觉坏了」记进台账、判断该进哪条泳道、在没有冲突时把它落进 `main`。这套东西把最贵的几个动作做成了命令和守护进程，而不是又一份文档。
 
-## 三种自动回写
+## 做完之后自动回写
 
-上面说的都是「输入怎么进来」。用户还有一半痛点在「事情做完之后没人记得」。这三种回写补的是那一半：
+上面说的都是「输入怎么进来」。用户还有一半痛点在「事情做完之后没人记得、又得人肉把零散对话攒成 PRD」。这些回写补的是那一半：
 
 - **产品状态**：产品今天实际怎么工作。改到行为的会话在同一轮写进 `ops/truth/product_state.json`（`truthctl product set`），人验收只看它相对主线的变化，不读实现。
 - **自验证**：合入前逐条真跑配置里的验证门禁，把 `命令 + cwd + 退出码` 写进 `acceptance.jsonl`。没配门禁就标 `todo`，不伪造 `verified`——所以「已验证」永远对应一条能照着复核的证据。
 - **判断逻辑蒸馏**：每轮收口后回看人额外说了什么，只把「为什么这么判断」写进 `judgments.jsonl`（`truthctl distill add`）。记的是判断逻辑，不是一次性细节——下次换个地方也不用重新讲。
+- **问题闭环**：用户报的 bug / 视觉 / 体验 / 架构问题收进 `ledger.jsonl` 后，由 agent 推进修复 -> 验证 -> `truthctl close <L-id> "<结论>"`。关闭时带 commit、证据，并自动追加一条进展；回归了用 `truthctl open` 重开。问题不会一直挂在 `open`，也不靠用户自己记。
+- **主线综合**：每轮收口跑一次 `truthctl synthesize`，把决策 / 进展 / 问题 / 验收 / 产品状态综合成 `docs/PRODUCT_MAINLINE.md`。产品讨论和零散需求自动长成产品叙事，人只读这一页就知道现状、最近在推什么、还差什么。
 
-三者一起形成「做完 → 验证 → 蒸馏」的闭环：产品行为可 diff、验收可复核、判断可累积。
+它们一起形成「做完 → 验证 → 收口 → 综合 → 蒸馏」的闭环：产品行为可 diff、验收可复核、问题可闭环、主线可综合、判断可累积。
 
 ## 怎么装
 
@@ -110,7 +112,7 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 - **常驻（可选）**：装一个 launchd 守护，没开会话时也按周期推进安全子集。开是 `--install`，关是 `--uninstall`。
 - **彻底关掉**：在 Plugins 页禁用 / 卸载插件即可。账本还留在项目里，随时能再装回来。
 
-也可以让对话直接调 MCP 工具：`intake_request`（一句话走完整条链，首选）/ `sync_control_plane` / `next_actions` / `project_status` / `route_inbox` / `resolve_list` / `resolve_plan` / `resolve_start` / `resolve_finish` / `convergence_plan` / `generate_context` / `dashboard` / `capture_request` / `suggest_branch` / `product_state` / `product_update` / `distill_review` / `distill_add`。
+也可以让对话直接调 MCP 工具：`intake_request`（一句话走完整条链，首选）/ `sync_control_plane` / `next_actions` / `project_status` / `route_inbox` / `resolve_list` / `resolve_plan` / `resolve_start` / `resolve_finish` / `convergence_plan` / `generate_context` / `dashboard` / `capture_request` / `suggest_branch` / `product_state` / `product_update` / `distill_review` / `distill_add` / `synthesize_mainline` / `close_item` / `reopen_item`。
 
 想手敲命令：
 
@@ -152,6 +154,8 @@ python3 "$PLUGIN/ops/kgctl.py" dash --open
 | `python3 "$PLUGIN/ops/kgctl.py" reap --go` | 回收已合并的分支（默认只预演） |
 | `python3 "$PLUGIN/ops/truthctl.py" ls` / `next` | 看台账 / 看优先级（同 `kgctl next`） |
 | `python3 "$PLUGIN/ops/truthctl.py" product` / `distill` | 看产品状态 / 蒸馏判断逻辑（细节见下节） |
+| `python3 "$PLUGIN/ops/truthctl.py" close <L-id> "<结论>"` / `open <L-id> "<原因>"` | 问题收口 / 重开（自动写进展、带 commit 与证据） |
+| `python3 "$PLUGIN/ops/truthctl.py" synthesize` | 把决策/进展/问题/验收综合成 `docs/PRODUCT_MAINLINE.md` |
 
 ## 常驻 vs 非常驻
 
@@ -217,7 +221,7 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 
 - **一本账、一处根**。状态根由 `ops/state_root.py` 统一解析（`KG_REPO` > 主干 worktree > 主工作树 > 当前 worktree），不会出现「这个 worktree 说待办 10 条、那个说没有」。
 - **只追加，不改历史**。台账是 JSONL，状态变化写新记录；快照和看板都是自动生成物。
-- **做完继续回写三样东西**。产品行为进 `product_state.json`（人验收只看它的变化）、验证证据进 `acceptance.jsonl`（命令 + cwd + 退出码）、判断逻辑进 `judgments.jsonl`（同一个判断人只做一次）。三者都是纯文本，可 diff、可累积。
+- **做完继续回写**。产品行为进 `product_state.json`（人验收只看它的变化）、验证证据进 `acceptance.jsonl`（命令 + cwd + 退出码）、判断逻辑进 `judgments.jsonl`（同一个判断人只做一次）、问题闭环写回 `ledger.jsonl`、主线综合写进 `docs/PRODUCT_MAINLINE.md`。全部是纯文本，可 diff、可累积。
 - **合并串行**。`land` 一次只推一个分支，用 `git merge-tree --write-tree` 在**写之前**先模拟合并，再扫描分支自己的树里是否残留 `<<<<<<<` / `>>>>>>>`；任一命中都不动，能合才走验证门禁，验证失败就丢弃、`main` 一动不动。
 - **永远不动别人的工作区**。推进 `main` 引用用 `git update-ref`，从不 `checkout` / `reset` / `stash` 任何人的在途改动。
 - **项目相关的旋钮集中在一处**。主干分支名、分支前缀、落盘用的主干 worktree、验证门禁命令、泳道定义，全在 `ops/central.config.json`（环境变量可覆盖）；不配就用对「单仓 + `frontend` 子目录 + `npm run build`」开箱即用的默认值。自动移植是显式开关 `auto_port`（默认关闭）——把「只差几个提交的冲突分支自动 cherry-pick」当成契约扩展，要项目自己点头才开。

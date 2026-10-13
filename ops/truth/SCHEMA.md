@@ -23,6 +23,10 @@ ops/truth/
   ledger.jsonl       # 问题台账：bug / 视觉 / 体验 / 架构问题（追加式，带状态与泳道）
   progress.jsonl     # 进展台账：每条泳道最近干了什么、是否落盘（追加式）
   acceptance.jsonl   # 验收台账：实现模块 / 验收项 / 状态 / 证据（追加式）
+
+生成物：
+  docs/PRODUCT_MAINLINE.md  # 由 truthctl synthesize 从以上台账综合出的产品主线
+  docs/PROJECT_STATUS.md    # 由 truthctl snapshot 生成的一屏项目状态
 ```
 
 ## 通用字段（JSONL 每条）
@@ -103,3 +107,9 @@ judgment 记「以后遇到同类情况该怎么判断」——记的是判断�
    没有验证门禁就写 `todo` 并说明，不允许用「通过构建」这类结论代替证据。
 6. **每轮蒸馏**：收口后回看这轮人额外说了什么，把「为什么这么判断」写进 `judgments.jsonl`——
    只记判断逻辑，不记一次性细节，这样下次换个地方也不用重新讲一遍。
+7. **问题一次提出就闭环**：bug/视觉/体验/架构进 `ledger.jsonl` 后，由 agent 推进修复 ->
+   验证 -> `truthctl close <L-id> "<结论>"`；关闭要带 commit/证据并自动追加进展。回归了
+   用 `truthctl open` 重开，不允许修完了还挂在 `open`，也不允许没验证就标 `done`。
+8. **主线自动综合**：每轮收口跑 `truthctl synthesize`，把决策/进展/问题/验收/产品状态
+   综合成 `docs/PRODUCT_MAINLINE.md`。人在 `mainline.json` 只拍板方向；零散讨论长成的主线
+   由这份生成物承接，人只读这一页。

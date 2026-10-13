@@ -2666,10 +2666,12 @@ def cmd_next(args):
 
 def cmd_tick(args):
     """自动挡主循环：输入归一 -> 真相刷新 -> 冲突收拢 -> 看板/上下文 -> 落盘状态。"""
-    print("[1/7] route inbox", flush=True)
+    print("[1/8] route inbox", flush=True)
     _truth("route", "--go")
-    print("\n[2/7] refresh project status", flush=True)
+    print("\n[2/8] refresh project status", flush=True)
     _truth("snapshot")
+    print("\n[3/8] synthesize product mainline", flush=True)
+    _truth("synthesize")
 
     rows = scan()
     print("  merged=%d clean=%d conflict=%d unresolved=%d" % (
@@ -2678,17 +2680,17 @@ def cmd_tick(args):
         sum(1 for r in rows if r["kind"] == "CONFLICT"),
         sum(1 for r in rows if r["kind"] == "UNRESOLVED")))
 
-    print("\n[3/7] consolidate conflict families", flush=True)
+    print("\n[4/8] consolidate conflict families", flush=True)
     if "--no-converge" not in args:
         cmd_converge(["--go", "--limit", "8"])
     else:
         print("  （--no-converge：跳过）")
 
-    print("\n[4/7] refresh board + dashboard", flush=True)
+    print("\n[5/8] refresh board + dashboard", flush=True)
     cmd_board([])
     cmd_dash([])
 
-    print("\n[5/7] write context packs for next tasks", flush=True)
+    print("\n[6/8] write context packs for next tasks", flush=True)
     rows = scan()
     branches = [r["branch"] for r in rows if r["kind"] == "CLEAN"][:20]
     branches += [g.get("branch") for g in load_convergence().get("groups", [])[:20]
@@ -2698,10 +2700,10 @@ def cmd_tick(args):
     else:
         print("  没有待执行分支，跳过")
 
-    print("\n[6/7] commit + push truth state", flush=True)
+    print("\n[7/8] commit + push truth state", flush=True)
     sync_trunk_truth(REPO, "sync from tick")
     push_truth_state()
-    print("\n[7/7] what to do next", flush=True)
+    print("\n[8/8] what to do next", flush=True)
     _truth("next")
 
 

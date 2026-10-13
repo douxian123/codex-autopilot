@@ -755,7 +755,44 @@ def test_verify_and_truth():
         snap2 = truthctl(repo, "snapshot", "--print")
         if "判断逻辑" not in snap2.stdout or "J-0001" not in snap2.stdout:
             raise AssertionError(f"snapshot 没有渲染判断逻辑:\n{snap2.stdout}")
-    print("selftest ok: 验证门禁真跑真写真拦；产品状态与判断逻辑可回写、可渲染。")
+
+        # 问题闭环：新增一条 ledger -> close 标 done 并写进展 -> open 能重开。
+        add = truthctl(repo, "add", "ledger", "按钮点着没反应",
+                       extra_env={"KG_TRUTH_KIND": "bug", "KG_TRUTH_DETAIL": "首页按钮无响应"})
+        if add.returncode != 0:
+            raise AssertionError(f"ledger add 失败:\n{add.stdout}\n{add.stderr}")
+        ledger = (repo / "ops" / "truth" / "ledger.jsonl").read_text(encoding="utf-8")
+        lid = _json.loads(ledger.splitlines()[-1])["id"]
+        cl = truthctl(repo, "close", lid, "修好并跑过门禁",
+                      extra_env={"KG_TRUTH_COMMIT": "abc1234",
+                                 "KG_TRUTH_EVIDENCE": "unit: cmd -> exit 0"})
+        if cl.returncode != 0:
+            raise AssertionError(f"close 失败:\n{cl.stdout}\n{cl.stderr}")
+        latest = {}
+        for line in (repo / "ops" / "truth" / "ledger.jsonl").read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                r = _json.loads(line)
+                latest[r["id"]] = r
+        if latest[lid].get("status") != "done":
+            raise AssertionError(f"close 后状态不是 done: {latest[lid]}")
+        prog2 = (repo / "ops" / "truth" / "progress.jsonl").read_text(encoding="utf-8")
+        if "关闭 %s" % lid not in prog2:
+            raise AssertionError("close 没有追加进展")
+        op = truthctl(repo, "open", lid, "又复现了")
+        if op.returncode != 0:
+            raise AssertionError(f"open 失败:\n{op.stdout}\n{op.stderr}")
+
+        # 综合：决策/进展/问题/验收合成产品主线，且主线文件真的落盘。
+        syn = truthctl(repo, "synthesize")
+        if syn.returncode != 0:
+            raise AssertionError(f"synthesize 失败:\n{syn.stdout}\n{syn.stderr}")
+        mainline_doc = repo / "docs" / "PRODUCT_MAINLINE.md"
+        if not mainline_doc.exists():
+            raise AssertionError("synthesize 没有写出 docs/PRODUCT_MAINLINE.md")
+        text = mainline_doc.read_text(encoding="utf-8")
+        if "现在是什么样" not in text or "还差什么" not in text:
+            raise AssertionError(f"产品主线缺少关键段落:\n{text[:400]}")
+    print("selftest ok: 验证门禁真跑真写真拦；产品状态与判断逻辑可回写；问题可闭环；主线可综合。")
 
 
 def test_mcp_contract():
@@ -795,13 +832,14 @@ def test_mcp_contract():
         contents = recv()["result"]["contents"][0]
         assert contents["mimeType"] == "text/html;profile=mcp-app"
         assert "总输入框" in contents["text"], "面板没讲清「总输入框」"
-        for anchor in ("productList", "judgmentList", "verifyBox"):
+        for anchor in ("productList", "judgmentList", "verifyBox", "mainlineBox"):
             assert anchor in contents["text"], f"面板高级区缺少 {anchor}"
 
         send({"jsonrpc": "2.0", "id": 30, "method": "tools/list", "params": {}})
         tool_names = {t["name"] for t in recv()["result"]["tools"]}
         missing = {"product_state", "product_update", "distill_review",
-                   "distill_add"} - tool_names
+                   "distill_add", "synthesize_mainline", "close_item",
+                   "reopen_item"} - tool_names
         assert not missing, f"缺少自动挡工具: {sorted(missing)}"
 
         send({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
@@ -810,6 +848,7 @@ def test_mcp_contract():
         assert "state" in sc and "switches" in sc
         assert "product_state" in sc and "judgments" in sc and "last_verification" in sc, \
             "状态快照缺少产品状态/判断逻辑/最近验证"
+        assert "mainline" in sc, "状态快照缺少产品主线摘要"
 
         send({"jsonrpc": "2.0", "id": 31, "method": "tools/call",
               "params": {"name": "product_update",

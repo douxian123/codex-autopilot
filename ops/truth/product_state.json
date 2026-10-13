@@ -1,4 +1,75 @@
 {
- "updated": "",
- "modules": []
+ "updated": "2026-10-13",
+ "modules": [
+  {
+   "area": "唯一入口",
+   "behavior": "零散需求（视觉/体验/bug/架构/门禁/多分支）说一次即进唯一入口，由系统路由到固定泳道，不需要用户选对话、选分支、选角色。",
+   "why": "真实工作思考和想法是零碎的、即时的；让用户自己挑对话/分支/角色就是把结构性工作推回给用户",
+   "files": [
+    "ops/kgctl.py",
+    "ops/central_mcp.py",
+    "plugin/skills/central-command/SKILL.md"
+   ],
+   "updated": "2026-10-13"
+  },
+  {
+   "area": "真相沉淀与真实验收",
+   "behavior": "主线/决策/问题/进展/验收/判断逻辑落进 ops/truth；验收证据必须是真实跑过的命令+cwd+退出码，不允许用结论代替证据。",
+   "why": "跨会话存活是路由与合并的共同依据；验证只认真实执行过的命令，假绿灯比红灯更危险",
+   "files": [
+    "ops/truthctl.py",
+    "ops/truth/SCHEMA.md"
+   ],
+   "updated": "2026-10-13"
+  },
+  {
+   "area": "问题闭环",
+   "behavior": "bug/视觉/体验/架构进台账后由 agent 推进：修复 -> 验证 -> close 并追加进展；回归用 reopen 重开。",
+   "why": "用户提一次就应闭环；挂在 open 或没验证就标 done 都会让台账失真",
+   "files": [
+    "ops/truthctl.py",
+    "plugin/skills/central-command/SKILL.md"
+   ],
+   "updated": "2026-10-13"
+  },
+  {
+   "area": "产品主线综合",
+   "behavior": "每轮收口跑 synthesize，把决策/进展/问题/验收/产品状态综合成 docs/PRODUCT_MAINLINE.md；人在 mainline.json 只拍板方向。",
+   "why": "零散讨论应自动长成产品主线，人只读一页，不读实现",
+   "files": [
+    "ops/truthctl.py",
+    "ops/central_mcp.py"
+   ],
+   "updated": "2026-10-13"
+  },
+  {
+   "area": "合并编排",
+   "behavior": "每个任务独立 worktree；合并前用 git merge-tree 预演，门禁通过且无冲突时自动 land 并同步 main 引用，不把要不要合推回用户。",
+   "why": "并行任务共享同一 checkout 会互相污染，移动靶最难查；能干净合并就不该把决策推回给用户",
+   "files": [
+    "ops/kgctl.py",
+    "ops/state_root.py"
+   ],
+   "updated": "2026-10-13"
+  },
+  {
+   "area": "常驻守护与面板",
+   "behavior": "面板显示运行状态、当前处理的分支合并逻辑、开关与必要信息；支持暂停/自动合入/自动拆冲突/常驻。",
+   "why": "无感的外挂没人敢信；用户要能随时看到它开着没、在做什么、以及随时停",
+   "files": [
+    "ops/central_daemon.py",
+    "plugin/ui/panel.html"
+   ],
+   "updated": "2026-10-13"
+  },
+  {
+   "area": "视觉/设计方案提示词",
+   "behavior": "做视觉/设计前先当产品经理+产品设计师，尊重用户、保护注意力：先截图看现状再改，改完再截图对比，只允许正向改动，不能更丑、更乱、更难读。",
+   "why": "视觉改动最容易越改越丑；把设计要求写进 harness 才能让每次改动都守住注意力秩序",
+   "files": [
+    "plugin/skills/central-command/SKILL.md"
+   ],
+   "updated": "2026-10-13"
+  }
+ ]
 }

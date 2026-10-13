@@ -170,6 +170,12 @@
     <p class="tiny" style="margin-top:10px">没有让新手去选分支、等合并、一个个点验收——这些由它自己串起来。</p>
   </section>
 
+  <!-- 3.5) 主线与未决问题：一页看清现在到哪、还差什么 -->
+  <section class="card">
+    <h2>现在到哪了 · 还差什么</h2>
+    <div id="mainlineBox"></div>
+  </section>
+
   <!-- 4) 控制 -->
   <section class="card">
     <div class="actions">
@@ -259,6 +265,7 @@
   var pending = {};
   var nextId = 1;
   var state = null;
+  if (/[?&]adv=1/.test(location.search)) document.body.classList.add("adv");
 
   function request(method, params){
     var id = nextId++;
@@ -354,6 +361,7 @@
     renderProduct(s.product_state || {});
     renderJudgments(s.judgments || []);
     renderVerify(s.last_verification);
+    renderMainline(s.mainline || {});
   }
 
   function renderProduct(ps){
@@ -418,6 +426,47 @@
     var note = document.createElement("div"); note.className = "meta";
     note.textContent = "上面是真实跑过的命令和工作目录，可以照着复核。";
     box.appendChild(note);
+  }
+
+  function renderMainline(ml){
+    var box = el("mainlineBox"); if (!box) return; box.innerHTML = "";
+    var stage = ml.stage || "";
+    var focus = ml.focus || [];
+    var open = ml.open_items || [];
+    if (!ml.product){
+      box.innerHTML = '<div class="empty">产品主线还没拍板。填一份 ops/truth/mainline.json，之后零散讨论会自动长成主线。</div>';
+      return;
+    }
+    var head = document.createElement("div"); head.className = "vhead";
+    var t = document.createElement("span"); t.className = "ttl"; t.textContent = ml.product;
+    if (stage){
+      var s = document.createElement("span"); s.className = "tag"; s.textContent = stage;
+      head.appendChild(s);
+    }
+    var cnt = document.createElement("span"); cnt.className = "when";
+    cnt.textContent = "未决 " + (ml.open_count || 0) + " 条";
+    head.appendChild(t); head.appendChild(cnt);
+    box.appendChild(head);
+    if (focus.length){
+      var f = document.createElement("div"); f.className = "meta";
+      f.textContent = "当前焦点：" + focus.join("；");
+      box.appendChild(f);
+    }
+    if (open.length){
+      var ul = document.createElement("ul"); ul.className = "list";
+      open.slice(0,6).forEach(function(it){
+        var li = document.createElement("li");
+        var tag = document.createElement("span");
+        tag.className = "tag" + (it.kind === "bug" || it.kind === "gate" ? " warn" : "");
+        tag.textContent = it.kind || "item";
+        var g = document.createElement("span"); g.className = "grow"; g.textContent = it.title || "";
+        li.appendChild(tag); li.appendChild(g); ul.appendChild(li);
+      });
+      box.appendChild(ul);
+    }
+    var foot = document.createElement("div"); foot.className = "meta";
+    foot.textContent = "零散讨论会自动归到这里；完整主线：" + (ml.doc || "docs/PRODUCT_MAINLINE.md");
+    box.appendChild(foot);
   }
 
   var KIND_LABEL = {
