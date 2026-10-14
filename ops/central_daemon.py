@@ -1187,6 +1187,13 @@ def build_plist(interval_min: int) -> dict:
         "KG_DAEMON_HOME": str(RUNTIME),
         "PATH": os.environ.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
         "LANG": os.environ.get("LANG", "en_US.UTF-8"),
+        # launchd 起的进程看不到交互 shell 里的 no_proxy，而 macOS 系统级 HTTP 代理
+        # 开着时，codex 的 reqwest 会把打向本地模型网关的请求也送进代理，代理对
+        # /v1/responses 回 502 —— 表现为每条 auto_exec 都 codex_exit_1。
+        # 2026-10-14 实测：最小环境不加这两个变量 -> 502；加上 -> 正常返回。
+        # 本地回环永远不该走代理，所以在这里硬钉住。
+        "no_proxy": "127.0.0.1,localhost,::1",
+        "NO_PROXY": "127.0.0.1,localhost,::1",
     }
     # KG_REPO 是账本所在；自包含安装下它和 KG_TRUNK 不一定同一个目录。
     repo_env = os.environ.get("KG_REPO")
