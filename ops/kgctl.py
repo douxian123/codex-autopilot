@@ -87,6 +87,47 @@ def _git_common_dir() -> Path:
 # land 锁放进共享的 .git（所有 worktree 共用），而不是任何检出目录里：放在检出里
 # 会被 `git status` 当成脏改动，而 land 要求主干工作树干净，于是命令把自己锁死。
 LOCK = _git_common_dir() / "kgctl-land.lock"
+
+
+def _lock_blocked() -> bool:
+    """锁文件在 ≠ 有人在做：先探活持有者，僵死锁就地隔离（不删除）。
+
+    land/resolve/supersede/converge 都把锁写在共享 .git 下，正常退出会 unlink；但进程
+    被 kill -9（调用方超时把命令掐掉就会这样）会留下僵死锁，而 `LOCK.exists()` 只看文件
+    在不在，于是**一条死锁会把整个舰队的落盘全堵住**（2026-10-14 实测堵了 25 分钟）。
+    所以读锁里的 pid 用 os.kill(pid, 0) 探活；确认持有者已死就把锁挪到旁边留下证据。
+    """
+    if not LOCK.exists():
+        return False
+    pid = None
+    try:
+        pid = int(LOCK.read_text().split()[0])
+    except (OSError, ValueError, IndexError):
+        pid = None
+    if pid is not None:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            return True
+    else:
+        # 读不出 pid（空文件 / 写坏）：只有老到不可能还在写才当僵死锁。
+        try:
+            if time.time() - LOCK.stat().st_mtime < 60:
+                return True
+        except OSError:
+            return True
+    stale = LOCK.with_name(f"{LOCK.name}.stale-{pid if pid is not None else 'nopid'}")
+    try:
+        LOCK.replace(stale)
+    except OSError:
+        return True
+    print(f"  [lock] 持有者已不在（pid={pid}），隔离僵死锁 -> {stale}")
+    return False
+
+
 BOARD = REPO / "docs" / "CONTROL_BOARD.md"
 DASHBOARD = REPO / "docs" / "CONTROL_PLANE.html"
 CONTEXT_DIR = REPO / "ops" / "context"
@@ -545,7 +586,7 @@ def cmd_supersede(args):
     if not go:
         print("\n（预演结束。加 --go 会逐个写进展台账并推送 main；不产生空合并提交。）")
         return
-    if LOCK.exists():
+    if _lock_blocked():
         sys.exit(f"已有 land 在进行（{LOCK}）")
     OPS.mkdir(parents=True, exist_ok=True)
     LOCK.write_text(f"{os.getpid()} supersede\n")
@@ -688,7 +729,7 @@ def cmd_port(args):
         print("预演结束。加 --go 会把这些提交移植到当前 main 上的一条新分支，"
               "跑同一道验证门禁，过了才 land。")
         return
-    if LOCK.exists():
+    if _lock_blocked():
         sys.exit(f"已有 land/port/converge 在进行（{LOCK}）")
     _align_main()
     base = git("rev-parse", f"origin/{MAIN}") or git("rev-parse", MAIN)
@@ -882,6 +923,11 @@ def cmd_suggest(args):
 
 def scan():
     rows = []
+    # 已裁决的源分支不再算「待裁决冲突」。resolve.json 里 landed/abandoned 的、
+    # progress.jsonl 里 superseded 的，git 层还可能显示 ahead+conflict（它们本来就是
+    # 没合进 main 的历史分支），只按 ahead/conflict 判定就会把它们反复捞回 C 组：
+    # 队列数字虚高，守护进程每轮还重拆同一条已收口的分支。单列一档 SETTLED。
+    settled = _decided_resolve_branches() | already_superseded()
     for b in codex_branches():
         # 收拢分支是自动挡生成的任务容器，不是待裁决的用户分支。把它排除在一屏 /
         # matrix / queue 之外，否则它自己带 conflict markers 时会被当成“残留冲突
@@ -898,6 +944,8 @@ def scan():
             conf = conflict_files(b)
             markers = unresolved_marker_files(b) if not conf else []
             kind = "CONFLICT" if conf else ("UNRESOLVED" if markers else "CLEAN")
+            if kind == "CONFLICT" and b in settled:
+                kind = "SETTLED"
         rows.append(dict(branch=b, ahead=ahead, behind=behind,
                          age=round((time.time() - ts) / 86400, 1) if ts else -1,
                          subject=git("log", "-1", "--format=%s", b)[:70],
@@ -909,14 +957,14 @@ def scan():
 def cmd_matrix(args):
     rows = scan()
     json.dump(rows, (OPS / "matrix.json").open("w"), ensure_ascii=False, indent=1)
-    g = {"MERGED": [], "CLEAN": [], "CONFLICT": [], "UNRESOLVED": []}
+    g = {"MERGED": [], "CLEAN": [], "CONFLICT": [], "UNRESOLVED": [], "SETTLED": []}
     for r in rows:
         g[r["kind"]].append(r)
     print(f"仓库 {REPO}")
     print(f"主干 {MAIN} @ {git('log','-1','--format=%h %s',MAIN)[:60]}\n")
     print(f"codex 分支 {len(rows)} 个 ->  已合并 {len(g['MERGED'])} | "
           f"能干净合 {len(g['CLEAN'])} | 有冲突 {len(g['CONFLICT'])} | "
-          f"残留冲突标记 {len(g['UNRESOLVED'])}\n")
+          f"残留冲突标记 {len(g['UNRESOLVED'])} | 已裁决 {len(g['SETTLED'])}\n")
 
     print("— A 已完全合并（可回收）—")
     for r in sorted(g["MERGED"], key=lambda x: -x["behind"]):
@@ -949,6 +997,12 @@ def cmd_matrix(args):
         if len(r["markers"]) > 3:
             print(f"       ... 共 {len(r['markers'])} 个文件")
     print("明细：ops/tasks/matrix.json")
+
+    if g["SETTLED"]:
+        print("\n— E 已裁决·不再计入冲突队列（landed/abandoned/superseded）—")
+        for r in sorted(g["SETTLED"], key=lambda x: (x["ahead"], x["branch"])):
+            print(f"   ahead={r['ahead']:3d} behind={r['behind']:4d} "
+                  f"{r['branch']:44s} {r['subject']}")
 
 
 def cmd_queue(args):
@@ -1205,7 +1259,7 @@ def cmd_replan(args):
     if not pending:
         print("没有可重盘的 convergence 组（都已被接管或已重盘）。")
         return
-    if go and LOCK.exists():
+    if go and _lock_blocked():
         sys.exit(f"已有 land/port/converge/replan 在进行（{LOCK}）")
     if go:
         LOCK.write_text(str(os.getpid()))
@@ -1313,7 +1367,7 @@ def cmd_converge(args):
     if not go:
         print("\n预演结束。加 --go 会新建 convergence 分支（不改 main、不改源分支）。")
         return
-    if LOCK.exists():
+    if _lock_blocked():
         sys.exit(f"已有 land/supersede/converge 在进行（{LOCK}）")
     LOCK.write_text(f"{os.getpid()} converge\n")
     made = []
@@ -2644,7 +2698,7 @@ def _resolve_prepare(args) -> None:
               "append-only JSONL 冲突自动行级并集，其余保留 marker 交给 agent；解完用 "
               "kgctl resolve --finish <slug> --go 走同一道门禁后落盘。")
         return
-    if LOCK.exists():
+    if _lock_blocked():
         sys.exit(f"已有 land/port/converge/resolve 在进行（{LOCK}）")
     slug = _resolve_slug(branch)
     resolve_branch = _resolve_branch_name(slug)
@@ -2747,10 +2801,51 @@ def _resolve_finish(target: str, go: bool) -> None:
     return _resolve_land(rec, wt)
 
 
-def _resolve_abandon(target: str, go: bool) -> None:
+def _resolve_abandon(target: str, go: bool, reason: str = "") -> None:
     rec = _find_resolve_task(target)
     if not rec:
-        sys.exit(f"找不到进行中的 resolve 任务：{target}（用 kgctl resolve --list 看）")
+        # 没有 open 任务也要能留痕放弃。冲突队列里真正解不动的是「超体量」分支：
+        # 它们在 `resolve --go` 的闸门处（未落改动 > RESOLVE_MAX_LINES）就被拒绝，
+        # 永远拿不到一条 open 记录，而「这条不该合」依然是必须写下来的决定——否则
+        # 队列每轮都把同一条重新报出来，用户看到的是一个永远减不下去的数字。
+        # 只接受完整 codex/ 分支名，并拒绝「已合并」「与 main 无冲突」这两种本该走
+        # land/reap 的分支，避免把能落地的工作误标成放弃。
+        branch = target if target.startswith(BRANCH_PREFIX) else ""
+        if not branch:
+            sys.exit(f"找不到进行中的 resolve 任务：{target}（用 kgctl resolve --list 看）")
+        ahead, _behind = counts(branch)
+        if ahead == 0:
+            sys.exit(f"{branch} 已完全合并，无需 abandon（可用 kgctl reap --go 回收）。")
+        conf = conflict_files(branch)
+        if not conf:
+            sys.exit(f"{branch} 与 {MAIN} 无冲突文件：应走 kgctl land {branch}，不要 abandon。")
+        if not go:
+            print(f"{branch}：没有进行中的 resolve 任务（属于「有冲突·未拆解」）。")
+            print("  加 --go 会写一条 abandoned 决定：源分支原样不动，只是不再计入冲突队列；")
+            print(f"  以后想重拆仍可显式 kgctl resolve {branch} --go。")
+            return
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        rec = {
+            "slug": _resolve_slug(branch),
+            "branch": branch,
+            "base_main": git("rev-parse", MAIN),
+            "source_head": git("rev-parse", branch),
+            "source_commits": [c for c in git("rev-list", f"{MAIN}..{branch}").splitlines() if c][:50],
+            "conflict_files": conf,
+            "unresolved_files": conf,
+            "auto_resolved_jsonl": [],
+            "created": stamp,
+            "updated": stamp,
+            "status": "abandoned",
+        }
+        if reason:
+            rec["reason"] = reason
+        _write_resolve_record(rec)
+        print(f"已记录放弃决定（未合并）：{branch}，源分支保持不变，不再计入冲突队列。")
+        if reason:
+            print(f"  理由：{reason}")
+        print(f"RESOLVE_RESULT branch={branch} outcome=abandoned")
+        return
     wt = Path(rec["worktree"])
     resolve_branch = rec["resolve_branch"]
     print(f"放弃任务 {rec['slug']}：删 {resolve_branch} 与 {wt}，源分支 {rec['branch']} 原样不动。")
@@ -2764,6 +2859,8 @@ def _resolve_abandon(target: str, go: bool) -> None:
                    capture_output=True, text=True)
     rec["status"] = "abandoned"
     rec["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    if reason:
+        rec["reason"] = reason
     _write_resolve_record(rec)
     print("已放弃。")
 
@@ -2803,7 +2900,7 @@ def cmd_resolve(args) -> None:
         print("      kgctl resolve <分支> [--go]")
         print("      kgctl resolve --list")
         print("      kgctl resolve --finish <slug|分支> [--go]")
-        print("      kgctl resolve --abandon <slug|分支> [--go]")
+        print("      kgctl resolve --abandon <slug|分支> [--reason 理由] [--go]")
         return
     if "--list" in args:
         return _resolve_list()
@@ -2817,8 +2914,12 @@ def cmd_resolve(args) -> None:
         i = args.index("--abandon")
         target = args[i + 1] if i + 1 < len(args) else ""
         if not target:
-            sys.exit("用法: kgctl resolve --abandon <slug|分支> [--go]")
-        return _resolve_abandon(target, "--go" in args)
+            sys.exit("用法: kgctl resolve --abandon <slug|分支> [--reason 理由] [--go]")
+        reason = ""
+        if "--reason" in args:
+            j = args.index("--reason")
+            reason = args[j + 1] if j + 1 < len(args) else ""
+        return _resolve_abandon(target, "--go" in args, reason)
     return _resolve_prepare(args)
 
 
@@ -2828,7 +2929,7 @@ def cmd_land(args):
     branch, dry = args[0], "--dry" in args
     if not branch.startswith(BRANCH_PREFIX):
         sys.exit(f"只允许 land {BRANCH_PREFIX}* 分支")
-    if LOCK.exists():
+    if _lock_blocked():
         sys.exit(f"已有 land 在进行（{LOCK}）")
 
     ahead, behind = counts(branch)
