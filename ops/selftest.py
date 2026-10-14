@@ -1032,6 +1032,20 @@ def test_auto_exec():
         if git(repo_p, "branch", "--list", branch_p).stdout.strip():
             raise AssertionError("直接收口后执行分支没有回收")
 
+        # --- _changed_paths 必须保住 porcelain 首行的前导空格，否则 git add 必失败 ---
+        # 曾经的 bug：_git() 整体 strip 掉 stdout，porcelain 首行 ' M app.txt' 变成
+        # 'M app.txt'，line[3:] 便切出 'pp.txt'，git add 直接 fatal，成果永远落不了盘
+        # （L-0016 的 ackend/package.json 就是这么来的）。
+        repo_cp, trunk_cp, home_cp = fixture(base / "changedpaths")
+        (repo_cp / "app.txt").write_text("main\nsecond\n", encoding="utf-8")
+        (repo_cp / "ops" / "central.config.json").write_text(
+            _json.dumps({"build": {"cmd": "", "cwd": "."}, "verify": [],
+                         "note": "touched"}), encoding="utf-8")
+        got = daemon_p._changed_paths(repo_cp)
+        if sorted(got) != ["app.txt", "ops/central.config.json"]:
+            raise AssertionError(
+                f"_changed_paths 解析 porcelain 首行有误（前导空格被吞）: {got}")
+
     print("selftest ok: 自动实现真跑并落盘、失败保留现场、收口失败不重复派、"
           "分支已有未落提交时直接收口、收口后清掉实现暂缓。")
 

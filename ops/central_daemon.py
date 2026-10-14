@@ -547,10 +547,23 @@ def _exec_prompt(item: dict) -> str:
 
 
 def _changed_paths(wt: Path) -> list:
-    """列出 worktree 里非忽略的改动路径，供显式 git add，绝不使用 git add -A。"""
-    _, status_out, _ = _git(wt, "status", "--porcelain")
+    """列出 worktree 里非忽略的改动路径，供显式 git add，绝不使用 git add -A。
+
+    这里刻意不走 _git()：_git 会对 stdout 整体 strip，把 porcelain 首行的前导空格
+    （X/Y 状态占位）吃掉，于是 line[3:] 对第一行少切一个字符——backend/package.json
+    解析成 ackend/package.json，git add 必然 fatal，现场只能落进 add_fail 永不收口。
+    L-0016 的 ackend/package.json、早期 L-0029 的 ackend/test/… 与 L-0030 的
+    rontend/scripts/… 都是同一个 bug。所以这里保留原始 stdout，只按行切。
+    """
+    try:
+        r = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"],
+                           capture_output=True, text=True, errors="replace", timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if r.returncode != 0:
+        return []
     changed = []
-    for line in status_out.splitlines():
+    for line in (r.stdout or "").splitlines():
         if len(line) < 4:
             continue
         path = line[3:].strip()
