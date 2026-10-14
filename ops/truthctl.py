@@ -35,6 +35,7 @@ add 的环境变量：
   KG_TRUTH_DECISION KG_TRUTH_WHY KG_TRUTH_ALTERNATIVES KG_TRUTH_SOURCE
 """
 
+import contextlib
 import json
 import os
 import re
@@ -42,6 +43,11 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # 非 POSIX 平台没有 flock：退回无锁，行为与旧实现一致
+    fcntl = None
 
 # 真相状态（inbox / 台账 / 泳道 / 看板）只有一处权威目录，见 ops/state_root.py。
 # 旧实现取「调用所在 worktree」，而 kgctl 取「git 主工作树」，于是同一个项目能同时
@@ -139,10 +145,58 @@ def _append(rec: dict):
         fh.write(json.dumps(rec, ensure_ascii=False) + '\n')
 
 
+LOCK = TRUTH / '.truthctl.lock'
+
+
+@contextlib.contextmanager
+def _truth_lock():
+    """把「读现有 id + 追加」关进一个临界区。
+
+    没有这道锁时，两个进程（面板 / 自动挡 / 执行器）同时 add 会算出同一个 id，
+    后写的那条按 id 覆盖先写的（JSONL 取最新），账面上静默丢一条 —— 见 L-0056。
+    """
+    if fcntl is None:
+        yield
+        return
+    TRUTH.mkdir(parents=True, exist_ok=True)
+    with LOCK.open('a+') as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _max_num(t: str) -> int:
+    """台账里同类 id 的最大编号（按数字算，不按行数）。"""
+    nums = []
+    for r in _read(TRUTH / FILES[t]):
+        m = re.match(r'^%s-(\d+)$' % PREFIX[t], str(r.get('id') or ''))
+        if m:
+            nums.append(int(m.group(1)))
+    return max(nums) if nums else 0
+
+
 def _next_id(t: str) -> str:
-    path = TRUTH / FILES[t]
-    n = len(_read(path)) + 1
-    return next_free_id(t, n)
+    """下一个空闲 id。必须在 _truth_lock() 临界区里调用，否则并发会撞号。
+
+    旧实现是 len(rows)+1：同 id 的状态覆盖行会让行数虚高、编号跳号，并发时两个
+    进程还会算出同一个号（L-0056）。改成「现有最大编号 +1」。
+    """
+    taken = _taken_ids(t)
+    n = _max_num(t) + 1
+    while f'{PREFIX[t]}-{n:04d}' in taken:
+        n += 1
+    return f'{PREFIX[t]}-{n:04d}'
+
+
+def _append_new(t: str, **fields) -> dict:
+    """在临界区里分配 id 并追加一条新记录。所有「新条目」都走这里。"""
+    with _truth_lock():
+        rec = {'id': _next_id(t), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'), 'type': t}
+        rec.update(fields)
+        _append(rec)
+        return rec
 
 
 def _taken_ids(t: str) -> set:
@@ -161,37 +215,36 @@ def cmd_add(args):
     if len(args) < 2 or args[0] not in PREFIX:
         sys.exit('用法: truthctl add <decision|ledger|progress|acceptance> "<标题>"')
     t, title = args[0], ' '.join(args[1:])
-    rec = {'id': _next_id(t), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
-           'type': t, 'title': title,
-           'lane': os.environ.get('KG_TRUTH_LANE') or None,
-           'files': _files(),
-           'source': os.environ.get('KG_TRUTH_SOURCE', 'agent')}
+    fields = {'title': title,
+              'lane': os.environ.get('KG_TRUTH_LANE') or None,
+              'files': _files(),
+              'source': os.environ.get('KG_TRUTH_SOURCE', 'agent')}
     if t == 'ledger':
-        rec.update(kind=os.environ.get('KG_TRUTH_KIND', 'bug'),
-                   detail=os.environ.get('KG_TRUTH_DETAIL', ''),
-                   status=os.environ.get('KG_TRUTH_STATUS', 'open'))
+        fields.update(kind=os.environ.get('KG_TRUTH_KIND', 'bug'),
+                      detail=os.environ.get('KG_TRUTH_DETAIL', ''),
+                      status=os.environ.get('KG_TRUTH_STATUS', 'open'))
     elif t == 'decision':
-        rec.update(decision=os.environ.get('KG_TRUTH_DECISION', ''),
-                   why=os.environ.get('KG_TRUTH_WHY', ''),
-                   alternatives=[a for a in os.environ.get('KG_TRUTH_ALTERNATIVES', '').split('|') if a],
-                   status=os.environ.get('KG_TRUTH_STATUS', 'active'))
+        fields.update(decision=os.environ.get('KG_TRUTH_DECISION', ''),
+                      why=os.environ.get('KG_TRUTH_WHY', ''),
+                      alternatives=[a for a in os.environ.get('KG_TRUTH_ALTERNATIVES', '').split('|') if a],
+                      status=os.environ.get('KG_TRUTH_STATUS', 'active'))
     elif t == 'progress':
-        rec.update(summary=os.environ.get('KG_TRUTH_SUMMARY', ''),
-                   commit=os.environ.get('KG_TRUTH_COMMIT') or None,
-                   landed=os.environ.get('KG_TRUTH_LANDED', '') == '1',
-                   status=os.environ.get('KG_TRUTH_STATUS', 'doing'))
+        fields.update(summary=os.environ.get('KG_TRUTH_SUMMARY', ''),
+                      commit=os.environ.get('KG_TRUTH_COMMIT') or None,
+                      landed=os.environ.get('KG_TRUTH_LANDED', '') == '1',
+                      status=os.environ.get('KG_TRUTH_STATUS', 'doing'))
     elif t == 'acceptance':
-        rec.update(level=os.environ.get('KG_TRUTH_LEVEL', 'P1'),
-                   status=os.environ.get('KG_TRUTH_STATUS', 'todo'),
-                   needs_human=os.environ.get('KG_TRUTH_NEEDS_HUMAN', '') == '1',
-                   steps=os.environ.get('KG_TRUTH_STEPS', ''),
-                   evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''))
+        fields.update(level=os.environ.get('KG_TRUTH_LEVEL', 'P1'),
+                      status=os.environ.get('KG_TRUTH_STATUS', 'todo'),
+                      needs_human=os.environ.get('KG_TRUTH_NEEDS_HUMAN', '') == '1',
+                      steps=os.environ.get('KG_TRUTH_STEPS', ''),
+                      evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''))
     elif t == 'judgment':
-        rec.update(statement=os.environ.get('KG_TRUTH_STATEMENT', '') or title,
-                   why=os.environ.get('KG_TRUTH_WHY', ''),
-                   scope=os.environ.get('KG_TRUTH_SCOPE', 'process'),
-                   status='active')
-    _append(rec)
+        fields.update(statement=os.environ.get('KG_TRUTH_STATEMENT', '') or title,
+                      why=os.environ.get('KG_TRUTH_WHY', ''),
+                      scope=os.environ.get('KG_TRUTH_SCOPE', 'process'),
+                      status='active')
+    rec = _append_new(t, **fields)
     print(f"已记入真相 [{rec['id']}] {t}：{title[:70]}")
 
 
@@ -236,17 +289,15 @@ def cmd_accept(args):
     title = ' '.join(title_parts)
     if not title:
         sys.exit('accept 需要一句标题：truthctl accept "<标题>"')
-    rec = {'id': _next_id('acceptance'), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
-           'type': 'acceptance', 'title': title,
-           'level': level or os.environ.get('KG_TRUTH_LEVEL', 'P1'),
-           'status': status or os.environ.get('KG_TRUTH_STATUS', 'todo'),
-           'needs_human': human or os.environ.get('KG_TRUTH_NEEDS_HUMAN', '') == '1',
-           'steps': steps or os.environ.get('KG_TRUTH_STEPS', ''),
-           'evidence': os.environ.get('KG_TRUTH_EVIDENCE', ''),
-           'lane': lane or os.environ.get('KG_TRUTH_LANE') or None,
-           'files': _files(),
-           'source': os.environ.get('KG_TRUTH_SOURCE', 'agent')}
-    _append(rec)
+    rec = _append_new('acceptance', title=title,
+                      level=level or os.environ.get('KG_TRUTH_LEVEL', 'P1'),
+                      status=status or os.environ.get('KG_TRUTH_STATUS', 'todo'),
+                      needs_human=human or os.environ.get('KG_TRUTH_NEEDS_HUMAN', '') == '1',
+                      steps=steps or os.environ.get('KG_TRUTH_STEPS', ''),
+                      evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''),
+                      lane=lane or os.environ.get('KG_TRUTH_LANE') or None,
+                      files=_files(),
+                      source=os.environ.get('KG_TRUTH_SOURCE', 'agent'))
     who = '需要人工验收' if rec['needs_human'] else '机器自证'
     print(f"已登记验收 [{rec['id']}]（{who}）{title[:70]}")
     if rec['needs_human'] and not rec['steps']:
@@ -264,12 +315,10 @@ def cmd_promote(args):
     if n < 1 or n > len(items):
         sys.exit(f'inbox 只有 {len(items)} 条，序号 {n} 越界')
     it = items[n - 1]
-    rec = {'id': _next_id('ledger'), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
-           'type': 'ledger', 'kind': kind, 'title': it.get('text', '')[:80],
-           'detail': it.get('text', ''), 'status': 'open',
-           'lane': it.get('lane'), 'files': it.get('files') or [],
-           'source': f"inbox#{n}"}
-    _append(rec)
+    rec = _append_new('ledger', kind=kind, title=it.get('text', '')[:80],
+                      detail=it.get('text', ''), status='open',
+                      lane=it.get('lane'), files=it.get('files') or [],
+                      source=f"inbox#{n}")
     # 回写 inbox 的 routed 标记
     items[n - 1]['routed'] = True
     items[n - 1]['lane'] = rec['id']
@@ -280,7 +329,8 @@ def cmd_promote(args):
 
 
 def _next_ledger_id() -> str:
-    return next_free_id('ledger', len(_read(TRUTH / 'ledger.jsonl')) + 1)
+    with _truth_lock():
+        return _next_id('ledger')
 
 
 def _latest_by_id(rows: list) -> dict:
@@ -371,11 +421,8 @@ def infer_lane(kind: str, text: str, files) -> str:
 
 
 def _append_ledger(kind, title, detail, files, source, lane) -> dict:
-    rec = {'id': _next_ledger_id(), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
-           'type': 'ledger', 'kind': kind, 'title': title, 'detail': detail,
-           'status': 'open', 'lane': lane, 'files': files or [], 'source': source}
-    _append(rec)
-    return rec
+    return _append_new('ledger', kind=kind, title=title, detail=detail,
+                       status='open', lane=lane, files=files or [], source=source)
 
 
 def _candidates(kind, text, files):
@@ -638,13 +685,11 @@ def cmd_distill(args):
         if len(args) < 2:
             sys.exit('用法: truthctl distill add "<判断逻辑>"（why/scope 走环境变量）')
         statement = ' '.join(args[1:])
-        rec = {'id': _next_id('judgment'), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
-               'type': 'judgment', 'title': statement[:80], 'statement': statement,
-               'why': os.environ.get('KG_TRUTH_WHY', ''),
-               'scope': os.environ.get('KG_TRUTH_SCOPE', 'process'),
-               'source': os.environ.get('KG_TRUTH_SOURCE', 'agent'),
-               'status': 'active'}
-        _append(rec)
+        rec = _append_new('judgment', title=statement[:80], statement=statement,
+                          why=os.environ.get('KG_TRUTH_WHY', ''),
+                          scope=os.environ.get('KG_TRUTH_SCOPE', 'process'),
+                          source=os.environ.get('KG_TRUTH_SOURCE', 'agent'),
+                          status='active')
         print(f"已蒸馏 [{rec['id']}]（{rec['scope']}）：{statement[:70]}")
         return
 
@@ -678,21 +723,21 @@ def cmd_distill(args):
 
 def _set_ledger_status(rid, status, note, evidence=''):
     # JSONL 只追加：同 id 的新记录覆盖旧记录，得到当前状态
-    rows = _read(TRUTH / FILES['ledger'])
-    rec = _latest_by_id(rows).get(rid)
-    if rec is None:
-        sys.exit('问题台账里没有 %s（先 truthctl ls ledger 看现有条目）' % rid)
-    merged = dict(rec)
-    merged['status'] = status
-    merged['ts'] = time.strftime('%Y-%m-%d %H:%M:%S')
-    if note:
-        merged['detail'] = (merged.get('detail', '') + '\n' if merged.get('detail') else '') + note
-    if evidence:
-        merged['evidence'] = evidence
-    if status == 'done':
-        merged['closed'] = merged['ts']
-    _append(merged)
-    return merged
+    with _truth_lock():
+        rec = _latest_by_id(_read(TRUTH / FILES['ledger'])).get(rid)
+        if rec is None:
+            sys.exit('问题台账里没有 %s（先 truthctl ls ledger 看现有条目）' % rid)
+        merged = dict(rec)
+        merged['status'] = status
+        merged['ts'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        if note:
+            merged['detail'] = (merged.get('detail', '') + '\n' if merged.get('detail') else '') + note
+        if evidence:
+            merged['evidence'] = evidence
+        if status == 'done':
+            merged['closed'] = merged['ts']
+        _append(merged)
+        return merged
 
 
 def cmd_close(args):
@@ -703,12 +748,11 @@ def cmd_close(args):
     note = ' '.join(args[1:]) if len(args) > 1 else ''
     rec = _set_ledger_status(rid, 'done', note, os.environ.get('KG_TRUTH_EVIDENCE', ''))
     commit = os.environ.get('KG_TRUTH_COMMIT') or None
-    prog = {'id': _next_id('progress'), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
-            'type': 'progress', 'title': '关闭 %s：%s' % (rid, rec.get('title', '')),
-            'summary': note, 'commit': commit, 'landed': bool(commit),
-            'lane': rec.get('lane'), 'files': rec.get('files') or [],
-            'source': os.environ.get('KG_TRUTH_SOURCE', 'agent'), 'status': 'done'}
-    _append(prog)
+    prog = _append_new('progress', title='关闭 %s：%s' % (rid, rec.get('title', '')),
+                       summary=note, commit=commit, landed=bool(commit),
+                       lane=rec.get('lane'), files=rec.get('files') or [],
+                       source=os.environ.get('KG_TRUTH_SOURCE', 'agent'),
+                       status='done')
     print('已关闭 [%s] %s（同时记入进展 %s）' % (rid, rec.get('title', ''), prog['id']))
 
 
