@@ -127,6 +127,21 @@ def read_jsonl(path: Path) -> list:
     return rows
 
 
+def latest_by_id(rows: list) -> dict:
+    """把 append-only 台账收敛成「每个 id 一条当前状态」。
+
+    同一条记录被改写时会追加一行同 id 的新记录，而不是就地覆盖。只按原始行
+    过滤状态，就会把已经关闭的 id 用最早那版 open 重新算成待办——2026-10-14
+    实测：L-0012 / L-0023 / L-0026 / L-0029 在 ledger 里已是 done，驾驶舱和
+    Context Pack 却仍把它们列为待办。凡是按「当前状态」取用的地方都要先过这一层。
+    """
+    out = {}
+    for r in rows:
+        if isinstance(r, dict) and r.get("id"):
+            out[r["id"]] = r
+    return out
+
+
 def write_json(path: Path, payload) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=1) + "\n",
@@ -1398,7 +1413,7 @@ def _context_payload(branch: str) -> dict:
     files = changed_files(branch)
     conf = conflict_files(branch)
     markers = unresolved_marker_files(branch) if not conf else []
-    rows = read_jsonl(REPO / "ops" / "truth" / "ledger.jsonl")
+    rows = latest_by_id(read_jsonl(REPO / "ops" / "truth" / "ledger.jsonl")).values()
     open_rows = [r for r in rows if r.get("status") in ("open", "doing", "todo")]
     overlap = []
     for r in open_rows:
@@ -1422,12 +1437,13 @@ def _context_payload(branch: str) -> dict:
         "changed_files": files,
         "mainline": json.loads((REPO / "ops" / "truth" / "mainline.json").read_text(encoding="utf-8"))
         if (REPO / "ops" / "truth" / "mainline.json").exists() else {},
-        "active_decisions": [r for r in read_jsonl(REPO / "ops" / "truth" / "decisions.jsonl")
+        "active_decisions": [r for r in latest_by_id(read_jsonl(REPO / "ops" / "truth" / "decisions.jsonl")).values()
                              if r.get("status") == "active"],
         "open_issues_overlapping": overlap,
-        "acceptance_todo": [r for r in read_jsonl(REPO / "ops" / "truth" / "acceptance.jsonl")
+        "acceptance_todo": [r for r in latest_by_id(read_jsonl(REPO / "ops" / "truth" / "acceptance.jsonl")).values()
                             if r.get("status") in ("todo", "wip", "blocked")],
-        "recent_progress": read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")[-8:],
+        "recent_progress": sorted(latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values(),
+                                  key=lambda r: r.get("ts", ""))[-8:],
         "convergence": next((g for g in load_convergence().get("groups", [])
                              if g.get("branch") == branch), None),
     }
@@ -1502,11 +1518,12 @@ def cmd_dash(args):
 
     rows = scan()
     groups = conflict_groups(rows)
-    led = read_jsonl(REPO / "ops" / "truth" / "ledger.jsonl")
+    led = latest_by_id(read_jsonl(REPO / "ops" / "truth" / "ledger.jsonl")).values()
     open_led = [r for r in led if r.get("status") in ("open", "doing", "todo")]
     open_led.sort(key=lambda r: ({"bug": 0, "arch": 1, "ux": 2, "visual": 3}.get(r.get("kind"), 9),
                                  r.get("ts", "")))
-    prog = read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")[-8:]
+    prog = sorted(latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values(),
+                  key=lambda r: r.get("ts", ""))[-8:]
     inbox = read_jsonl(INBOX)
     pending = [x for x in inbox if not x.get("routed")]
 

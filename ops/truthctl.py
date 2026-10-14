@@ -534,9 +534,11 @@ def cmd_route(args):
 
 def cmd_next(args):
     """只回答一个问题：现在最该动的是哪几条，用户不用自己翻台账。"""
-    led = [r for r in _read(TRUTH / 'ledger.jsonl') if r.get('status') in ('open', 'doing')]
+    led = [r for r in _latest_by_id(_read(TRUTH / 'ledger.jsonl')).values()
+           if r.get('status') in ('open', 'doing')]
     led.sort(key=lambda r: (PRIORITY.get(r.get('kind'), 9), r.get('ts', '')))
-    acc = [r for r in _read(TRUTH / 'acceptance.jsonl') if r.get('status') == 'blocked']
+    acc = [r for r in _latest_by_id(_read(TRUTH / 'acceptance.jsonl')).values()
+           if r.get('status') == 'blocked']
     print('=== 自动挡 · 现在做什么 ===')
     if acc:
         print('被卡住的验收项（需要用户拍板或外部条件）：')
@@ -656,14 +658,15 @@ def cmd_distill(args):
     else:
         print('  （唯一入口还没有收到输入）')
 
-    blocked = [r for r in _read(TRUTH / FILES['acceptance'])
+    blocked = [r for r in _latest_by_id(_read(TRUTH / FILES['acceptance'])).values()
                if r.get('status') == 'blocked']
     if blocked:
         print('\n被卡住、需要人拍板的地方：')
         for r in blocked:
             print(f"  {r['id']} {r.get('title', '')}")
 
-    active = [r for r in _read(TRUTH / FILES['judgment']) if r.get('status') == 'active']
+    active = [r for r in _latest_by_id(_read(TRUTH / FILES['judgment'])).values()
+              if r.get('status') == 'active']
     print(f"\n已蒸馏的判断逻辑（{len(active)} 条）：")
     if not active:
         print('  （还没有。把「为什么这么判断」写回：truthctl distill add "<判断逻辑>"）')
@@ -747,10 +750,12 @@ def cmd_synthesize(args):
     人只读这一页，就知道产品现在是什么样、最近在推什么、还差什么。
     """
     ml = _read_json(TRUTH / 'mainline.json')
-    dec = [r for r in _read(TRUTH / 'decisions.jsonl') if r.get('status') == 'active']
+    dec = [r for r in _latest_by_id(_read(TRUTH / 'decisions.jsonl')).values()
+           if r.get('status') == 'active']
     led = list(_latest_by_id(_read(TRUTH / 'ledger.jsonl')).values())
-    prg = _read(TRUTH / 'progress.jsonl')
-    acc = _read(TRUTH / 'acceptance.jsonl')
+    prg = sorted(_latest_by_id(_read(TRUTH / 'progress.jsonl')).values(),
+                 key=lambda r: r.get('ts', ''))
+    acc = list(_latest_by_id(_read(TRUTH / 'acceptance.jsonl')).values())
     ps = _read_json(PRODUCT_STATE)
     modules = ps.get('modules') if isinstance(ps.get('modules'), list) else []
     open_led = [r for r in led if r.get('status') in ('open', 'doing')]
@@ -877,10 +882,11 @@ def cmd_synthesize(args):
 
 def cmd_snapshot(args):
     ml = json.loads((TRUTH / 'mainline.json').read_text()) if (TRUTH / 'mainline.json').exists() else {}
-    dec = _read(TRUTH / 'decisions.jsonl')
-    led = _read(TRUTH / 'ledger.jsonl')
-    prg = _read(TRUTH / 'progress.jsonl')
-    acc = _read(TRUTH / 'acceptance.jsonl')
+    dec = list(_latest_by_id(_read(TRUTH / 'decisions.jsonl')).values())
+    led = list(_latest_by_id(_read(TRUTH / 'ledger.jsonl')).values())
+    prg = sorted(_latest_by_id(_read(TRUTH / 'progress.jsonl')).values(),
+                 key=lambda r: r.get('ts', ''))
+    acc = list(_latest_by_id(_read(TRUTH / 'acceptance.jsonl')).values())
 
     open_led = [r for r in led if r.get('status') in ('open', 'doing')]
     blocked_acc = [r for r in acc if r.get('status') == 'blocked']
