@@ -2566,12 +2566,18 @@ def _resolve_land(rec: dict, wt: Path) -> None:
     out = (res.stdout or "").rstrip()
     print(out)
     rec["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    if res.returncode == 0 and "已落盘并推送 origin" in out:
+    # land 在写门禁之前可能因分支已被合入而短路（"已完全合并，无需 land"）。那同样是
+    # 「内容已进 main」的收口信号，不能因为少了落盘字样就把已落盘的分支退回 gate_fail。
+    already_merged = "已完全合并" in out
+    if res.returncode == 0 and ("已落盘并推送 origin" in out or already_merged):
         rec["status"] = "landed"
         _write_resolve_record(rec)
         subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
                        capture_output=True, text=True)
-        print(f"✓ {resolve_branch} 已通过门禁并落盘；worktree 已回收，源分支 {rec['branch']} 未改动。")
+        if already_merged:
+            print(f"✓ {resolve_branch} 内容已全在 {MAIN}（无未落提交）；标记 landed，worktree 已回收。")
+        else:
+            print(f"✓ {resolve_branch} 已通过门禁并落盘；worktree 已回收，源分支 {rec['branch']} 未改动。")
         print(f"RESOLVE_RESULT branch={rec['branch']} outcome=landed")
         return
     rec["status"] = "gate_fail"
