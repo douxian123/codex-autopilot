@@ -179,7 +179,7 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 
 常驻自动做六件事：路由唯一入口里的散需求、把与 `main` 无冲突的分支串行落盘、归档「内容其实早进 `main`」的重复分支（`supersede --fast`）、把真冲突分支**拆成单个可执行任务（`resolve`，默认开）**，冲突量大且分散时再收拢成族（`converge`），以及可选的 `auto_exec` 自动实现台账条目。每个落盘分支仍走 `kgctl land` 的全部护栏（真实验证、`origin/main` 对齐、失败即保留现场）。**真正需要判断语义的冲突不会自动合**：`resolve` 只做确定性并集（append-only JSONL 行级并集），其余冲突原样保留 marker 写成任务书，交给一个 agent 逐条解干净后走同一道门禁落盘。你不再需要回答「这 60 个分支要不要合」，也不再需要自己把它们塞进几十个对话。
 
-`auto_exec` 默认关闭，因为会真的启动会话改代码、消耗额度。打开后每轮最多一条，在 `<状态根>-exec-<id>` 独立 worktree 里跑，结束后显式提交（绝不 `git add -A`），再走 `kgctl land` 的门禁落盘并关闭台账项。`codex exec` 非零退出、超时或落盘失败时，已产生的改动会先提交成 WIP，分支和 worktree 保留，并在面板「实现暂缓」里登记原因；只有完全没产生改动才回收 worktree。
+`auto_exec` 默认关闭，因为会真的启动会话改代码、消耗额度。打开后每轮最多一条，在 `<状态根>-exec-<id>` 独立 worktree 里跑，结束后显式提交（绝不 `git add -A`），再走 `kgctl land` 的门禁落盘并关闭台账项。`codex exec` 非零退出、超时或落盘失败时，已产生的改动会先提交成 WIP，分支和 worktree 保留，并在面板「实现暂缓」里登记原因；只有完全没产生改动才回收 worktree。底层模型网关（本地 `127.0.0.1:15721`）瞬时 `502 Bad Gateway` / `Transport channel closed` / 连接被拒这类**基础设施抖动**会被单独识别：退出码非 0 且日志尾部命中抖动特征时，在同一个 worktree 上指数退避重跑（默认 3 次，项目配置 `auto_exec.retries` 可调整）；重试仍失败记 `codex_infra_fail`，和 `codex_exit_1` 分开，一眼看出是环境问题而不是需求做不出来。超时仍按 `codex_exit_124` 处理，不重试。
 
 另有一档可选动作 `auto_port`（默认关闭）：守护一个周期里把「只差 1–N 个提交」的冲突分支逐条试一遍（上限 6 条），把未落提交 cherry-pick 到当前 `main` 上的一条新分支，跑同一道验证门禁，过了才落盘；cherry-pick 一撞文本冲突就整体 `--abort` 放弃，绝不猜「谁对」。它只消灭「基线旧、实际只差几个提交」这种假冲突，把冲突队列从几十条压到真正需要人判断的少数。在项目里 `ops/central.config.json` 写：
 

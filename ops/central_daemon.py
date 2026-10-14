@@ -98,6 +98,17 @@ RESOLVE_MAX_ATTEMPTS = 1
 # 里实现 -> 门禁 -> 落盘 -> 收口。默认关闭；打开后每周期最多派一条，避免一次开一堆会话。
 EXEC_DEFAULT_TIMEOUT = 3600
 EXEC_MAX_PER_CYCLE = 1
+# 基础设施抖动 vs 需求真做不出来：底层模型代理（127.0.0.1:15721）偶发 502 /
+# Transport channel closed，会让 codex 进程以非 0 退出，但需求本身没问题。同一
+# worktree 上指数退避重跑即可，默认 3 次；重试仍失败记 codex_infra_fail，与
+# codex_exit_N 一眼区分开（L-0055 就是这么被误记成「做不出来」的）。
+EXEC_INFRA_RETRIES = 3
+EXEC_INFRA_BACKOFF = 20.0
+# 只认这几种环境抖动特征；只看日志尾部若干字节，不把大日志整份读进来。
+EXEC_INFRA_PATTERN = re.compile(
+    r"502 Bad Gateway|Transport channel closed|ECONNRESET|connection refused",
+    re.IGNORECASE)
+EXEC_INFRA_TAIL_BYTES = 8192
 
 _stop = False
 
@@ -359,9 +370,13 @@ def auto_exec_config() -> dict:
     默认「代码层开启、用户层关闭」——真正开关是面板 / `control.json` 里的 `auto_exec`，
     默认 False。派真实 codex 会话改代码比自动合分支风险高，所以必须由用户显式打开；
     项目配置可以关掉、收紧沙箱或换模型，但用户开关拥有最终否决权。
+
+    `retries` 是「基础设施抖动」在同一 worktree 上的重跑上限（默认 3 次，指数退避），
+    与「需求真做不出来」区分开；只在日志尾部命中抖动特征时才生效。
     """
     out = {"enabled": True, "max_per_cycle": EXEC_MAX_PER_CYCLE,
-           "timeout": EXEC_DEFAULT_TIMEOUT, "sandbox": "workspace-write", "model": None}
+           "timeout": EXEC_DEFAULT_TIMEOUT, "sandbox": "workspace-write", "model": None,
+           "retries": EXEC_INFRA_RETRIES}
     repo = _state_repo()
     if repo:
         try:
@@ -378,6 +393,10 @@ def auto_exec_config() -> dict:
                     out[key] = max(1, int(cfg.get(key, out[key])))
                 except (TypeError, ValueError):
                     pass
+            try:
+                out["retries"] = max(0, int(cfg.get("retries", out["retries"])))
+            except (TypeError, ValueError):
+                pass
             if cfg.get("sandbox"):
                 out["sandbox"] = str(cfg["sandbox"])
             if cfg.get("model"):
@@ -604,6 +623,31 @@ def _branch_pending_commits(repo, branch: str, main_branch: str) -> int:
         return 0
 
 
+def _exec_log_tail(log_path, limit: int = EXEC_INFRA_TAIL_BYTES) -> str:
+    """只读执行日志尾部若干字节，用于判断失败是不是基础设施抖动。"""
+    try:
+        with Path(log_path).open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - limit))
+            return fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def classify_exec_infra_failure(log_path) -> bool:
+    """日志尾部命中基础设施抖动特征 -> 这次失败可重试，不是需求做不出来。
+
+    底层模型代理（127.0.0.1:15721）偶发 502 Bad Gateway / Transport channel
+    closed / ECONNRESET / connection refused 会让 codex 进程以非 0 退出，但需求
+    本身没问题（L-0055 实测：代理 16:00:52 已恢复 200）。这类失败在同一 worktree 上
+    重跑就能过，不该被记成 codex_exit_1 永久暂缓。
+
+    只看日志尾部，宁可漏判（当普通失败处理）也不整份读大日志。
+    """
+    return bool(EXEC_INFRA_PATTERN.search(_exec_log_tail(log_path)))
+
+
 def _preserve_exec(repo, wt: Path, branch: str, rid: str, reason: str, blocked: dict,
                    detail: str = "") -> dict:
     """保留一个执行 worktree：有改动就提交成 WIP，绝不因为失败删掉在途工作。"""
@@ -681,27 +725,61 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
         cmd += ["-m", cfg["model"]]
     cmd += [ _exec_prompt(item) ]
     log_path = _exec_dir() / f"{slug}.log"
-    log(f"[exec] 派发 {rid} -> {branch}（worktree={wt}, codex={codex[0]}）")
-    try:
-        with log_path.open("w", encoding="utf-8") as fh:
-            r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=fh, stderr=subprocess.STDOUT,
-                               cwd=str(wt), timeout=cfg["timeout"])
-        code = r.returncode
-    except subprocess.TimeoutExpired:
-        code = 124
-    except OSError as exc:
-        log(f"[exec] 无法启动 codex: {exc}")
-        code = 125
-    result["exit"] = code
-    log(f"[exec] {rid} codex 退出码={code}（日志 {log_path}）")
+    retries = max(0, int(cfg.get("retries", EXEC_INFRA_RETRIES)))
+    total = retries + 1
+    code, attempt, infra = 0, 0, False
+    while True:
+        attempt += 1
+        first = attempt == 1
+        if first:
+            log(f"[exec] 派发 {rid} -> {branch}（worktree={wt}, codex={codex[0]}）")
+        else:
+            log(f"[exec] {rid} 第 {attempt}/{total} 次重试"
+                f"（同一 worktree={wt}，日志 {log_path}）")
+        try:
+            with log_path.open("w" if first else "a", encoding="utf-8") as fh:
+                if not first:
+                    fh.write(f"\n===== auto_exec 重试 第 {attempt}/{total} 次（{_now()}，"
+                             f"上一次退出码={code}，判定为基础设施抖动）=====\n")
+                    fh.flush()
+                r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=fh,
+                                   stderr=subprocess.STDOUT, cwd=str(wt),
+                                   timeout=cfg["timeout"])
+            code = r.returncode
+        except subprocess.TimeoutExpired:
+            code = 124
+        except OSError as exc:
+            log(f"[exec] 无法启动 codex: {exc}")
+            code = 125
+        result["exit"] = code
+        log(f"[exec] {rid} codex 退出码={code}（第 {attempt}/{total} 次，日志 {log_path}）")
+        if code == 0:
+            break
+        # 超时(124) 与启动失败(125) 不重试：超时已经吃掉一整个 cfg["timeout"]，再乘 N 会把
+        # 一个周期拖垮；启动失败重跑也没有新证据。只有日志尾部命中抖动特征才重跑。
+        infra = code not in (124, 125) and classify_exec_infra_failure(log_path)
+        if not infra or attempt > retries:
+            break
+        delay = EXEC_INFRA_BACKOFF * (2 ** (attempt - 1))
+        log(f"[exec] {rid} 判定为基础设施抖动（退出码={code}），{delay:.0f}s 后重试")
+        time.sleep(delay)
+    result["attempts"] = attempt
     if code != 0:
-        preserved = _preserve_exec(repo, wt, branch, rid, f"codex_exit_{code}", blocked)
+        if infra:
+            # 与 codex_exit_N 区分：一眼看出是环境抖动，不是需求做不出来。
+            reason = "codex_infra_fail"
+            detail = (f"基础设施抖动，同一 worktree 重试 {attempt - 1} 次仍失败；"
+                      f"日志尾部: {_exec_log_tail(log_path)[-200:].strip()}")
+        else:
+            reason = f"codex_exit_{code}"
+            detail = ""
+        preserved = _preserve_exec(repo, wt, branch, rid, reason, blocked, detail=detail)
         if preserved.get("preserve"):
             result.update({"outcome": "codex_fail_preserved",
                            "commit": preserved.get("commit"),
                            "worktree": preserved.get("worktree")})
         else:
-            blocked[rid] = {"reason": f"codex_exit_{code}", "ts": _now()}
+            blocked[rid] = {"reason": reason, "ts": _now()}
             _cleanup_exec(repo, wt, branch)
             result["outcome"] = "codex_fail"
         return result

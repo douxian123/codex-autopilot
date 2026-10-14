@@ -845,13 +845,15 @@ def test_auto_exec():
       1. 成功后台账真的变成 done，且 main 里真的有它写的文件；
       2. 失败但产生了改动时，分支和 worktree 被保留（wip 提交 + codex_exit_N），不丢在途工作；
       3. 落盘成功但收口失败时，不删现场、不重复派同一条（防止覆盖他人工作）。
+      4. 模型代理瞬时 502（「基础设施抖动」）不算需求做不出来：日志尾部命中抖动特征就
+         在同一个 worktree 上重跑，重试仍失败记 codex_infra_fail，与 codex_exit_N 区分。
     """
     import importlib
     import json as _json
 
     sys.path.insert(0, str(OPS))
 
-    def fixture(base, item_status="open"):
+    def fixture(base, item_status="open", exec_cfg=None):
         """一个能跑 land 的最小状态根：裸远端 + main + 空门禁 + 一条台账待办。"""
         base.mkdir(parents=True, exist_ok=True)
         repo = base / "state"
@@ -872,9 +874,11 @@ def test_auto_exec():
                          "title": "面板按钮点着没反应", "status": item_status,
                          "ts": "2026-01-01T00:00:00+08:00"},
                         ensure_ascii=False) + "\n", encoding="utf-8")
+        cfg_obj = {"build": {"cmd": "", "cwd": "."}, "verify": []}
+        if exec_cfg:
+            cfg_obj["auto_exec"] = exec_cfg
         (repo / "ops" / "central.config.json").write_text(
-            _json.dumps({"build": {"cmd": "", "cwd": "."}, "verify": []}),
-            encoding="utf-8")
+            _json.dumps(cfg_obj), encoding="utf-8")
         run(["git", "init", "-q", "-b", "main", str(repo)])
         git(repo, "config", "user.email", "selftest@example.invalid")
         git(repo, "config", "user.name", "Autopilot Selftest")
@@ -902,6 +906,60 @@ def test_auto_exec():
             "printf 'fake codex\\n' > \"$wt/fake.txt\"\n"
             f"exit {exit_code}\n",
             encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
+    def fake_codex_flaky(base, name):
+        """第一次以 502 抖动失败、第二次成功：验证在同一个 worktree 上重跑。"""
+        path = base / name
+        counter = base / f"{name}.count"
+        wt_log = base / f"{name}.wt"
+        path.write_text(
+            "#!/bin/sh\n"
+            "wt=\"\"\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
+            "done\n"
+            f"echo \"$wt\" >> {wt_log}\n"
+            f"n=$(cat {counter} 2>/dev/null || echo 0)\n"
+            "n=$((n + 1))\n"
+            f"echo $n > {counter}\n"
+            "if [ \"$n\" = \"1\" ]; then\n"
+            "  echo 'ERROR: Reconnecting... 5/5'\n"
+            "  echo 'ERROR: unexpected status 502 Bad Gateway: Unknown error, url: "
+            "http://127.0.0.1:15721/v1/responses'\n"
+            "  exit 1\n"
+            "fi\n"
+            "printf 'fake codex\\n' > \"$wt/fake.txt\"\n"
+            "exit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+        return path, wt_log
+
+    def fake_codex_infra(base, name):
+        """每次都写一半 + 打 502 文本 + 退出 1：验证重试到上限仍失败时的登记原因。"""
+        path = base / name
+        path.write_text(
+            "#!/bin/sh\n"
+            "wt=\"\"\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
+            "done\n"
+            "printf 'partial\\n' > \"$wt/partial.txt\"\n"
+            "echo 'ERROR: unexpected status 502 Bad Gateway: Unknown error, url: "
+            "http://127.0.0.1:15721/v1/responses'\n"
+            "exit 1\n", encoding="utf-8")
+        path.chmod(0o755)
+        return path
+
+    def fake_codex_hang(base, name):
+        """打一句 502 文本后就不退出：验证超时仍归 124，且不会被当成可重试抖动。"""
+        path = base / name
+        path.write_text(
+            "#!/bin/sh\n"
+            "echo 'ERROR: unexpected status 502 Bad Gateway: Unknown error, url: "
+            "http://127.0.0.1:15721/v1/responses'\n"
+            "sleep 30\n"
+            "exit 0\n", encoding="utf-8")
         path.chmod(0o755)
         return path
 
@@ -1046,8 +1104,103 @@ def test_auto_exec():
             raise AssertionError(
                 f"_changed_paths 解析 porcelain 首行有误（前导空格被吞）: {got}")
 
+        # --- 基础设施抖动 vs 需求做不出来：502 日志文本判定为可重试，并在同一 worktree 重跑 ---
+        # L-0055 的现场原文就是模型代理 127.0.0.1:15721 的瞬时 502 + Transport channel
+        # closed；这类失败不该被记成 codex_exit_1 永久暂缓。
+        probe = base / "probe-infra.log"
+        probe.write_text(
+            "ERROR: Reconnecting... 1/5\n"
+            "ERROR: rmcp::transport::worker: worker quit with fatal: Transport channel closed,"
+            ' when UnexpectedServerResponse("HTTP 502: ")\n'
+            "ERROR: unexpected status 502 Bad Gateway: Unknown error, url: "
+            "http://127.0.0.1:15721/v1/responses\n", encoding="utf-8")
+        quiet_log = base / "probe-clean.log"
+        quiet_log.write_text("需求已实现，验证通过\n", encoding="utf-8")
+
+        repo_r, trunk_r, home_r = fixture(base / "infra-retry")
+        flaky, wt_log = fake_codex_flaky(base, "fake-flaky.sh")
+        daemon_r = load_daemon(repo_r, trunk_r, home_r, flaky)
+        daemon_r.EXEC_INFRA_BACKOFF = 0  # 退避不拖慢自测
+        if not daemon_r.classify_exec_infra_failure(probe):
+            raise AssertionError("502 日志文本没有被判定为可重试的基础设施失败")
+        if daemon_r.classify_exec_infra_failure(quiet_log):
+            raise AssertionError("普通日志被误判成基础设施抖动")
+        if daemon_r.classify_exec_infra_failure(base / "no-such.log"):
+            raise AssertionError("日志不存在时被误判成基础设施抖动")
+        for text in ("Transport channel closed", "ECONNRESET", "connection refused"):
+            probe.write_text(f"error: {text}\n", encoding="utf-8")
+            if not daemon_r.classify_exec_infra_failure(probe):
+                raise AssertionError(f"{text} 没有被判定为可重试的基础设施失败")
+
+        blocked_r = {}
+        results_r = daemon_r.dispatch_exec(False, blocked_r)
+        if results_r[0].get("outcome") != "landed" or results_r[0].get("attempts") != 2:
+            raise AssertionError(f"抖动后重试没有落成 landed: {results_r}\nblocked={blocked_r}")
+        if blocked_r:
+            raise AssertionError(f"抖动后重试成功不应留下 blocked: {blocked_r}")
+        wts = [l for l in wt_log.read_text(encoding="utf-8").splitlines() if l.strip()]
+        if len(wts) != 2 or len(set(wts)) != 1:
+            raise AssertionError(f"重试没有落在同一个 worktree 上: {wts}")
+        if git(repo_r, "show", "main:fake.txt").stdout.strip() != "fake codex":
+            raise AssertionError("重试成功后 main 里没有执行器的产物")
+        slug_r = f"{daemon_r._exec_slug('L-0001')}-{daemon_r._exec_slug('面板按钮点着没反应')}"
+        exec_log = (home_r / "exec" / f"{slug_r}.log").read_text(encoding="utf-8")
+        if "502 Bad Gateway" not in exec_log or "重试 第 2/4 次" not in exec_log:
+            raise AssertionError(f"重试没有保留第一次的现场证据: {exec_log[-600:]}")
+        daemon_log = (home_r / "daemon.log").read_text(encoding="utf-8")
+        if "第 2/4 次重试" not in daemon_log or str(home_r / "exec" / f"{slug_r}.log") not in daemon_log:
+            raise AssertionError(f"daemon.log 没写明第几次重试 / 日志路径: {daemon_log[-800:]}")
+
+        # --- 重试到上限仍抖动：reason 记 codex_infra_fail（与 codex_exit_1 区分）、现场保留、不重复派 ---
+        repo_e, trunk_e, home_e = fixture(base / "infra-exhaust")
+        daemon_e = load_daemon(repo_e, trunk_e, home_e,
+                               fake_codex_infra(base, "fake-infra.sh"))
+        daemon_e.EXEC_INFRA_BACKOFF = 0
+        blocked_e = {}
+        results_e = daemon_e.dispatch_exec(False, blocked_e)
+        if results_e[0].get("outcome") != "codex_fail_preserved":
+            raise AssertionError(f"抖动失败没有保留现场: {results_e}")
+        if results_e[0].get("attempts") != 4:
+            raise AssertionError(f"抖动失败没有重试到默认上限（1+3）: {results_e}")
+        if blocked_e.get("L-0001", {}).get("reason") != "codex_infra_fail":
+            raise AssertionError(f"抖动失败原因没有与 codex_exit_N 区分: {blocked_e}")
+        if "502 Bad Gateway" not in (blocked_e.get("L-0001", {}).get("detail") or ""):
+            raise AssertionError(f"codex_infra_fail 没有留下抖动原文证据: {blocked_e}")
+        if not Path(blocked_e["L-0001"]["worktree"]).exists():
+            raise AssertionError("抖动失败丢掉了在途 worktree")
+        again_e = daemon_e.dispatch_exec(False, blocked_e)
+        if again_e:
+            raise AssertionError(f"codex_infra_fail 后被重复派发: {again_e}")
+
+        # --- retries 可通过项目配置收紧；普通失败（exit 7，无抖动文本）不受影响 ---
+        repo_x, trunk_x, home_x = fixture(base / "infra-retries-1",
+                                         exec_cfg={"retries": 0})
+        daemon_x = load_daemon(repo_x, trunk_x, home_x,
+                               fake_codex_infra(base, "fake-infra-x.sh"))
+        daemon_x.EXEC_INFRA_BACKOFF = 0
+        blocked_x = {}
+        results_x = daemon_x.dispatch_exec(False, blocked_x)
+        if results_x[0].get("attempts") != 1:
+            raise AssertionError(f"retries=0 时仍重试了: {results_x}")
+        if blocked_x.get("L-0001", {}).get("reason") != "codex_infra_fail":
+            raise AssertionError(f"retries=0 的抖动失败原因不对: {blocked_x}")
+
+        # --- 超时护栏不变：即使日志里有 502 文本，超时仍归 codex_exit_124 且不重试 ---
+        repo_t, trunk_t, home_t = fixture(base / "infra-timeout",
+                                         exec_cfg={"timeout": 1})
+        daemon_t = load_daemon(repo_t, trunk_t, home_t,
+                               fake_codex_hang(base, "fake-hang.sh"))
+        daemon_t.EXEC_INFRA_BACKOFF = 0
+        blocked_t = {}
+        results_t = daemon_t.dispatch_exec(False, blocked_t)
+        if results_t[0].get("exit") != 124 or results_t[0].get("attempts") != 1:
+            raise AssertionError(f"超时没有仍归 124 / 或误重试了: {results_t}")
+        if blocked_t.get("L-0001", {}).get("reason") != "codex_exit_124":
+            raise AssertionError(f"超时原因登记不正确: {blocked_t}")
+
     print("selftest ok: 自动实现真跑并落盘、失败保留现场、收口失败不重复派、"
-          "分支已有未落提交时直接收口、收口后清掉实现暂缓。")
+          "分支已有未落提交时直接收口、收口后清掉实现暂缓、"
+          "502 日志判定为可重试并在同一 worktree 重跑（重试到上限记 codex_infra_fail）。")
 
 
 def test_mcp_contract():

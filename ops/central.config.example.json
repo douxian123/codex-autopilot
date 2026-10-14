@@ -33,6 +33,7 @@
     "max_per_cycle": 1,
     "timeout": 3600,
     "sandbox": "workspace-write",
-    "model": null
+    "model": null,
+    "retries": 3
   }
 }

@@ -84,5 +84,7 @@
   convergence 分支也不会被 `queue` 列为可落盘，而是留在 convergence worktree 里交给
   agent 逐族解。
 - **`auto_exec` 默认关闭**：打开后每轮最多启动一个真实 `codex exec` 会话，在独立 worktree
-  里实现台账条目；完成走同一道 land 门禁，失败保留 WIP 分支和 worktree。它不会改产品方向、
-  不会删数据、不会发布。
+  里实现台账条目；完成走同一道 land 门禁，失败保留 WIP 分支和 worktree。底层模型网关瞬时
+  502 / 连接被拒这类抖动会在同一个 worktree 上重跑（默认 3 次，`auto_exec.retries` 可调），
+  重试仍失败记 `codex_infra_fail`，与 `codex_exit_N` 分开。它不会改产品方向、不会删数据、
+  不会发布。
