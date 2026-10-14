@@ -611,9 +611,19 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
     slug = f"{_exec_slug(rid)}-{_exec_slug(item.get('title') or '')}"
     branch = f"{prefix}exec-{slug}"
     wt = Path(repo).parent / f"{Path(repo).name}-exec-{slug}"
-    if _git(repo, "rev-parse", "--verify", branch)[0] == 0 or wt.exists():
-        blocked[rid] = {"reason": "leftover", "ts": _now()}
-        return {"id": rid, "outcome": "leftover"}
+    # 旧实现一见 worktree / 分支已存在就永久记 leftover，且自己从不清理残留，于是任何
+    # 首次收口没走完的需求都会永远卡住（L-0029/L-0030 反复 leftover 的结构根因）。
+    # 改为非破坏性自愈：有在途改动就接着收口，空的/干净的残留才清掉重建；绝不丢未提交改动。
+    existing = _git(repo, "rev-parse", "--verify", branch)[0] == 0 or wt.exists()
+    if existing and wt.exists() and _changed_paths(wt):
+        log(f"[exec] {rid} 已有在途 worktree -> 跳过新会话，接着收口")
+        return _finish_exec(item, cfg, repo, wt, branch, rid,
+                            {"id": rid, "branch": branch, "worktree": str(wt)}, blocked)
+    if existing:
+        _git(repo, "worktree", "remove", "--force", str(wt))
+        if _git(repo, "rev-parse", "--verify", branch)[0] == 0:
+            _git(repo, "branch", "-D", branch)
+        log(f"[exec] {rid} 残留 worktree/分支已清掉（无未提交改动），重建")
     _git(repo, "fetch", "origin", main_branch)
     _, base, _ = _git(repo, "rev-parse", f"origin/{main_branch}")
     if not base:
@@ -664,7 +674,11 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
             _cleanup_exec(repo, wt, branch)
             result["outcome"] = "codex_fail"
         return result
+    return _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked)
 
+
+def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
+    """codex 已实现（或从在途现场恢复）之后的公共收尾：add -> commit -> land -> close。"""
     # 把 codex 留下的改动显式提交（不 git add -A；只加 status 里列出的、非忽略的路径）。
     changed = _changed_paths(wt)
     if not changed:
@@ -717,6 +731,27 @@ def _cleanup_exec(repo, wt: Path, branch: str) -> None:
     _git(repo, "branch", "-D", branch)
 
 
+def _looks_like_command(text: str) -> bool:
+    """判断一串输入是不是「终端命令尾巴」而非一条产品需求。
+
+    用户把 `kgctl ... --help` / `... --list` / 纯 `list` 这类命令残片误投进唯一入口时，
+    它们会落到默认泳道（bug）并最终被 auto_exec 当成需求派给一个真实会话去「实现」——
+    既烧会话又永不收口（L-0035/L-0037 就是这么来的）。这里挡的是明显不是需求的短命令残片：
+    只识别单行、短（<=16 字符）、无空格，或纯 `--flag` 形态，或命令名后紧跟 `--flag`。
+    宁可漏判成需求，也不误吞真实需求——所以命中条件收得很窄。
+    """
+    t = (text or "").strip()
+    if not t or "\n" in t or len(t) > 16:
+        return False
+    if t.startswith("-"):
+        return bool(re.fullmatch(r"-{1,2}[A-Za-z][\w-]*", t))
+    if re.fullmatch(r"[A-Za-z][\w-]*", t):
+        return True
+    if re.fullmatch(r"[A-Za-z][\w-]*\s+-{1,2}[A-Za-z][\w-]*", t):
+        return True
+    return False
+
+
 def dispatch_exec(dry: bool, blocked: dict) -> list:
     """每周期派最多 max_per_cycle 条待办。返回本轮结果列表。"""
     cfg = auto_exec_config()
@@ -730,6 +765,12 @@ def dispatch_exec(dry: bool, blocked: dict) -> list:
     for item in _ledger_open_items():
         rid = item.get("id")
         if rid in blocked:
+            continue
+        if _looks_like_command(item.get("title")) or _looks_like_command(item.get("detail")):
+            log(f"[exec] {rid} 输入像命令残片（{(item.get('title') or '')[:24]!r}），"
+                f"不派给执行器")
+            blocked[rid] = {"reason": "looks_like_command",
+                            "title": (item.get("title") or "")[:60], "ts": _now()}
             continue
         if dry:
             log(f"[dry] 会派发 {rid}（{item.get('kind')}）{item.get('title')}")

@@ -2448,6 +2448,31 @@ def _open_resolve_sources() -> set:
             if t.get("status") in ("needs_agent", "gate_fail") and t.get("branch")}
 
 
+def _decided_resolve_branches() -> set:
+    """已经给出结论（落盘 landed 或明确放弃 abandoned）的源分支集合。
+
+    `abandoned` 也落进这个集合，是为了让「放弃」这个决定留痕：否则守护进程下一轮
+    又把它当成候选捡回来重拆，`resolve --list` 里会反复冒出同一条已裁决的分支。
+    人工想重拆时仍然可以显式 `kgctl resolve codex/<分支> --go`，自动拆解不再自动回头。
+    """
+    return {t.get("branch") for t in load_resolve().get("tasks", [])
+            if t.get("status") in ("landed", "abandoned") and t.get("branch")}
+
+
+def _open_resolve_tasks() -> list:
+    """还没收口的冲突任务（needs_agent / gate_fail），已收口的旧记录不算。
+
+    早期留下的 needs_agent 记录会和后来的 landed/abandoned 并存，不去重就会把
+    已经收口的分支一直报成「待解」——`--status` 与 `--list` 必须用同一套口径。
+    """
+    tasks = load_resolve().get("tasks", [])
+    settled = {t.get("slug") for t in tasks if t.get("status") in ("landed", "abandoned")}
+    settled |= {t.get("branch") for t in tasks if t.get("status") in ("landed", "abandoned")}
+    return [t for t in tasks
+            if t.get("status") in ("needs_agent", "gate_fail")
+            and t.get("slug") not in settled and t.get("branch") not in settled]
+
+
 def _find_resolve_task(target: str):
     tasks = load_resolve().get("tasks", [])
     settled = {t.get("slug") for t in tasks if t.get("status") in ("landed", "abandoned")}
@@ -2478,7 +2503,7 @@ def _pick_resolve_candidate(max_files: int, max_lines: int):
     """挑一条「冲突文件少、未落改动也小」的冲突分支。返回 (候选, 超体量的)。"""
     rows = scan()
     open_src = _open_resolve_sources()
-    landed_src = _landed_resolve_branches()
+    decided_src = _decided_resolve_branches()
     # 守护进程把「拆不动 / 门禁没过」的分支名放进 KG_RESOLVE_SKIP，避免每个周期
     # 反复拆同一条。手动执行不带该环境变量，行为不变。
     skip = {b for b in os.environ.get("KG_RESOLVE_SKIP", "").split(":") if b}
@@ -2487,7 +2512,7 @@ def _pick_resolve_candidate(max_files: int, max_lines: int):
     for r in rows:
         if r["kind"] != "CONFLICT" or _is_generated_branch(r["branch"]):
             continue
-        if r["branch"] in open_src or r["branch"] in landed_src or r["branch"] in skip:
+        if r["branch"] in open_src or r["branch"] in decided_src or r["branch"] in skip:
             continue
         burden = bmap.get(r["branch"], len(r["conflicts"]))
         nf, nl = unlanded_diff_size(r["branch"])
@@ -2739,12 +2764,7 @@ def _resolve_abandon(target: str, go: bool) -> None:
 
 def _resolve_list() -> None:
     tasks = load_resolve().get("tasks", [])
-    settled = {t.get("slug") for t in tasks if t.get("status") in ("landed", "abandoned")}
-    settled |= {t.get("branch") for t in tasks if t.get("status") in ("landed", "abandoned")}
-    open_tasks = [t for t in tasks if t.get("status") in ("needs_agent", "gate_fail")]
-    # 同一 slug/源分支已经 landed 的旧 needs_agent 记录不算开放任务。
-    open_tasks = [t for t in open_tasks
-                  if t.get("slug") not in settled and t.get("branch") not in settled]
+    open_tasks = _open_resolve_tasks()
     done = [t for t in tasks if t.get("status") == "landed"]
     print("=== 冲突执行任务 ===")
     if not open_tasks:
@@ -2928,8 +2948,7 @@ def cmd_status(args):
         light = [b for n, b in burden if n <= 8]
         print(f"冲突可解度     {len(light)}/{len(conflicts)} 支只需解 <=8 个冲突文件"
               f"（最轻 {burden[0][0]} 个：{burden[0][1]}）")
-    open_tasks = [t for t in load_resolve().get("tasks", [])
-                  if t.get("status") in ("needs_agent", "gate_fail")]
+    open_tasks = _open_resolve_tasks()
     if open_tasks:
         print(f"冲突执行任务   {len(open_tasks)} 个待解（kgctl resolve --list）")
     wts = worktree_map()
