@@ -580,6 +580,17 @@ def _git_add_retry(wt: Path, paths: list, attempts: int = 3, delay: float = 2.0)
     return 1, err
 
 
+def _branch_pending_commits(repo, branch: str, main_branch: str) -> int:
+    """分支上还没进 main 的提交数；分支不存在或读不到一律按 0 算。"""
+    rc, out, _ = _git(repo, "rev-list", "--count", f"{main_branch}..{branch}")
+    if rc != 0:
+        return 0
+    try:
+        return int((out or "0").strip() or 0)
+    except ValueError:
+        return 0
+
+
 def _preserve_exec(repo, wt: Path, branch: str, rid: str, reason: str, blocked: dict,
                    detail: str = "") -> dict:
     """保留一个执行 worktree：有改动就提交成 WIP，绝不因为失败删掉在途工作。"""
@@ -613,17 +624,24 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
     wt = Path(repo).parent / f"{Path(repo).name}-exec-{slug}"
     # 旧实现一见 worktree / 分支已存在就永久记 leftover，且自己从不清理残留，于是任何
     # 首次收口没走完的需求都会永远卡住（L-0029/L-0030 反复 leftover 的结构根因）。
-    # 改为非破坏性自愈：有在途改动就接着收口，空的/干净的残留才清掉重建；绝不丢未提交改动。
+    # 改为非破坏性自愈：有在途改动、或分支上已有未落提交，都接着走同一道门禁收口；
+    # 只有真正没有任何成果（无未提交改动且分支不领先 main）的残留才清掉重建。
+    # 绝不丢未提交改动，也绝不删掉已经提交、只是没走完落盘的那笔提交。
     existing = _git(repo, "rev-parse", "--verify", branch)[0] == 0 or wt.exists()
-    if existing and wt.exists() and _changed_paths(wt):
+    changed_in_flight = _changed_paths(wt) if wt.exists() else []
+    if existing and changed_in_flight:
         log(f"[exec] {rid} 已有在途 worktree -> 跳过新会话，接着收口")
+        return _finish_exec(item, cfg, repo, wt, branch, rid,
+                            {"id": rid, "branch": branch, "worktree": str(wt)}, blocked)
+    if existing and _branch_pending_commits(repo, branch, main_branch):
+        log(f"[exec] {rid} worktree 干净但分支已有未落提交 -> 跳过新会话，直接收口")
         return _finish_exec(item, cfg, repo, wt, branch, rid,
                             {"id": rid, "branch": branch, "worktree": str(wt)}, blocked)
     if existing:
         _git(repo, "worktree", "remove", "--force", str(wt))
         if _git(repo, "rev-parse", "--verify", branch)[0] == 0:
             _git(repo, "branch", "-D", branch)
-        log(f"[exec] {rid} 残留 worktree/分支已清掉（无未提交改动），重建")
+        log(f"[exec] {rid} 残留 worktree/分支已清掉（无未提交改动、分支无未落提交），重建")
     _git(repo, "fetch", "origin", main_branch)
     _, base, _ = _git(repo, "rev-parse", f"origin/{main_branch}")
     if not base:
@@ -679,24 +697,33 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
 
 def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
     """codex 已实现（或从在途现场恢复）之后的公共收尾：add -> commit -> land -> close。"""
+    conf = central_config.load(repo)
+    main_branch = conf.get("main_branch", "main")
     # 把 codex 留下的改动显式提交（不 git add -A；只加 status 里列出的、非忽略的路径）。
     changed = _changed_paths(wt)
-    if not changed:
+    if changed:
+        add_rc, add_err = _git_add_retry(wt, changed)
+        if add_rc != 0:
+            log(f"[exec] {rid} git add 失败，重试后仍失败：{(add_err or '')[:300]}")
+            return _preserve_exec(repo, wt, branch, rid, "add_fail", blocked, detail=add_err)
+        title = (item.get("title") or "").strip().replace("\n", " ")[:60]
+        msg = f"exec({item.get('id')}): {title}".rstrip()
+        if _git(wt, "commit", "-m", msg)[0] != 0:
+            return _preserve_exec(repo, wt, branch, rid, "commit_fail", blocked)
+        _, commit, _ = _git(wt, "rev-parse", "HEAD")
+        result["commit"] = commit
+    elif _branch_pending_commits(repo, branch, main_branch):
+        # 上一轮已经把改动提交进分支、只是没走完落盘（例如守护在 land 前退出）。
+        # 重复实现会覆盖既定成果；直接把这笔提交交给同一道门禁收口。
+        _, commit, _ = _git(repo, "rev-parse", branch)
+        result["commit"] = commit or result.get("commit")
+        log(f"[exec] {rid} worktree 干净但分支已有未落提交 -> 直接收口 {(commit or '')[:12]}")
+    else:
         log(f"[exec] {rid} 没有产生改动，记为无变化")
         blocked[rid] = {"reason": "no_changes", "ts": _now()}
         _cleanup_exec(repo, wt, branch)
         result["outcome"] = "no_changes"
         return result
-    add_rc, add_err = _git_add_retry(wt, changed)
-    if add_rc != 0:
-        log(f"[exec] {rid} git add 失败，重试后仍失败：{(add_err or '')[:300]}")
-        return _preserve_exec(repo, wt, branch, rid, "add_fail", blocked, detail=add_err)
-    title = (item.get("title") or "").strip().replace("\n", " ")[:60]
-    msg = f"exec({item.get('id')}): {title}".rstrip()
-    if _git(wt, "commit", "-m", msg)[0] != 0:
-        return _preserve_exec(repo, wt, branch, rid, "commit_fail", blocked)
-    _, commit, _ = _git(wt, "rev-parse", "HEAD")
-    result["commit"] = commit
 
     lrc, lout = run_kgctl(["land", branch], timeout=LAND_TIMEOUT)
     kind = classify_land(lout, lrc)

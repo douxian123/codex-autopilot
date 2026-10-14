@@ -1006,7 +1006,34 @@ def test_auto_exec():
         if kept or "L-9999" not in blocked_keep:
             raise AssertionError("台账读不到时误清了真实暂缓记录")
 
-    print("selftest ok: 自动实现真跑并落盘、失败保留现场、收口失败不重复派、收口后清掉实现暂缓。")
+        # --- 分支已有未落提交、worktree 干净：直接收口，不重复实现、不删已有成果 ---
+        # 复刻「上一轮改动已提交进分支、守护在 land 前退出」的现场：分支领先 main 一笔，
+        # 且 worktree 已不存在。旧逻辑会把分支 -D 删掉再重建，等于丢掉已提交的成果。
+        repo_p, trunk_p, home_p = fixture(base / "pending")
+        daemon_p = load_daemon(repo_p, trunk_p, home_p,
+                               fake_codex(base, "fake-again.sh", 0))
+        slug_p = f"{daemon_p._exec_slug('L-0001')}-{daemon_p._exec_slug('面板按钮点着没反应')}"
+        branch_p = f"codex/exec-{slug_p}"
+        wt_p = Path(repo_p).parent / f"{Path(repo_p).name}-exec-{slug_p}"
+        run(["git", "-C", str(repo_p), "worktree", "add", "-q", "-b", branch_p, str(wt_p)])
+        (wt_p / "fake.txt").write_text("preserved\n", encoding="utf-8")
+        git(wt_p, "add", "fake.txt")
+        git(wt_p, "commit", "-q", "-m", "exec(L-0001): 面板按钮点着没反应")
+        run(["git", "-C", str(repo_p), "worktree", "remove", "--force", str(wt_p)])
+        blocked_p = {}
+        results_p = daemon_p.dispatch_exec(False, blocked_p)
+        if not results_p or results_p[0].get("outcome") != "landed":
+            raise AssertionError(
+                f"分支已有未落提交时没有直接收口: {results_p}\nblocked={blocked_p}")
+        if git(repo_p, "show", "main:fake.txt").stdout.strip() != "preserved":
+            raise AssertionError("直接收口没有把已有提交落进 main（疑似重复实现覆盖了成果）")
+        if ledger_latest(repo_p)["L-0001"].get("status") != "done":
+            raise AssertionError(f"直接收口后台账没有收口: {ledger_latest(repo_p)}")
+        if git(repo_p, "branch", "--list", branch_p).stdout.strip():
+            raise AssertionError("直接收口后执行分支没有回收")
+
+    print("selftest ok: 自动实现真跑并落盘、失败保留现场、收口失败不重复派、"
+          "分支已有未落提交时直接收口、收口后清掉实现暂缓。")
 
 
 def test_mcp_contract():
