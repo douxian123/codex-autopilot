@@ -68,6 +68,12 @@ DEFAULTS = {
     "grace_minutes": 5.0,         # 窗口最近活动距今 < 这个值就认为「有人在用」，不打扰
     "cooldown_minutes": 60.0,     # 两次自动换代之间的最短间隔
     "rotate_timeout_minutes": 30.0,  # 换代进程超过这么久还没结束就当它挂了
+    "rotate_settle_minutes": 3.0,    # 换代启动后至少等这么久才去核对结果（否则必然误判）
+    # 换代时给新窗口指定模型（留空 = 用 codex 默认）。
+    # 为什么要能指定：某些中转站按**请求体大小**预扣费，长上下文窗口一旦把余额算穿，
+    # 每拍都 403「预扣费额度失败」，模型一个字都回不出来（实测事故）——这时把心跳/司令窗
+    # 放到按量计费的便宜通道（如 deepseek-flash）比"再换一个窗口"更根治。
+    "rotate_model": "",
     # 越线线（warn）
     "last_input_warn": 120_000,
     "tokens_used_warn": 150_000_000,
@@ -111,7 +117,7 @@ def config() -> dict:
         data = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         if isinstance(data, dict):
             for k, v in data.items():
-                if k in out and isinstance(v, (int, float, bool)):
+                if k in out and isinstance(v, (int, float, bool, str)):
                     out[k] = v
     except (OSError, ValueError):
         pass
@@ -411,6 +417,8 @@ def start_rotate(automation: str, thread_id: str, cfg: dict) -> dict:
         log(f"× 换代跳过：找不到 {script}")
         return {"started": False, "why": "找不到 cockpit_rotate.py"}
     cmd = [sys.executable, str(script), "--automation", automation, "--go", "--force"]
+    if cfg.get("rotate_model"):
+        cmd += ["--model", str(cfg["rotate_model"])]
     try:
         RUNTIME.mkdir(parents=True, exist_ok=True)
         with ROTATE_LOG.open("a", encoding="utf-8") as fh:
@@ -583,8 +591,13 @@ def run(dry: bool = False, do_rotate: bool | None = None) -> dict:
     # 换代进程收尾核对（要写状态，所以只在真跑时做；预演保持只读）
     if not dry:
         st = _state_load()
-        if (st.get("rotate") or {}).get("result") == "running" and not rotating:
-            _rotate_result(str((st.get("rotate") or {}).get("automation") or ""), cfg)
+        rot = st.get("rotate") or {}
+        # 只看「已经跑够时间」的那次：换代要起真实 codex 会话（实测 1~3 分钟），
+        # 刚启动就核对必然读到「目标还没换」而误判成 no-effect（实测事故：04:10 启动、
+        # 同秒就写了「没有改变目标线程」，而那时换代还在跑）。
+        settle = time.time() - float(rot.get("ts") or 0) >= cfg["rotate_settle_minutes"] * 60
+        if rot.get("result") == "running" and not rotating and settle:
+            _rotate_result(str(rot.get("automation") or ""), cfg)
         st = _state_load()
         st["last_run"] = report["iso"]
         st["last_report"] = {"threads": report["threads"], "usage": usage}

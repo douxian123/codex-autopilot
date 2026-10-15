@@ -24,6 +24,9 @@ kgctl —— 自动挡的唯一执行入口（stdlib only）
   9. 真冲突拆成单任务   -> `kgctl resolve --auto --go`（每条冲突分支一个独立 worktree，
                             只自动并集 append-only JSONL，其余保留 marker 写任务书；
                            解完 `resolve --finish` 走同一道门禁后自动落盘）
+ 10. 「缺门禁证据」可自证 -> `kgctl queue --gates`（队列带门禁状态）/ `kgctl gate <分支>`
+                            （在分支自己的工作树上真跑门禁，把 command/cwd/exit 写进验收台账，
+                             不合并、不动 main；跑过之后该分支才敢被 land）
 
 安全约定（硬编码，不可关）
   * `reap` 默认只预演，必须显式 `--go`。
@@ -1006,14 +1009,41 @@ def cmd_matrix(args):
                   f"{r['branch']:44s} {r['subject']}")
 
 
+def _acceptance_by_lane() -> dict:
+    """lane(=分支名) → 最新一条验收记录（按台账追加顺序取最后一条）。
+
+    存在的理由：队列只报「有几个提交、落后多少」，不报「这个分支的门禁跑了没、过没过」。
+    心跳拍因此只能说「队列没有附带门禁证据」而不敢 land —— 空拍的一半原因在这。
+    """
+    out = {}
+    for r in read_jsonl(REPO / "ops" / "truth" / "acceptance.jsonl"):
+        lane = r.get("lane")
+        if lane:
+            out[lane] = r
+    return out
+
+
 def cmd_queue(args):
+    show_gates = "--gates" in (args or [])
     rows = scan()
     clean = sorted([r for r in rows if r["kind"] == "CLEAN"],
                    key=lambda x: (x["ahead"], -x["behind"]))
+    acc = _acceptance_by_lane() if show_gates else {}
     print("合并队列（一次一个，合完立刻重算）\n")
     for i, r in enumerate(clean, 1):
         print(f"  {i:2d}. kgctl land {r['branch']}   "
               f"（{r['ahead']} 提交 / {r['nfiles']} 文件 / 落后 {r['behind']}）")
+        if not show_gates:
+            continue
+        a = acc.get(r["branch"])
+        age = r.get("age")
+        age_txt = f"{age} 天前" if isinstance(age, (int, float)) and age >= 0 else "取不到"
+        if a:
+            ev = (a.get("evidence") or "").replace("\n", " ")[:180]
+            print(f"      门禁 {a.get('status')} @ {a.get('ts')} · {a.get('source')}：{ev}")
+        else:
+            print(f"      门禁 无记录 → 先跑 `python3 ops/kgctl.py gate {r['branch']}` 造证据，再 land")
+        print(f"      最后提交 {age_txt}")
     if not clean:
         print("  队列为空")
     print(f"\n其余 {len(rows)-len(clean)} 个："
@@ -1022,6 +1052,67 @@ def cmd_queue(args):
     unresolved = sum(1 for r in rows if r["kind"] == "UNRESOLVED")
     if unresolved:
         print(f"另有 {unresolved} 个分支残留冲突标记，已从队列排除。")
+
+
+def cmd_gate(args):
+    """kgctl gate <分支> [--keep] —— 在分支自己的工作树上真跑一遍验证门禁，并把结果写进验收台账。
+
+    存在的理由：队列里的分支常常「没有门禁证据」，于是心跳拍只能报「缺证据」而不敢 land，
+    一拍就这么空过去了。这个命令把「缺证据」变成「有证据」：不合并、不推送、不动 main、
+    不动源分支；跑完把 name/cmd/cwd/exit 写进 ops/truth/acceptance.jsonl（lane=分支,
+    source=kgctl gate），随后 `kgctl queue --gates` 就能看到它、`kgctl land` 直接可用。
+    退出码：门禁全过 0，任一失败 1（便于看门狗与心跳拍直接判定）。
+    """
+    import tempfile
+    if not args:
+        sys.exit("用法: kgctl gate <分支> [--keep]")
+    branch, keep = args[0], "--keep" in args
+    if not git("rev-parse", "--verify", f"{branch}^{{commit}}"):
+        sys.exit(f"× 没有这个分支：{branch}")
+    wt_path = worktree_map().get(branch)
+    tmp = None
+    if wt_path:
+        wt = Path(wt_path)
+        print(f"用分支已有的工作树：{wt}")
+    else:
+        tmp = Path(tempfile.gettempdir()) / f"kg-gate-{slugify(branch, 24)}-{os.getpid()}"
+        subprocess.run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
+                       capture_output=True, text=True)
+        add = subprocess.run(["git", "-C", str(SHARED), "worktree", "add", "--detach", str(tmp), branch],
+                             capture_output=True, text=True, errors="replace")
+        if add.returncode != 0:
+            sys.exit(f"× 建门禁工作树失败：{(add.stdout or '') + (add.stderr or '')}".strip()[:400])
+        wt = tmp
+        print(f"门禁工作树（临时）：{wt}")
+    try:
+        _link_side_dirs(wt)
+        ok, results, out = _run_verify_gates(wt)
+        for r in results:
+            print(f"  [{r.get('name')}] $ {r.get('cmd')} (cwd={r.get('cwd')}) -> exit "
+                  f"{0 if r.get('ok') else 1}")
+        if not results:
+            print("  (项目没配验证门禁，按通过处理；请在 ops/central.config.json 的 verify 里补上)")
+        sha = git("rev-parse", branch)
+        env = dict(os.environ, KG_REPO=str(REPO), KG_TRUTH_LANE=branch, KG_TRUTH_COMMIT=sha,
+                   KG_TRUTH_STATUS="verified" if ok else "todo",
+                   KG_TRUTH_EVIDENCE=_verify_evidence(results),
+                   KG_TRUTH_SOURCE="kgctl gate",
+                   KG_TRUTH_SUMMARY=f"{branch} 的门禁预跑（未落盘）")
+        p = subprocess.run([sys.executable, str(RUNTIME_OPS / "truthctl.py"), "add", "acceptance",
+                            f"{branch} 门禁预跑（未落盘）"],
+                           cwd=str(REPO), env=env, capture_output=True, text=True, errors="replace")
+        if p.returncode == 0:
+            print(f"  验收台账 {(p.stdout or '').strip()}")
+        else:
+            print(f"  × 写验收台账失败（门禁结果仍有效）：{((p.stdout or '') + (p.stderr or '')).strip()[:300]}")
+        print(f"\n结论：门禁 {'ok → 可以直接 `kgctl land ' + branch + '`' if ok else '× 失败 → 先修再 land'}")
+        if not ok:
+            print(out[-1200:])
+        return 0 if ok else 1
+    finally:
+        if tmp is not None and not keep:
+            subprocess.run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
+                           capture_output=True, text=True)
 
 
 def cmd_clash(args):
@@ -3483,7 +3574,7 @@ def cmd_doctor(args):
 
 
 CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route, "suggest": cmd_suggest,
-        "matrix": cmd_matrix, "queue": cmd_queue, "converge": cmd_converge,
+        "matrix": cmd_matrix, "queue": cmd_queue, "gate": cmd_gate, "converge": cmd_converge,
         "replan": cmd_replan,
         "context": cmd_context, "dash": cmd_dash,
         "clash": cmd_clash, "reap": cmd_reap, "land": cmd_land, "supersede": cmd_supersede,

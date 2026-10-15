@@ -1535,6 +1535,13 @@ def loop(interval_min: int, max_land: int, dry: bool) -> int:
                 budget_gate.daemon_hook(dry=dry, log_fn=log)
             except Exception as exc:
                 log(f"[budget] 闸门跳过（fail-open）：{exc!r}")
+            # 空转记分（fail-open）：给每一拍分类，连续空转就点名并把记分写进下一拍的 prompt。
+            # 与预算闸门同族：只读判定、动作显式、一键关、异常一律吞掉。
+            try:
+                import beat_audit
+                beat_audit.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[beat] 记分跳过（fail-open）：{exc!r}")
             if _stop:
                 break
             was_paused = control_state.is_paused()
