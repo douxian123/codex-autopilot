@@ -14,10 +14,13 @@ set -uo pipefail
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OPEN_APP=1
 DO_INSTALL=1
+WITH_SELFTEST=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-open) OPEN_APP=0; shift ;;
     --no-install) DO_INSTALL=0; shift ;;
+    # 自检里有一条会回头跑本脚本，默认不带这个开关，避免无限套娃。
+    --with-selftest) WITH_SELFTEST=1; shift ;;
     -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
     *) echo "未知参数：$1" >&2; exit 2 ;;
   esac
@@ -149,6 +152,26 @@ if printf '%s' "${STATUS}" | grep -q '"ok": true'; then
   pass "统一控制通道可用（总闸状态：${LIFECYCLE}）"
 else
   fail "统一控制通道不可用"
+fi
+
+head_ 6 "面板首屏逻辑"
+PANEL_LOGIC="$(cd "$REPO" && python3 ops/panel_logic_check.py 2>&1)"
+if printf '%s' "${PANEL_LOGIC}" | grep -q "全部通过"; then
+  pass "面板首屏（含关闭态）每个值都来自真实控制层数据"
+else
+  fail "面板首屏逻辑检查未通过"
+  printf '%s\n' "${PANEL_LOGIC}" | tail -6 | sed 's/^/        /'
+fi
+
+if [ "${WITH_SELFTEST}" -eq 1 ]; then
+  head_ 7 "全量自检"
+  if (cd "$REPO" && python3 ops/selftest.py > /tmp/autopilot-selftest-preview.log 2>&1); then
+    GROUPS="$(grep -c '^selftest ok' /tmp/autopilot-selftest-preview.log 2>/dev/null || echo '?')"
+    pass "全量自检 ${GROUPS} 组通过"
+  else
+    fail "全量自检未通过"
+    tail -12 /tmp/autopilot-selftest-preview.log 2>/dev/null | sed 's/^/        /'
+  fi
 fi
 
 printf '\n---------------- 结果 ----------------\n'
