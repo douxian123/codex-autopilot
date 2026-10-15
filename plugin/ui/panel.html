@@ -875,7 +875,8 @@
         heading.textContent = section.name || "未命名窗口集合";
         group.appendChild(heading);
         var members = threads.filter(function(thread){
-          return thread.sectionId === section.id;
+          var sid = thread.sectionId || (thread.section && thread.section.id);
+          return sid === section.id;
         });
         if (!members.length){
           var empty = document.createElement("div"); empty.className = "d";

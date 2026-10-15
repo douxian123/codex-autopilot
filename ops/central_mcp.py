@@ -393,7 +393,7 @@ TOOLS = [
     },
     {
         "name": "codex_native_move_thread",
-        "description": "通过 Codex threadSection/move 调整真实对话窗口的集合归属；section_id 为空表示移出集合。独立 app-server 不保证立即同步到当前桌面窗口。",
+        "description": "通过 Codex thread/section/move 调整真实对话窗口的集合归属；section_id 为空表示移出集合。独立 app-server 不保证立即同步到当前桌面窗口。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -407,7 +407,7 @@ TOOLS = [
     },
     {
         "name": "codex_native_dispatch_task",
-        "description": "创建一个真实 Codex 原生子对话并立即用 turn/start 派活；成功后把 thread/turn 与自动挡台账关联。",
+        "description": "创建一个真实 Codex 原生子对话并立即用 turn/start 派活；成功后把 thread/turn 与自动挡台账关联。未指定窗口集合时自动归入本项目的集合（同名复用，不重复创建）；集合操作失败不拦派活，但会如实记进路线记录。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -677,6 +677,20 @@ def _native_routes_path():
     return _truth_dir() / "native_routes.jsonl"
 
 
+def _auto_section_name():
+    """派活时自动归入的窗口集合名：按绑定项目分桶。
+
+    用户要的是「窗口拉太多时自动给它们一个文件夹」。名字里带项目名，
+    多个项目的子对话不会混进同一个集合；同名集合会被复用，不重复创建。
+    """
+    base = codex_native.DEFAULT_SECTION_NAME
+    try:
+        project = Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve().name
+    except (OSError, ValueError):
+        project = ""
+    return "%s · %s" % (base, project) if project else base
+
+
 def _append_native_route(ledger_id, result, status):
     """Persist host linkage metadata without creating a second task ledger."""
     path = _native_routes_path()
@@ -690,6 +704,7 @@ def _append_native_route(ledger_id, result, status):
         "turn_id": result.get("turn_id") or turn.get("id")
         or (turn.get("turn") or {}).get("id") or result.get("turnId"),
         "section_id": result.get("section_id"),
+        "section_note": result.get("section_note"),
         "cwd": result.get("cwd"),
     }
     with path.open("a", encoding="utf-8") as fh:
@@ -1361,6 +1376,7 @@ def call_tool(name, args):
                 (args.get("cwd") or "").strip(),
                 args.get("prompt"),
                 args.get("section_id"),
+                auto_section=_auto_section_name(),
             )
             if result:
                 _append_native_route(

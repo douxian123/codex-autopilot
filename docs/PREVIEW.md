@@ -31,6 +31,18 @@ python3 ops/panel_render_check.py   # 真浏览器渲染真面板：断言首屏
 
 第一条不依赖浏览器，随时能跑；第二条需要本机有 Chrome/Chromium（`AUTOPILOT_CHROMIUM` 可指定），截图落在 `docs/panel-first-screen.png`。
 
+原生直连协议还能对着真实 Codex 二进制验一遍（默认跳过，不拖慢主自检）：
+
+```bash
+AUTOPILOT_SELFTEST_REAL_CODEX=1 python3 ops/selftest.py
+```
+
+它在一个临时状态目录里跑真实的 `codex app-server`：建原生会话 → 建窗口集合 → 列出来必须在，并确认归组调用的是服务器认识的方法名。这条只证明协议和官方实现对得上；任务真正出现在你桌面 Codex 窗口里，仍以 `preview-check.sh` 的原生自检为准。
+
+## 子对话怎么归置
+
+自动挡派活时会在 Codex 里建一个按项目命名的窗口集合（例如「Codex 自动挡 · 某个项目」），新建的子对话自动归进去；同名集合复用，不重复创建。集合由 Codex 宿主维护，自动挡不写宿主的数据库。集合建不了时派活照常进行，但会如实记下「没归组」。
+
 ## 装什么
 
 一条命令（在仓库根目录）：

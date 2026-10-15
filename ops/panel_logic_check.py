@@ -134,6 +134,7 @@ console.log(JSON.stringify({
   recentNote: read("recentNote"),
   needClass: document.getElementById("need").className,
   recentHtml: document.getElementById("recentBox").innerHTML,
+  routeText: read("routeBox"),
 }));
 """
 
@@ -236,6 +237,33 @@ def main(argv):
             print("  PASS  关闭后不再显示正在运行")
         fails += has("关闭后总状态是关闭态", shut["stateLabel"], "已恢复原生状态")
         fails += has("关闭后副标题说明 Codex 回到原生", shut["subtitle"], "自动挡已关闭")
+
+        # 窗口集合按官方协议的真实形状分组：集合挂在嵌套 section.id 上，
+        # 不是扁平 sectionId。写错字段名时集合会永远显示「暂无窗口」。
+        routed = dict(payload)
+        routed["route"] = {
+            "thread_note": "",
+            "native": {
+                "sections": [{"id": "sec-1", "name": "Codex 自动挡 · 面板检查"}],
+                "threads": [
+                    {"id": "t-in", "name": "归进集合的子对话",
+                     "section": {"id": "sec-1", "name": "Codex 自动挡 · 面板检查"}},
+                    {"id": "t-out", "name": "没归组的子对话", "section": None},
+                ],
+            },
+        }
+        try:
+            grouped = run_once(routed)
+        except RuntimeError as exc:
+            print(exc)
+            return 1
+        fails += has("窗口集合按官方嵌套字段分组显示会话", grouped["routeText"],
+                     "Codex 自动挡 · 面板检查", "归进集合的子对话")
+        if "没归组的子对话" in str(grouped["routeText"]):
+            print("  FAIL  没归组的会话被塞进了集合")
+            fails += 1
+        else:
+            print("  PASS  没归组的会话没有混进集合")
 
         if not quiet:
             print("\n结果：" + ("全部通过" if fails == 0 else f"{fails} 项未通过"))

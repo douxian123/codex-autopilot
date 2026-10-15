@@ -17,6 +17,8 @@ SOCKET = Path(os.environ.get("CODEX_APP_SERVER_SOCKET", CODEX_HOME / "ipc" / "ip
 HISTORY_DB = Path(os.environ.get("CODEX_THREAD_HISTORY_DB",
                                  CODEX_HOME / "thread_history_1.sqlite"))
 CLI = os.environ.get("CODEX_CLI", "codex")
+# 子对话默认归进这个窗口集合：自动挡派人干活时统一开在这里，用户不必自己整理。
+DEFAULT_SECTION_NAME = os.environ.get("CODEX_AUTOPILOT_SECTION", "Codex 自动挡")
 _next_id = 0
 
 
@@ -179,13 +181,27 @@ def _turn_input(prompt):
     return [{"type": "text", "text": str(prompt)}]
 
 
-def dispatch_task(cwd, prompt, section_id=None):
+def _thread_section_id(thread):
+    """会话归属的窗口集合：官方协议是嵌套 section.id，兼容早期扁平 sectionId。"""
+    thread = thread or {}
+    nested = thread.get("section") or {}
+    return nested.get("id") or thread.get("sectionId") or None
+
+
+def dispatch_task(cwd, prompt, section_id=None, auto_section=None):
     """Create a native thread and start its first turn in the same session."""
     path = Path(cwd).expanduser()
     if not path.is_absolute() or not path.is_dir():
         return None, "cwd 必须是已存在的绝对目录"
     if not str(prompt or "").strip():
         return None, "prompt 不能为空"
+    section_note = None
+    if not section_id and auto_section:
+        section, section_error = ensure_section(auto_section)
+        if section:
+            section_id = section.get("id")
+        else:
+            section_note = "没能建/找到窗口集合「%s」：%s" % (auto_section, section_error)
     proc, error = _session(host_only=True)
     if error:
         return None, error
@@ -199,7 +215,7 @@ def dispatch_task(cwd, prompt, section_id=None):
         if not thread_id:
             return None, "thread/start 未返回 thread.id"
         if section_id:
-            _, error = _session_request(proc, "threadSection/move", {
+            _, error = _session_request(proc, "thread/section/move", {
                 "threadId": thread_id,
                 "sectionId": section_id,
             })
@@ -208,6 +224,7 @@ def dispatch_task(cwd, prompt, section_id=None):
                     "thread_id": thread_id,
                     "cwd": thread.get("cwd") or str(path.resolve()),
                     "section_id": None,
+                    "section_note": section_note,
                     "thread": thread,
                 }, "thread 已创建，但加入窗口集合失败：" + error
         turn, error = _session_request(proc, "turn/start", {
@@ -219,7 +236,8 @@ def dispatch_task(cwd, prompt, section_id=None):
                 "thread_id": thread_id,
                 "turn_id": None,
                 "cwd": thread.get("cwd") or str(path.resolve()),
-                "section_id": thread.get("sectionId") or section_id,
+                "section_id": _thread_section_id(thread) or section_id,
+                "section_note": section_note,
                 "thread": thread,
             }, "thread 已创建，但 turn/start 失败：" + error
         turn_data = turn or {}
@@ -227,7 +245,8 @@ def dispatch_task(cwd, prompt, section_id=None):
             "thread_id": thread_id,
             "turn_id": turn_data.get("turn", {}).get("id") or turn_data.get("turnId"),
             "cwd": thread.get("cwd") or str(path.resolve()),
-            "section_id": thread.get("sectionId") or section_id,
+            "section_id": _thread_section_id(thread) or section_id,
+            "section_note": section_note,
             "thread": thread,
             "turn": turn_data,
         }, None
@@ -316,6 +335,32 @@ def create_section(name):
     return result.get("section"), None
 
 
+def list_sections():
+    """列出宿主里现有的窗口集合；只在真实桌面宿主上查。"""
+    result, error = _rpc("threadSection/list", {"limit": 100}, host_only=True)
+    if error:
+        return None, error
+    return (result or {}).get("data") or [], None
+
+
+def ensure_section(name):
+    """按名字复用窗口集合，只有不存在时才建；绝不出现两个同名集合。
+
+    用户要的是「窗口拉太多时自动给它们一个文件夹」，不是每次派活都新开一个。
+    查/建都走宿主，失败时如实返回原因，由调用方决定是否降级。
+    """
+    name = str(name or "").strip()
+    if not name:
+        return None, "name 不能为空"
+    sections, error = list_sections()
+    if error:
+        return None, error
+    for section in sections:
+        if str((section or {}).get("name") or "").strip() == name:
+            return section, None
+    return create_section(name)
+
+
 def start_thread(cwd, section_id=None):
     path = Path(cwd).expanduser()
     if not path.is_absolute() or not path.is_dir():
@@ -328,7 +373,7 @@ def start_thread(cwd, section_id=None):
     if not thread_id:
         return None, "thread/start 未返回 thread.id"
     if section_id:
-        _, error = _rpc("threadSection/move", {
+        _, error = _rpc("thread/section/move", {
             "threadId": thread_id, "sectionId": section_id,
         }, host_only=True)
         if error:
@@ -336,7 +381,7 @@ def start_thread(cwd, section_id=None):
                     "section_id": None}, "thread 已创建，但加入窗口集合失败：" + error
     return {"thread_id": thread.get("id"), "cwd": thread.get("cwd"),
             "status": thread.get("status"),
-            "section_id": section_id or thread.get("sectionId")}, None
+            "section_id": section_id or _thread_section_id(thread)}, None
 
 
 def move_thread(thread_id, section_id=None, before_thread_id=None):
@@ -350,7 +395,7 @@ def move_thread(thread_id, section_id=None, before_thread_id=None):
     params = {"threadId": thread_id, "sectionId": section_id}
     if before_thread_id:
         params["beforeThreadId"] = before_thread_id
-    result, error = _rpc("threadSection/move", params, host_only=True)
+    result, error = _rpc("thread/section/move", params, host_only=True)
     if error:
         return None, error
     return result, None

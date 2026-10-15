@@ -76,8 +76,8 @@
     },
     {
       "step": "原生 thread 直连派活",
-      "expected": "把任务派进 Codex 自己的对话窗口与窗口集合，而不是另起一套编排",
-      "status": "next"
+      "expected": "用 Codex 官方 app-server 协议建原生对话、自动归入本项目的窗口集合、持续 follow-up；协议已用真实 codex 二进制验证（含窗口集合创建与移动方法名），派进用户桌面窗口需在不受限环境验收",
+      "status": "doing"
     },
     {
       "step": "真实端到端演示与预览发布",

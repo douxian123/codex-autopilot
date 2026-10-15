@@ -1224,7 +1224,7 @@ def test_codex_native_bridge():
                 proc, "thread/start", {"cwd": "/tmp"})
             assert error is None and created["thread"]["id"] == "thread-1"
             moved, error = codex_native._session_request(
-                proc, "threadSection/move",
+                proc, "thread/section/move",
                 {"threadId": "thread-1", "sectionId": "section-1"})
             assert error is None and moved == {}
             started, error = codex_native._session_request(
@@ -1279,7 +1279,7 @@ def test_codex_native_bridge():
         assert dispatched["turn_id"] == "turn-dispatch"
         session_mock.assert_called_once_with(host_only=True)
         assert [call.args[1] for call in request_mock.call_args_list] == [
-            "thread/start", "threadSection/move", "turn/start"]
+            "thread/start", "thread/section/move", "turn/start"]
         assert "sectionId" not in request_mock.call_args_list[0].args[2]
         assert request_mock.call_args_list[1].args[2]["sectionId"] == "section-1"
         assert request_mock.call_args_list[2].args[2]["threadId"] == "thread-dispatch"
@@ -1314,6 +1314,181 @@ def test_codex_native_bridge():
         assert "thread 已创建" in error
 
     print("selftest ok: app-server 初始化顺序、原生窗口集合移动、turn/start 输入协议与只读历史降级通过。")
+
+
+FAKE_SECTION_SERVER = """
+import json, os, sys
+state_path = os.environ["FAKE_STATE"]
+def load():
+    try:
+        with open(state_path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return {"sections": [], "moves": [], "creates": [], "threads": 0}
+def save(data):
+    with open(state_path, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+for line in sys.stdin:
+    try:
+        req = json.loads(line)
+    except ValueError:
+        continue
+    rid = req.get("id")
+    if rid is None:
+        continue
+    method = req.get("method")
+    params = req.get("params") or {}
+    data = load()
+    if method == "threadSection/list":
+        if os.environ.get("FAKE_FAIL_SECTIONS"):
+            print(json.dumps({"id": rid, "error": {"message": "section API unavailable"}}), flush=True)
+            continue
+        result = {"data": data["sections"]}
+    elif method == "threadSection/create":
+        name = params.get("name")
+        data["creates"].append(name)
+        section = {"id": "sec-%d" % (len(data["sections"]) + 1), "name": name}
+        data["sections"].append(section)
+        save(data)
+        result = {"section": section}
+    elif method == "thread/start":
+        data["threads"] = data.get("threads", 0) + 1
+        save(data)
+        result = {"thread": {"id": "thread-%d" % data["threads"], "cwd": params.get("cwd")}}
+    elif method == "thread/section/move":
+        data["moves"].append({"threadId": params.get("threadId"), "sectionId": params.get("sectionId")})
+        save(data)
+        result = {}
+    elif method == "turn/start":
+        result = {"turn": {"id": "turn-1"}}
+    else:
+        result = {}
+    print(json.dumps({"id": rid, "result": result}), flush=True)
+"""
+
+def test_native_section_grouping():
+    """派活自动归入项目窗口集合：同名复用、不重复建；集合失败不拦派活但要如实记。
+
+    用户要的是「窗口拉太多时自动给它们一个文件夹」。这里用真的 app-server 协议
+    形状（threadSection/list + create + move）跑两遍，锁住「不是每次派活都新开一个」。
+    """
+    import importlib
+    import json as _json
+
+    sys.path.insert(0, str(OPS))
+    import codex_native
+    importlib.reload(codex_native)
+
+    with tempfile.TemporaryDirectory(prefix="codex-native-section-") as tmp:
+        tmp_path = Path(tmp)
+        server = tmp_path / "fake_app_server.py"
+        server.write_text(FAKE_SECTION_SERVER, encoding="utf-8")
+        state = tmp_path / "state.json"
+        os.environ["FAKE_STATE"] = str(state)
+
+        real_open = codex_native._open_session
+        codex_native._open_session = lambda command: real_open(
+            [sys.executable, str(server)])
+        try:
+            first, error = codex_native.dispatch_task(
+                str(OPS.parent), "第一条派活", auto_section="Codex 自动挡 · 测试")
+            assert error is None and first["thread_id"], first
+            assert first["section_id"] == "sec-1", first
+            assert first["section_note"] is None, first
+
+            second, error = codex_native.dispatch_task(
+                str(OPS.parent), "第二条派活", auto_section="Codex 自动挡 · 测试")
+            assert error is None and second["section_id"] == "sec-1", second
+
+            data = _json.loads(state.read_text(encoding="utf-8"))
+            assert data["creates"] == ["Codex 自动挡 · 测试"], data["creates"]
+            assert len(data["sections"]) == 1, data["sections"]
+            assert [m["sectionId"] for m in data["moves"]] == ["sec-1", "sec-1"], data["moves"]
+
+            # 集合 API 不可用时照常派活，但必须如实报出「没归组」，不能假装成功。
+            os.environ["FAKE_FAIL_SECTIONS"] = "1"
+            third, error = codex_native.dispatch_task(
+                str(OPS.parent), "第三条派活", auto_section="Codex 自动挡 · 测试")
+            assert error is None and third["thread_id"], third
+            assert third["section_id"] is None, third
+            assert third["section_note"] and "窗口集合" in third["section_note"], third
+        finally:
+            codex_native._open_session = real_open
+            os.environ.pop("FAKE_STATE", None)
+            os.environ.pop("FAKE_FAIL_SECTIONS", None)
+
+    print("selftest ok: 派活自动归入项目窗口集合、同名复用不重复建、集合失败不拦派活。")
+
+
+def test_real_codex_app_server():
+    """真二进制协议验证：真实 codex app-server 能按我们的调用建出原生会话。
+
+    默认跳过：换一台机器没装 codex CLI 时不该让主自检变红。设
+    AUTOPILOT_SELFTEST_REAL_CODEX=1 真跑。它在一个可写的临时状态目录里跑，
+    不碰用户的 ~/.codex，也不会创建用户桌面窗口，只证明协议真的对得上官方实现。
+    """
+    if os.environ.get("AUTOPILOT_SELFTEST_REAL_CODEX") != "1":
+        print("selftest skip: 真二进制协议验证默认跳过"
+              "（设 AUTOPILOT_SELFTEST_REAL_CODEX=1 开启）。")
+        return
+
+    import importlib
+    import shutil as _shutil
+
+    cli = os.environ.get("CODEX_CLI", "codex")
+    if not _shutil.which(cli):
+        print("selftest skip: 没装 codex CLI，跳过真二进制协议验证。")
+        return
+
+    sys.path.insert(0, str(OPS))
+    import codex_native
+
+    with tempfile.TemporaryDirectory(prefix="codex-real-home-") as home:
+        old_home = os.environ.get("CODEX_HOME")
+        os.environ["CODEX_HOME"] = home
+        try:
+            importlib.reload(codex_native)
+            proc, error = codex_native._open_session([cli, "app-server"])
+            assert proc is not None, f"真实 codex app-server 起不来：{error}"
+            try:
+                started, error = codex_native._session_request(
+                    proc, "thread/start", {"cwd": str(OPS.parent)})
+                assert error is None, error
+                thread_id = ((started or {}).get("thread") or {}).get("id")
+                assert thread_id, started
+
+                # 窗口集合真链路：创建 → 把会话移进去 → 列出来必须在。
+                # 方法名或参数写错，这里会直接失败而不是在用户机器上才发现。
+                created, error = codex_native._session_request(
+                    proc, "threadSection/create", {"name": "Codex 自动挡 · 自检"})
+                assert error is None, error
+                section = (created or {}).get("section") or {}
+                assert section.get("id"), created
+
+                moved, move_error = codex_native._session_request(
+                    proc, "thread/section/move",
+                    {"threadId": thread_id, "sectionId": section["id"]})
+                if move_error:
+                    # 隔离状态目录里会话还没落盘时，服务器仍必须「认识」这个方法：
+                    # 报的只能是找不到会话，绝不能是未知方法。
+                    assert "unknown variant" not in move_error, move_error
+                    assert "not found" in move_error.lower(), move_error
+
+                listed, error = codex_native._session_request(
+                    proc, "threadSection/list", {"limit": 100})
+                assert error is None, error
+                names = [s.get("name") for s in ((listed or {}).get("data") or [])]
+                assert "Codex 自动挡 · 自检" in names, names
+            finally:
+                codex_native._close_session(proc)
+        finally:
+            if old_home is None:
+                os.environ.pop("CODEX_HOME", None)
+            else:
+                os.environ["CODEX_HOME"] = old_home
+            importlib.reload(codex_native)
+
+    print("selftest ok: 真实 codex app-server 按官方协议建出原生会话、创建窗口集合，并确认 thread/section/move 是服务器认识的方法。")
 
 
 def test_verify_and_truth():
@@ -2012,6 +2187,8 @@ if __name__ == "__main__":
     test_installed_copy_binding()
     test_panel_first_screen()
     test_codex_native_bridge()
+    test_native_section_grouping()
+    test_real_codex_app_server()
     test_verify_and_truth()
     test_auto_exec()
     test_mcp_contract()
