@@ -19,6 +19,9 @@ HISTORY_DB = Path(os.environ.get("CODEX_THREAD_HISTORY_DB",
 CLI = os.environ.get("CODEX_CLI", "codex")
 # 子对话默认归进这个窗口集合：自动挡派人干活时统一开在这里，用户不必自己整理。
 DEFAULT_SECTION_NAME = os.environ.get("CODEX_AUTOPILOT_SECTION", "Codex 自动挡")
+# 查宿主会话/窗口集合的时间预算。桌面宿主「连得上但不回话」时，
+# 控制面（面板开关、Companion、MCP status）绝不能被它拖住。
+SNAPSHOT_TIMEOUT = float(os.environ.get("CODEX_AUTOPILOT_NATIVE_TIMEOUT", "6"))
 _next_id = 0
 
 
@@ -43,13 +46,19 @@ def _server_commands(include_isolated=True):
     return commands
 
 
-def _rpc(method, params, host_only=False):
-    """Issue one request over a handshaken app-server connection."""
-    proc, error = _session(host_only=host_only)
+def _rpc(method, params, host_only=False, timeout=30):
+    """Issue one request over a handshaken app-server connection.
+
+    timeout 是这一步的总预算：握手与发请求共享同一个 deadline，
+    否则「连得上但不回话」会变成两段各自等满。
+    """
+    deadline = time.monotonic() + max(1.0, float(timeout))
+    proc, error = _session(host_only=host_only, timeout=timeout)
     if error:
         return None, error
     try:
-        return _session_request(proc, method, params)
+        return _session_request(proc, method, params,
+                                timeout=max(1.0, deadline - time.monotonic()))
     finally:
         _close_session(proc)
 
@@ -110,7 +119,7 @@ def _drain_stderr(proc, timeout=1.0, limit=800):
     return "".join(chunks).strip()[-limit:]
 
 
-def _open_session(command):
+def _open_session(command, timeout=30):
     """Open one official app-server session for dependent requests."""
     try:
         proc = subprocess.Popen(command, stdin=subprocess.PIPE,
@@ -125,7 +134,7 @@ def _open_session(command):
                        "capabilities": {}},
         }) + "\n")
         proc.stdin.flush()
-        response, _, error = _read_response(proc, init_id, timeout=30)
+        response, _, error = _read_response(proc, init_id, timeout=timeout)
         if error:
             _close_session(proc)
             return None, error
@@ -139,24 +148,30 @@ def _open_session(command):
         return None, str(exc)
 
 
-def _session(host_only=False):
+def _session(host_only=False, timeout=30):
+    """在同一个预算内逐个试候选服务，不按候选数把等待翻倍。"""
+    deadline = time.monotonic() + max(1.0, float(timeout))
     last_error = None
     for command in _server_commands(include_isolated=not host_only):
-        proc, error = _open_session(command)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.2:
+            last_error = last_error or "app-server 没有在限定时间内回应"
+            break
+        proc, error = _open_session(command, timeout=remaining)
         if proc is not None:
             return proc, None
         last_error = error
     return None, last_error or "app-server 不可用"
 
 
-def _session_request(proc, method, params):
+def _session_request(proc, method, params, timeout=8):
     request_id = _request_id()
     try:
         proc.stdin.write(json.dumps({
             "id": request_id, "method": method, "params": params
         }) + "\n")
         proc.stdin.flush()
-        response, _, error = _read_response(proc, request_id)
+        response, _, error = _read_response(proc, request_id, timeout=timeout)
     except (OSError, ValueError) as exc:
         return None, str(exc)
     if error:
@@ -311,11 +326,24 @@ def _history_snapshot():
         return []
 
 
-def snapshot():
-    sections, section_error = _rpc("threadSection/list", {"limit": 100})
+def snapshot(timeout=None):
+    """读宿主里的窗口集合与会话；连不上就按时降级，绝不把调用方拖住。
+
+    timeout=0 表示这次只读缓存状态、压根不连宿主——面板/开关那条快路用它，
+    免得一个不回话的宿主把「点一下开关」变成几秒钟的等待。
+    """
+    if timeout is not None and float(timeout) <= 0:
+        return {"available": False, "transport": "not-queried",
+                "reason": "本次只读缓存状态，没有连宿主",
+                "sections": [], "threads": _history_snapshot()}
+    deadline = time.monotonic() + max(
+        1.0, float(SNAPSHOT_TIMEOUT if timeout is None else timeout))
+    sections, section_error = _rpc("threadSection/list", {"limit": 100},
+                                   timeout=max(1.0, deadline - time.monotonic()))
     threads, thread_error = _rpc(
         "thread/list", {"limit": 100, "sortKey": "updated_at",
-                        "sortDirection": "desc", "useStateDbOnly": True})
+                        "sortDirection": "desc", "useStateDbOnly": True},
+        timeout=max(1.0, deadline - time.monotonic()))
     if sections is not None and threads is not None:
         return {"available": True, "transport": "codex-app-server-stdio",
                 "reason": None, "sections": sections.get("data", []),
@@ -401,7 +429,7 @@ def move_thread(thread_id, section_id=None, before_thread_id=None):
     return result, None
 
 
-def probe():
+def probe(timeout=12, progress=None):
     """如实报告「原生直连」现在通不通，以及不通是因为什么。
 
     这一条是给用户和面板用的：能派活的唯一条件是桌面端宿主的控制 socket 可达。
@@ -419,8 +447,11 @@ def probe():
         "sample": 0,
     }
     if info["socket_present"]:
+        if progress:
+            progress("正在连接 Codex 桌面宿主的控制 socket（最多等 %d 秒）…" % timeout)
         result, error = _rpc("thread/list",
-                             {"limit": 1, "useStateDbOnly": True}, host_only=True)
+                             {"limit": 1, "useStateDbOnly": True}, host_only=True,
+                             timeout=timeout)
         if error is None:
             info.update(transport="codex-app-server-stdio", connected=True,
                         can_dispatch=True, reason=None,
@@ -440,6 +471,10 @@ def probe():
                         "`python3 ops/codex_native.py probe` 才是有效结论。")
     elif not info["socket_present"]:
         info["hint"] = "先启动 Codex 桌面端；它起来之后才会创建控制 socket。"
+    elif not info["connected"]:
+        # 连不上但没报权限错：多半是宿主没在等超时时间内回应。给可执行的下一步。
+        info["hint"] = ("桌面宿主没有在这个时间内回应。先确认 Codex 正在运行；"
+                        "仍不通就跑 `bash preview-check.sh` 看完整结论。")
     return info
 
 
@@ -511,9 +546,14 @@ def _cli(argv):
 
     action = argv[0] if argv else "probe"
     if action == "probe":
-        result = probe()
+        # 连不上时会等一个超时；先打一行进度，别让人对着空屏幕猜是不是卡死了。
+        result = probe(progress=lambda line: print(line, file=sys.stderr, flush=True))
         record_probe(result)
         payload, error = result, None
+        if not (result or {}).get("can_dispatch"):
+            # 退出码要能一眼判断：连得上能派活才是 0，否则 1 并说明原因。
+            error = ((result or {}).get("hint") or (result or {}).get("reason")
+                     or "原生直连当前不可派活")
     elif action == "history":
         payload, error = history(int(take("--limit", 20))), None
     elif action == "snapshot":

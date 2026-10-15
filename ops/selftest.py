@@ -978,6 +978,7 @@ def test_daemon_control_action():
         importlib.reload(central_mcp)
 
         calls = []
+        real_run = central_mcp._run
 
         def fake_run(argv, extra_env=None, timeout=900):
             calls.append(list(argv))
@@ -1020,6 +1021,8 @@ def test_daemon_control_action():
         assert control_state.load()["daemon_enabled"] is False, \
             "launchd 安装失败却把偏好写成已开启"
     finally:
+        # 打桩不还原会污染后面的测试：它们会拿到假的 launchctl 结果。
+        central_mcp._run = real_run
         if old_home is None:
             os.environ.pop("KG_DAEMON_HOME", None)
         else:
@@ -1395,8 +1398,8 @@ def test_native_section_grouping():
         os.environ["FAKE_STATE"] = str(state)
 
         real_open = codex_native._open_session
-        codex_native._open_session = lambda command: real_open(
-            [sys.executable, str(server)])
+        codex_native._open_session = lambda command, timeout=30: real_open(
+            [sys.executable, str(server)], timeout=timeout)
         try:
             first, error = codex_native.dispatch_task(
                 str(OPS.parent), "第一条派活", auto_section="Codex 自动挡 · 测试")
@@ -1426,6 +1429,93 @@ def test_native_section_grouping():
             os.environ.pop("FAKE_FAIL_SECTIONS", None)
 
     print("selftest ok: 派活自动归入项目窗口集合、同名复用不重复建、集合失败不拦派活。")
+
+
+def test_native_call_budget():
+    """宿主「连得上但不回话」时，状态查询与开关不能被拖住。
+
+    真实踩到的坑：桌面宿主 socket 可连、但不回包，于是
+    `_route_summary -> snapshot()` 一路等到超时，用户点一下开关要卡半分钟。
+    这里锁住三件事：给了预算就按时降级、候选服务不按个数翻倍等待、
+    面板/开关那条快路根本不连宿主。
+    """
+    import importlib
+    import io
+    import os as _os
+    import time as _time
+
+    sys.path.insert(0, str(OPS))
+    import codex_native
+    importlib.reload(codex_native)
+
+    class FrozenProc:
+        """活着但永远不说话（不发 EOF、不写 stdout）的假宿主进程。"""
+
+        def __init__(self):
+            read_fd, self._write_fd = _os.pipe()
+            error_fd, self._error_write_fd = _os.pipe()
+            self.stdout = _os.fdopen(read_fd, "r")
+            self.stderr = _os.fdopen(error_fd, "r")
+            self.stdin = io.StringIO()
+
+        def wait(self, timeout=None):
+            return 0
+
+        def kill(self):
+            pass
+
+        def close(self):
+            self.stdout.close()
+            self.stderr.close()
+            _os.close(self._write_fd)
+            _os.close(self._error_write_fd)
+
+    frozen = FrozenProc()
+    real_open = codex_native._open_session
+    real_commands = codex_native._server_commands
+    try:
+        codex_native._open_session = lambda command, timeout=30: (frozen, None)
+        started = _time.monotonic()
+        state = codex_native.snapshot(timeout=1)
+        elapsed = _time.monotonic() - started
+        assert state["available"] is False, state
+        assert state["reason"], "降级时必须如实说明原因，不能只说不可用"
+        assert elapsed < 4, "snapshot 给了 1 秒预算却等了 %.1fs" % elapsed
+
+        # 候选有多个时也不能按候选数翻倍：预算 1 秒就必须在 1 秒出头回来。
+        attempts = []
+
+        def slow_open(command, timeout=30):
+            attempts.append(round(float(timeout), 2))
+            _time.sleep(0.4)
+            return None, "不回话"
+
+        codex_native._open_session = slow_open
+        codex_native._server_commands = (
+            lambda include_isolated=True: [["a"], ["b"], ["c"]])
+        started = _time.monotonic()
+        _, error = codex_native._session(timeout=1)
+        elapsed = _time.monotonic() - started
+        assert error, "全都不回话时必须如实返回错误"
+        assert len(attempts) < 3, "预算已经用完却还在试下一个候选：%s" % attempts
+        assert attempts[1] < 0.9, "第二个候选没有拿到剩余预算：%s" % attempts
+        assert elapsed < 2.5, "三个候选各等一次超时：%.1fs" % elapsed
+
+        # 面板/开关那条快路给 0 预算：压根不连宿主，就没有「等它回话」这回事。
+        connected = []
+        codex_native._open_session = lambda command, timeout=30: (
+            connected.append(command) or (None, "快路不该连宿主"))
+        started = _time.monotonic()
+        cached = codex_native.snapshot(timeout=0)
+        elapsed = _time.monotonic() - started
+        assert connected == [], "快路仍然去连了宿主：%s" % connected
+        assert cached["available"] is False and cached["reason"], cached
+        assert elapsed < 0.5, "快路不该等：%.1fs" % elapsed
+    finally:
+        codex_native._open_session = real_open
+        codex_native._server_commands = real_commands
+        frozen.close()
+    print("selftest ok: 宿主不回话时状态查询按预算降级，快路不连宿主、候选不翻倍。")
 
 
 def test_real_codex_app_server():
@@ -2213,6 +2303,7 @@ if __name__ == "__main__":
     test_panel_first_screen()
     test_codex_native_bridge()
     test_native_section_grouping()
+    test_native_call_budget()
     test_real_codex_app_server()
     test_verify_and_truth()
     test_auto_exec()

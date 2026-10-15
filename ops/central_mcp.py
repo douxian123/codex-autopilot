@@ -844,8 +844,12 @@ def _mainline_summary(limit=6):
     }
 
 
-def _route_summary(limit=20):
-    """Merge the ledger route with the host-owned Codex sections and threads."""
+def _route_summary(limit=20, timeout=None):
+    """Merge the ledger route with the host-owned Codex sections and threads.
+
+    timeout 控制在宿主上查会话的预算：面板/开关那条路给很短的预算，
+    免得桌面宿主不回话时，点一下开关要等上一整段超时。
+    """
     latest = {}
     for rec in _read_jsonl(_truth_dir() / "ledger.jsonl"):
         if rec.get("id"):
@@ -870,7 +874,7 @@ def _route_summary(limit=20):
             "native_route": binding or None,
         })
     rows.sort(key=lambda r: (0 if r.get("status") == "doing" else 1, r.get("id") or ""))
-    native = codex_native.snapshot()
+    native = codex_native.snapshot(timeout=timeout)
     thread_by_id = {t.get("id"): t for t in native.get("threads", []) if t.get("id")}
     for row in rows:
         host_thread = thread_by_id.get(row.get("thread_id"))
@@ -1160,7 +1164,8 @@ def _status_payload(fast=True):
         "judgments": _active_judgments(),
         "last_verification": _last_verification(),
         "mainline": _mainline_summary(),
-        "route": _route_summary(),
+        # fast=True 是面板/开关那条路：只读缓存，不连宿主，绝不因此变慢。
+        "route": _route_summary(timeout=0.0 if fast else None),
         "roadmap": _roadmap(),
         "doing_items": board["doing"],
         "todo_items": board["todo"],
