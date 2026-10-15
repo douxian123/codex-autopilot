@@ -50,7 +50,7 @@ done
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$REPO/plugin"
-# Codex 的 personal marketplace 根是 $HOME：清单在 $HOME/.agents/plugins/marketplace.json，
+# Codex 的 personal marketplace 根是 ${HOME}：清单在 $HOME/.agents/plugins/marketplace.json，
 # 而清单里的 "./plugins/<name>" 是相对根解析的，所以插件实体必须落在 $HOME/plugins/<name>。
 # 这两个目录不是同一个地方，装错了会被 marketplace 列出、却 add 不进去。
 MANIFEST_DIR="$HOME/.agents/plugins"
@@ -135,7 +135,7 @@ if [ -d "$TRUNK" ]; then
   TRUNK="$(cd "$TRUNK" && pwd)"
 fi
 if [ "$TRUNK" = "$PROJECT" ]; then
-  echo "× --trunk 不能等于 --state-root（$PROJECT）。" >&2
+  echo "× --trunk 不能等于 --state-root（${PROJECT}）。" >&2
   echo "  落盘主干必须是独立 worktree；指到账本目录会在 merge/reset 时直接改写它。" >&2
   echo "  留空即用默认的 ${PROJECT}-trunk。" >&2
   exit 1
@@ -324,7 +324,7 @@ if [ "$COMPANION" -eq 1 ]; then
     rm -rf -- "$WORK"
     mkdir -p "$WORK"
     cp -R "$DEST/companion/." "$WORK/"
-    echo "编译菜单栏 Companion（日志：$LOG）…"
+    echo "编译菜单栏 Companion（日志：${LOG}）…"
     if bash "$WORK/build.sh" >"$LOG" 2>&1 && [ -d "$WORK/dist/CodexAutopilotCompanion.app" ]; then
       APP_DST="$HOME/Applications/CodexAutopilotCompanion.app"
       APP_STAGE="$HOME/Applications/.CodexAutopilotCompanion.staging-$$.app"

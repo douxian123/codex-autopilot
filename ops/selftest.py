@@ -725,6 +725,60 @@ def test_installer():
     print("selftest ok: 安装器使用不可变版本目录、拒绝覆盖同版本、保留旧安装并可回滚入口。")
 
 
+def test_installer_shell_portability():
+    """安装脚本必须能在 macOS 自带 bash 3.2 + set -u 下跑完整条路径。
+
+    bash 3.2 有个多字节解析缺陷：`$VAR` 紧跟全角字符时，那个字节会被算进变量名，
+    set -u 下直接判 unbound 并中断安装。这类写法在中文提示里很容易踩到，所以既静态
+    扫一遍，也真跑一次完整安装路径（覆盖 Companion 分支前后整段），防止只在非中文
+    路径下才暴露。
+    """
+    import re
+
+    pattern = re.compile(rb"\$[A-Za-z_][A-Za-z0-9_]*")
+    for path in sorted(OPS.parent.rglob("*.sh")):
+        if ".git" in path.parts or ".build" in path.parts:
+            continue
+        blob = path.read_bytes()
+        for m in pattern.finditer(blob):
+            end = m.end()
+            if end < len(blob) and blob[end] >= 0x80:
+                line = blob[:m.start()].count(b"\n") + 1
+                raise AssertionError(
+                    f"{path.name}:{line} 用了 $VAR 紧跟多字节字符，bash 3.2 下会 unbound；"
+                    f"改成 ${{VAR}} 写法")
+
+    install = OPS.parent / "install.sh"
+    with tempfile.TemporaryDirectory(prefix="autopilot-install-bash32-") as tmp:
+        home = Path(tmp) / "home"
+        home.mkdir(parents=True)
+        # 用一个立刻失败的 swiftc 桩，只为让 Companion 分支走「编译失败降级」，
+        # 覆盖它前后的整段提示/权限路径；真编译由 test_companion_contract 覆盖。
+        fake_bin = Path(tmp) / "bin"
+        fake_bin.mkdir()
+        stub = fake_bin / "swiftc"
+        stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        stub.chmod(0o755)
+
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+        result = run(["bash", str(install), "--no-seed", "--no-marketplace", str(OPS.parent)],
+                     env=env, check=False)
+        combined = result.stdout + result.stderr
+        assert "unbound variable" not in combined, f"bash 3.2 变量解析崩了:\n{combined}"
+        assert result.returncode == 0, f"完整安装路径没跑完:\n{combined}"
+        assert (home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.1"
+                / "ops" / "central_mcp.py").is_file()
+        # 同一份安装不带 Companion 时也必须照样成功。
+        result2 = run(["bash", str(install), "--no-seed", "--no-marketplace",
+                       "--no-companion", str(OPS.parent)], env=env, check=False)
+        # 版本目录已存在，第二次会因「拒绝覆盖」退出；只要不是崩在变量解析上就说明路径健康。
+        assert "unbound variable" not in (result2.stdout + result2.stderr)
+
+    print("selftest ok: 安装脚本在 macOS bash 3.2 + set -u 下整条路径跑完，没有多字节变量解析崩溃。")
+
+
 def test_daemon_project_binding():
     """仅把绑定到当前项目的 launchd 守护显示为当前项目正在运行。"""
     import importlib
@@ -1720,6 +1774,7 @@ if __name__ == "__main__":
     test_reset_trunk_truth_conflict()
     test_control_state()
     test_installer()
+    test_installer_shell_portability()
     test_daemon_project_binding()
     test_companion_contract()
     test_panel_contract()
