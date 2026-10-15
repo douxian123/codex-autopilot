@@ -1,0 +1,1 @@
+{"ts": "2026-10-15 12:25:54", "text": "复用 Codex 原生 app-server/thread、Projects/窗口集合与 scheduled automations，形成主司令窗到子对话窗的真实路线编排；先验证稳定官方接口，再实现最小可靠接入与面板映射，不伪造宿主能力", "source": "user", "files": [], "kind": "unknown", "routed": true, "lane": "bug"}
