@@ -25,6 +25,8 @@ set -euo pipefail
 NO_MARKET=0
 NO_SEED=0
 REFRESH=0
+ROLLBACK=0
+LIST_RELEASES=0
 PROJECT=""
 TRUNK=""
 while [ $# -gt 0 ]; do
@@ -32,6 +34,8 @@ while [ $# -gt 0 ]; do
     --no-marketplace) NO_MARKET=1; shift ;;
     --refresh-plugin) REFRESH=1; shift ;;
     --no-seed) NO_SEED=1; shift ;;
+    --rollback) ROLLBACK=1; shift ;;
+    --list-releases) LIST_RELEASES=1; shift ;;
     --state-root) PROJECT="${2:?--state-root 需要一个目录}"; shift 2 ;;
     --trunk) TRUNK="${2:?--trunk 需要一个目录}"; shift 2 ;;
     -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
@@ -47,11 +51,68 @@ PLUGIN_DIR="$REPO/plugin"
 MANIFEST_DIR="$HOME/.agents/plugins"
 MARKET="$MANIFEST_DIR/marketplace.json"
 PLUGIN_ROOT="$HOME/plugins"
+AUTOPILOT_ROOT="$PLUGIN_ROOT/codex-autopilot"
+RELEASE_ROOT="$AUTOPILOT_ROOT/releases"
+INSTALL_STATE="$AUTOPILOT_ROOT/install-state.json"
 
 PY="$(command -v python3 || true)"
 if [ -z "$PY" ]; then
   echo "找不到 python3，请先安装后再运行。" >&2
   exit 1
+fi
+
+if [ "$LIST_RELEASES" -eq 1 ]; then
+  if [ -d "$RELEASE_ROOT" ]; then
+    find "$RELEASE_ROOT" -mindepth 1 -maxdepth 1 -type d ! -name '.staging-*' -print | sort
+  else
+    echo "尚无版本化安装。"
+  fi
+  exit 0
+fi
+
+if [ "$ROLLBACK" -eq 1 ]; then
+  "$PY" - "$MARKET" "$INSTALL_STATE" <<'PYEOF'
+import json, os, sys, tempfile
+market, state_path = sys.argv[1:3]
+try:
+    state = json.load(open(state_path, encoding="utf-8"))
+    previous = state.get("previous_source")
+except (OSError, ValueError):
+    state = None
+if state is None or "previous_source" not in state:
+    raise SystemExit("没有可回滚的 Codex 自动挡安装记录。")
+try:
+    data = json.load(open(market, encoding="utf-8"))
+except (OSError, ValueError) as exc:
+    raise SystemExit(f"无法读取 marketplace，未执行回滚：{exc}")
+entry = next((p for p in data.get("plugins", []) if p.get("name") == "codex-autopilot"), None)
+if not entry:
+    raise SystemExit("marketplace 中找不到 Codex 自动挡，未执行回滚。")
+if previous:
+    entry["source"] = {"source": "local", "path": previous}
+else:
+    data["plugins"] = [p for p in data.get("plugins", [])
+                       if p.get("name") != "codex-autopilot"]
+fd, tmp = tempfile.mkstemp(prefix=".marketplace-codex-autopilot-", dir=os.path.dirname(market))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, market)
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+if previous:
+    print(f"已回滚 Codex 自动挡入口到 {previous}；其他 marketplace 项目保持不变，已安装版本目录均保留。")
+else:
+    print("已从 marketplace 移除本次新增的 Codex 自动挡入口；其他项目和已安装版本目录均保留。")
+PYEOF
+  exit 0
 fi
 
 [ -n "$PROJECT" ] || PROJECT="$REPO"
@@ -92,17 +153,31 @@ if [ "$NO_SEED" -eq 0 ]; then
   done
 fi
 
-# 2) 装插件实体：plugin/ 的清单 + skill，加上本仓库的运行时 ops/。
-mkdir -p "$MANIFEST_DIR" "$PLUGIN_ROOT"
-DEST="$PLUGIN_ROOT/codex-autopilot"
-if [ -L "$DEST" ] || [ -e "$DEST" ]; then rm -rf -- "$DEST"; fi
-mkdir -p "$DEST/ops"
-cp -R "$PLUGIN_DIR/." "$DEST/"
-cp "$REPO"/ops/*.py "$DEST/ops/"
-cp "$REPO/ops/central.config.example.json" "$DEST/ops/"
+# 2) 先校验，再把不可变版本装进独立目录；绝不删除或覆盖旧安装。
+mkdir -p "$MANIFEST_DIR" "$PLUGIN_ROOT" "$RELEASE_ROOT"
+VERSION="$("$PY" - "$PLUGIN_DIR/.codex-plugin/plugin.json" <<'PYEOF'
+import json, sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])
+PYEOF
+)"
+case "$VERSION" in
+  *[!A-Za-z0-9._+-]*|"") echo "× 插件版本号不合法：$VERSION" >&2; exit 1 ;;
+esac
+DEST="$RELEASE_ROOT/$VERSION"
+if [ -e "$DEST" ]; then
+  echo "× 版本目录已存在，拒绝覆盖：$DEST" >&2
+  echo "  已有发布不可变；请提升 plugin/.codex-plugin/plugin.json 的版本号后再安装。" >&2
+  exit 1
+fi
+STAGE="$RELEASE_ROOT/.staging-$VERSION-$$"
+mkdir -p "$STAGE/ops"
+trap 'if [ -n "${STAGE:-}" ] && [ -d "$STAGE" ]; then rm -rf -- "$STAGE"; fi' EXIT
+cp -R "$PLUGIN_DIR/." "$STAGE/"
+cp "$REPO"/ops/*.py "$STAGE/ops/"
+cp "$REPO/ops/central.config.example.json" "$STAGE/ops/"
 
 # 3) .mcp.json：运行时代码走插件自己的 ops/，状态写回目标项目。
-"$PY" - "$DEST/.mcp.json" "$PY" "$PROJECT" "$TRUNK" <<'PYEOF'
+"$PY" - "$STAGE/.mcp.json" "$PY" "$PROJECT" "$TRUNK" <<'PYEOF'
 import json, sys
 path, python, project, trunk = sys.argv[1:5]
 env = {"KG_REPO": project}
@@ -123,38 +198,99 @@ print(f"  状态根     = {project}")
 if trunk:
     print(f"  落盘主干   = {trunk}")
 PYEOF
-
-echo "已安装插件到 $DEST"
+if ! "$PY" -m py_compile "$STAGE"/ops/*.py; then
+  echo "× 新版本 Python 预检失败，当前安装入口未更改。" >&2
+  exit 1
+fi
+mv "$STAGE" "$DEST"
+STAGE=""
+echo "已安装不可变版本 $VERSION 到 $DEST"
 
 # 4) 登记进个人 marketplace
 if [ "$NO_MARKET" -eq 0 ]; then
-  "$PY" - "$MARKET" <<'PYEOF'
-import json, os, shutil, sys
-path = sys.argv[1]
+  "$PY" - "$MARKET" "$INSTALL_STATE" "$VERSION" <<'PYEOF'
+import json, os, shutil, sys, tempfile
+path, state_path, version = sys.argv[1:4]
 name = "codex-autopilot"
+source_path = f"./plugins/codex-autopilot/releases/{version}"
 entry = {
     "name": name,
-    "source": {"source": "local", "path": "./plugins/codex-autopilot"},
+    "source": {"source": "local", "path": source_path},
     "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
     "category": "Productivity",
 }
 if os.path.exists(path):
-    shutil.copyfile(path, path + ".bak-codex-autopilot")
     with open(path, encoding="utf-8") as fh:
         data = json.load(fh)
 else:
     data = {"name": "personal", "interface": {"displayName": "Personal"}, "plugins": []}
 plugins = data.setdefault("plugins", [])
-plugins[:] = [p for p in plugins if p.get("name") != name]
-plugins.append(entry)
-with open(path, "w", encoding="utf-8") as fh:
-    json.dump(data, fh, ensure_ascii=False, indent=2)
-    fh.write("\n")
-print(f"已注册 {name} 到 {path}（原文件备份为 .bak-codex-autopilot）")
+existing = next((p for p in plugins if p.get("name") == name), None)
+previous = ((existing or {}).get("source") or {}).get("path")
+if existing:
+    existing.update(entry)
+else:
+    plugins.append(entry)
+directory = os.path.dirname(path)
+os.makedirs(directory, exist_ok=True)
+fd, tmp = tempfile.mkstemp(prefix=".marketplace-codex-autopilot-", dir=directory)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+state = {"version": version, "source": source_path, "previous_source": previous}
+fd, tmp = tempfile.mkstemp(prefix=".install-state-", dir=os.path.dirname(state_path))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(state, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, state_path)
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+print(f"已注册 {name} 到 {path}，当前版本路径：{source_path}")
+if previous:
+    print(f"原版本仍完整保留，可用 ./install.sh --rollback 回退到：{previous}")
+PYEOF
+  mkdir -p "$HOME/Library/Application Support/CodexAutopilot"
+  "$PY" - "$HOME/Library/Application Support/CodexAutopilot/companion.json" "$DEST/ops/companion_api.py" "$PROJECT" <<'PYEOF'
+import json, os, sys, tempfile
+path, api, project = sys.argv[1:4]
+data = {"api": api, "project": project}
+fd, tmp = tempfile.mkstemp(prefix=".companion-", dir=os.path.dirname(path))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+print(f"Companion 控制接口配置：{path}")
 PYEOF
 else
   echo "（跳过 marketplace：请手工把下面条目加进 $MARKET 的 plugins 数组）"
-  echo '  { "name": "codex-autopilot", "source": { "source": "local", "path": "./plugins/codex-autopilot" }, "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" }, "category": "Productivity" }'
+  echo "  新版本目录：$DEST"
+  echo '  marketplace 入口将指向该不可变版本目录；可使用 ./install.sh --rollback 回退。'
 fi
 
 # 5) 可选：用官方 CLI 刷新已安装插件，避免桌面端继续用旧缓存。

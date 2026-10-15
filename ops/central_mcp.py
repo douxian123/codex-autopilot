@@ -19,6 +19,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -576,27 +577,24 @@ def _daemon_state():
 
 
 def _daemon_live():
-    """常驻是否真在跑：launchd 的 plist 存在，且实例锁背后确实有一个活进程。"""
-    if not (Path.home() / "Library" / "LaunchAgents"
-            / "com.codex-autopilot.daemon.plist").exists():
-        return False, None
-    lock = RUNTIME / "daemon.lock"
+    """从 launchd 读取存活状态和绑定项目，不用受沙箱限制的 kill(pid, 0)。"""
+    uid = os.getuid() if hasattr(os, "getuid") else 0
     try:
-        raw = lock.read_text(encoding="utf-8").strip()
-    except OSError:
-        return True, None
-    pid = None
-    for tok in raw.replace("\n", " ").split():
-        if tok.isdigit():
-            pid = int(tok)
-            break
-    if pid is None:
-        return True, None
-    try:
-        os.kill(pid, 0)
-        return True, pid
-    except (OSError, ProcessLookupError):
-        return False, pid
+        result = subprocess.run(
+            ["launchctl", "print", f"gui/{uid}/com.codex-autopilot.daemon"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False, None, None
+    if result.returncode != 0:
+        return False, None, None
+    text = result.stdout or ""
+    state = re.search(r"(?m)^\s*state = (\w+)\s*$", text)
+    pid_match = re.search(r"(?m)^\s*pid = (\d+)\s*$", text)
+    repo_match = re.search(r"(?m)^\s*KG_REPO => (.+?)\s*$", text)
+    pid = int(pid_match.group(1)) if pid_match else None
+    bound_repo = str(Path(repo_match.group(1)).expanduser().resolve()) if repo_match else None
+    return bool(state and state.group(1) == "running" and pid), pid, bound_repo
 
 
 def _ledger_count():
@@ -678,18 +676,31 @@ def _append_native_route(ledger_id, result, status):
     """Persist host linkage metadata without creating a second task ledger."""
     path = _native_routes_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    turn = result.get("turn") or {}
     record = {
         "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         "ledger_id": ledger_id,
         "status": status,
         "thread_id": result.get("thread_id"),
-        "turn_id": result.get("turn_id"),
+        "turn_id": result.get("turn_id") or turn.get("id")
+        or (turn.get("turn") or {}).get("id") or result.get("turnId"),
         "section_id": result.get("section_id"),
         "cwd": result.get("cwd"),
     }
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     return record
+
+
+def _ledger_item(ledger_id):
+    latest = {}
+    for record in _read_jsonl(_truth_dir() / "ledger.jsonl"):
+        if record.get("id"):
+            latest[record["id"]] = record
+    item = latest.get(ledger_id)
+    if item and item.get("status") in ("open", "doing", "todo", "wip", "blocked"):
+        return item
+    return None
 
 
 def _native_route_map():
@@ -927,8 +938,10 @@ def _status_payload(fast=True):
     """把控制开关 + 缓存状态 + 项目计数，拼成面板和模型都能用的一个 JSON。"""
     from datetime import datetime, timezone
     ctrl = control_state.load()
-    st = _daemon_state()
-    live, pid = _daemon_live()
+    job_running, pid, daemon_project = _daemon_live()
+    current_project = str(Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve())
+    live = bool(job_running and daemon_project == current_project)
+    st = _daemon_state() if live else {}
     summary = st.get("last_summary") or {}
     board = _acceptance_board()
     failures = [{"target": t, "kind": k} for t, k in (st.get("last_failures") or [])]
@@ -939,7 +952,7 @@ def _status_payload(fast=True):
     enabled = bool(ctrl.get("enabled", True))
     lifecycle = control_state.lifecycle_status(ctrl)
 
-    exec_now = _running_exec()
+    exec_now = _running_exec() if live else None
     if ctrl.get("error"):
         state_key, state_label = "error", "状态异常，已安全暂停"
     elif not enabled:
@@ -951,7 +964,11 @@ def _status_payload(fast=True):
     elif failures:
         state_key, state_label = "blocked", "有分支需要你拍板"
     elif not live:
-        state_key, state_label = "session_only", "仅会话内运行（常驻未开）"
+        state_key, state_label = "session_only", (
+            "当前项目未连接常驻守护"
+            if job_running and daemon_project and daemon_project != current_project
+            else "仅会话内运行（常驻未开）"
+        )
     elif summary.get("clean") or summary.get("merged"):
         state_key, state_label = "working", "正在检查可合入的分支"
     else:
@@ -981,6 +998,9 @@ def _status_payload(fast=True):
     elif rtasks:
         doing = f"正在处理 {len(rtasks)} 条冲突，拆成可执行任务后逐条收口"
         why = "冲突不丢给你逐条裁决，先自动拆成任务，解完再走同一道门禁"
+    elif job_running and daemon_project and daemon_project != current_project:
+        doing = "后台守护正在服务另一个项目；当前项目的任务与进度不会混入它的队列"
+        why = "常驻守护按项目绑定，面板只读取当前项目自己的账本"
     else:
         doing = "已检查一轮，当前没有能安全自动合入的分支"
         why = "和 main 冲突的、或门禁没过的，不会被自动合，等你处理"
@@ -1015,6 +1035,7 @@ def _status_payload(fast=True):
         "why": why,
         "recent": recent,
         "need_action": need_action,
+        "recent_completed": list(last[:5]),
         "switches": {
             "auto_land": bool(ctrl.get("auto_land", True)),
             "auto_resolve": bool(ctrl.get("auto_resolve", True)),
@@ -1024,7 +1045,9 @@ def _status_payload(fast=True):
         },
         "daemon": {
             "live": bool(live),
+            "job_running": bool(job_running),
             "pid": pid,
+            "project": daemon_project,
             "last_cycle": st.get("last_cycle_iso"),
             "interval_min": st.get("interval_min"),
         },
@@ -1264,22 +1287,43 @@ def call_tool(name, args):
             cwd = (args.get("cwd") or "").strip()
             result, error = codex_native.start_thread(cwd, args.get("section_id"))
         elif name == "codex_native_dispatch_task":
+            ledger_id = (args.get("ledger_id") or "").strip()
+            if not _ledger_item(ledger_id):
+                return {
+                    "code": "AUTOPILOT_LEDGER_ITEM_NOT_DISPATCHABLE",
+                    "message": "只能给自动挡台账中仍未收口的问题派活。",
+                }, 2
             result, error = codex_native.dispatch_task(
                 (args.get("cwd") or "").strip(),
                 args.get("prompt"),
                 args.get("section_id"),
             )
-            if not error:
+            if result:
                 _append_native_route(
-                    args["ledger_id"],
+                    ledger_id,
                     result,
-                    status="dispatched",
+                    status="dispatch_failed" if error else "dispatched",
                 )
         elif name == "codex_native_follow_up":
+            thread_id = (args.get("thread_id") or "").strip()
             result, error = codex_native.follow_up(
-                (args.get("thread_id") or "").strip(),
+                thread_id,
                 args.get("prompt"),
             )
+            if not error:
+                binding = next(
+                    (row for row in _native_route_map().values()
+                     if row.get("thread_id") == thread_id),
+                    None,
+                )
+                if binding:
+                    _append_native_route(
+                        binding["ledger_id"],
+                        {"thread_id": thread_id, "turn": result or {},
+                         "section_id": binding.get("section_id"),
+                         "cwd": binding.get("cwd")},
+                        status="follow_up_started",
+                    )
         else:
             result, error = codex_native.move_thread(
                 (args.get("thread_id") or "").strip(),

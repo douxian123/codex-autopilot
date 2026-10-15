@@ -660,6 +660,102 @@ def test_control_state():
     print("selftest ok: 用户级开关生效，暂停闸门拦住新工作，损坏即安全暂停。")
 
 
+def test_installer():
+    """版本化安装只切 marketplace 指针，不覆盖旧插件；回滚只还原自动挡入口。"""
+    import json as _json
+
+    install = OPS.parent / "install.sh"
+    with tempfile.TemporaryDirectory(prefix="autopilot-install-test-") as tmp:
+        home = Path(tmp) / "home"
+        old_plugin = home / "plugins" / "codex-autopilot"
+        old_plugin.mkdir(parents=True)
+        sentinel = old_plugin / "user-preserved.txt"
+        sentinel.write_text("keep\n", encoding="utf-8")
+        market = home / ".agents" / "plugins" / "marketplace.json"
+        market.parent.mkdir(parents=True)
+        market.write_text(_json.dumps({
+            "name": "personal",
+            "plugins": [
+                {"name": "other-plugin", "source": {"source": "local", "path": "./plugins/other"}},
+                {"name": "codex-autopilot",
+                 "source": {"source": "local", "path": "./plugins/codex-autopilot"},
+                 "policy": {"installation": "AVAILABLE"}},
+            ],
+        }), encoding="utf-8")
+
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        command = ["bash", str(install), "--no-seed", str(OPS.parent)]
+        upgraded = run(command, env=env, check=False)
+        if upgraded.returncode:
+            raise AssertionError(f"版本化安装失败:\n{upgraded.stdout}\n{upgraded.stderr}")
+        data = _json.loads(market.read_text(encoding="utf-8"))
+        entry = next(p for p in data["plugins"] if p["name"] == "codex-autopilot")
+        other = next(p for p in data["plugins"] if p["name"] == "other-plugin")
+        assert entry["source"]["path"] == "./plugins/codex-autopilot/releases/0.6.0-preview.1"
+        assert other["source"]["path"] == "./plugins/other"
+        assert sentinel.read_text(encoding="utf-8") == "keep\n"
+        release = home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.1"
+        assert (release / "ops" / "central_mcp.py").is_file()
+
+        duplicate = run(command, env=env, check=False)
+        assert duplicate.returncode != 0 and "拒绝覆盖" in duplicate.stderr
+        data_after_duplicate = _json.loads(market.read_text(encoding="utf-8"))
+        entry_after_duplicate = next(
+            p for p in data_after_duplicate["plugins"] if p["name"] == "codex-autopilot")
+        assert entry_after_duplicate["source"]["path"] == entry["source"]["path"]
+
+        rolled_back = run(["bash", str(install), "--rollback"], env=env, check=False)
+        if rolled_back.returncode:
+            raise AssertionError(f"回滚失败:\n{rolled_back.stdout}\n{rolled_back.stderr}")
+        restored = _json.loads(market.read_text(encoding="utf-8"))
+        restored_entry = next(p for p in restored["plugins"] if p["name"] == "codex-autopilot")
+        assert restored_entry["source"]["path"] == "./plugins/codex-autopilot"
+        assert any(p["name"] == "other-plugin" for p in restored["plugins"])
+        assert sentinel.read_text(encoding="utf-8") == "keep\n"
+        assert (release / "ops" / "central_mcp.py").is_file()
+
+    print("selftest ok: 安装器使用不可变版本目录、拒绝覆盖同版本、保留旧安装并可回滚入口。")
+
+
+def test_daemon_project_binding():
+    """仅把绑定到当前项目的 launchd 守护显示为当前项目正在运行。"""
+    import importlib
+    from unittest import mock
+
+    sys.path.insert(0, str(OPS))
+    import central_mcp
+    importlib.reload(central_mcp)
+    old_repo = os.environ.get("KG_REPO")
+    os.environ["KG_REPO"] = "/tmp/autopilot-project-a"
+    try:
+        same_project = mock.Mock(
+            returncode=0,
+            stdout=("state = running\npid = 4321\n"
+                    "KG_REPO => /tmp/autopilot-project-a\n"),
+        )
+        with mock.patch.object(central_mcp.subprocess, "run", return_value=same_project):
+            live, pid, project = central_mcp._daemon_live()
+            assert live and pid == 4321 and project == str(Path("/tmp/autopilot-project-a").resolve())
+
+        other_project = mock.Mock(
+            returncode=0,
+            stdout=("state = running\npid = 8765\n"
+                    "KG_REPO => /tmp/autopilot-project-b\n"),
+        )
+        with mock.patch.object(central_mcp.subprocess, "run", return_value=other_project):
+            live, pid, project = central_mcp._daemon_live()
+            assert live and pid == 8765 and project == str(Path("/tmp/autopilot-project-b").resolve())
+            target = str(Path(os.environ["KG_REPO"]).resolve())
+            assert project != target
+    finally:
+        if old_repo is None:
+            os.environ.pop("KG_REPO", None)
+        else:
+            os.environ["KG_REPO"] = old_repo
+    print("selftest ok: launchd 状态通过 launchctl 查询，跨项目 daemon 不冒充当前项目。")
+
+
 def test_codex_native_bridge():
     """app-server 使用官方协议参数；历史数据库只读降级，不写宿主状态。"""
     import importlib
@@ -671,20 +767,43 @@ def test_codex_native_bridge():
     import codex_native
     importlib.reload(codex_native)
 
-    response = "\n".join([
-        _json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}}),
-        _json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"thread": {
-            "id": "thread-1", "cwd": "/tmp/project", "sectionId": "section-1"}}}),
-        "",
-    ])
-    with mock.patch.object(codex_native.subprocess, "run",
-                           return_value=mock.Mock(returncode=0, stdout=response, stderr="")) as run_mock:
-        started, error = codex_native.start_thread("/tmp", "section-1")
-        assert error is None and started["thread_id"] == "thread-1"
-        requests = [_json.loads(line) for line in run_mock.call_args.kwargs["input"].splitlines()]
-        assert requests[0]["method"] == "initialize"
-        assert requests[1]["method"] == "initialized"
-        assert requests[2]["params"]["sectionId"] == "section-1"
+    with tempfile.TemporaryDirectory(prefix="codex-fake-server-") as tmp:
+        server = Path(tmp) / "fake_app_server.py"
+        server.write_text(
+            "import json, sys\n"
+            "for line in sys.stdin:\n"
+            "    req = json.loads(line)\n"
+            "    method, rid = req.get('method'), req.get('id')\n"
+            "    if rid is None:\n"
+            "        continue\n"
+            "    if method == 'thread/start':\n"
+            "        result = {'thread': {'id': 'thread-1', 'cwd': '/tmp'}}\n"
+            "    elif method == 'turn/start':\n"
+            "        result = {'turn': {'id': 'turn-1'}}\n"
+            "    else:\n"
+            "        result = {}\n"
+            "    print(json.dumps({'id': rid, 'result': result}), flush=True)\n",
+            encoding="utf-8",
+        )
+        proc, error = codex_native._open_session([sys.executable, str(server)])
+        assert error is None and proc is not None
+        try:
+            created, error = codex_native._session_request(
+                proc, "thread/start", {"cwd": "/tmp"})
+            assert error is None and created["thread"]["id"] == "thread-1"
+            moved, error = codex_native._session_request(
+                proc, "threadSection/move",
+                {"threadId": "thread-1", "sectionId": "section-1"})
+            assert error is None and moved == {}
+            started, error = codex_native._session_request(
+                proc, "turn/start", {
+                    "threadId": "thread-1",
+                    "input": codex_native._turn_input("请实现并验证这个任务"),
+                })
+            assert error is None and started["turn"]["id"] == "turn-1"
+            assert codex_native._turn_input("x") == [{"type": "text", "text": "x"}]
+        finally:
+            codex_native._close_session(proc)
 
     with mock.patch.object(codex_native, "_rpc", return_value=(None, "unavailable")):
         with tempfile.TemporaryDirectory(prefix="codex-history-") as tmp:
@@ -714,9 +833,10 @@ def test_codex_native_bridge():
                 codex_native.HISTORY_DB = old_db
 
     fake_proc = object()
-    with mock.patch.object(codex_native, "_session", return_value=(fake_proc, None)), \
+    with mock.patch.object(codex_native, "_session", return_value=(fake_proc, None)) as session_mock, \
             mock.patch.object(codex_native, "_session_request", side_effect=[
                 ({"thread": {"id": "thread-dispatch", "cwd": "/tmp"}}, None),
+                ({}, None),
                 ({"turn": {"id": "turn-dispatch"}}, None),
             ]) as request_mock, \
             mock.patch.object(codex_native, "_close_session") as close_mock:
@@ -725,18 +845,43 @@ def test_codex_native_bridge():
         assert error is None
         assert dispatched["thread_id"] == "thread-dispatch"
         assert dispatched["turn_id"] == "turn-dispatch"
-        assert request_mock.call_args_list[1].args[1] == "turn/start"
-        assert request_mock.call_args_list[1].args[2]["threadId"] == "thread-dispatch"
+        session_mock.assert_called_once_with(host_only=True)
+        assert [call.args[1] for call in request_mock.call_args_list] == [
+            "thread/start", "threadSection/move", "turn/start"]
+        assert "sectionId" not in request_mock.call_args_list[0].args[2]
+        assert request_mock.call_args_list[1].args[2]["sectionId"] == "section-1"
+        assert request_mock.call_args_list[2].args[2]["threadId"] == "thread-dispatch"
         close_mock.assert_called_once_with(fake_proc)
 
-    with mock.patch.object(codex_native, "_session", return_value=(fake_proc, None)), \
+    with mock.patch.object(codex_native, "_session", return_value=(fake_proc, None)) as session_mock, \
             mock.patch.object(codex_native, "_session_request",
                               return_value=({"turn": {"id": "turn-follow-up"}}, None)), \
             mock.patch.object(codex_native, "_close_session"):
         continued, error = codex_native.follow_up("thread-dispatch", "继续处理并回报卡点")
         assert error is None and continued["turn"]["id"] == "turn-follow-up"
+        session_mock.assert_called_once_with(host_only=True)
 
-    print("selftest ok: Codex app-server 初始化/sectionId 协议与 SQLite 只读历史降级通过。")
+    with mock.patch.object(codex_native, "_rpc", side_effect=[
+        ({"thread": {"id": "thread-start", "cwd": "/tmp"}}, None),
+        ({}, None),
+    ]) as rpc_mock:
+        started, error = codex_native.start_thread("/tmp", "section-1")
+        assert error is None and started["section_id"] == "section-1"
+        assert rpc_mock.call_args_list[0].args[1] == {
+            "cwd": str(Path("/tmp").resolve())}
+        assert rpc_mock.call_args_list[1].args[1] == {
+            "threadId": "thread-start", "sectionId": "section-1"}
+
+    with mock.patch.object(codex_native, "_session", return_value=(fake_proc, None)), \
+            mock.patch.object(codex_native, "_session_request", side_effect=[
+                ({"thread": {"id": "thread-orphan", "cwd": "/tmp"}}, None),
+                (None, "turn/start rejected"),
+            ]), mock.patch.object(codex_native, "_close_session"):
+        partial, error = codex_native.dispatch_task("/tmp", "task")
+        assert partial["thread_id"] == "thread-orphan" and partial["turn_id"] is None
+        assert "thread 已创建" in error
+
+    print("selftest ok: app-server 初始化顺序、原生窗口集合移动、turn/start 输入协议与只读历史降级通过。")
 
 
 def test_verify_and_truth():
@@ -1425,6 +1570,8 @@ if __name__ == "__main__":
     test_resolve()
     test_reset_trunk_truth_conflict()
     test_control_state()
+    test_installer()
+    test_daemon_project_binding()
     test_codex_native_bridge()
     test_verify_and_truth()
     test_auto_exec()

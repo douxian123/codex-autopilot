@@ -15,10 +15,23 @@ from pathlib import Path
 OPS = Path(__file__).resolve().parent
 sys.path.insert(0, str(OPS))
 import control_state  # noqa: E402
+from plugin_binding import apply_plugin_env  # noqa: E402
+
+apply_plugin_env()
+
+
+def _companion_config():
+    path = (Path.home() / "Library" / "Application Support"
+            / "CodexAutopilot" / "companion.json")
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
 
 
 def _repo():
-    return Path(os.environ.get("KG_REPO") or OPS.parent).expanduser().resolve()
+    configured = _companion_config().get("project")
+    return Path(os.environ.get("KG_REPO") or configured or OPS.parent).expanduser().resolve()
 
 
 def _result(payload, code=0):
@@ -29,8 +42,19 @@ def _result(payload, code=0):
 def main(argv):
     action = argv[0] if argv else "status"
     if action == "status":
+        from central_mcp import _status_payload
+
         cfg = control_state.load()
+        snapshot = _status_payload(fast=True)
+        active = (snapshot.get("doing_items") or [])[:3]
+        attention = (
+            (snapshot.get("human_acceptance") or [])
+            + (snapshot.get("blocked", {}).get("failures") or [])
+            + (snapshot.get("blocked", {}).get("resolve") or [])
+            + (snapshot.get("blocked", {}).get("exec") or [])
+        )[:5]
         return _result({
+            "ok": True,
             "enabled": bool(cfg.get("enabled", True)),
             "lifecycle": control_state.lifecycle_status(cfg),
             "paused": bool(cfg.get("paused")),
@@ -40,6 +64,26 @@ def main(argv):
                             "auto_exec", "daemon_enabled")
             },
             "error": cfg.get("error"),
+            "project": str(_repo()),
+            "current_task": (
+                {
+                    "title": (snapshot.get("exec_now") or {}).get("title")
+                    or (active[0].get("title") if active else None),
+                    "stage": "自动实现中" if snapshot.get("exec_now") else (
+                        "处理中" if active else "空闲"
+                    ),
+                    "detail": snapshot.get("doing"),
+                }
+                if snapshot.get("exec_now") or active
+                else None
+            ),
+            "attention": [
+                item.get("title") or item.get("target") or item.get("branch")
+                or item.get("id") or "需要处理"
+                for item in attention
+            ],
+            "recent_completed": snapshot.get("recent_completed") or [],
+            "daemon": snapshot.get("daemon") or {},
         })
     if action in ("enable", "disable"):
         enabled = action == "enable"

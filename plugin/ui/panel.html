@@ -237,6 +237,17 @@
   .toast{font-size:12.5px;color:var(--ink-3);min-height:16px;flex:1 1 auto;text-align:right}
   .toast.ok{color:var(--ok)}
   .toast.err{color:var(--err)}
+  .intake{margin:14px 0 18px}
+  .intake label{display:block;font-size:13px;font-weight:600;margin-bottom:7px}
+  .intake textarea{display:block;width:100%;min-height:76px;resize:vertical;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;padding:10px 12px}
+  .intake textarea:focus{outline:2px solid var(--brand-500);outline-offset:1px}
+  .intake-actions{display:flex;align-items:center;gap:10px;margin-top:8px}
+  .intake-actions .btn{border-radius:8px}
+  .intake-state{font-size:12px;color:var(--ink-3);min-width:0;overflow-wrap:anywhere}
+  .overview-detail{margin:18px 0}
+  .overview-detail>summary{list-style:none;cursor:pointer;padding:11px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:13px;font-weight:600;color:var(--ink)}
+  .overview-detail>summary::-webkit-details-marker{display:none}
+  .overview-detail[open]>summary{margin-bottom:12px}
 
   /* switches */
   .switchrow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line-2)}
@@ -310,47 +321,59 @@
     <span class="al-tx">读取中…</span>
   </div>
 
-  <section class="track">
-    <div class="stages">
-      <div class="stage" id="stageTodo"><div class="n" id="stTodo">0</div><div class="l">待处理</div></div>
-      <div class="stage" id="stageDoing"><div class="n" id="stDoing">0</div><div class="l">进行中</div></div>
-      <div class="stage" id="stageReview"><div class="n" id="stReview">0</div><div class="l">待你验收</div></div>
-      <div class="stage" id="stageStuck"><div class="n" id="stStuck">0</div><div class="l">卡住</div></div>
-    </div>
-    <div class="stats">
-      <span><b id="cReceived">0</b>收到反馈</span>
-      <span><b id="cLanded">0</b>已合入</span>
-      <span><b id="cResolved">0</b>已收口</span>
+  <section class="intake">
+    <label for="intakeText">派一个新任务</label>
+    <textarea id="intakeText" placeholder="说说你发现的问题或想完成的事"></textarea>
+    <div class="intake-actions">
+      <button class="btn primary" id="intakeSubmit">提交任务</button>
+      <span class="intake-state" id="intakeState" role="status" aria-live="polite"></span>
     </div>
   </section>
 
   <section class="card">
-    <div class="chead"><h2>进行中的任务</h2><span class="count" id="workCount"></span></div>
+    <div class="chead"><h2>当前工作</h2><span class="count" id="workCount"></span></div>
     <div id="progressBox"></div>
   </section>
 
-  <section class="card">
-    <div class="chead"><h2>任务路线</h2><span class="count">Codex 原生工作区</span></div>
-    <div class="route-summary" id="routeSummary">任务由自动挡账本、泳道分支和 worktree 关联；Codex thread 的实时列表由宿主提供时再显示。</div>
-    <details class="fold" style="margin-top:10px"><summary>路线与工作区详情</summary><div class="foldbody"><div id="routeBox"></div></div></details>
-  </section>
-
-  <section class="card">
-    <div class="chead"><h2>产品路线</h2><span class="count" id="roadFrac"></span></div>
-    <div class="roadbar"><span id="roadFill"></span></div>
-    <div class="roadnow" id="roadNow"></div>
-    <details class="fold" style="margin-top:12px"><summary>每一步到哪了</summary><div class="foldbody"><div id="roadmapBox"></div></div></details>
-  </section>
-
   <section class="card" id="acceptCard">
-    <div class="chead"><h2>需要你验收</h2><span class="count" id="accNote"></span></div>
+    <div class="chead"><h2>需要你处理</h2><span class="count" id="accNote"></span></div>
     <div id="acceptBox"></div>
   </section>
 
-  <section class="card">
-    <div class="chead"><h2>产品主线</h2></div>
-    <div id="mainlineBox"></div>
-  </section>
+  <details class="overview-detail">
+    <summary>路线与工程详情</summary>
+    <section class="track">
+      <div class="stages">
+        <div class="stage" id="stageTodo"><div class="n" id="stTodo">0</div><div class="l">待处理</div></div>
+        <div class="stage" id="stageDoing"><div class="n" id="stDoing">0</div><div class="l">进行中</div></div>
+        <div class="stage" id="stageReview"><div class="n" id="stReview">0</div><div class="l">待你验收</div></div>
+        <div class="stage" id="stageStuck"><div class="n" id="stStuck">0</div><div class="l">卡住</div></div>
+      </div>
+      <div class="stats">
+        <span><b id="cReceived">0</b>收到反馈</span>
+        <span><b id="cLanded">0</b>已合入</span>
+        <span><b id="cResolved">0</b>已收口</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="chead"><h2>任务路线</h2><span class="count">Codex 原生工作区</span></div>
+      <div class="route-summary" id="routeSummary">任务由自动挡账本、泳道分支和 worktree 关联；Codex thread 的实时列表由宿主提供时再显示。</div>
+      <details class="fold" style="margin-top:10px"><summary>路线与工作区详情</summary><div class="foldbody"><div id="routeBox"></div></div></details>
+    </section>
+
+    <section class="card">
+      <div class="chead"><h2>产品路线</h2><span class="count" id="roadFrac"></span></div>
+      <div class="roadbar"><span id="roadFill"></span></div>
+      <div class="roadnow" id="roadNow"></div>
+      <details class="fold" style="margin-top:12px"><summary>每一步到哪了</summary><div class="foldbody"><div id="roadmapBox"></div></div></details>
+    </section>
+
+    <section class="card">
+      <div class="chead"><h2>产品主线</h2></div>
+      <div id="mainlineBox"></div>
+    </section>
+  </details>
 
   <section class="ctrl">
     <button class="btn danger" id="pauseBtn">暂停</button>
@@ -487,6 +510,10 @@
 
   function callTool(name, args){
     return request("tools/call", {name:name, arguments:args||{}}).then(function(res){
+      if (res && res.isError) {
+        var message = res.content && res.content[0] && res.content[0].text;
+        throw new Error(message || "操作未完成");
+      }
       if (res && res.structuredContent) return res.structuredContent;
       var t = "";
       if (res && res.content && res.content[0]) t = res.content[0].text || "";
@@ -594,6 +621,8 @@
     renderProgress(doingItems, s.todo_items || [], todoCount);
     renderRoute(s.route || {});
     renderMainline(s.mainline || {});
+    var intakeButton = el("intakeSubmit");
+    if (intakeButton) intakeButton.disabled = !s.enabled || !!s.error;
   }
 
   function renderExecNow(en){
@@ -1035,6 +1064,33 @@
       return loadStatus(false);
     }).catch(function(e){ toast("检查失败：" + (e && e.message || e), "err"); })
       .then(function(){ btn.disabled = false; });
+  });
+
+  el("intakeSubmit").addEventListener("click", function(){
+    var field = el("intakeText");
+    var text = field.value.trim();
+    if (!text) {
+      el("intakeState").textContent = "先写下要处理的事";
+      return;
+    }
+    var button = el("intakeSubmit");
+    button.disabled = true;
+    el("intakeState").textContent = "正在加入自动挡任务…";
+    callTool("intake_request", {text:text, kind:"unknown"}).then(function(result){
+      field.value = "";
+      el("intakeState").textContent = result.__text__ || "已加入任务并开始归类";
+      return loadStatus(false);
+    }).catch(function(error){
+      el("intakeState").textContent = "没有提交成功：" + (error.message || error);
+    }).then(function(){
+      button.disabled = !(state && state.enabled);
+    });
+  });
+  el("intakeText").addEventListener("keydown", function(event){
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      el("intakeSubmit").click();
+    }
   });
 
   Array.prototype.forEach.call(document.querySelectorAll(".sw"), function(sw){

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Read-only Codex native thread snapshot with a safe history DB fallback."""
+"""Codex native thread bridge with a read-only history fallback."""
 
 import json
 import os
@@ -32,59 +32,23 @@ def _server_command():
     return [CLI, "app-server"]
 
 
-def _server_commands():
+def _server_commands(include_isolated=True):
     commands = [_server_command()]
     fallback = [CLI, "app-server"]
-    if commands[0] != fallback:
+    if include_isolated and commands[0] != fallback:
         commands.append(fallback)
     return commands
 
 
-def _rpc(method, params):
-    """Run one request against the official app-server stdio transport."""
-    init_id, request_id = _request_id(), _request_id()
-    requests = [
-        {"jsonrpc": "2.0", "id": init_id, "method": "initialize",
-         "params": {"clientInfo": {"name": "codex-autopilot", "title": "Codex Autopilot",
-                                   "version": "0.6.0-preview.1"},
-                     "capabilities": {}}},
-        {"jsonrpc": "2.0", "method": "initialized", "params": {}},
-        {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params},
-    ]
-    payload = "\n".join(json.dumps(item) for item in requests) + "\n"
-    last_error = None
-    for command in _server_commands():
-        try:
-            proc = subprocess.run(command, input=payload, capture_output=True,
-                                  text=True, timeout=4)
-            if proc.returncode:
-                last_error = proc.stderr.strip() or "app-server exit %d" % proc.returncode
-                continue
-            messages = {}
-            for line in proc.stdout.splitlines():
-                try:
-                    msg = json.loads(line)
-                except ValueError:
-                    continue
-                if "id" in msg:
-                    messages[str(msg["id"])] = msg
-            init_response = messages.get(str(init_id), {})
-            if init_response.get("error"):
-                error = init_response["error"]
-                last_error = str(error.get("message") or error)
-                continue
-            response = messages.get(str(request_id), {})
-            if response.get("error"):
-                error = response["error"]
-                last_error = str(error.get("message") or error)
-                continue
-            if "result" not in response:
-                last_error = "app-server 未返回方法结果"
-                continue
-            return response["result"], None
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            last_error = str(exc)
-    return None, last_error or "app-server 不可用"
+def _rpc(method, params, host_only=False):
+    """Issue one request over a handshaken app-server connection."""
+    proc, error = _session(host_only=host_only)
+    if error:
+        return None, error
+    try:
+        return _session_request(proc, method, params)
+    finally:
+        _close_session(proc)
 
 
 def _read_response(proc, response_id, timeout=8):
@@ -121,31 +85,30 @@ def _open_session(command):
                                 text=True, bufsize=1)
         init_id = _request_id()
         proc.stdin.write(json.dumps({
-            "jsonrpc": "2.0", "id": init_id, "method": "initialize",
+            "id": init_id, "method": "initialize",
             "params": {"clientInfo": {"name": "codex-autopilot",
                                       "title": "Codex Autopilot",
                                       "version": "0.6.0-preview.1"},
                        "capabilities": {}},
         }) + "\n")
-        proc.stdin.write(json.dumps(
-            {"jsonrpc": "2.0", "method": "initialized", "params": {}}
-        ) + "\n")
         proc.stdin.flush()
-        response, _, error = _read_response(proc, init_id)
+        response, _, error = _read_response(proc, init_id, timeout=30)
         if error:
             _close_session(proc)
             return None, error
         if response.get("error"):
             _close_session(proc)
             return None, str(response["error"].get("message") or response["error"])
+        proc.stdin.write(json.dumps({"method": "initialized"}) + "\n")
+        proc.stdin.flush()
         return proc, None
     except OSError as exc:
         return None, str(exc)
 
 
-def _session():
+def _session(host_only=False):
     last_error = None
-    for command in _server_commands():
+    for command in _server_commands(include_isolated=not host_only):
         proc, error = _open_session(command)
         if proc is not None:
             return proc, None
@@ -155,11 +118,14 @@ def _session():
 
 def _session_request(proc, method, params):
     request_id = _request_id()
-    proc.stdin.write(json.dumps({
-        "jsonrpc": "2.0", "id": request_id, "method": method, "params": params
-    }) + "\n")
-    proc.stdin.flush()
-    response, _, error = _read_response(proc, request_id)
+    try:
+        proc.stdin.write(json.dumps({
+            "id": request_id, "method": method, "params": params
+        }) + "\n")
+        proc.stdin.flush()
+        response, _, error = _read_response(proc, request_id)
+    except (OSError, ValueError) as exc:
+        return None, str(exc)
     if error:
         return None, error
     if response.get("error"):
@@ -179,7 +145,7 @@ def _close_session(proc):
 
 
 def _turn_input(prompt):
-    return [{"type": "input_text", "text": str(prompt)}]
+    return [{"type": "text", "text": str(prompt)}]
 
 
 def dispatch_task(cwd, prompt, section_id=None):
@@ -189,13 +155,11 @@ def dispatch_task(cwd, prompt, section_id=None):
         return None, "cwd 必须是已存在的绝对目录"
     if not str(prompt or "").strip():
         return None, "prompt 不能为空"
-    proc, error = _session()
+    proc, error = _session(host_only=True)
     if error:
         return None, error
     try:
         params = {"cwd": str(path.resolve())}
-        if section_id:
-            params["sectionId"] = section_id
         started, error = _session_request(proc, "thread/start", params)
         if error:
             return None, error
@@ -203,12 +167,30 @@ def dispatch_task(cwd, prompt, section_id=None):
         thread_id = thread.get("id")
         if not thread_id:
             return None, "thread/start 未返回 thread.id"
+        if section_id:
+            _, error = _session_request(proc, "threadSection/move", {
+                "threadId": thread_id,
+                "sectionId": section_id,
+            })
+            if error:
+                return {
+                    "thread_id": thread_id,
+                    "cwd": thread.get("cwd") or str(path.resolve()),
+                    "section_id": None,
+                    "thread": thread,
+                }, "thread 已创建，但加入窗口集合失败：" + error
         turn, error = _session_request(proc, "turn/start", {
             "threadId": thread_id,
             "input": _turn_input(prompt),
         })
         if error:
-            return None, error
+            return {
+                "thread_id": thread_id,
+                "turn_id": None,
+                "cwd": thread.get("cwd") or str(path.resolve()),
+                "section_id": thread.get("sectionId") or section_id,
+                "thread": thread,
+            }, "thread 已创建，但 turn/start 失败：" + error
         turn_data = turn or {}
         return {
             "thread_id": thread_id,
@@ -228,7 +210,7 @@ def follow_up(thread_id, prompt):
         return None, "thread_id 不能为空"
     if not str(prompt or "").strip():
         return None, "prompt 不能为空"
-    proc, error = _session()
+    proc, error = _session(host_only=True)
     if error:
         return None, error
     try:
@@ -297,7 +279,7 @@ def snapshot():
 def create_section(name):
     if not name:
         return None, "name 不能为空"
-    result, error = _rpc("threadSection/create", {"name": name})
+    result, error = _rpc("threadSection/create", {"name": name}, host_only=True)
     if error:
         return None, error
     return result.get("section"), None
@@ -307,15 +289,23 @@ def start_thread(cwd, section_id=None):
     path = Path(cwd).expanduser()
     if not path.is_absolute() or not path.is_dir():
         return None, "cwd 必须是已存在的绝对目录"
-    params = {"cwd": str(path.resolve())}
-    if section_id:
-        params["sectionId"] = section_id
-    result, error = _rpc("thread/start", params)
+    result, error = _rpc("thread/start", {"cwd": str(path.resolve())}, host_only=True)
     if error:
         return None, error
     thread = result.get("thread") or {}
+    thread_id = thread.get("id")
+    if not thread_id:
+        return None, "thread/start 未返回 thread.id"
+    if section_id:
+        _, error = _rpc("threadSection/move", {
+            "threadId": thread_id, "sectionId": section_id,
+        }, host_only=True)
+        if error:
+            return {"thread_id": thread_id, "cwd": thread.get("cwd"),
+                    "section_id": None}, "thread 已创建，但加入窗口集合失败：" + error
     return {"thread_id": thread.get("id"), "cwd": thread.get("cwd"),
-            "status": thread.get("status"), "section_id": thread.get("sectionId")}, None
+            "status": thread.get("status"),
+            "section_id": section_id or thread.get("sectionId")}, None
 
 
 def move_thread(thread_id, section_id=None, before_thread_id=None):
@@ -329,7 +319,7 @@ def move_thread(thread_id, section_id=None, before_thread_id=None):
     params = {"threadId": thread_id, "sectionId": section_id}
     if before_thread_id:
         params["beforeThreadId"] = before_thread_id
-    result, error = _rpc("threadSection/move", params)
+    result, error = _rpc("threadSection/move", params, host_only=True)
     if error:
         return None, error
     return result, None
