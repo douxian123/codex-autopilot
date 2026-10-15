@@ -779,6 +779,28 @@ def test_installer_shell_portability():
     print("selftest ok: 安装脚本在 macOS bash 3.2 + set -u 下整条路径跑完，没有多字节变量解析崩溃。")
 
 
+def test_panel_first_screen():
+    """面板首屏必须真的把控制层数据渲染出来，而不是只有对得上的元素 id。
+
+    这条真执行面板脚本（最小 DOM），核对：绑定项目、总状态、正在做什么、
+    原生直连结论、三个计数，以及「关掉总闸后是明确关闭态」。没有 node 时跳过。
+    """
+    import shutil
+
+    if not shutil.which("node"):
+        print("selftest skip: 没有 node，面板首屏逻辑检查跳过。")
+        return
+    script = OPS / "panel_logic_check.py"
+    assert script.is_file(), "panel_logic_check.py 缺失"
+    env = os.environ.copy()
+    env.setdefault("KG_REPO", str(OPS.parent))
+    result = run([sys.executable, str(script), "--quiet"],
+                 cwd=str(OPS.parent), env=env, check=False)
+    if result.returncode != 0:
+        raise AssertionError(f"面板首屏逻辑检查未通过:\n{result.stdout}\n{result.stderr}")
+    print("selftest ok: 面板首屏（含关闭态）每个值都来自真实控制层数据。")
+
+
 def test_preview_check_contract():
     """预览验收脚本是用户唯一的一键验收入口，必须真检查、真报错。
 
@@ -881,7 +903,9 @@ def test_companion_contract():
 
     source_text = source.read_text(encoding="utf-8")
     for needle in ("kVK_ANSI_A", "kVK_ANSI_S", "kVK_ANSI_D", "/usr/sbin/screencapture",
-                   "registerForDraggedTypes", "servicesProvider", "companion_api"):
+                   "registerForDraggedTypes", "servicesProvider", "companion_api",
+                   # 附件必须看得见、撤得掉，不能退化成一个数字
+                   "lastPathComponent", "xmark.circle.fill"):
         assert needle in source_text, f"Companion 源码缺少 {needle}"
     # Companion 不许自己造第二套任务账本或第二套状态文件。
     for forbidden in ("intake.jsonl", "ledger.jsonl", "control.json"):
@@ -993,6 +1017,14 @@ def test_panel_contract():
     switch_keys = set(re.findall(r'data-key="([^"]+)"', html))
     unknown = sorted(switch_keys - set(control_state.DEFAULTS))
     assert not unknown, f"面板有控制层不认识的开关：{unknown}"
+
+    # 首屏必须能回答「当前绑定哪个项目」：面板元素、控制层字段、真实名字三边都在。
+    assert "projectLine" in dom_ids, "面板首屏缺少绑定项目那一行"
+    payload = central_mcp._status_payload(fast=True)
+    project = payload.get("project")
+    assert isinstance(project, dict), "控制层没有把绑定项目吐给面板"
+    assert project.get("name"), "绑定项目没有名字，面板会显示未绑定"
+    assert project.get("path"), "绑定项目没有路径，用户无法确认是哪一个"
 
     print(f"selftest ok: 面板元素（{len(used_ids)} 个）与工具（{len(called)} 个）"
           f"全部真实存在，开关项都在控制层里。")
@@ -1818,6 +1850,7 @@ if __name__ == "__main__":
     test_companion_contract()
     test_panel_contract()
     test_preview_check_contract()
+    test_panel_first_screen()
     test_codex_native_bridge()
     test_verify_and_truth()
     test_auto_exec()

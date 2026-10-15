@@ -716,6 +716,41 @@ def _native_route_map():
     return latest
 
 
+def _recent_done(landed, limit=5):
+    """最近完成了什么：真相层里已收口的问题 + 守护进程刚合入的分支。
+
+    以前这一行只显示「自动合入过的分支」，在没有常驻守护、只是走完台账闭环的项目里
+    永远是空的；可用户问「最近完成了什么」，问的是这个项目最近真正收口了什么事。
+    """
+    rows = []
+    latest = {}
+    for r in _read_jsonl(_truth_dir() / "ledger.jsonl"):
+        if r.get("id"):
+            latest[r["id"]] = r
+    for r in latest.values():
+        if r.get("status") in ("done", "wontfix"):
+            title = " ".join((r.get("title") or "").split())
+            rows.append((r.get("ts") or "", f"{r.get('id')} 已收口：{title[:70]}"))
+    for item in (landed or []):
+        if isinstance(item, dict):
+            name = item.get("branch") or item.get("target") or item.get("id") or ""
+            when = item.get("ts") or item.get("at") or ""
+        else:
+            name, when = str(item), ""
+        if name:
+            rows.append((when, f"{name} 已合入"))
+    rows.sort(key=lambda pair: pair[0], reverse=True)
+    seen, out = set(), []
+    for _, text in rows:
+        if text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def _acceptance_board():
     """验收分两堆：需要人拍板的、机器已自证的。顺带分出未决问题的 doing/todo。"""
     latest = {}
@@ -1055,11 +1090,15 @@ def _status_payload(fast=True):
         "error": ctrl.get("error"),
         "state": state_key,
         "state_label": state_label,
+        "project": {
+            "path": current_project,
+            "name": Path(current_project).name,
+        },
         "doing": doing,
         "why": why,
         "recent": recent,
         "need_action": need_action,
-        "recent_completed": list(last[:5]),
+        "recent_completed": _recent_done(last, 5),
         "switches": {
             "auto_land": bool(ctrl.get("auto_land", True)),
             "auto_resolve": bool(ctrl.get("auto_resolve", True)),

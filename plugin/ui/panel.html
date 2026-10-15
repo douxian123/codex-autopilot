@@ -244,6 +244,7 @@
   .intake-actions{display:flex;align-items:center;gap:10px;margin-top:8px}
   .intake-actions .btn{border-radius:8px}
   .nativeline{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+  .projline{margin-top:8px;overflow-wrap:anywhere}
   .nativeline #nativeState{font-size:12.5px;color:var(--ink-2);line-height:1.5}
   .nativeline .btn{padding:5px 10px;font-size:12px;border-radius:8px;flex:0 0 auto}
   .intake-state{font-size:12px;color:var(--ink-3);min-width:0;overflow-wrap:anywhere}
@@ -306,6 +307,7 @@
       <div><div class="t">Codex 自动挡</div><div class="d" id="masterState">正在读取状态…</div></div>
       <button class="sw" id="masterToggle" aria-label="启用或关闭 Codex 自动挡" aria-pressed="true"></button>
     </div>
+    <div class="d projline" id="projectLine">绑定项目：读取中…</div>
   </section>
 
   <section class="hero">
@@ -341,6 +343,11 @@
   <section class="card" id="acceptCard">
     <div class="chead"><h2>需要你处理</h2><span class="count" id="accNote"></span></div>
     <div id="acceptBox"></div>
+  </section>
+
+  <section class="card" id="recentCard">
+    <div class="chead"><h2>最近完成</h2><span class="count" id="recentNote"></span></div>
+    <div id="recentBox"></div>
   </section>
 
   <details class="overview-detail">
@@ -600,6 +607,12 @@
     master.disabled = !!s.error;
     setText("masterState", s.error || (!s.enabled ? "已关闭 · Codex 原生功能不受影响" :
       (s.lifecycle === "draining" ? "暂停推进 · 当前安全操作可收尾" : "正在运行")));
+    var proj = s.project || {};
+    var pl = el("projectLine");
+    if (pl) {
+      pl.textContent = "绑定项目：" + (proj.name || "未绑定") + (proj.path ? "（" + proj.path + "）" : "");
+      pl.title = proj.path || "";
+    }
     el("runBtn").disabled = !s.enabled || !!s.paused;
     el("pauseBtn").disabled = !s.enabled;
     renderNative(s);
@@ -626,6 +639,7 @@
     renderVerify(s.last_verification);
     renderRoadmap(s.roadmap || [], s.mainline || {});
     renderAcceptance(humanAcc, s.machine_verified || []);
+    renderRecent(s.recent_completed || []);
     renderProgress(doingItems, s.todo_items || [], todoCount);
     renderRoute(s.route || {});
     renderMainline(s.mainline || {});
@@ -909,6 +923,24 @@
       meta.textContent = bits.join(" · ") || "已进入账本，等待路由";
       row.appendChild(title); row.appendChild(meta); box.appendChild(row);
     });
+  }
+
+  function renderRecent(list){
+    var box = el("recentBox"); if (!box) return; box.innerHTML = "";
+    var note = el("recentNote");
+    list = list || [];
+    if (note) note.textContent = list.length ? (list.length + " 项") : "";
+    if (!list.length){
+      box.innerHTML = '<div class="empty">还没有收口记录。走完一次「修复 → 验证 → 关闭台账」后会出现在这里。</div>';
+      return;
+    }
+    var ul = document.createElement("ul"); ul.className = "list";
+    list.slice(0,5).forEach(function(text){
+      var li = document.createElement("li");
+      var g = document.createElement("span"); g.className = "grow"; g.textContent = text;
+      li.appendChild(g); ul.appendChild(li);
+    });
+    box.appendChild(ul);
   }
 
   function renderAcceptance(human, machine){

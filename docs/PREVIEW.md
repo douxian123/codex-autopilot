@@ -13,6 +13,15 @@ bash preview-check.sh
 
 只想自检、不动安装：`bash preview-check.sh --no-install`；无图形界面时：`--no-open`。
 
+面板本身还有两条独立检查：
+
+```bash
+python3 ops/panel_logic_check.py    # 真跑面板脚本：首屏每个值是否都来自真实状态（含关闭态）
+python3 ops/panel_render_check.py   # 真浏览器渲染真面板：断言首屏文字并存一张截图
+```
+
+第一条不依赖浏览器，随时能跑；第二条需要本机有 Chrome/Chromium（`AUTOPILOT_CHROMIUM` 可指定），截图落在 `docs/panel-first-screen.png`。
+
 ## 装什么
 
 一条命令（在仓库根目录）：

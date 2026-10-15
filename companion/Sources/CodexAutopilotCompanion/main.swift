@@ -401,9 +401,33 @@ struct CompanionView: View {
             }
             Divider()
             if !model.attachments.isEmpty {
-                Text("附件 \(model.attachments.count) 个")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                // 附件要看得见、撤得掉：只报数量的话，派出去的活带了什么自己都不知道。
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("附件 \(model.attachments.count) 个")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    ForEach(model.attachments, id: \.self) { path in
+                        HStack(spacing: 5) {
+                            Image(systemName: "paperclip")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Text((path as NSString).lastPathComponent)
+                                .font(.caption)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .help(path)
+                            Spacer(minLength: 0)
+                            Button {
+                                model.attachments.removeAll { $0 == path }
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                            .help("移除此附件")
+                        }
+                    }
+                }
             }
             TextField("派一个新任务", text: $model.intake)
                 .textFieldStyle(.roundedBorder)
