@@ -331,7 +331,7 @@ TOOLS = [
     },
     {
         "name": "autopilot_status",
-        "description": "自动挡的当前状态：是否暂停、三个自动开关、常驻是否在跑、正在做什么/为什么、最近替你完成了什么、累计收到多少反馈与收口多少项、是否有需要你拍板的事。面板用它渲染；模型回答“自动挡现在在干嘛 / 开着吗 / 做了什么”时也用它。默认 fast=true 只读本机缓存，不发命令、不改任何东西。",
+        "description": "自动挡的当前状态：总开关 on/draining/off/error、自动开关、Codex 原生 task/worktree 映射（仅已有真实记录）、正在做什么和需要处理的事项。面板用它渲染；fast=true 只读缓存。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -342,13 +342,13 @@ TOOLS = [
     },
     {
         "name": "autopilot_control",
-        "description": "控制自动挡。action=pause 随时停（不再启动新工作，当前 Git 操作安全收尾）；resume 恢复；run_once 立刻检查一轮；set_auto_land/set_auto_resolve/set_auto_port 真开关三个自动动作；enable_daemon/disable_daemon 开关后台常驻。返回控制后的最新状态。",
+        "description": "控制自动挡总开关与运行状态。disable 关闭外挂并拒绝新自动工作，enable 恢复；pause 暂停推进但允许安全收尾，resume 恢复；其余 action 控制自动动作和后台常驻。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["pause", "resume", "run_once", "set_auto_land",
+                    "enum": ["enable", "disable", "pause", "resume", "run_once", "set_auto_land",
                              "set_auto_resolve", "set_auto_port", "set_auto_exec",
                              "enable_daemon", "disable_daemon"],
                 },
@@ -404,6 +404,7 @@ TOOLS = [
                 "set": {
                     "type": "object",
                     "properties": {
+                        "enabled": {"type": "boolean"},
                         "paused": {"type": "boolean"},
                         "auto_land": {"type": "boolean"},
                         "auto_resolve": {"type": "boolean"},
@@ -435,6 +436,11 @@ SETTINGS_UPDATE_TOOL = "autopilot_settings_update"
 SETTINGS_SCHEMA = {
     "type": "object",
     "properties": {
+        "enabled": {
+            "type": "boolean",
+            "title": "启用 Codex 自动挡",
+            "description": "关闭后停止自动挡的 intake、调度与后台动作；已有任务和工作区保留。",
+        },
         "paused": {
             "type": "boolean",
             "title": "暂停自动挡",
@@ -466,12 +472,13 @@ SETTINGS_SCHEMA = {
             "description": "用系统自带的常驻机制定时检查；关掉后只在对话里手动触发。",
         },
     },
-    "required": ["paused", "auto_land", "auto_resolve", "auto_port", "auto_exec",
+    "required": ["enabled", "paused", "auto_land", "auto_resolve", "auto_port", "auto_exec",
                  "daemon_enabled"],
 }
 
 SETTINGS_LAYOUT = [
     {"kind": "group", "title": "运行", "items": [
+        {"kind": "property", "property": "enabled"},
         {"kind": "property", "property": "paused"},
         {"kind": "tool", "tool": "autopilot_run_once",
          "description": "立刻检查一轮，不改任何开关"},
@@ -672,6 +679,38 @@ def _mainline_summary(limit=6):
     }
 
 
+def _route_summary(limit=20):
+    """Aggregate real ledger task and workspace links without inventing host threads."""
+    latest = {}
+    for rec in _read_jsonl(_truth_dir() / "ledger.jsonl"):
+        if rec.get("id"):
+            latest[rec["id"]] = rec
+    rows = []
+    for rec in latest.values():
+        if rec.get("status") not in ("open", "doing", "todo", "wip", "blocked"):
+            continue
+        rows.append({
+            "id": rec.get("id"),
+            "title": rec.get("title") or rec.get("detail") or "",
+            "status": rec.get("status"),
+            "lane": rec.get("lane"),
+            "branch": rec.get("branch"),
+            "worktree": rec.get("worktree"),
+            "parent_thread_id": rec.get("parent_thread_id"),
+            "thread_id": rec.get("thread_id"),
+            "thread_group_id": rec.get("thread_group_id"),
+            "route_key": rec.get("route_key"),
+        })
+    rows.sort(key=lambda r: (0 if r.get("status") == "doing" else 1, r.get("id") or ""))
+    return {
+        "commander": {"kind": "autopilot", "label": "主司令窗"},
+        "source": "ops/truth/ledger.jsonl",
+        "thread_api": "unavailable",
+        "thread_note": "Codex 原生窗口由宿主维护；仅展示账本中已有的真实关联，不虚构窗口。",
+        "tasks": rows[:limit],
+    }
+
+
 def _product_state(limit=25):
     """产品今天是怎么工作的：按模块读 product_state.json。"""
     data = _json_file(_truth_dir() / "product_state.json")
@@ -784,10 +823,14 @@ def _status_payload(fast=True):
     blocked = st.get("resolve_blocked") or {}
     port_blocked = st.get("port_blocked") or {}
     paused = bool(ctrl.get("paused"))
+    enabled = bool(ctrl.get("enabled", True))
+    lifecycle = control_state.lifecycle_status(ctrl)
 
     exec_now = _running_exec()
     if ctrl.get("error"):
         state_key, state_label = "error", "状态异常，已安全暂停"
+    elif not enabled:
+        state_key, state_label = "off", "自动挡已关闭，Codex 已恢复原生状态"
     elif paused:
         state_key, state_label = "paused", "已暂停"
     elif exec_now:
@@ -802,7 +845,10 @@ def _status_payload(fast=True):
         state_key, state_label = "idle", "运行中，暂无待办"
 
     # 大白话的「正在做什么 / 为什么 / 最近做了什么 / 需要你做什么」。
-    if paused:
+    if not enabled:
+        doing = "自动挡已关闭；Codex 原生会话、项目与工作区保持不变"
+        why = "总开关关闭后不再接收或启动自动挡工作"
+    elif paused:
         doing = "暂停中，没有在动任何分支"
         why = "你按了暂停。恢复后它才会继续检查、合入"
     elif exec_now:
@@ -833,7 +879,9 @@ def _status_payload(fast=True):
     else:
         recent = "还没有自动合入过分支"
 
-    if failures:
+    if not enabled:
+        need_action = "需要继续使用自动挡时，重新开启总开关"
+    elif failures:
         need_action = f"需要你拍板：{failures[0]['target']}（{failures[0]['kind']}）"
     elif ctrl.get("error"):
         need_action = "控制文件异常，去高级面板看一眼或恢复默认"
@@ -845,6 +893,8 @@ def _status_payload(fast=True):
         "generated_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
         "fast": bool(fast),
         "paused": paused,
+        "enabled": enabled,
+        "lifecycle": lifecycle,
         "error": ctrl.get("error"),
         "state": state_key,
         "state_label": state_label,
@@ -895,6 +945,7 @@ def _status_payload(fast=True):
         "judgments": _active_judgments(),
         "last_verification": _last_verification(),
         "mainline": _mainline_summary(),
+        "route": _route_summary(),
         "roadmap": _roadmap(),
         "doing_items": board["doing"],
         "todo_items": board["todo"],
@@ -972,23 +1023,41 @@ def control_action(action, enabled=None):
     """执行一个控制动作，返回 (dict 或文本, rc)。开关都真落到用户级 control.json。"""
     if not action:
         return "autopilot_control 需要 action", 2
+    if action == "disable":
+        control_state.set_keys(enabled=False)
+        control_state.append_event("disable")
+        return _with_status("自动挡已关闭；Codex 原生功能和现有工作区未改动。"), 0
+    if action == "enable":
+        control_state.set_keys(enabled=True)
+        control_state.append_event("enable")
+        return _with_status("自动挡已开启；保留的任务与工作区可继续处理。"), 0
     if action == "pause":
+        if not control_state.is_enabled():
+            return control_state.mutation_guard(), 2
         control_state.set_keys(paused=True)
         control_state.append_event("pause")
         return _with_status("已暂停：不再启动新工作；当前 Git 操作会安全收尾。"), 0
     if action == "resume":
+        if not control_state.is_enabled():
+            return control_state.mutation_guard(), 2
         control_state.set_keys(paused=False)
         control_state.append_event("resume")
         return _with_status("已恢复运行：下一轮会继续检查、合入。"), 0
     if action == "run_once":
+        if not control_state.is_enabled():
+            return control_state.mutation_guard(), 2
         if control_state.is_paused():
             return "当前处于暂停中，不会偷偷跑一轮。先恢复运行再试。", 2
         daemon = OPS_DIR / "central_daemon.py"
         control_state.append_event("run_once")
         out, rc = _run([str(daemon), "--once"], timeout=2400)
         return _with_status("已跑完一轮：\n" + out), rc
+    if action.startswith("set_") and not action.startswith("set_auto_"):
+        return "未知 action：%s" % action, 2
     if action in ("set_auto_land", "set_auto_resolve", "set_auto_port",
                    "set_auto_exec"):
+        if not control_state.is_enabled():
+            return control_state.mutation_guard(), 2
         if not isinstance(enabled, bool):
             return "%s 需要 enabled（true/false）" % action, 2
         key = action[len("set_"):]
@@ -996,6 +1065,8 @@ def control_action(action, enabled=None):
         control_state.append_event("switch", name=key, value=enabled)
         return _with_status("%s 已%s。" % (key, "打开" if enabled else "关闭")), 0
     if action in ("enable_daemon", "disable_daemon"):
+        if not control_state.is_enabled():
+            return control_state.mutation_guard(), 2
         daemon = OPS_DIR / "central_daemon.py"
         want = action == "enable_daemon"
         out, rc = _run([str(daemon), "--install" if want else "--uninstall"], timeout=120)
@@ -1029,8 +1100,21 @@ def _settings_update(set_values):
     """把宿主送来的变更落到用户级 control.json，并回读权威值。"""
     if not isinstance(set_values, dict) or not set_values:
         return "autopilot_settings_update 需要 set（至少一项）", 2
+    if "enabled" in set_values and set_values.get("enabled") is False:
+        control_state.set_keys(enabled=False)
+        control_state.append_event("disable")
+        return {"values": _settings_values(),
+                "__text__": "自动挡已关闭；Codex 原生功能和现有工作区未改动。"}, 0
+    guard = control_state.mutation_guard()
+    if guard:
+        return guard, 2
     changed = {k: v for k, v in set_values.items()
                if k in control_state.DEFAULTS and isinstance(v, bool)}
+    if "enabled" in changed:
+        control_state.set_keys(**changed)
+        control_state.append_event("settings", **changed)
+        return {"values": _settings_values(),
+                "__text__": "设置已更新。"}, 0
     if not changed:
         return "set 里没有可识别的开关项", 2
     control_state.set_keys(**changed)
@@ -1042,9 +1126,26 @@ def _settings_update(set_values):
 
 def call_tool(name, args):
     args = args or {}
+    read_only_tools = {
+        "project_status", "next_actions", "product_state", "distill_review",
+        "suggest_branch", "resolve_list", "resolve_plan", "generate_context",
+        "dashboard", "autopilot_status", "render_autopilot_panel",
+        "autopilot_settings_read",
+    }
+    control_tools = {
+        "autopilot_control", "autopilot_run_once",
+        "autopilot_settings_update",
+    }
+    if name not in read_only_tools | control_tools:
+        guard = control_state.mutation_guard()
+        if guard:
+            return guard, 2
     if name == "project_status":
         return kgctl("status")
     if name == "capture_request":
+        guard = control_state.mutation_guard()
+        if guard:
+            return guard, 2
         text = (args.get("text") or "").strip()
         if not text:
             return "capture_request 需要 text", 2
@@ -1053,8 +1154,14 @@ def call_tool(name, args):
                "KG_INBOX_KIND": args.get("kind") or "unknown"}
         return kgctl("inbox", text, extra_env=env)
     if name == "sync_control_plane":
+        guard = control_state.mutation_guard()
+        if guard:
+            return guard, 2
         return kgctl("tick")
     if name == "route_inbox":
+        guard = control_state.mutation_guard()
+        if guard:
+            return guard, 2
         return kgctl("route", *(["--go"] if args.get("confirm") else []))
     if name == "next_actions":
         return truthctl("next")
@@ -1107,6 +1214,9 @@ def call_tool(name, args):
     if name == "suggest_branch":
         return kgctl("suggest")
     if name == "intake_request":
+        guard = control_state.mutation_guard()
+        if guard:
+            return guard, 2
         text = (args.get("text") or "").strip()
         if not text:
             return "intake_request 需要 text", 2

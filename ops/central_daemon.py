@@ -914,6 +914,10 @@ def run_cycle(dry: bool, max_land: int) -> dict:
       * 因此这里是最外层也最可靠的闸门；`_run_cycle` 里的逐子系统闸门是第二道保险，
         防止别的调用方绕过本函数直接进内部实现。
     """
+    if not control_state.is_enabled():
+        log("[disabled] 自动挡已关闭或控制文件异常：本轮不启动任何新工作")
+        return {"ts": time.time(), "iso": _now(), "dry": dry,
+                "disabled": True, "summary": {}, "landed": [], "failures": []}
     if control_state.is_paused():
         log("[pause] 已暂停：本轮不启动任何新工作（面板可恢复）")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
@@ -935,6 +939,10 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
                 "summary": summary, "landed": [], "failures": []}
 
     log("--- cycle start (live) ---")
+    if not control_state.is_enabled():
+        log("[disabled] 周期开始前自动挡已关闭：不做路由/落盘")
+        return {"ts": time.time(), "iso": _now(), "dry": dry,
+                "disabled": True, "summary": {}, "landed": [], "failures": []}
     if control_state.is_paused():
         log("[pause] 周期开始前被暂停：只刷新状态，不做路由/落盘")
         return {"ts": time.time(), "iso": _now(), "dry": dry,

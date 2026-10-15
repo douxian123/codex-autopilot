@@ -134,6 +134,10 @@
   .subhead:first-child{margin-top:0}
   .meta{margin-top:10px;color:var(--ink-3);font-size:11.5px;line-height:1.6}
   .empty{color:var(--ink-3);font-size:12.5px}
+  .route-row{padding:9px 0;border-bottom:1px solid var(--line-2)}
+  .route-row:last-child{border-bottom:0}
+  .route-row .t{font-size:12.5px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+  .route-row .d{margin-top:4px;color:var(--ink-3);font-size:11.5px;overflow-wrap:anywhere}
   .tiny{font-size:11.5px;color:var(--ink-3)}
 
   /* ---- chips ---- */
@@ -280,6 +284,13 @@
     </div>
   </header>
 
+  <section class="card" style="padding:11px 14px;margin-bottom:10px">
+    <div class="switchrow" style="padding:0;border:0">
+      <div><div class="t">Codex 自动挡</div><div class="d" id="masterState">正在读取状态…</div></div>
+      <button class="sw" id="masterToggle" aria-label="启用或关闭 Codex 自动挡" aria-pressed="true"></button>
+    </div>
+  </section>
+
   <section class="hero">
     <div class="hero-top">
       <span class="pulse"></span>
@@ -311,8 +322,14 @@
   </section>
 
   <section class="card">
-    <div class="chead"><h2>正在做 · 还差什么</h2><span class="count" id="workCount"></span></div>
+    <div class="chead"><h2>进行中的任务</h2><span class="count" id="workCount"></span></div>
     <div id="progressBox"></div>
+  </section>
+
+  <section class="card">
+    <div class="chead"><h2>任务路线</h2><span class="count">Codex 原生工作区</span></div>
+    <div class="route-summary" id="routeSummary">任务由自动挡账本、泳道分支和 worktree 关联；Codex thread 的实时列表由宿主提供时再显示。</div>
+    <details class="fold" style="margin-top:10px"><summary>路线与工作区详情</summary><div class="foldbody"><div id="routeBox"></div></div></details>
   </section>
 
   <section class="card">
@@ -538,7 +555,16 @@
     if (s.paused) { pb.innerHTML = IC_PLAY + "<span>恢复运行</span>"; pb.className = "btn primary"; }
     else { pb.innerHTML = IC_PAUSE + "<span>暂停</span>"; pb.className = "btn danger"; }
     if (s.error) { el("subtitle").textContent = s.error; }
+    else if (!s.enabled) { el("subtitle").textContent = "自动挡已关闭，Codex 保持原生状态"; }
     else { el("subtitle").textContent = s.paused ? "已暂停，不再推进新工作" : "零散问题直接说，其余我来"; }
+    var master = el("masterToggle");
+    master.classList.toggle("on", !!s.enabled);
+    master.setAttribute("aria-pressed", s.enabled ? "true" : "false");
+    master.disabled = !!s.error;
+    setText("masterState", s.error || (!s.enabled ? "已关闭 · Codex 原生功能不受影响" :
+      (s.lifecycle === "draining" ? "暂停推进 · 当前安全操作可收尾" : "正在运行")));
+    el("runBtn").disabled = !s.enabled || !!s.paused;
+    el("pauseBtn").disabled = !s.enabled;
 
     var sw = s.switches || {};
     var sws = document.querySelectorAll(".sw");
@@ -563,6 +589,7 @@
     renderRoadmap(s.roadmap || [], s.mainline || {});
     renderAcceptance(humanAcc, s.machine_verified || []);
     renderProgress(doingItems, s.todo_items || [], todoCount);
+    renderRoute(s.route || {});
     renderMainline(s.mainline || {});
   }
 
@@ -767,6 +794,35 @@
     }
   }
 
+  function renderRoute(route){
+    var box = el("routeBox"); if (!box) return; box.innerHTML = "";
+    route = route || {};
+    var note = document.createElement("div"); note.className = "empty";
+    note.textContent = route.thread_note || "Codex 原生窗口由宿主维护；这里只展示已有的真实关联。";
+    box.appendChild(note);
+    var tasks = route.tasks || [];
+    if (!tasks.length){
+      var empty = document.createElement("div"); empty.className = "empty";
+      empty.textContent = "当前没有未决子任务。新需求会从主司令窗进入，再按泳道进入独立 worktree。";
+      box.appendChild(empty);
+      return;
+    }
+    tasks.forEach(function(t){
+      var row = document.createElement("div"); row.className = "route-row";
+      var title = document.createElement("div"); title.className = "t";
+      title.textContent = (t.id ? t.id + " · " : "") + (t.title || "未命名任务");
+      var meta = document.createElement("div"); meta.className = "d";
+      var bits = [];
+      if (t.status) bits.push(t.status);
+      if (t.lane) bits.push("泳道 " + t.lane);
+      if (t.branch) bits.push(t.branch);
+      if (t.worktree) bits.push(t.worktree);
+      if (t.thread_id) bits.push("Codex window " + t.thread_id);
+      meta.textContent = bits.join(" · ") || "已进入账本，等待路由";
+      row.appendChild(title); row.appendChild(meta); box.appendChild(row);
+    });
+  }
+
   function renderAcceptance(human, machine){
     var box = el("acceptBox"); if (!box) return; box.innerHTML = "";
     var note = el("accNote");
@@ -911,7 +967,18 @@
     if (msg){ clearTimeout(toast._t); toast._t = setTimeout(function(){ t.textContent=""; t.className="toast"; }, 6000); }
   }
 
+  el("masterToggle").addEventListener("click", function(){
+    var target = !(state && state.enabled);
+    this.disabled = true;
+    callTool("autopilot_control", {action:target ? "enable" : "disable"}).then(function(sc){
+      if (sc && sc.state) { state = sc; render(state); }
+      toast(target ? "自动挡已开启" : "自动挡已关闭", "ok");
+    }).catch(function(e){ toast("操作失败：" + (e && e.message || e), "err"); })
+      .then(function(){ el("masterToggle").disabled = false; });
+  });
+
   el("pauseBtn").addEventListener("click", function(){
+    if (!state || !state.enabled) return;
     var pausing = !(state && state.paused);
     var btn = this; btn.disabled = true;
     callTool("autopilot_control", {action: pausing ? "pause" : "resume"}).then(function(sc){

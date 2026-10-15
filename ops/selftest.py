@@ -610,7 +610,7 @@ def test_control_state():
 
         # 默认不暂停，三个动作开关按设计默认值。
         d = control_state.load()
-        assert d["paused"] is False and d["auto_land"] is True
+        assert d["enabled"] is True and d["paused"] is False and d["auto_land"] is True
         assert d["auto_resolve"] is True and d["auto_port"] is False
 
         # 暂停后 run_cycle 必须秒返回且不启动任何工作。
@@ -631,10 +631,21 @@ def test_control_state():
         control_state.set_keys(auto_exec=True)
         assert central_daemon.auto_exec_config()["enabled"] is True
 
+        control_state.set_keys(enabled=False, auto_exec=True)
+        assert control_state.lifecycle_status() == "off"
+        blocked = control_state.mutation_guard()
+        assert blocked and blocked["code"] == "AUTOPILOT_DISABLED"
+        disabled_cycle = central_daemon.run_cycle(dry=False, max_land=1)
+        assert disabled_cycle.get("disabled") is True
+        restored = control_state.set_keys(enabled=True)
+        assert restored["enabled"] is True and restored["auto_exec"] is True
+        assert control_state.mutation_guard() is None
+
         # control.json 损坏 -> 安全暂停 + error 可见。
         control_state.path().write_text("{ this is not json", encoding="utf-8")
         bad = control_state.load()
-        assert bad["paused"] is True and bad["error"], "损坏的 control.json 没有安全暂停"
+        assert bad["enabled"] is False and bad["paused"] is True and bad["error"], \
+            "损坏的 control.json 没有安全暂停"
 
         # 事件流水可写可读。
         control_state.save(dict(control_state.DEFAULTS))
@@ -1259,6 +1270,8 @@ def test_mcp_contract():
         assert "product_state" in sc and "judgments" in sc and "last_verification" in sc, \
             "状态快照缺少产品状态/判断逻辑/最近验证"
         assert "mainline" in sc, "状态快照缺少产品主线摘要"
+        assert "route" in sc and sc["route"]["commander"]["label"] == "主司令窗", \
+            "状态快照缺少主司令窗路线"
         for key in ("roadmap", "doing_items", "todo_items", "todo_count",
                     "human_acceptance", "machine_verified"):
             assert key in sc, f"状态快照缺少 {key}"
@@ -1299,6 +1312,20 @@ def test_mcp_contract():
         send({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
               "params": {"name": "autopilot_control", "arguments": {"action": "resume"}}})
         assert recv()["result"]["structuredContent"]["paused"] is False
+        send({"jsonrpc": "2.0", "id": 8, "method": "tools/call",
+              "params": {"name": "autopilot_control", "arguments": {"action": "disable"}}})
+        off = recv()["result"]["structuredContent"]
+        assert off["enabled"] is False and off["lifecycle"] == "off"
+        send({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+              "params": {"name": "intake_request",
+                         "arguments": {"text": "must reject while off"}}})
+        refused = recv()["result"]
+        assert refused["isError"] is True
+        assert "AUTOPILOT_DISABLED" in _json.dumps(refused, ensure_ascii=False)
+        send({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
+              "params": {"name": "autopilot_control", "arguments": {"action": "enable"}}})
+        on = recv()["result"]["structuredContent"]
+        assert on["enabled"] is True and on["lifecycle"] == "on"
         proc.stdin.close()
     finally:
         try:
