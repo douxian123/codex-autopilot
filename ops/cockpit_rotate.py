@@ -149,8 +149,11 @@ def build_handoff(name: str, cfg: dict, pulse_text: str, gen: int, why: str,
 上一代窗口因为「{why}」退场——长驻窗口的上下文会越喂越肥，模型在长上下文里会退化成
 「用最短的一句话结束轮次」，所以这个任务设计了定期轮换，**这不是事故，是常规维护**。
 
-你的位置：这个窗口是**心跳与指挥位**，不是实现位。你每拍只做一件事——跑一页体检、判断有无变化、汇报。
-需要读文件、写代码、跑门禁的任务，派给独立 worktree 里的子对话，你只收它们的结论。
+你的位置：这个窗口是**心跳与指挥位**，但「指挥」不是「只汇报」——每拍都必须把推进做实：
+① 跑一页体检；② 看在途任务与合并队列；③ 有已提交、门禁通过、无冲突的分支**立即落盘**；
+④ 没有足够的在途任务就按产品路线**派下一批**。
+需要读文件、写代码、跑门禁的实现任务，派给独立 worktree 里的子对话；你负责派活、验收、落盘与汇报。
+**不允许把「已检查、无变化」当成一拍的终点**：没有可推进项时也要明确写下一条要派的工作或真实阻塞。
 
 【你的纪律（原文，不要重新发明）】
 {cfg.get('prompt', '')}
@@ -289,6 +292,11 @@ def main() -> int:
     ap.add_argument("--model", default=os.environ.get("ROTATE_MODEL", ""),
                     help="新窗口用的模型（留空则用 codex 默认）")
     ap.add_argument("--thread", default="", help="指定新线程 id（跳过创建，用于人工建好窗口后接管）")
+    ap.add_argument("--force", action="store_true",
+                    help="即使本脚本自带的预算线（rollout 80MB / 累计 150M token）没越，也执行轮换。"
+                         "给「更早的轮换线」用（例如单轮 input 峰值 / 压缩频率这类信号）："
+                         "这些信号说明窗口已经在退化，而累计量还没到本条线。"
+                         "所有安全前置（codex-guard 体检、备份、原子替换、回读校验）一条都不放宽。")
     args = ap.parse_args()
 
     if OFF_SWITCH.exists():
@@ -313,8 +321,10 @@ def main() -> int:
     print(f"=== 窗口轮换预演 · {args.automation} ===")
     print(f"当前目标线程 {tid[:12]}…  预算：rollout "
           f"{(b.get('rollout_mb') or -1):.1f}MB，累计 {(b.get('tokens_used') or 0)/1e6:.1f}M token")
-    print(f"是否需要轮换：{'是（' + why + '）' if need else '否'}")
-    if not need:
+    print(f"是否需要轮换：{'是（' + why + '）' if need else '否'}"
+          + ("　← 由 --force 强制轮换（更早的轮换线，例如单轮 input 峰值 / 压缩频率）"
+             if (not need and args.force) else ""))
+    if not need and not args.force:
         print("预算在阈值内，无需动作。")
         return 0
 

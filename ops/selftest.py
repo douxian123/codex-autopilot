@@ -1312,6 +1312,163 @@ def test_mcp_contract():
     print("selftest ok: MCP resources 合约、暂停闸门、状态/控制工具全部通过。")
 
 
+def test_budget_gate():
+    """预算闸门：越线判定 / 不打扰在用窗口 / 熔断与恢复 / 一键关 / 预演零副作用。
+
+    全部在临时目录里伪造数据源（automations + codex 线程库 + 代理账本），
+    不碰真实的 ~/.codex、不换代、不发通知、不写真实状态。
+    """
+    import json as _json
+    import sqlite3
+    import time as _time
+    import importlib
+
+    sys.path.insert(0, str(OPS))
+    bg = importlib.import_module("budget_gate")
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-budget-") as tmp:
+        root = Path(tmp)
+        home = root / "home"
+        codex = home / ".codex"
+        runtime = root / "runtime"
+        (codex / "automations" / "fake").mkdir(parents=True)
+        runtime.mkdir(parents=True)
+
+        # 目标线程的 rollout：峰值 19 万（谷底 4.6 万）+ 近 1 小时压缩 3 次
+        rollout = root / "rollout.jsonl"
+        now_iso = _time.strftime("%Y-%m-%dT%H:%M:%S", _time.gmtime())
+        lines = []
+        for i, v in enumerate([46_000, 120_000, 190_000]):
+            lines.append(_json.dumps({"timestamp": now_iso, "type": "response_item",
+                                      "payload": {"type": "token_usage_record",
+                                                  "usage": {"input_tokens": v}}}))
+        for i in range(3):
+            lines.append(_json.dumps({"timestamp": now_iso, "type": "compacted",
+                                      "payload": {"message": "summary"}}))
+        rollout.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        db = codex / "state_5.sqlite"
+        c = sqlite3.connect(db)
+        c.execute("create table threads (id text primary key, rollout_path text, "
+                  "tokens_used integer, updated_at integer)")
+        c.execute("insert into threads values (?,?,?,?)", ("fake-thread", str(rollout), 1_000, 0))
+        c.commit()
+        c.close()
+
+        proxy = home / ".codex-proxy" / "stats.db"
+        proxy.parent.mkdir(parents=True)
+        p = sqlite3.connect(proxy)
+        p.execute("create table requests (id integer primary key, ts integer, provider text, "
+                  "model text, input_tokens integer, output_tokens integer, "
+                  "cache_hit_tokens integer, status integer)")
+        p.execute("insert into requests (ts, provider, model, input_tokens, output_tokens, "
+                  "cache_hit_tokens, status) values (?,?,?,?,?,?,?)",
+                  (int(_time.time()) - 60, "fake", "fake-model", 10_000_000, 1000, 9_000_000, 200))
+        p.commit()
+        p.close()
+
+        (codex / "automations" / "fake" / "automation.toml").write_text(
+            'version = 1\nid = "fake"\nkind = "heartbeat"\nname = "fake"\n'
+            'prompt = "x"\nstatus = "ACTIVE"\nrrule = "RRULE:FREQ=MINUTELY;INTERVAL=15"\n'
+            'target_thread_id = "fake-thread"\ncreated_at = 1\nupdated_at = 1\n',
+            encoding="utf-8")
+
+        # 把模块里的路径指向伪造环境（测完在 finally 里还原）
+        real = {k: getattr(bg, k) for k in
+                ("AUTOMATIONS", "CODEX_DB", "PROXY_DB", "RUNTIME", "STATE", "LOG",
+                 "ROTATE_LOG", "OFF_FILES", "CONFIG_PATH")}
+        started = []
+        real_popen = subprocess.Popen
+
+        class _NoPopen:
+            def __init__(self, *a, **k):
+                started.append(a[0] if a else k.get("args"))
+                raise OSError("selftest: 换代被拦住（本测试不允许真换代）")
+
+        try:
+            bg.AUTOMATIONS, bg.CODEX_DB, bg.PROXY_DB = (codex / "automations", db, proxy)
+            bg.RUNTIME, bg.STATE = runtime, runtime / "budget-gate.json"
+            bg.LOG, bg.ROTATE_LOG = runtime / "budget-gate.log", runtime / "rotate.log"
+            bg.OFF_FILES = (runtime / "BUDGET_GATE_OFF", codex / "budget-gate.off")
+            bg.CONFIG_PATH = codex / "nonexistent.json"
+            bg.notify = lambda *a, **k: None          # 不发桌面通知
+            bg._event = lambda *a, **k: None          # 不写真实流水
+            subprocess.Popen = _NoPopen
+
+            # 1) 越线判定：只看「最后一轮」（4.6 万，谷底）会漏，峰值/压缩必须抓住
+            info = bg.measure_thread("fake-thread", bg.DEFAULTS)
+            level, reasons = bg.verdict(info, bg.DEFAULTS)
+            if level != "over":
+                raise AssertionError(f"峰值 19 万 + 压缩 3 次应判 over，实得 {level}：{reasons}")
+            if info.get("peak_input_recent") != 190_000:
+                raise AssertionError(f"峰值读错：{info.get('peak_input_recent')}")
+            if info.get("compactions_recent") != 3:
+                raise AssertionError(f"压缩次数读错：{info.get('compactions_recent')}")
+
+            # 2) 窗口刚动过（有人在用）→ 不换代，只等
+            rep = bg.run(dry=False)
+            acts = [a["action"] for a in rep["actions"]]
+            if "rotate-wait" not in acts or started:
+                raise AssertionError(f"在用窗口不该被换代，实得动作 {acts}，换代调用 {started}")
+
+            # 3) 窗口空闲 10 分钟 + 允许换代 → 才会真的排一次换代（Popen 被测试拦住）
+            old = _time.time() - 600
+            os.utime(rollout, (old, old))
+            rep = bg.run(dry=False)
+            acts = [a["action"] for a in rep["actions"]]
+            if "rotate" not in acts or len(started) != 1:
+                raise AssertionError(f"空闲且越线应排一次换代，实得动作 {acts}，换代调用 {started}")
+            if "--force" not in list(started[0]):
+                raise AssertionError(f"换代必须带 --force 才越过 cockpit_rotate 自带的粗线：{started[0]}")
+
+            # 4) 熔断与恢复：用量越线停「派活」，回落自动恢复
+            bg._maybe_pause_dispatch({"input": 9_000_000_000, "fresh": 9_000_000_000,
+                                      "requests": 1, "window_minutes": 60}, bg.DEFAULTS)
+            if not bg.dispatch_paused()[0]:
+                raise AssertionError("用量越线没有暂停派活")
+            import central_daemon as _cd
+            real_ac, real_state = _cd.auto_exec_config, _cd.control_state.load
+            try:
+                _cd.control_state.load = lambda: {"auto_exec": True}
+                if _cd.auto_exec_config().get("enabled"):
+                    raise AssertionError("熔断后自动挡仍在派活（auto_exec 没被关掉）")
+            finally:
+                _cd.control_state.load = real_state
+            bg._maybe_pause_dispatch({"input": 1_000_000, "fresh": 100_000,
+                                      "requests": 5, "window_minutes": 60}, bg.DEFAULTS)
+            if bg.dispatch_paused()[0]:
+                raise AssertionError("用量回落后没有自动恢复派活")
+
+            # 5) 状态文件坏掉 → fail-open（不误停、不抛）
+            bg.STATE.write_text("{ 坏 json", encoding="utf-8")
+            if bg.dispatch_paused()[0]:
+                raise AssertionError("状态文件坏掉时不应误停派活")
+
+            # 6) 一键关：存在开关文件 → 整体跳过，零动作
+            bg.STATE.unlink()
+            (runtime / "BUDGET_GATE_OFF").write_text("", encoding="utf-8")
+            rep = bg.run(dry=False)
+            if not rep["off"] or any(a["action"] not in ("skip",) for a in rep["actions"]):
+                raise AssertionError(f"一键关没有生效：{rep['actions']}")
+            (runtime / "BUDGET_GATE_OFF").unlink()
+
+            # 7) 预演零副作用：不写状态、不换代
+            before = bg.STATE.exists()
+            started.clear()
+            bg.run(dry=True)
+            if started:
+                raise AssertionError("预演模式下发生了换代")
+            if bg.STATE.exists() != before and not before:
+                raise AssertionError("预演模式不应写状态文件")
+        finally:
+            subprocess.Popen = real_popen
+            for k, v in real.items():
+                setattr(bg, k, v)
+
+    print("selftest ok: 预算闸门抓住峰值/压缩越线、不打扰在用窗口、只对空闲越线窗口换代（带 --force）；"
+          "用量熔断可停派活并自动恢复；状态坏掉 fail-open；一键关与预演零副作用。")
+
+
 if __name__ == "__main__":
     main()
     test_replan()
@@ -1321,3 +1478,4 @@ if __name__ == "__main__":
     test_verify_and_truth()
     test_auto_exec()
     test_mcp_contract()
+    test_budget_gate()

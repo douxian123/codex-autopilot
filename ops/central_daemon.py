@@ -428,6 +428,17 @@ def auto_exec_config() -> dict:
     # 用户级开关拥有最终否决权（默认关）。
     if not control_state.load().get("auto_exec", False):
         out["enabled"] = False
+    # 预算熔断（fail-open）：用量越过硬上限时只停「派活」（auto_exec），
+    # 不停 tick / land / resolve —— 不丢在途工作，降回来自动恢复。
+    # 任何异常都当作「没有这道闸门」，不影响原行为。
+    try:
+        import budget_gate
+        paused, why = budget_gate.dispatch_paused()
+        if paused:
+            out["enabled"] = False
+            out["_paused_by_budget"] = why
+    except Exception:
+        pass
     return out
 
 
@@ -1516,6 +1527,14 @@ def loop(interval_min: int, max_land: int, dry: bool) -> int:
                 run_cycle(dry, max_land)
             except Exception as exc:  # 单轮失败不能让守护退出
                 log(f"× 本轮异常（已吞掉，下轮继续）：{exc!r}")
+            # 预算闸门（fail-open）：测量长驻窗口预算、按需自动换代、按需暂停派活。
+            # 放在本轮 land/resolve 之后 —— 既有工作先收尾，闸门不插队。
+            # 任何异常都当作「没有这个钩子」，绝不影响自动挡本体。
+            try:
+                import budget_gate
+                budget_gate.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[budget] 闸门跳过（fail-open）：{exc!r}")
             if _stop:
                 break
             was_paused = control_state.is_paused()
