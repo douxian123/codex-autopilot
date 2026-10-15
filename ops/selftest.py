@@ -801,6 +801,81 @@ def test_panel_first_screen():
     print("selftest ok: 面板首屏（含关闭态）每个值都来自真实控制层数据。")
 
 
+def test_installed_copy_binding():
+    """装出来的那份副本必须自己认得项目，并且 MCP 能应答。
+
+    这条防的是最容易翻车、又最难查的一类问题：插件装是装上了，marketplace 也列出来了，
+    但 Codex 拉起它时它不知道自己该管哪个项目，于是面板一片空白——用户只会觉得
+    「装了没用」。这里真装一次到隔离 HOME，然后用装出来的副本、不带任何环境变量跑：
+      1) kgctl status —— 能不能自己解析出项目；
+      2) MCP 握手 —— initialize/tools/list 能不能应答。
+    """
+    import json as _json
+
+    install = OPS.parent / "install.sh"
+    with tempfile.TemporaryDirectory(prefix="autopilot-installed-bind-") as tmp:
+        home = Path(tmp) / "home"
+        home.mkdir(parents=True)
+        project = Path(tmp) / "project"
+        # 状态根判据是 ops/tasks + ops/truth 两个目录都在；目标项目本身是个 git 仓库。
+        (project / "ops" / "tasks").mkdir(parents=True)
+        (project / "ops" / "truth").mkdir(parents=True)
+        (project / "ops" / "truth" / "ledger.jsonl").write_text("", encoding="utf-8")
+        (project / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(project)], check=False)
+        run(["git", "-C", str(project), "-c", "user.email=t@t", "-c", "user.name=t",
+             "add", "."], check=False)
+        run(["git", "-C", str(project), "-c", "user.email=t@t", "-c", "user.name=t",
+             "commit", "-qm", "init"], check=False)
+
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        for key in ("KG_REPO", "KG_TRUNK", "KG_DAEMON_HOME"):
+            env.pop(key, None)
+        result = run(["bash", str(install), "--no-seed", "--no-marketplace",
+                      "--no-companion", str(project)], env=env, check=False)
+        assert result.returncode == 0, f"安装失败:\n{result.stdout}\n{result.stderr}"
+
+        release = home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.1"
+        binding = _json.loads((release / ".mcp.json").read_text(encoding="utf-8"))
+        bound = binding["mcpServers"]["codex-autopilot"]["env"]["KG_REPO"]
+        assert bound == str(project), f"插件没有把项目写进绑定：{bound}"
+
+        # 1) 不带 KG_REPO：装出来的副本要能自己认出项目
+        status = run([sys.executable, str(release / "ops" / "kgctl.py"), "status"],
+                     env=env, cwd=str(release), check=False)
+        assert status.returncode == 0, f"装出来的副本跑不起来:\n{status.stdout}\n{status.stderr}"
+        assert str(project) in (status.stdout + status.stderr), \
+            f"装出来的副本没有认出项目：\n{status.stdout}"
+
+        # 2) MCP 握手：Codex 拉起它时要能应答
+        proc = subprocess.Popen([sys.executable, str(release / "ops" / "central_mcp.py")],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, env=env,
+                                cwd=str(release))
+        try:
+            def send(o):
+                proc.stdin.write(_json.dumps(o, ensure_ascii=False) + "\n")
+                proc.stdin.flush()
+
+            send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                  "params": {"protocolVersion": "2025-06-18"}})
+            init = _json.loads(proc.stdout.readline())["result"]
+            assert "resources" in init["capabilities"], "装出来的 MCP 没声明 resources"
+            assert init["serverInfo"]["name"], "装出来的 MCP 没有名字"
+
+            send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
+            tools = _json.loads(proc.stdout.readline())["result"]["tools"]
+            names = {t["name"] for t in tools}
+            for need in ("autopilot_status", "intake_request", "autopilot_control"):
+                assert need in names, f"装出来的 MCP 少了工具 {need}"
+        finally:
+            proc.kill()
+            proc.wait(timeout=10)
+
+    print("selftest ok: 装出来的副本自带绑定、kgctl 认得出项目、MCP 能应答（不带任何环境变量）。")
+
+
 def test_preview_check_contract():
     """预览验收脚本是用户唯一的一键验收入口，必须真检查、真报错。
 
@@ -1852,6 +1927,7 @@ if __name__ == "__main__":
     test_companion_contract()
     test_panel_contract()
     test_preview_check_contract()
+    test_installed_copy_binding()
     test_panel_first_screen()
     test_codex_native_bridge()
     test_verify_and_truth()

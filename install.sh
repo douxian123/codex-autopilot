@@ -23,11 +23,13 @@
 #   ./install.sh --no-marketplace     # 只装插件，不动 marketplace.json
 #   ./install.sh --no-companion       # 不编译/安装 macOS 菜单栏 Companion
 #   ./install.sh --refresh-plugin     # 装完后用 codex CLI 刷新已安装插件（否则桌面端可能仍用旧缓存）
+#   ./install.sh --verify             # 装完立刻跑一遍验收（落地物/菜单栏应用/原生自检/总闸）
 set -euo pipefail
 
 NO_MARKET=0
 NO_SEED=0
 REFRESH=0
+VERIFY=0
 ROLLBACK=0
 LIST_RELEASES=0
 COMPANION=1
@@ -37,6 +39,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --no-marketplace) NO_MARKET=1; shift ;;
     --refresh-plugin) REFRESH=1; shift ;;
+    --verify) VERIFY=1; shift ;;
     --no-seed) NO_SEED=1; shift ;;
     --no-companion) COMPANION=0; shift ;;
     --rollback) ROLLBACK=1; shift ;;
@@ -371,3 +374,14 @@ echo "  1) 重启 Codex 桌面端 / CLI，在 Plugins → Personal 里安装「C
 echo "  2) 在项目里直接说话即可，例如：左边导航排版坏了，帮我记下来并安排修复"
 echo "  3) 菜单栏：open \"$HOME/Applications/CodexAutopilotCompanion.app\"（⌥⌘A 面板 · ⌥⌘S 截图派活）"
 echo "  4) 想手敲命令看状态：KG_REPO=$PROJECT python3 $DEST/ops/kgctl.py status"
+
+# 装完顺手验收：装是装上了、还是装上了能用，是两件事。
+if [ "$VERIFY" -eq 1 ]; then
+  echo
+  echo "跑一遍验收（安装本身已完成；下面报 FAIL 的是还需要处理的部分）…"
+  set +e
+  bash "$REPO/preview-check.sh" --no-install
+  verify_code=$?
+  set -e
+  exit "$verify_code"
+fi

@@ -5,6 +5,14 @@
 
 ## 一条命令验收
 
+装和验可以合成一步：
+
+```bash
+bash install.sh --verify
+```
+
+装完立刻跑同一份验收报告。只想验收、不动安装时用下面这条：
+
 ```bash
 bash preview-check.sh
 ```
