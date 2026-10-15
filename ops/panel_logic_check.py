@@ -120,6 +120,10 @@ console.log(JSON.stringify({
   ok: true,
   projectLine: read("projectLine"),
   projectTitle: document.getElementById("projectLine").title,
+  hierarchyProject: read("hierProject"),
+  hierarchyRoad: read("hierRoad"),
+  hierarchyWork: read("hierWork"),
+  routeWorkItems: read("routeWorkItems"),
   stateLabel: read("stateLabel"),
   subtitle: read("subtitle"),
   masterState: read("masterState"),
@@ -205,6 +209,23 @@ def main(argv):
         fails += has("首屏显示绑定项目（名字+路径）", out["projectLine"],
                      project.get("name"), project.get("path"))
         fails += has("绑定项目路径进了 title（悬停可看全）", out["projectTitle"], project.get("path"))
+        mainline = payload.get("mainline") or {}
+        roadmap = payload.get("roadmap") or []
+        current_road = next((item for item in roadmap if item.get("status") == "doing"), None)
+        current_road = current_road or next((item for item in roadmap if item.get("status") == "next"), None)
+        expected_stage = (current_road or {}).get("step") or "路线待拆解"
+        expected_product = mainline.get("product") or project.get("name") or "当前项目"
+        expected_project = project.get("name") or str(project.get("path") or "").rstrip("/").split("/")[-1] or "未绑定项目"
+        fails += has("路线图显示项目归属", out["hierarchyProject"], expected_project)
+        fails += has("路线图显示产品路线与当前阶段", out["hierarchyRoad"], expected_product, expected_stage)
+        current_items = payload.get("doing_items") or payload.get("todo_items") or []
+        expected_work = ((current_items[0].get("title") or current_items[0].get("detail"))
+                         if current_items else "等待下一条需求")
+        fails += has("路线图显示当前工作项", out["hierarchyWork"], expected_work)
+        if current_items:
+            fails += has("路线图列出工作项状态", out["routeWorkItems"],
+                         current_items[0].get("title") or current_items[0].get("detail"),
+                         "进行中" if payload.get("doing_items") else "待处理")
         fails += has("首屏显示总状态文案", out["stateLabel"], payload.get("state_label"))
         fails += has("首屏显示正在做什么", out["heroSub"], payload.get("doing"))
         fails += has("首屏开关文案与控制层一致", out["masterState"],
