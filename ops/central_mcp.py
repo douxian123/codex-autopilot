@@ -367,6 +367,11 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
+        "name": "codex_native_probe",
+        "description": "真跑一次「原生直连」自检：桌面端控制 socket 通不通、能不能把任务派进 Codex 窗口。结果会记下来，面板显示的是这次实测结果而不是猜测。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
         "name": "codex_native_create_section",
         "description": "通过 Codex app-server 创建原生 thread section；属于显式写操作，自动挡关闭时拒绝。独立 app-server 不保证立即同步到当前桌面窗口。",
         "inputSchema": {
@@ -934,6 +939,25 @@ def _running_exec():
     return info
 
 
+def _native_status():
+    """原生直连状态：socket 在不在是即时事实；能不能派活只看已跑过的自检结果。
+
+    没跑过自检就说没跑过，不去猜「应该连得上」——这个区分是为了让「已连通」
+    永远是一条实测结论，而不是推断。
+    """
+    state = dict(codex_native.socket_state())
+    probe = codex_native.last_probe()
+    state["last_probe"] = probe
+    if probe is None:
+        state["label"] = ("原生直连：未自检（点「原生自检」跑一次）"
+                          if state.get("socket_present") else "原生直连：Codex 未运行")
+    elif probe.get("connected"):
+        state["label"] = "原生直连：已连通，可派活到 Codex 窗口"
+    else:
+        state["label"] = "原生直连：不可派活，只能只读历史"
+    return state
+
+
 def _status_payload(fast=True):
     """把控制开关 + 缓存状态 + 项目计数，拼成面板和模型都能用的一个 JSON。"""
     from datetime import datetime, timezone
@@ -1051,6 +1075,7 @@ def _status_payload(fast=True):
             "last_cycle": st.get("last_cycle_iso"),
             "interval_min": st.get("interval_min"),
         },
+        "native": _native_status(),
         "counters": {
             "received": _ledger_count(),
             "open_items": _open_ledger_count(),
@@ -1266,7 +1291,7 @@ def call_tool(name, args):
         "project_status", "next_actions", "product_state", "distill_review",
         "suggest_branch", "resolve_list", "resolve_plan", "generate_context",
         "dashboard", "autopilot_status", "render_autopilot_panel",
-        "autopilot_settings_read", "codex_native_threads",
+        "autopilot_settings_read", "codex_native_threads", "codex_native_probe",
     }
     control_tools = {
         "autopilot_control", "autopilot_run_once",
@@ -1342,6 +1367,12 @@ def call_tool(name, args):
         return kgctl("status")
     if name == "codex_native_threads":
         return codex_native.snapshot()
+    if name == "codex_native_probe":
+        # 自检是诊断动作：不碰任务、不碰账本，所以即使总开关关着也允许跑，
+        # 否则用户没法在「关着」的时候判断到底是不是权限/环境的问题。
+        result = codex_native.probe()
+        codex_native.record_probe(result)
+        return result
     if name == "capture_request":
         guard = control_state.mutation_guard()
         if guard:

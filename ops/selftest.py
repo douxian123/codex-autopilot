@@ -871,6 +871,40 @@ def test_companion_contract():
         print("selftest ok: Companion 真编译出可安装的 .app。")
 
 
+def test_panel_contract():
+    """面板只通过 MCP 工具读写，而且它引用的每个元素都真实存在。
+
+    这一条防的是「面板看着对、其实点不动」：id 对不上时按钮就是死的，
+    HTML/JS 语法检查完全看不出来。同时也挡住「面板自己造第二套工具/开关」。
+    """
+    import re
+
+    html = (OPS.parent / "plugin" / "ui" / "panel.html").read_text(encoding="utf-8")
+    script = "\n".join(re.findall(r"<script>([\s\S]*?)</script>", html))
+    assert script.strip(), "面板里没有脚本，等于没接上控制层"
+
+    dom_ids = set(re.findall(r'id="([^"]+)"', html))
+    used_ids = set(re.findall(r'\bel\("([^"]+)"\)', script))
+    created_ids = set(re.findall(r'\.id\s*=\s*"([^"]+)"', script))
+    missing = sorted(used_ids - dom_ids - created_ids)
+    assert not missing, f"面板引用了不存在的元素：{missing}"
+
+    sys.path.insert(0, str(OPS))
+    import central_mcp
+    import control_state
+
+    tool_names = {tool["name"] for tool in central_mcp.TOOLS}
+    called = set(re.findall(r'callTool\("([^"]+)"', script))
+    assert called <= tool_names, f"面板调了不存在的工具：{sorted(called - tool_names)}"
+
+    switch_keys = set(re.findall(r'data-key="([^"]+)"', html))
+    unknown = sorted(switch_keys - set(control_state.DEFAULTS))
+    assert not unknown, f"面板有控制层不认识的开关：{unknown}"
+
+    print(f"selftest ok: 面板元素（{len(used_ids)} 个）与工具（{len(called)} 个）"
+          f"全部真实存在，开关项都在控制层里。")
+
+
 def test_codex_native_bridge():
     """app-server 使用官方协议参数；历史数据库只读降级，不写宿主状态。"""
     import importlib
@@ -1688,6 +1722,7 @@ if __name__ == "__main__":
     test_installer()
     test_daemon_project_binding()
     test_companion_contract()
+    test_panel_contract()
     test_codex_native_bridge()
     test_verify_and_truth()
     test_auto_exec()

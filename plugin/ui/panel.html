@@ -243,6 +243,9 @@
   .intake textarea:focus{outline:2px solid var(--brand-500);outline-offset:1px}
   .intake-actions{display:flex;align-items:center;gap:10px;margin-top:8px}
   .intake-actions .btn{border-radius:8px}
+  .nativeline{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+  .nativeline #nativeState{font-size:12.5px;color:var(--ink-2);line-height:1.5}
+  .nativeline .btn{padding:5px 10px;font-size:12px;border-radius:8px;flex:0 0 auto}
   .intake-state{font-size:12px;color:var(--ink-3);min-width:0;overflow-wrap:anywhere}
   .overview-detail{margin:18px 0}
   .overview-detail>summary{list-style:none;cursor:pointer;padding:11px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:13px;font-weight:600;color:var(--ink)}
@@ -359,6 +362,10 @@
     <section class="card">
       <div class="chead"><h2>任务路线</h2><span class="count">Codex 原生工作区</span></div>
       <div class="route-summary" id="routeSummary">任务由自动挡账本、泳道分支和 worktree 关联；Codex thread 的实时列表由宿主提供时再显示。</div>
+      <div class="nativeline">
+        <span id="nativeState">原生直连：正在读取…</span>
+        <button class="btn" id="nativeProbe" type="button">原生自检</button>
+      </div>
       <details class="fold" style="margin-top:10px"><summary>路线与工作区详情</summary><div class="foldbody"><div id="routeBox"></div></div></details>
     </section>
 
@@ -595,6 +602,7 @@
       (s.lifecycle === "draining" ? "暂停推进 · 当前安全操作可收尾" : "正在运行")));
     el("runBtn").disabled = !s.enabled || !!s.paused;
     el("pauseBtn").disabled = !s.enabled;
+    renderNative(s);
 
     var sw = s.switches || {};
     var sws = document.querySelectorAll(".sw");
@@ -824,6 +832,17 @@
       todo.forEach(function(it){ wrap2.appendChild(chip(it)); });
       box.appendChild(h2); box.appendChild(wrap2);
     }
+  }
+
+  function renderNative(s){
+    var box = el("nativeState"); if (!box) return;
+    var native = (s && s.native) || {};
+    var probe = native.last_probe || null;
+    var text = native.label || (native.socket_present ? "原生直连：未自检" : "原生直连：Codex 未运行");
+    if (probe && probe.at) { text += "（自检于 " + probe.at + "）"; }
+    box.textContent = text;
+    var btn = el("nativeProbe");
+    if (btn) { btn.disabled = false; btn.title = (probe && probe.reason) ? probe.reason : "真跑一次原生直连自检"; }
   }
 
   function renderRoute(route){
@@ -1115,6 +1134,19 @@
   });
 
   el("refresh").addEventListener("click", function(e){ e.preventDefault(); toast("已刷新"); loadStatus(); });
+
+  el("nativeProbe").addEventListener("click", function(){
+    var btn = this; btn.disabled = true;
+    var box = el("nativeState");
+    if (box) { box.textContent = "原生直连：正在自检…"; }
+    callTool("codex_native_probe", {}).then(function(res){
+      var probe = (res && res.last_probe) || res || {};
+      if (probe.connected) { toast("原生直连已连通：可以把任务派进 Codex 窗口", "ok"); }
+      else { toast("原生直连不可用：" + (probe.reason || "原因见原生直连这一行"), "err"); }
+      return loadStatus(false);
+    }).catch(function(e){ toast("自检失败：" + (e && e.message || e), "err"); })
+      .then(function(){ btn.disabled = false; });
+  });
 
   el("exportBtn").addEventListener("click", function(){
     var blob = new Blob([document.documentElement.outerHTML], {type:"text/html"});
