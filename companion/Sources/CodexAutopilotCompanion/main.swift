@@ -73,8 +73,10 @@ final class CompanionModel: ObservableObject {
 
     /// 需要把面板顶到用户眼前时回调（截图、附件、派活成功）。
     var onNeedsAttention: (() -> Void)?
-    /// 打开浏览器里的完整面板。
+    /// 回到 Codex 里的自动挡面板（菜单栏只是锚点，不另造主面板）。
     var onOpenPanel: (() -> Void)?
+    /// 浏览器里的 HTML 驾驶舱：只作备用视图，不是主面板。
+    var onOpenCockpit: (() -> Void)?
 
     private let scriptPath: String
     private let supportDir: URL
@@ -349,6 +351,15 @@ final class CompanionModel: ObservableObject {
             handler()
             return
         }
+        message = "在 Codex 里打开「Codex 自动挡」面板"
+    }
+
+    /// HTML 驾驶舱是备用视图：主面板在 Codex 本体里，避免出现第二套面板。
+    func openCockpit() {
+        if let handler = onOpenCockpit {
+            handler()
+            return
+        }
         call(["panel"]) { [weak self] code, payload, text in
             guard let self else { return }
             if code != 0 {
@@ -468,6 +479,7 @@ struct CompanionView: View {
             HStack(spacing: 6) {
                 Button("打开 Codex") { model.openCodex() }.controlSize(.small)
                 Button("完整面板") { model.openPanel() }.controlSize(.small)
+                Button("HTML 驾驶舱") { model.openCockpit() }.controlSize(.small)
                 Button("原生自检") { model.nativeProbe() }.controlSize(.small)
                 Button("状态文件") { model.openStatus() }.controlSize(.small)
                 Spacer()
@@ -654,7 +666,8 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         }
 
         model.onNeedsAttention = { [weak self] in self?.showPopover() }
-        model.onOpenPanel = { [weak self] in self?.openDashboard() }
+        model.onOpenPanel = { [weak self] in self?.openCodexPanel() }
+        model.onOpenCockpit = { [weak self] in self?.openHTMLCockpit() }
         model.$status
             .receive(on: RunLoop.main)
             .sink { [weak self] status in
@@ -663,7 +676,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
             .store(in: &cancellables)
 
         let center = HotKeyCenter()
-        // ⌥⌘A 开合面板，⌥⌘S 截图派活，⌥⌘D 打开完整面板
+        // ⌥⌘A 开合菜单栏小面板，⌥⌘S 截图派活，⌥⌘D 回到 Codex 里的完整面板
         center.register(keyCode: UInt32(kVK_ANSI_A),
                         modifiers: UInt32(cmdKey | optionKey)) { [weak self] in
             self?.togglePopover()
@@ -674,7 +687,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         }
         center.register(keyCode: UInt32(kVK_ANSI_D),
                         modifiers: UInt32(cmdKey | optionKey)) { [weak self] in
-            self?.openDashboard()
+            self?.openCodexPanel()
         }
         hotKeys = center
 
@@ -710,8 +723,14 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// 完整面板：让控制接口生成驾驶舱 HTML，再用系统默认程序打开。
-    private func openDashboard() {
+    /// 完整面板在 Codex 本体里：菜单栏只负责把你送回去，不再另开一个面板。
+    private func openCodexPanel() {
+        model.openCodex()
+        model.message = "已切到 Codex；在 Codex 里打开「Codex 自动挡」面板"
+    }
+
+    /// HTML 驾驶舱：备用视图，让控制接口生成后再用系统默认程序打开。
+    private func openHTMLCockpit() {
         let path = model.controlScriptPath
         guard !path.isEmpty else { return }
         let process = Process()

@@ -1063,8 +1063,16 @@ def test_companion_contract():
                    # 附件必须看得见、撤得掉，不能退化成一个数字
                    "lastPathComponent", "xmark.circle.fill",
                    # 「打开 Codex」按 bundle id 激活，不去猜应用路径
-                   "com.openai.codex", "openCodex"):
+                   "com.openai.codex", "openCodex",
+                   # 主面板在 Codex 本体里：菜单栏只负责送回去，HTML 驾驶舱是备用
+                   "openCodexPanel", "openCockpit", "onOpenCockpit"):
         assert needle in source_text, f"Companion 源码缺少 {needle}"
+
+    # 「完整面板」不许把浏览器里的驾驶舱当主面板直接打开。
+    primary_panel = source_text.split("func openPanel()", 1)[1].split(
+        "func openCockpit()", 1)[0]
+    assert 'call(["panel"])' not in primary_panel, \
+        "菜单栏「完整面板」又去开 HTML 驾驶舱了，主面板必须在 Codex 里"
     # Companion 不许自己造第二套任务账本或第二套状态文件。
     for forbidden in ("intake.jsonl", "ledger.jsonl", "control.json"):
         assert forbidden not in source_text, f"Companion 自己碰了 {forbidden}"
@@ -1433,6 +1441,7 @@ def test_real_codex_app_server():
         return
 
     import importlib
+    import re as _re
     import shutil as _shutil
 
     cli = os.environ.get("CODEX_CLI", "codex")
@@ -1479,6 +1488,21 @@ def test_real_codex_app_server():
                 assert error is None, error
                 names = [s.get("name") for s in ((listed or {}).get("data") or [])]
                 assert "Codex 自动挡 · 自检" in names, names
+
+                # 项目里所有发往原生服务的方法名都必须真实存在。
+                # 防的是「假服务器认识、真服务器不认」这种只在用户机器上炸的写法。
+                source = (OPS / "codex_native.py").read_text(encoding="utf-8")
+                used = set(_re.findall(r'_rpc\(\s*"([^"]+)"', source)) | set(
+                    _re.findall(r'_session_request\(\s*proc,\s*"([^"]+)"', source))
+                assert used, "没抓到任何原生方法名，检查本身失效了"
+                _, unknown_error = codex_native._session_request(
+                    proc, "___autopilot_unknown___", {})
+                match = _re.search(r"expected one of (.+)$", unknown_error or "")
+                accepted = set(_re.findall(r"`([^`]+)`", match.group(1))) if match else set()
+                assert accepted, f"拿不到服务器接受的方法列表：{unknown_error}"
+                unknown_methods = sorted(m for m in used if m not in accepted)
+                assert not unknown_methods, \
+                    f"这些原生方法名在真实服务上不存在：{unknown_methods}"
             finally:
                 codex_native._close_session(proc)
         finally:
@@ -1488,7 +1512,8 @@ def test_real_codex_app_server():
                 os.environ["CODEX_HOME"] = old_home
             importlib.reload(codex_native)
 
-    print("selftest ok: 真实 codex app-server 按官方协议建出原生会话、创建窗口集合，并确认 thread/section/move 是服务器认识的方法。")
+    print("selftest ok: 真实 codex app-server 建出原生会话与窗口集合，"
+          "并核对项目里所有原生方法名都真实存在。")
 
 
 def test_verify_and_truth():
