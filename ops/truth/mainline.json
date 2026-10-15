@@ -82,7 +82,7 @@
     {
       "step": "真实端到端演示与预览发布",
       "expected": "一条真实需求从入口走到收口，每一步留下命令、cwd、退出码、commit",
-      "status": "next"
+      "status": "doing"
     }
   ]
 }

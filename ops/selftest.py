@@ -779,6 +779,45 @@ def test_installer_shell_portability():
     print("selftest ok: 安装脚本在 macOS bash 3.2 + set -u 下整条路径跑完，没有多字节变量解析崩溃。")
 
 
+def test_preview_check_contract():
+    """预览验收脚本是用户唯一的一键验收入口，必须真检查、真报错。
+
+    它把安装、落地物、市场指向、菜单栏应用、原生直连、总闸状态串成一次运行。
+    这里守三件事：脚本存在且可执行、引用的路径就是真实安装布局、没装的时候
+    如实报失败并用非零退出码（不能变成只会打印「全部通过」的摆设）。
+    """
+    script = OPS.parent / "preview-check.sh"
+    assert script.is_file(), "preview-check.sh 缺失"
+    assert os.access(script, os.X_OK), "preview-check.sh 不可执行"
+    text = script.read_text(encoding="utf-8")
+    for needle in ("plugin/.codex-plugin/plugin.json",
+                   "plugins/codex-autopilot/releases",
+                   "Applications/CodexAutopilotCompanion.app",
+                   ".agents/plugins/marketplace.json",
+                   "ops/codex_native.py probe",
+                   "ops/companion_api.py status",
+                   "CodexAutopilot/companion.json"):
+        assert needle in text, f"preview-check.sh 少了 {needle}"
+    assert "FAILS=$((FAILS + 1))" in text and 'exit "${FAILS}"' in text, \
+        "验收脚本没有把失败项数当退出码"
+
+    home = tempfile.mkdtemp(prefix="kg-preview-home-")
+    try:
+        env = os.environ.copy()
+        env["HOME"] = home
+        result = run(["bash", str(script), "--no-install", "--no-open"],
+                     cwd=str(OPS.parent), env=env, check=False)
+        combined = result.stdout + result.stderr
+        assert "unbound variable" not in combined, combined
+        assert "FAIL" in combined, f"空环境里什么都没报：\n{combined}"
+        assert "全部通过" not in combined, "什么都没装却报全部通过"
+        assert result.returncode > 0, "什么都没装却是零退出码"
+    finally:
+        import shutil
+        shutil.rmtree(home, ignore_errors=True)
+    print("selftest ok: 预览验收脚本引用真实路径，未安装时如实报失败并非零退出。")
+
+
 def test_daemon_project_binding():
     """仅把绑定到当前项目的 launchd 守护显示为当前项目正在运行。"""
     import importlib
@@ -1778,6 +1817,7 @@ if __name__ == "__main__":
     test_daemon_project_binding()
     test_companion_contract()
     test_panel_contract()
+    test_preview_check_contract()
     test_codex_native_bridge()
     test_verify_and_truth()
     test_auto_exec()
