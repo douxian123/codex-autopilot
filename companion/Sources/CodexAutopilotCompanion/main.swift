@@ -317,6 +317,33 @@ final class CompanionModel: ObservableObject {
 
     // MARK: 面板与状态
 
+    func openCodex() {
+        // Codex 桌面端本体是 ChatGPT.app，bundle id = com.openai.codex（已从 Info.plist 核实）。
+        // 先在运行中的实例里找，其次按 bundle id 解析路径；都没有就如实说没找到，
+        // 不去猜路径、不去伪造「已打开」。
+        let codexID = "com.openai.codex"
+        if let running = NSWorkspace.shared.runningApplications.first(where: {
+            $0.bundleIdentifier == codexID
+        }), running.activate(options: [.activateAllWindows]) {
+            message = "已切到 Codex"
+            return
+        }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: codexID) else {
+            message = "没找到 Codex 桌面端（com.openai.codex），手动打开即可"
+            return
+        }
+        NSWorkspace.shared.openApplication(at: url,
+                                           configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, error in
+            DispatchQueue.main.async {
+                if let error = error {
+                    self?.message = "打开 Codex 失败：" + error.localizedDescription
+                } else {
+                    self?.message = "已打开 Codex"
+                }
+            }
+        }
+    }
+
     func openPanel() {
         if let handler = onOpenPanel {
             handler()
@@ -439,6 +466,7 @@ struct CompanionView: View {
                 Button("刷新") { model.refresh() }.controlSize(.small)
             }
             HStack(spacing: 6) {
+                Button("打开 Codex") { model.openCodex() }.controlSize(.small)
                 Button("完整面板") { model.openPanel() }.controlSize(.small)
                 Button("原生自检") { model.nativeProbe() }.controlSize(.small)
                 Button("状态文件") { model.openStatus() }.controlSize(.small)

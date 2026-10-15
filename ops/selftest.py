@@ -905,7 +905,9 @@ def test_companion_contract():
     for needle in ("kVK_ANSI_A", "kVK_ANSI_S", "kVK_ANSI_D", "/usr/sbin/screencapture",
                    "registerForDraggedTypes", "servicesProvider", "companion_api",
                    # 附件必须看得见、撤得掉，不能退化成一个数字
-                   "lastPathComponent", "xmark.circle.fill"):
+                   "lastPathComponent", "xmark.circle.fill",
+                   # 「打开 Codex」按 bundle id 激活，不去猜应用路径
+                   "com.openai.codex", "openCodex"):
         assert needle in source_text, f"Companion 源码缺少 {needle}"
     # Companion 不许自己造第二套任务账本或第二套状态文件。
     for forbidden in ("intake.jsonl", "ledger.jsonl", "control.json"):
