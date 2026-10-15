@@ -8,10 +8,12 @@
 # 代码、或者那份代码已经过期，插件跑的都是自己这一份最新代码。目标项目只留账本
 # （ops/tasks + ops/truth + ops/context + docs/）。
 #
-# 非破坏：只写下面三处
-#   1. ~/plugins/codex-autopilot/（插件实体，重跑即覆盖）
-#   2. ~/.agents/plugins/marketplace.json（先备份为 .bak-codex-autopilot）
+# 非破坏：只写下面几处，旧版本目录和旧账本一律保留
+#   1. ~/plugins/codex-autopilot/releases/<版本>/（每个版本一个不可变目录）
+#   2. ~/.agents/plugins/marketplace.json（原子替换，只改自动挡这一条）
 #   3. 目标项目里缺失的状态文件（已存在的一律不动）
+#   4. ~/Applications/CodexAutopilotCompanion.app（可随时从版本目录重建）
+#   5. ~/Library/Application Support/CodexAutopilot/companion.json（Companion 配置）
 #
 # 用法：
 #   ./install.sh [项目目录]          # 默认本仓库自身；这个目录 = 状态根
@@ -19,6 +21,7 @@
 #   ./install.sh --trunk <目录>       # 指定落盘用的主干 worktree，写进 KG_TRUNK
 #   ./install.sh --no-seed            # 不在目标项目里补状态文件
 #   ./install.sh --no-marketplace     # 只装插件，不动 marketplace.json
+#   ./install.sh --no-companion       # 不编译/安装 macOS 菜单栏 Companion
 #   ./install.sh --refresh-plugin     # 装完后用 codex CLI 刷新已安装插件（否则桌面端可能仍用旧缓存）
 set -euo pipefail
 
@@ -27,6 +30,7 @@ NO_SEED=0
 REFRESH=0
 ROLLBACK=0
 LIST_RELEASES=0
+COMPANION=1
 PROJECT=""
 TRUNK=""
 while [ $# -gt 0 ]; do
@@ -34,11 +38,12 @@ while [ $# -gt 0 ]; do
     --no-marketplace) NO_MARKET=1; shift ;;
     --refresh-plugin) REFRESH=1; shift ;;
     --no-seed) NO_SEED=1; shift ;;
+    --no-companion) COMPANION=0; shift ;;
     --rollback) ROLLBACK=1; shift ;;
     --list-releases) LIST_RELEASES=1; shift ;;
     --state-root) PROJECT="${2:?--state-root 需要一个目录}"; shift 2 ;;
     --trunk) TRUNK="${2:?--trunk 需要一个目录}"; shift 2 ;;
-    -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) PROJECT="$1"; shift ;;
   esac
 done
@@ -175,6 +180,13 @@ trap 'if [ -n "${STAGE:-}" ] && [ -d "$STAGE" ]; then rm -rf -- "$STAGE"; fi' EX
 cp -R "$PLUGIN_DIR/." "$STAGE/"
 cp "$REPO"/ops/*.py "$STAGE/ops/"
 cp "$REPO/ops/central.config.example.json" "$STAGE/ops/"
+# Companion 源码随版本目录一起装：以后任何一次升级都能从版本目录重建菜单栏应用，
+# 不依赖原始仓库还在不在。
+mkdir -p "$STAGE/companion"
+cp -R "$REPO/companion/Sources" "$STAGE/companion/"
+for f in build.sh Info.plist Package.swift README.md; do
+  [ -f "$REPO/companion/$f" ] && cp "$REPO/companion/$f" "$STAGE/companion/$f"
+done
 
 # 3) .mcp.json：运行时代码走插件自己的 ops/，状态写回目标项目。
 "$PY" - "$STAGE/.mcp.json" "$PY" "$PROJECT" "$TRUNK" <<'PYEOF'
@@ -293,7 +305,47 @@ else
   echo '  marketplace 入口将指向该不可变版本目录；可使用 ./install.sh --rollback 回退。'
 fi
 
-# 5) 可选：用官方 CLI 刷新已安装插件，避免桌面端继续用旧缓存。
+# 5) 菜单栏 Companion：编译成 .app 放进 ~/Applications。
+#    它只是状态锚点，只读 ops/companion_api.py 这一条通道；编译不了也不影响插件本体。
+#    构建在工作目录里做（不污染不可变版本目录），app 本身随时可重建。
+if [ "$COMPANION" -eq 1 ]; then
+  echo
+  if ! command -v swiftc >/dev/null 2>&1; then
+    echo "本机没有 swiftc，跳过菜单栏 Companion。"
+    echo "  装好 Xcode Command Line Tools 后手动补："
+    echo "    bash $DEST/companion/build.sh"
+    echo "  然后把 $DEST/companion/dist/CodexAutopilotCompanion.app 拖进「应用程序」"
+  else
+    BUILD_ROOT="$AUTOPILOT_ROOT/build"
+    LOG_DIR="$AUTOPILOT_ROOT/logs"
+    WORK="$BUILD_ROOT/companion-$VERSION"
+    LOG="$LOG_DIR/companion-$VERSION.log"
+    mkdir -p "$BUILD_ROOT" "$LOG_DIR"
+    rm -rf -- "$WORK"
+    mkdir -p "$WORK"
+    cp -R "$DEST/companion/." "$WORK/"
+    echo "编译菜单栏 Companion（日志：$LOG）…"
+    if bash "$WORK/build.sh" >"$LOG" 2>&1 && [ -d "$WORK/dist/CodexAutopilotCompanion.app" ]; then
+      APP_DST="$HOME/Applications/CodexAutopilotCompanion.app"
+      APP_STAGE="$HOME/Applications/.CodexAutopilotCompanion.staging-$$.app"
+      mkdir -p "$HOME/Applications"
+      rm -rf -- "$APP_STAGE"
+      cp -R "$WORK/dist/CodexAutopilotCompanion.app" "$APP_STAGE"
+      rm -rf -- "$APP_DST"
+      mv "$APP_STAGE" "$APP_DST"
+      echo "已安装菜单栏 Companion：$APP_DST"
+      echo "  启动：open \"$APP_DST\""
+      echo "  快捷键：⌥⌘A 开合面板 · ⌥⌘S 截图派活 · ⌥⌘D 打开完整面板"
+      echo "  截图拖到菜单栏图标上，或者在「服务」菜单里选「发送到 Codex 自动挡」也可以派活"
+    else
+      echo "× Companion 编译失败，插件本体已装好、不受影响。"
+      echo "  失败原因见：$LOG"
+      echo "  手动重试：bash $DEST/companion/build.sh"
+    fi
+  fi
+fi
+
+# 6) 可选：用官方 CLI 刷新已安装插件，避免桌面端继续用旧缓存。
 #    Codex 会把插件快照到 ~/.codex/plugins/cache/personal/<name>/<version>/；
 #    只改 marketplace 文件和插件目录，缓存不会自动更新。
 if [ "$REFRESH" -eq 1 ]; then
@@ -317,4 +369,5 @@ echo
 echo "完成。下一步："
 echo "  1) 重启 Codex 桌面端 / CLI，在 Plugins → Personal 里安装「Codex 自动挡」"
 echo "  2) 在项目里直接说话即可，例如：左边导航排版坏了，帮我记下来并安排修复"
-echo "  3) 想手敲命令看状态：KG_REPO=$PROJECT python3 $DEST/ops/kgctl.py status"
+echo "  3) 菜单栏：open \"$HOME/Applications/CodexAutopilotCompanion.app\"（⌥⌘A 面板 · ⌥⌘S 截图派活）"
+echo "  4) 想手敲命令看状态：KG_REPO=$PROJECT python3 $DEST/ops/kgctl.py status"

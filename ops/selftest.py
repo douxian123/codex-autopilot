@@ -685,7 +685,9 @@ def test_installer():
 
         env = os.environ.copy()
         env["HOME"] = str(home)
-        command = ["bash", str(install), "--no-seed", str(OPS.parent)]
+        # --no-companion：菜单栏 .app 的编译单独测（test_companion_contract），
+        # 不让一次安装测试既跑安装又跑 Swift 编译。
+        command = ["bash", str(install), "--no-seed", "--no-companion", str(OPS.parent)]
         upgraded = run(command, env=env, check=False)
         if upgraded.returncode:
             raise AssertionError(f"版本化安装失败:\n{upgraded.stdout}\n{upgraded.stderr}")
@@ -697,6 +699,11 @@ def test_installer():
         assert sentinel.read_text(encoding="utf-8") == "keep\n"
         release = home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.1"
         assert (release / "ops" / "central_mcp.py").is_file()
+        # Companion 源码必须随版本目录一起装：以后能从这个目录重建菜单栏应用。
+        assert (release / "companion" / "build.sh").is_file()
+        assert (release / "companion" / "Info.plist").is_file()
+        assert (release / "companion" / "Sources" / "CodexAutopilotCompanion"
+                / "main.swift").is_file()
 
         duplicate = run(command, env=env, check=False)
         assert duplicate.returncode != 0 and "拒绝覆盖" in duplicate.stderr
@@ -754,6 +761,114 @@ def test_daemon_project_binding():
         else:
             os.environ["KG_REPO"] = old_repo
     print("selftest ok: launchd 状态通过 launchctl 查询，跨项目 daemon 不冒充当前项目。")
+
+
+def test_companion_contract():
+    """菜单栏 Companion 只有一条通道：ops/companion_api.py。
+
+    查三件事：打包元数据齐全（否则装出来是个没服务菜单的壳）、用户入口真的接上了
+    （快捷键/截图/拖入/服务菜单，缺一个就是少一个入口）、总闸关掉后这个通道同样拒绝新需求。
+    真编译 .app 需要 swiftc，默认跳过；设 AUTOPILOT_SELFTEST_COMPANION=1 会真编一次。
+    """
+    import importlib
+    import json as _json
+    import shutil
+
+    companion = OPS.parent / "companion"
+    build = companion / "build.sh"
+    plist = companion / "Info.plist"
+    source = companion / "Sources" / "CodexAutopilotCompanion" / "main.swift"
+    assert build.is_file() and os.access(build, os.X_OK), "companion/build.sh 缺失或不可执行"
+    assert plist.is_file() and source.is_file(), "Companion 打包元数据缺失"
+
+    plist_text = plist.read_text(encoding="utf-8")
+    for needle in ("LSUIElement", "sendToAutopilot",
+                   "com.douxian.codex-autopilot.companion"):
+        assert needle in plist_text, f"Info.plist 缺少 {needle}"
+
+    source_text = source.read_text(encoding="utf-8")
+    for needle in ("kVK_ANSI_A", "kVK_ANSI_S", "kVK_ANSI_D", "/usr/sbin/screencapture",
+                   "registerForDraggedTypes", "servicesProvider", "companion_api"):
+        assert needle in source_text, f"Companion 源码缺少 {needle}"
+    # Companion 不许自己造第二套任务账本或第二套状态文件。
+    for forbidden in ("intake.jsonl", "ledger.jsonl", "control.json"):
+        assert forbidden not in source_text, f"Companion 自己碰了 {forbidden}"
+
+    api = OPS / "companion_api.py"
+    home = tempfile.mkdtemp(prefix="kg-companion-home-")
+    staged_repo = Path(tempfile.mkdtemp(prefix="kg-companion-repo-"))
+    empty_repo = Path(tempfile.mkdtemp(prefix="kg-companion-empty-"))
+    old_daemon_home = os.environ.get("KG_DAEMON_HOME")
+    old_repo = os.environ.get("KG_REPO")
+    os.environ["KG_DAEMON_HOME"] = home
+    try:
+        def api_run(*args, repo=None):
+            env = os.environ.copy()
+            if repo is not None:
+                env["KG_REPO"] = str(repo)
+            return run([sys.executable, str(api), *args],
+                       cwd=str(OPS.parent), env=env, check=False)
+
+        os.environ["KG_REPO"] = str(OPS.parent)
+        status = _json.loads(api_run("status").stdout)
+        assert status["ok"] is True and status["enabled"] is True
+        assert status["lifecycle"] == "on"
+        assert status["project"] == str(OPS.parent.resolve())
+        for key in ("switches", "attention", "daemon", "recent_completed"):
+            assert key in status, f"status 输出缺少 {key}"
+
+        off = _json.loads(api_run("disable").stdout)
+        assert off["enabled"] is False and off["lifecycle"] == "off"
+        refused = api_run("intake", "总闸关掉后不该收需求")
+        assert refused.returncode == 2 and "AUTOPILOT_DISABLED" in refused.stdout, \
+            f"关掉总闸后 Companion 通道仍收需求: {refused.stdout}{refused.stderr}"
+        back = _json.loads(api_run("enable").stdout)
+        assert back["enabled"] is True and back["lifecycle"] == "on"
+
+        # 附件与需求原话分开：--attach 进 files，不改写用户那句话。
+        sys.path.insert(0, str(OPS))
+        import companion_api
+        importlib.reload(companion_api)
+        text, files = companion_api._split_attachments(
+            ["--attach", "/tmp/shot.png", "左边", "排版", "坏了", "-a", "/tmp/a.log"])
+        assert text == "左边 排版 坏了", text
+        assert files == ["/tmp/shot.png", "/tmp/a.log"], files
+        assert companion_api._split_attachments(["--attach"]) == ("", [])
+
+        # open status 指向真实状态文件；没有就如实报错，不编一个路径出来。
+        (staged_repo / "docs").mkdir(parents=True)
+        mainline = staged_repo / "docs" / "PRODUCT_MAINLINE.md"
+        mainline.write_text("# 主线\n", encoding="utf-8")
+        opened = _json.loads(api_run("open", "status", repo=staged_repo).stdout)
+        # 状态根会被 resolve（macOS 的 /var 是指向 /private/var 的软链），按解析后的路径比。
+        assert opened["ok"] is True and opened["path"] == str(mainline.resolve()), opened
+        missing = api_run("open", "status", repo=empty_repo)
+        assert missing.returncode == 1 and '"ok": false' in missing.stdout
+        unknown = api_run("nonsense")
+        assert unknown.returncode == 2 and "UNKNOWN_ACTION" in unknown.stdout
+    finally:
+        if old_daemon_home is None:
+            os.environ.pop("KG_DAEMON_HOME", None)
+        else:
+            os.environ["KG_DAEMON_HOME"] = old_daemon_home
+        if old_repo is None:
+            os.environ.pop("KG_REPO", None)
+        else:
+            os.environ["KG_REPO"] = old_repo
+        shutil.rmtree(home, ignore_errors=True)
+        shutil.rmtree(staged_repo, ignore_errors=True)
+        shutil.rmtree(empty_repo, ignore_errors=True)
+
+    print("selftest ok: Companion 契约（打包元数据、快捷键/截图/拖入/服务入口、"
+          "总闸关掉后同一通道拒收）。")
+
+    if os.environ.get("AUTOPILOT_SELFTEST_COMPANION") == "1":
+        built = run(["bash", str(build)], cwd=str(companion), check=False)
+        assert built.returncode == 0, f"Companion 编译失败:\n{built.stdout}\n{built.stderr}"
+        app = companion / "dist" / "CodexAutopilotCompanion.app"
+        assert (app / "Contents" / "MacOS" / "CodexAutopilotCompanion").is_file()
+        assert (app / "Contents" / "Info.plist").is_file()
+        print("selftest ok: Companion 真编译出可安装的 .app。")
 
 
 def test_codex_native_bridge():
@@ -1572,6 +1687,7 @@ if __name__ == "__main__":
     test_control_state()
     test_installer()
     test_daemon_project_binding()
+    test_companion_contract()
     test_codex_native_bridge()
     test_verify_and_truth()
     test_auto_exec()

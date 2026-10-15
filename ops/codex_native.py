@@ -7,6 +7,7 @@ import os
 import selectors
 import sqlite3
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -64,6 +65,11 @@ def _read_response(proc, response_id, timeout=8):
                 break
             line = proc.stdout.readline()
             if not line:
+                # 子进程断了。它写过的 stderr 才是「为什么没通」的原文，
+                # 拿回来贴进原因里，免得把「连不上」误报成「协议超时」。
+                detail = _drain_stderr(proc)
+                if detail:
+                    return None, messages, f"app-server 连接中断：{detail}"
                 break
             try:
                 message = json.loads(line)
@@ -75,6 +81,31 @@ def _read_response(proc, response_id, timeout=8):
         return None, messages, "app-server 未在限定时间内返回方法结果"
     finally:
         selector.close()
+
+
+def _drain_stderr(proc, timeout=1.0, limit=800):
+    """取回子进程 stderr 里已有的内容（只取现有，不阻塞等它退出）。"""
+    chunks = []
+    selector = selectors.DefaultSelector()
+    try:
+        selector.register(proc.stderr, selectors.EVENT_READ)
+        deadline = time.monotonic() + timeout
+        total = 0
+        while time.monotonic() < deadline:
+            if not selector.select(max(0, deadline - time.monotonic())):
+                break
+            line = proc.stderr.readline()
+            if not line:
+                break
+            chunks.append(line)
+            total += len(line)
+            if total > limit:
+                break
+    except (OSError, ValueError):
+        pass
+    finally:
+        selector.close()
+    return "".join(chunks).strip()[-limit:]
 
 
 def _open_session(command):
@@ -323,3 +354,142 @@ def move_thread(thread_id, section_id=None, before_thread_id=None):
     if error:
         return None, error
     return result, None
+
+
+def probe():
+    """如实报告「原生直连」现在通不通，以及不通是因为什么。
+
+    这一条是给用户和面板用的：能派活的唯一条件是桌面端宿主的控制 socket 可达。
+    socket 不可达时只降级成只读历史（能看，不能派），绝不把只读结果说成已连通，
+    也不去改宿主的 SQLite 来伪造一个「已连接」。
+    """
+    info = {
+        "socket": str(SOCKET),
+        "socket_present": SOCKET.is_socket(),
+        "history_db": HISTORY_DB.is_file(),
+        "transport": "unavailable",
+        "connected": False,
+        "can_dispatch": False,
+        "reason": None,
+        "sample": 0,
+    }
+    if info["socket_present"]:
+        result, error = _rpc("thread/list",
+                             {"limit": 1, "useStateDbOnly": True}, host_only=True)
+        if error is None:
+            info.update(transport="codex-app-server-stdio", connected=True,
+                        can_dispatch=True, reason=None,
+                        sample=len((result or {}).get("data") or []))
+            return info
+        info["reason"] = error
+    else:
+        info["reason"] = f"没有找到 Codex 桌面端控制 socket：{SOCKET}"
+    if info["history_db"]:
+        info["transport"] = "history-read-only"
+        info["sample"] = len(_history_snapshot())
+        info["reason"] = (info["reason"] or "") + "（只能只读看历史，不能派活）"
+    reason = info["reason"] or ""
+    if "Operation not permitted" in reason or "Permission" in reason:
+        info["hint"] = ("当前进程被系统权限挡住，连不到桌面端的控制 socket；"
+                        "在终端（不受该限制的环境）里重跑一次 "
+                        "`python3 ops/codex_native.py probe` 才是有效结论。")
+    elif not info["socket_present"]:
+        info["hint"] = "先启动 Codex 桌面端；它起来之后才会创建控制 socket。"
+    return info
+
+
+def history(limit=100):
+    """只读历史：桌面端的 thread 列表（不写任何宿主状态）。"""
+    return _history_snapshot()[:limit]
+
+
+def socket_state():
+    """便宜的状态：只回答「socket 在不在」，不做连接（可以高频调用）。"""
+    return {"socket": str(SOCKET), "socket_present": SOCKET.is_socket(),
+            "history_db": HISTORY_DB.is_file()}
+
+
+def _probe_record_path():
+    try:
+        import control_state
+        return control_state.home() / "native-probe.json"
+    except Exception:
+        return None
+
+
+def record_probe(result):
+    """把一次真实探测的结果落盘。面板/Companion 只显示这个已验证据，
+    不自己猜「应该连得上」，也不把从没跑过自检说成已连通。"""
+    path = _probe_record_path()
+    if path is None:
+        return None
+    payload = dict(result)
+    payload["at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        return None
+    return payload
+
+
+def last_probe():
+    """上一次自检结果；从没跑过就是 None（区别于「跑过但没通」）。"""
+    path = _probe_record_path()
+    if path is None:
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _cli(argv):
+    """命令行入口：用户在终端里能直接自证原生直连通不通。
+
+    例：
+        python3 ops/codex_native.py probe
+        python3 ops/codex_native.py history --limit 5
+        python3 ops/codex_native.py dispatch --cwd DIR --prompt "…" [--section SECTION]
+        python3 ops/codex_native.py follow --thread THREAD --prompt "…"
+        python3 ops/codex_native.py section --name "窗口集合名"
+        python3 ops/codex_native.py move --thread THREAD --section SECTION
+    """
+    def take(flag, default=None):
+        if flag in argv:
+            index = argv.index(flag)
+            if index + 1 < len(argv):
+                return argv[index + 1]
+        return default
+
+    action = argv[0] if argv else "probe"
+    if action == "probe":
+        result = probe()
+        record_probe(result)
+        payload, error = result, None
+    elif action == "history":
+        payload, error = history(int(take("--limit", 20))), None
+    elif action == "snapshot":
+        payload, error = snapshot(), None
+    elif action == "dispatch":
+        payload, error = dispatch_task(take("--cwd", os.getcwd()),
+                                       take("--prompt", ""), take("--section"))
+    elif action == "follow":
+        payload, error = follow_up(take("--thread"), take("--prompt", ""))
+    elif action == "section":
+        payload, error = create_section(take("--name", ""))
+    elif action == "move":
+        payload, error = move_thread(take("--thread"), take("--section"))
+    else:
+        print(json.dumps({"code": "UNKNOWN_ACTION", "message": action},
+                         ensure_ascii=False))
+        return 2
+    print(json.dumps({"ok": error is None, "result": payload, "error": error},
+                     ensure_ascii=False, indent=2))
+    return 0 if error is None else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(_cli(sys.argv[1:]))
