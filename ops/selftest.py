@@ -694,10 +694,10 @@ def test_installer():
         data = _json.loads(market.read_text(encoding="utf-8"))
         entry = next(p for p in data["plugins"] if p["name"] == "codex-autopilot")
         other = next(p for p in data["plugins"] if p["name"] == "other-plugin")
-        assert entry["source"]["path"] == "./plugins/codex-autopilot/releases/0.6.0-preview.2"
+        assert entry["source"]["path"] == "./plugins/codex-autopilot/releases/0.6.0-preview.3"
         assert other["source"]["path"] == "./plugins/other"
         assert sentinel.read_text(encoding="utf-8") == "keep\n"
-        release = home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.2"
+        release = home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.3"
         assert (release / "ops" / "central_mcp.py").is_file()
         # Companion 源码必须随版本目录一起装：以后能从这个目录重建菜单栏应用。
         assert (release / "companion" / "build.sh").is_file()
@@ -768,7 +768,7 @@ def test_installer_shell_portability():
         combined = result.stdout + result.stderr
         assert "unbound variable" not in combined, f"bash 3.2 变量解析崩了:\n{combined}"
         assert result.returncode == 0, f"完整安装路径没跑完:\n{combined}"
-        assert (home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.2"
+        assert (home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.3"
                 / "ops" / "central_mcp.py").is_file()
         # 同一份安装不带 Companion 时也必须照样成功。
         result2 = run(["bash", str(install), "--no-seed", "--no-marketplace",
@@ -836,7 +836,7 @@ def test_installed_copy_binding():
                       "--no-companion", str(project)], env=env, check=False)
         assert result.returncode == 0, f"安装失败:\n{result.stdout}\n{result.stderr}"
 
-        release = home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.2"
+        release = home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.3"
         binding = _json.loads((release / ".mcp.json").read_text(encoding="utf-8"))
         bound = binding["mcpServers"]["codex-autopilot"]["env"]["KG_REPO"]
         assert bound == str(project), f"插件没有把项目写进绑定：{bound}"
@@ -1068,7 +1068,10 @@ def test_companion_contract():
                    # 「打开 Codex」按 bundle id 激活，不去猜应用路径
                    "com.openai.codex", "openCodex",
                    # 主面板在 Codex 本体里：菜单栏只负责送回去，HTML 驾驶舱是备用
-                   "openCodexPanel", "openCockpit", "onOpenCockpit"):
+                   "openCodexPanel", "openCockpit", "onOpenCockpit",
+                   # 仅在待办集合变化时发系统提醒，轮询不重复打扰
+                   "UNUserNotificationCenter", "notifyIfNeeded",
+                   "Codex 自动挡需要你处理", "lastAttentionFingerprint"):
         assert needle in source_text, f"Companion 源码缺少 {needle}"
 
     # 「完整面板」不许把浏览器里的驾驶舱当主面板直接打开。

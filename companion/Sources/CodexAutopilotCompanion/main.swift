@@ -14,6 +14,7 @@ import Carbon.HIToolbox
 import Combine
 import Foundation
 import SwiftUI
+import UserNotifications
 
 // MARK: - 状态模型（与 ops/companion_api.py status 输出一一对应）
 
@@ -80,6 +81,7 @@ final class CompanionModel: ObservableObject {
 
     private let scriptPath: String
     private let supportDir: URL
+    private let attentionKey = "CodexAutopilot.lastAttentionFingerprint"
 
     init() {
         scriptPath = CompanionModel.resolveScriptPath()
@@ -140,9 +142,34 @@ final class CompanionModel: ObservableObject {
             }
             DispatchQueue.main.async {
                 self?.busy = false
+                if let payload,
+                   let data = try? JSONSerialization.data(withJSONObject: payload),
+                   let decoded = try? JSONDecoder().decode(CompanionStatus.self, from: data) {
+                    self?.notifyIfNeeded(decoded.attention ?? [])
+                }
                 then(code, payload, text)
             }
         }
+    }
+
+    private func notifyIfNeeded(_ items: [String]) {
+        guard !items.isEmpty else {
+            UserDefaults.standard.removeObject(forKey: attentionKey)
+            return
+        }
+        let fingerprint = items.joined(separator: "\n")
+        guard UserDefaults.standard.string(forKey: attentionKey) != fingerprint else { return }
+        UserDefaults.standard.set(fingerprint, forKey: attentionKey)
+        let content = UNMutableNotificationContent()
+        content.title = "Codex 自动挡需要你处理"
+        content.body = items.first ?? "打开面板查看当前事项"
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "codex-autopilot-attention",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request)
     }
 
     func refresh() {
@@ -676,6 +703,7 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
         popover.behavior = .transient
         popover.contentSize = NSSize(width: 320, height: 340)
@@ -702,7 +730,13 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         model.$status
             .receive(on: RunLoop.main)
             .sink { [weak self] status in
-                self?.statusItem.button?.image = self?.iconImage(enabled: status.enabled)
+                self?.statusItem.button?.image = self?.iconImage(
+                    enabled: status.enabled,
+                    attention: !(status.attention ?? []).isEmpty
+                )
+                self?.statusItem.button?.toolTip = (status.attention ?? []).isEmpty
+                    ? "Codex 自动挡"
+                    : "Codex 自动挡：需要你处理"
             }
             .store(in: &cancellables)
 
@@ -731,8 +765,13 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func iconImage(enabled: Bool) -> NSImage? {
-        let name = enabled ? "road.lanes" : "pause.circle"
+    private func iconImage(enabled: Bool, attention: Bool = false) -> NSImage? {
+        let name: String
+        if attention {
+            name = "exclamationmark.circle.fill"
+        } else {
+            name = enabled ? "road.lanes" : "pause.circle"
+        }
         let image = NSImage(systemSymbolName: name, accessibilityDescription: "Codex 自动挡")
         image?.isTemplate = true
         return image

@@ -1041,6 +1041,8 @@ def _status_payload(fast=True):
         state_key, state_label = "working", "正在自动实现一条需求"
     elif failures:
         state_key, state_label = "blocked", "有分支需要你拍板"
+    elif board["human"]:
+        state_key, state_label = "blocked", "需要你验收"
     elif not live:
         state_key, state_label = "session_only", (
             "当前项目未连接常驻守护"
@@ -1070,6 +1072,10 @@ def _status_payload(fast=True):
         tgt, kind = failures[0]["target"], failures[0]["kind"]
         doing = f"卡在 {tgt}（{kind}），已停下等你决定"
         why = "这类改动要么改了产品方向、要么门禁过不了，按约定不自动合"
+    elif board["human"]:
+        title = board["human"][0].get("title") or "一项已完成功能"
+        doing = f"已完成 {title}，现在停下来等你验收"
+        why = "这一步需要真实桌面操作或产品判断，自动挡不会替你假装通过"
     elif summary.get("clean"):
         doing = f"正在把 {summary.get('clean')} 个和主线无冲突的分支逐个合入"
         why = "它们和 main 无冲突、验证门禁已过，属于可以安全自动合入的那一类"
@@ -1094,6 +1100,8 @@ def _status_payload(fast=True):
         need_action = "需要继续使用自动挡时，重新开启总开关"
     elif failures:
         need_action = f"需要你拍板：{failures[0]['target']}（{failures[0]['kind']}）"
+    elif board["human"]:
+        need_action = f"需要你验收：{board['human'][0].get('title') or '请打开面板查看验收步骤'}"
     elif ctrl.get("error"):
         need_action = "控制文件异常，去高级面板看一眼或恢复默认"
     else:
