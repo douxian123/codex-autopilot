@@ -53,6 +53,17 @@ if [ -z "$PY" ]; then
   echo "找不到 python3，请先安装后再运行。" >&2
   exit 1
 fi
+# 重装时**沿用已有的解释器路径**，不要静默换成另一个 python3。
+# 为什么：`command -v python3` 的结果取决于 PATH；从不同 shell 跑 install.sh 会得到不同
+# 解释器（实测在 /opt/homebrew/bin/python3 与 /usr/bin/python3 之间来回跳）。那会让一次
+# 「只刷新代码」的重装顺手改写一份本来能用的配置——属于「静默改变别人的东西」。
+EXISTING_MCP="$PLUGIN_ROOT/codex-autopilot/.mcp.json"
+if [ -f "$EXISTING_MCP" ]; then
+  PREV_PY="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["mcpServers"]["codex-autopilot"]["command"])' "$EXISTING_MCP" 2>/dev/null || true)"
+  if [ -n "$PREV_PY" ] && [ -x "$PREV_PY" ]; then
+    PY="$PREV_PY"
+  fi
+fi
 
 [ -n "$PROJECT" ] || PROJECT="$REPO"
 if [ ! -d "$PROJECT" ]; then
@@ -99,7 +110,11 @@ if [ -L "$DEST" ] || [ -e "$DEST" ]; then rm -rf -- "$DEST"; fi
 mkdir -p "$DEST/ops"
 cp -R "$PLUGIN_DIR/." "$DEST/"
 cp "$REPO"/ops/*.py "$DEST/ops/"
-cp "$REPO/ops/central.config.example.json" "$DEST/ops/"
+# 运行时可能带非 .py 的配套文件（模板/示例配置）。一并复制，别只列举个别文件——
+# 列举会漏，而漏掉的那个通常在用户真要用它时才发现（曾漏过 DELEGATION_TEMPLATE.md：
+# 脚本装上了、模板没装，skill 指着一个不存在的文件）。
+cp "$REPO"/ops/*.md "$DEST/ops/" 2>/dev/null || true
+cp "$REPO"/ops/*.json "$DEST/ops/" 2>/dev/null || true
 
 # 3) .mcp.json：运行时代码走插件自己的 ops/，状态写回目标项目。
 "$PY" - "$DEST/.mcp.json" "$PY" "$PROJECT" "$TRUNK" <<'PYEOF'
