@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-13 21:42:52　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-15 13:28:53　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -38,11 +38,13 @@
 
 ## 最近在推进
 
-- （还没有进展记录）
+- [已落盘] @ codex/nati 已接入 Codex 原生 thread/section 协议适配与面板映射；独立 app-server 不可用时只读历史降级，未把独立服务冒充当前桌面宿主实时连接。
+- [在途] @ 0a46cef 已提交 Codex app-server thread/section 适配、只读历史降级、窗口集合面板展示与协议模拟测试。真实 app-server 因 state runtime 初始化失败未能连通；turn/start 调度、台账自动绑定、桌面实时状态和 scheduled automation 闭环仍未完成，L-0001 保持 open。
 
 ## 还差什么
 
-- 台账里没有未决问题
+**bug（1 待处理）**
+- `L-0001` 复用 Codex 原生 app-server/thread、Projects/窗口集合与 scheduled automations，形成主司令窗到子对话窗的真
 
 ## 需要你验收
 
@@ -55,7 +57,7 @@
 ## 进度概览
 
 - 累计关闭问题：0 条
-- 累计落盘：0 条
-- 未决问题：0 条
+- 累计落盘：1 条
+- 未决问题：1 条
 - 已验收：0 条
 
