@@ -1,1 +1,2 @@
 {"ts": "2026-10-15 12:25:54", "text": "复用 Codex 原生 app-server/thread、Projects/窗口集合与 scheduled automations，形成主司令窗到子对话窗的真实路线编排；先验证稳定官方接口，再实现最小可靠接入与面板映射，不伪造宿主能力", "source": "user", "files": [], "kind": "unknown", "routed": true, "lane": "bug"}
+{"ts": "2026-10-15 17:18:26", "text": "把真实安装 + 菜单栏 Companion + 原生直连自检压成一条命令，让用户一次跑完就能验收预览包（当前只能手工分步做）", "source": "user", "files": [], "kind": "unknown", "routed": true, "lane": "bug"}
