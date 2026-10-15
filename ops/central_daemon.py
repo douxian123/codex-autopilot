@@ -149,17 +149,41 @@ def log_block(title: str, rc: int, out: str) -> None:
 
 
 def run_kgctl(args, timeout=TICK_TIMEOUT, env_extra=None):
-    """调用 kgctl，返回 (rc, 合并后的 stdout+stderr)。"""
+    """调用 kgctl，返回 (rc, 合并后的 stdout+stderr)。
+
+    超时不能只说一句「超时」：旧实现在 TimeoutExpired 分支里**把子进程已经产出的输出
+    整段丢掉**（subprocess.run 抛异常时不给 output），于是 2026-10-15 22:49 那次 tick
+    挂满 1800s 之后，日志里只剩一行 `[tick] rc=124`，卡在哪一步无从判断。
+    现在自己起进程：到点先收下已产出的行，再用 killpg 收掉整个进程组（只 kill 直接
+    子进程会留下 git 孙进程，就是历史上那类「僵尸服务存活几小时」的形态）。
+    """
     cmd = [sys.executable, str(KGCTL), *args]
     env = {**os.environ, **env_extra} if env_extra else None
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
-                           cwd=str(CODE_ROOT), timeout=timeout, env=env)
-        return p.returncode, (p.stdout or "") + (p.stderr or "")
-    except subprocess.TimeoutExpired:
-        return 124, f"kgctl {' '.join(args)} 超时（>{timeout}s）"
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, errors="replace", cwd=str(CODE_ROOT),
+                                env=env, start_new_session=True)
     except OSError as exc:
         return 125, f"调用 kgctl 失败: {exc}"
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+        return proc.returncode, out or ""
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except OSError:
+            proc.kill()
+        try:
+            out, _ = proc.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            out = ""
+        tail = (out or "").strip()
+        msg = f"kgctl {' '.join(args)} 超时（>{timeout}s，进程组已收掉）"
+        if tail:
+            msg += "\n超时前已产出的输出如下（最后一行即卡住的位置）：\n" + tail
+        else:
+            msg += "\n（超时前一行输出都没有——卡在第一个阶段之前，见 kgctl tick 的阶段编号）"
+        return 124, msg
 
 
 def load_state() -> dict:
@@ -954,7 +978,11 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
         superseded = int(m.group(1))
 
     landed, failures = [], []
-    if rc != 0 and not out.strip():
+    if rc == 124:
+        # 超时必须算失败：旧实现里 tick 超时的 out 是一条说明文案（非空），于是既不进
+        # failures 也不报警——30 分钟的黑洞在面板上显示成 last_failures=0。
+        failures.append(("(tick)", "tick_timeout"))
+    elif rc != 0 and not out.strip():
         failures.append(("(tick)", "tick_error"))
 
     auto_land = control_state.load().get("auto_land", True)

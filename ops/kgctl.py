@@ -2352,9 +2352,13 @@ def _align_main_ref_to_origin(new: str = "") -> str:
 # 真相层与生成视图：它们本来就该落在主干工作树上，所以不算「污染」。land /
 # supersede 先提交它们再落盘，而不是因为「主干有未提交改动」直接拒绝执行——
 # 后者曾经让每一次 `kgctl tick` 都顺手把 land 锁死。
+# 心跳窗口每拍都要写 docs/COCKPIT_BRIEF.md 与 docs/AGENT_SYNC.md。这两份文件不在
+# TRUTH_PATHS 里时，tick 的 sync_trunk_truth 不会提交它们——心跳每写一次，共享检出就
+# 多一份无人认领的在途改动（正是 PARALLEL_WORKFLOW「禁止制造在途改动」要禁止的形态）。
 TRUTH_PATHS = ("ops/truth", "ops/tasks", "ops/context", "docs/PROJECT_STATUS.md",
                "docs/CONTROL_BOARD.md", "docs/CONTROL_PLANE.html",
-               "docs/PRODUCT_MAINLINE.md")
+               "docs/PRODUCT_MAINLINE.md", "docs/COCKPIT_BRIEF.md",
+               "docs/AGENT_SYNC.md")
 TRUTH_COMMIT_RE = re.compile(r"^(chore\(truth\)|train: (sync|merge))")
 
 
@@ -2564,15 +2568,32 @@ def _resolve_truth_merge(wt: Path) -> bool:
 
 
 def _merge_truth_from_origin() -> bool:
-    merged = subprocess.run(
-        ["git", "-C", str(REPO), "merge", "--no-ff", f"origin/{MAIN}",
-         "-m", "train: merge origin/main into truth state"],
-        capture_output=True, text=True)
-    if merged.returncode == 0:
+    rc, _out = _git_bounded(["merge", "--no-ff", f"origin/{MAIN}",
+                             "-m", "train: merge origin/main into truth state"], 180)
+    if rc == 0:
         return True
     if _resolve_truth_merge(REPO):
         return True
     return False
+
+
+def _git_bounded(args, timeout: int, label: str = ""):
+    """有界的 git 调用：超时就杀，返回 (rc, 合并后的输出)，绝不无限期挂着。
+
+    事故（2026-10-15 22:19 那一轮）：tick 挂满 1800s 被守护进程杀掉，日志里只剩
+    `[tick] rc=124`，连卡在哪一步都看不出。tick 的网络步骤当时用的是没有 timeout
+    的 subprocess.run —— 只要 TCP 卡住，整轮就是黑洞：真相层不提交、不推送，
+    共享检出也就停在上一个 commit 上（实测落后 origin/main 20 个 commit）。
+    这里给每一步一个上限，把「无限期挂着」变成「一条可见的失败」。
+    """
+    try:
+        p = subprocess.run(["git", "-C", str(REPO), *args], capture_output=True,
+                           text=True, errors="replace", timeout=timeout)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except subprocess.TimeoutExpired:
+        return 124, f"git {' '.join(args)} 超时（>{timeout}s）"
+    except OSError as exc:  # 解释器/可执行文件问题，也要有明确结果而不是抛穿 tick
+        return 125, f"git {' '.join(args)} 起不来：{exc}"
 
 
 def push_truth_state() -> None:
@@ -2581,10 +2602,9 @@ def push_truth_state() -> None:
     远端前进不是终止条件：真相层是追加式 JSONL，先合并远端再推送；只有非真相文件冲突
     才放弃。这样「本地 inbox / 台账永远推不上 main」不会再成为暗坑。
     """
-    fetched = subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
-                             capture_output=True, text=True)
-    if fetched.returncode != 0:
-        print(f"  fetch origin/{MAIN} 失败：{fetched.stderr.strip()[:200]}")
+    frc, fout = _git_bounded(["fetch", "origin", MAIN], 120)
+    if frc != 0:
+        print(f"  fetch origin/{MAIN} 失败：{fout.strip()[:200]}")
         return
     ahead = int(git("rev-list", "--count", f"origin/{MAIN}..HEAD") or 0)
     if ahead == 0:
@@ -2598,10 +2618,9 @@ def push_truth_state() -> None:
         if not _merge_truth_from_origin():
             return
         ahead = int(git("rev-list", "--count", f"origin/{MAIN}..HEAD") or 0)
-    pushed = subprocess.run(["git", "-C", str(REPO), "push", "origin", f"HEAD:{MAIN}"],
-                            capture_output=True, text=True)
-    if pushed.returncode != 0:
-        print(f"  真相层推送失败，{ahead} 条提交留在本地：{(pushed.stdout + pushed.stderr).strip()[:200]}")
+    prc, pout = _git_bounded(["push", "origin", f"HEAD:{MAIN}"], 180)
+    if prc != 0:
+        print(f"  真相层推送失败，{ahead} 条提交留在本地：{pout.strip()[:200]}")
         return
     subprocess.run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}", "HEAD"],
                    check=False)
@@ -3262,13 +3281,22 @@ def cmd_next(args):
     _truth("next")
 
 
+def _stage(n: int, label: str) -> None:
+    """打印阶段号 + 开始时间。
+
+    tick 被上层超时杀掉时（实测 2026-10-15 22:19 那一轮挂了 1800s 被杀），日志里最后
+    一个时间戳就是卡住的位置；旧实现八个阶段共用固定文案，超时后完全无法定位。
+    """
+    print("\n[%d/8] %s  (%s)" % (n, label, time.strftime("%H:%M:%S")), flush=True)
+
+
 def cmd_tick(args):
     """自动挡主循环：输入归一 -> 真相刷新 -> 冲突收拢 -> 看板/上下文 -> 落盘状态。"""
-    print("[1/8] route inbox", flush=True)
+    _stage(1, "route inbox")
     _truth("route", "--go")
-    print("\n[2/8] refresh project status", flush=True)
+    _stage(2, "refresh project status")
     _truth("snapshot")
-    print("\n[3/8] synthesize product mainline", flush=True)
+    _stage(3, "synthesize product mainline")
     _truth("synthesize")
 
     rows = scan()
@@ -3278,17 +3306,17 @@ def cmd_tick(args):
         sum(1 for r in rows if r["kind"] == "CONFLICT"),
         sum(1 for r in rows if r["kind"] == "UNRESOLVED")))
 
-    print("\n[4/8] consolidate conflict families", flush=True)
+    _stage(4, "consolidate conflict families")
     if "--no-converge" not in args:
         cmd_converge(["--go", "--limit", "8"])
     else:
         print("  （--no-converge：跳过）")
 
-    print("\n[5/8] refresh board + dashboard", flush=True)
+    _stage(5, "refresh board + dashboard")
     cmd_board([])
     cmd_dash([])
 
-    print("\n[6/8] write context packs for next tasks", flush=True)
+    _stage(6, "write context packs for next tasks")
     rows = scan()
     branches = [r["branch"] for r in rows if r["kind"] == "CLEAN"][:20]
     branches += [g.get("branch") for g in load_convergence().get("groups", [])[:20]
@@ -3298,10 +3326,10 @@ def cmd_tick(args):
     else:
         print("  没有待执行分支，跳过")
 
-    print("\n[7/8] commit + push truth state", flush=True)
+    _stage(7, "commit + push truth state")
     sync_trunk_truth(REPO, "sync from tick")
     push_truth_state()
-    print("\n[8/8] what to do next", flush=True)
+    _stage(8, "what to do next")
     _truth("next")
 
 
