@@ -953,6 +953,87 @@ def test_daemon_project_binding():
     print("selftest ok: launchd 状态通过 launchctl 查询，跨项目 daemon 不冒充当前项目。")
 
 
+def test_daemon_control_action():
+    """后台常驻开关必须真启停 launchd，而不是只改偏好位。
+
+    面板上的「后台常驻」如果只写配置、不装守护，用户会以为关掉 Codex 还能推进，
+    实际什么都没在跑。这里锁住三件事：总闸关掉时拒绝、开启/关闭真转发到
+    `central_daemon.py --install/--uninstall`、安装失败不谎报已开启。
+    """
+    import importlib
+
+    home = tempfile.mkdtemp(prefix="kg-daemon-ctl-")
+    project = Path(tempfile.mkdtemp(prefix="kg-daemon-ctl-proj-"))
+    (project / "ops" / "truth").mkdir(parents=True)
+    (project / "ops" / "truth" / "ledger.jsonl").write_text("", encoding="utf-8")
+    old_home = os.environ.get("KG_DAEMON_HOME")
+    old_repo = os.environ.get("KG_REPO")
+    os.environ["KG_DAEMON_HOME"] = home
+    os.environ["KG_REPO"] = str(project)
+    try:
+        sys.path.insert(0, str(OPS))
+        import control_state
+        import central_mcp
+        importlib.reload(control_state)
+        importlib.reload(central_mcp)
+
+        calls = []
+
+        def fake_run(argv, extra_env=None, timeout=900):
+            calls.append(list(argv))
+            return "fake launchctl ok", 0
+
+        central_mcp._run = fake_run
+
+        # 总闸关掉后，连后台常驻开关都不许碰 launchd。
+        control_state.set_keys(enabled=False, daemon_enabled=False)
+        refused, rc = central_mcp.control_action("enable_daemon")
+        assert rc == 2, f"总闸关掉后 enable_daemon 竟然返回 {rc}"
+        assert "AUTOPILOT_DISABLED" in str(refused), refused
+        assert calls == [], f"总闸关掉后仍去动了 launchd: {calls}"
+        assert control_state.load()["daemon_enabled"] is False
+
+        control_state.set_keys(enabled=True)
+
+        payload, rc = central_mcp.control_action("enable_daemon")
+        assert rc == 0, f"开启后台常驻失败: {payload}"
+        assert calls and calls[-1][-1] == "--install", \
+            f"开启后台常驻没真调 --install: {calls}"
+        assert control_state.load()["daemon_enabled"] is True
+
+        calls.clear()
+        payload, rc = central_mcp.control_action("disable_daemon")
+        assert rc == 0, f"关闭后台常驻失败: {payload}"
+        assert calls and calls[-1][-1] == "--uninstall", \
+            f"关闭后台常驻没真调 --uninstall: {calls}"
+        assert control_state.load()["daemon_enabled"] is False
+
+        # 真装不上时不能把偏好写成「已开启」。
+        control_state.set_keys(daemon_enabled=False)
+
+        def failing_run(argv, extra_env=None, timeout=900):
+            return "launchctl bootstrap 失败", 1
+
+        central_mcp._run = failing_run
+        payload, rc = central_mcp.control_action("enable_daemon")
+        assert rc == 1, f"launchd 安装失败却返回成功: {rc}"
+        assert control_state.load()["daemon_enabled"] is False, \
+            "launchd 安装失败却把偏好写成已开启"
+    finally:
+        if old_home is None:
+            os.environ.pop("KG_DAEMON_HOME", None)
+        else:
+            os.environ["KG_DAEMON_HOME"] = old_home
+        if old_repo is None:
+            os.environ.pop("KG_REPO", None)
+        else:
+            os.environ["KG_REPO"] = old_repo
+        import shutil
+        shutil.rmtree(home, ignore_errors=True)
+        shutil.rmtree(project, ignore_errors=True)
+    print("selftest ok: 后台常驻开关真启停 launchd，失败不谎报。")
+
+
 def test_companion_contract():
     """菜单栏 Companion 只有一条通道：ops/companion_api.py。
 
@@ -1924,6 +2005,7 @@ if __name__ == "__main__":
     test_installer()
     test_installer_shell_portability()
     test_daemon_project_binding()
+    test_daemon_control_action()
     test_companion_contract()
     test_panel_contract()
     test_preview_check_contract()
