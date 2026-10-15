@@ -138,6 +138,9 @@
   .route-row:last-child{border-bottom:0}
   .route-row .t{font-size:12.5px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
   .route-row .d{margin-top:4px;color:var(--ink-3);font-size:11.5px;overflow-wrap:anywhere}
+  .route-group{padding:8px 0;border-bottom:1px solid var(--line-2)}
+  .route-group:last-child{border-bottom:0}
+  .route-group .t{font-size:12px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
   .tiny{font-size:11.5px;color:var(--ink-3)}
 
   /* ---- chips ---- */
@@ -800,6 +803,43 @@
     var note = document.createElement("div"); note.className = "empty";
     note.textContent = route.thread_note || "Codex 原生窗口由宿主维护；这里只展示已有的真实关联。";
     box.appendChild(note);
+    var native = route.native || {};
+    var threads = native.threads || [];
+    var sections = native.sections || [];
+    if (sections.length){
+      sections.forEach(function(section){
+        var group = document.createElement("div"); group.className = "route-group";
+        var heading = document.createElement("div"); heading.className = "t";
+        heading.textContent = section.name || "未命名窗口集合";
+        group.appendChild(heading);
+        var members = threads.filter(function(thread){
+          return thread.sectionId === section.id;
+        });
+        if (!members.length){
+          var empty = document.createElement("div"); empty.className = "d";
+          empty.textContent = "暂无窗口";
+          group.appendChild(empty);
+        }
+        members.forEach(function(thread){
+          var item = document.createElement("div"); item.className = "d";
+          item.textContent = thread.name || thread.title || thread.id || "Codex 对话";
+          group.appendChild(item);
+        });
+        box.appendChild(group);
+      });
+    } else if (threads.length){
+      var historical = document.createElement("div"); historical.className = "empty";
+      historical.textContent = "Codex 对话历史（只读）";
+      box.appendChild(historical);
+      threads.slice(0, 12).forEach(function(thread){
+        var item = document.createElement("div"); item.className = "route-row";
+        var title = document.createElement("div"); title.className = "t";
+        title.textContent = thread.name || thread.title || "Codex 对话";
+        var meta = document.createElement("div"); meta.className = "d";
+        meta.textContent = thread.id || "";
+        item.appendChild(title); item.appendChild(meta); box.appendChild(item);
+      });
+    }
     var tasks = route.tasks || [];
     if (!tasks.length){
       var empty = document.createElement("div"); empty.className = "empty";

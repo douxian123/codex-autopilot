@@ -660,6 +660,62 @@ def test_control_state():
     print("selftest ok: 用户级开关生效，暂停闸门拦住新工作，损坏即安全暂停。")
 
 
+def test_codex_native_bridge():
+    """app-server 使用官方协议参数；历史数据库只读降级，不写宿主状态。"""
+    import importlib
+    import json as _json
+    import sqlite3
+    from unittest import mock
+
+    sys.path.insert(0, str(OPS))
+    import codex_native
+    importlib.reload(codex_native)
+
+    response = "\n".join([
+        _json.dumps({"jsonrpc": "2.0", "id": 1, "result": {}}),
+        _json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"thread": {
+            "id": "thread-1", "cwd": "/tmp/project", "sectionId": "section-1"}}}),
+        "",
+    ])
+    with mock.patch.object(codex_native.subprocess, "run",
+                           return_value=mock.Mock(returncode=0, stdout=response, stderr="")) as run_mock:
+        started, error = codex_native.start_thread("/tmp", "section-1")
+        assert error is None and started["thread_id"] == "thread-1"
+        requests = [_json.loads(line) for line in run_mock.call_args.kwargs["input"].splitlines()]
+        assert requests[0]["method"] == "initialize"
+        assert requests[1]["method"] == "initialized"
+        assert requests[2]["params"]["sectionId"] == "section-1"
+
+    with mock.patch.object(codex_native, "_rpc", return_value=(None, "unavailable")):
+        with tempfile.TemporaryDirectory(prefix="codex-history-") as tmp:
+            db_path = Path(tmp) / "history.sqlite"
+            with sqlite3.connect(db_path) as db:
+                db.executescript("""
+                    CREATE TABLE thread_turns (
+                        thread_id TEXT, completed_at INTEGER, started_at INTEGER, status TEXT
+                    );
+                    CREATE TABLE thread_items (
+                        thread_id TEXT, item_type TEXT, rollout_ordinal INTEGER, item_json TEXT
+                    );
+                    INSERT INTO thread_turns VALUES ('historic-thread', 20, 10, 'idle');
+                    INSERT INTO thread_items VALUES (
+                        'historic-thread', 'userMessage', 1, '{"text":"历史标题"}'
+                    );
+                """)
+            old_db, codex_native.HISTORY_DB = codex_native.HISTORY_DB, db_path
+            try:
+                snapshot = codex_native.snapshot()
+                assert snapshot["available"] is False
+                assert snapshot["transport"] == "history-read-only"
+                assert snapshot["threads"][0]["id"] == "historic-thread"
+                with sqlite3.connect(db_path) as db:
+                    assert db.execute("SELECT count(*) FROM thread_turns").fetchone()[0] == 1
+            finally:
+                codex_native.HISTORY_DB = old_db
+
+    print("selftest ok: Codex app-server 初始化/sectionId 协议与 SQLite 只读历史降级通过。")
+
+
 def test_verify_and_truth():
     """验证门禁与真相层：门禁真跑、证据真写、失败真拦；产品状态/判断逻辑可累积。"""
     import json as _json
@@ -1345,6 +1401,7 @@ if __name__ == "__main__":
     test_resolve()
     test_reset_trunk_truth_conflict()
     test_control_state()
+    test_codex_native_bridge()
     test_verify_and_truth()
     test_auto_exec()
     test_mcp_contract()

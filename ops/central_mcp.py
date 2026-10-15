@@ -48,6 +48,7 @@ SERVER_VERSION = _server_version()
 from plugin_binding import apply_plugin_env  # noqa: E402
 
 import control_state  # noqa: E402
+import codex_native  # noqa: E402
 
 try:
     import exec_status  # noqa: E402
@@ -355,6 +356,45 @@ TOOLS = [
                 "enabled": {"type": "boolean", "description": "set_auto_* 的目标值"},
             },
             "required": ["action"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "codex_native_threads",
+        "description": "只读查看 Codex 对话与窗口集合；优先读取独立 app-server，连接不可用时降级到本地只读历史。独立 app-server 不保证等同于当前桌面窗口实时状态。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "codex_native_create_section",
+        "description": "通过 Codex app-server 创建原生 thread section；属于显式写操作，自动挡关闭时拒绝。独立 app-server 不保证立即同步到当前桌面窗口。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "codex_native_start_thread",
+        "description": "通过 Codex app-server 创建对话窗口。必须提供真实项目 cwd；可选 section_id 指定 Codex 原生窗口集合。该接口的结果不保证立即出现在当前桌面窗口。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"cwd": {"type": "string"}, "section_id": {"type": "string"}},
+            "required": ["cwd"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "codex_native_move_thread",
+        "description": "通过 Codex threadSection/move 调整真实对话窗口的集合归属；section_id 为空表示移出集合。独立 app-server 不保证立即同步到当前桌面窗口。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "thread_id": {"type": "string"},
+                "section_id": {"type": ["string", "null"]},
+                "before_thread_id": {"type": "string"},
+            },
+            "required": ["thread_id"],
             "additionalProperties": False,
         },
     },
@@ -680,7 +720,7 @@ def _mainline_summary(limit=6):
 
 
 def _route_summary(limit=20):
-    """Aggregate real ledger task and workspace links without inventing host threads."""
+    """Merge the ledger route with the host-owned Codex sections and threads."""
     latest = {}
     for rec in _read_jsonl(_truth_dir() / "ledger.jsonl"):
         if rec.get("id"):
@@ -702,11 +742,22 @@ def _route_summary(limit=20):
             "route_key": rec.get("route_key"),
         })
     rows.sort(key=lambda r: (0 if r.get("status") == "doing" else 1, r.get("id") or ""))
+    native = codex_native.snapshot()
+    thread_by_id = {t.get("id"): t for t in native.get("threads", []) if t.get("id")}
+    for row in rows:
+        host_thread = thread_by_id.get(row.get("thread_id"))
+        if host_thread:
+            row["native_thread"] = host_thread
     return {
         "commander": {"kind": "autopilot", "label": "主司令窗"},
         "source": "ops/truth/ledger.jsonl",
-        "thread_api": "unavailable",
-        "thread_note": "Codex 原生窗口由宿主维护；仅展示账本中已有的真实关联，不虚构窗口。",
+        "thread_api": "available" if native.get("available") else "unavailable",
+        "native": native,
+        "thread_note": (
+            "数据来自独立 Codex app-server；不代表当前桌面宿主窗口的实时状态。自动挡只保存已有真实关联。"
+            if native.get("available") else
+            "Codex 原生 app-server 当前不可用；窗口仅从宿主历史只读展示，不虚构实时窗口。"
+        ),
         "tasks": rows[:limit],
     }
 
@@ -1130,18 +1181,43 @@ def call_tool(name, args):
         "project_status", "next_actions", "product_state", "distill_review",
         "suggest_branch", "resolve_list", "resolve_plan", "generate_context",
         "dashboard", "autopilot_status", "render_autopilot_panel",
-        "autopilot_settings_read",
+        "autopilot_settings_read", "codex_native_threads",
     }
     control_tools = {
         "autopilot_control", "autopilot_run_once",
         "autopilot_settings_update",
     }
+    native_mutation_tools = {
+        "codex_native_create_section", "codex_native_start_thread",
+        "codex_native_move_thread",
+    }
+    if name in native_mutation_tools:
+        guard = control_state.mutation_guard()
+        if guard:
+            return guard, 2
+        if name == "codex_native_create_section":
+            result, error = codex_native.create_section((args.get("name") or "").strip())
+        elif name == "codex_native_start_thread":
+            cwd = (args.get("cwd") or "").strip()
+            result, error = codex_native.start_thread(cwd, args.get("section_id"))
+        else:
+            result, error = codex_native.move_thread(
+                (args.get("thread_id") or "").strip(),
+                args.get("section_id"),
+                (args.get("before_thread_id") or "").strip() or None,
+            )
+        if error:
+            return {"code": "CODEX_NATIVE_UNAVAILABLE", "message": error}, 2
+        control_state.append_event("codex_native", action=name, result=result)
+        return result, 0
     if name not in read_only_tools | control_tools:
         guard = control_state.mutation_guard()
         if guard:
             return guard, 2
     if name == "project_status":
         return kgctl("status")
+    if name == "codex_native_threads":
+        return codex_native.snapshot()
     if name == "capture_request":
         guard = control_state.mutation_guard()
         if guard:
