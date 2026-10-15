@@ -713,6 +713,29 @@ def test_codex_native_bridge():
             finally:
                 codex_native.HISTORY_DB = old_db
 
+    fake_proc = object()
+    with mock.patch.object(codex_native, "_session", return_value=(fake_proc, None)), \
+            mock.patch.object(codex_native, "_session_request", side_effect=[
+                ({"thread": {"id": "thread-dispatch", "cwd": "/tmp"}}, None),
+                ({"turn": {"id": "turn-dispatch"}}, None),
+            ]) as request_mock, \
+            mock.patch.object(codex_native, "_close_session") as close_mock:
+        dispatched, error = codex_native.dispatch_task(
+            "/tmp", "请实现并验证这个任务", "section-1")
+        assert error is None
+        assert dispatched["thread_id"] == "thread-dispatch"
+        assert dispatched["turn_id"] == "turn-dispatch"
+        assert request_mock.call_args_list[1].args[1] == "turn/start"
+        assert request_mock.call_args_list[1].args[2]["threadId"] == "thread-dispatch"
+        close_mock.assert_called_once_with(fake_proc)
+
+    with mock.patch.object(codex_native, "_session", return_value=(fake_proc, None)), \
+            mock.patch.object(codex_native, "_session_request",
+                              return_value=({"turn": {"id": "turn-follow-up"}}, None)), \
+            mock.patch.object(codex_native, "_close_session"):
+        continued, error = codex_native.follow_up("thread-dispatch", "继续处理并回报卡点")
+        assert error is None and continued["turn"]["id"] == "turn-follow-up"
+
     print("selftest ok: Codex app-server 初始化/sectionId 协议与 SQLite 只读历史降级通过。")
 
 
@@ -1316,7 +1339,8 @@ def test_mcp_contract():
         tool_names = {t["name"] for t in recv()["result"]["tools"]}
         missing = {"product_state", "product_update", "distill_review",
                    "distill_add", "synthesize_mainline", "close_item",
-                   "reopen_item", "register_acceptance"} - tool_names
+                   "reopen_item", "register_acceptance",
+                   "codex_native_dispatch_task", "codex_native_follow_up"} - tool_names
         assert not missing, f"缺少自动挡工具: {sorted(missing)}"
 
         send({"jsonrpc": "2.0", "id": 4, "method": "tools/call",

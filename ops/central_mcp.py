@@ -21,6 +21,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -399,6 +400,34 @@ TOOLS = [
         },
     },
     {
+        "name": "codex_native_dispatch_task",
+        "description": "创建一个真实 Codex 原生子对话并立即用 turn/start 派活；成功后把 thread/turn 与自动挡台账关联。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ledger_id": {"type": "string"},
+                "cwd": {"type": "string"},
+                "prompt": {"type": "string"},
+                "section_id": {"type": "string"},
+            },
+            "required": ["ledger_id", "cwd", "prompt"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "codex_native_follow_up",
+        "description": "向已关联的 Codex 原生子对话继续派活；这是 follow-up，不创建第二份任务账本。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "thread_id": {"type": "string"},
+                "prompt": {"type": "string"},
+            },
+            "required": ["thread_id", "prompt"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "render_autopilot_panel",
         "description": "打开自动挡面板（inline 卡片 / 对话侧栏 / 全局侧栏 / 全屏）。面板第一屏用大白话说明：它是什么、怎么用（普通 Codex 输入框就是总输入框，不用新建对话或分支）、它替你做了什么、现在在做什么、你需要做什么、随时可暂停。用户问“自动挡在哪看 / 怎么用 / 现在开着吗”时用它。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
@@ -641,6 +670,36 @@ def _read_jsonl(path):
     return out
 
 
+def _native_routes_path():
+    return _truth_dir() / "native_routes.jsonl"
+
+
+def _append_native_route(ledger_id, result, status):
+    """Persist host linkage metadata without creating a second task ledger."""
+    path = _native_routes_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "ledger_id": ledger_id,
+        "status": status,
+        "thread_id": result.get("thread_id"),
+        "turn_id": result.get("turn_id"),
+        "section_id": result.get("section_id"),
+        "cwd": result.get("cwd"),
+    }
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return record
+
+
+def _native_route_map():
+    latest = {}
+    for record in _read_jsonl(_native_routes_path()):
+        if record.get("ledger_id"):
+            latest[record["ledger_id"]] = record
+    return latest
+
+
 def _acceptance_board():
     """验收分两堆：需要人拍板的、机器已自证的。顺带分出未决问题的 doing/todo。"""
     latest = {}
@@ -725,10 +784,12 @@ def _route_summary(limit=20):
     for rec in _read_jsonl(_truth_dir() / "ledger.jsonl"):
         if rec.get("id"):
             latest[rec["id"]] = rec
+    bindings = _native_route_map()
     rows = []
     for rec in latest.values():
         if rec.get("status") not in ("open", "doing", "todo", "wip", "blocked"):
             continue
+        binding = bindings.get(rec.get("id"), {})
         rows.append({
             "id": rec.get("id"),
             "title": rec.get("title") or rec.get("detail") or "",
@@ -737,9 +798,10 @@ def _route_summary(limit=20):
             "branch": rec.get("branch"),
             "worktree": rec.get("worktree"),
             "parent_thread_id": rec.get("parent_thread_id"),
-            "thread_id": rec.get("thread_id"),
+            "thread_id": rec.get("thread_id") or binding.get("thread_id"),
             "thread_group_id": rec.get("thread_group_id"),
             "route_key": rec.get("route_key"),
+            "native_route": binding or None,
         })
     rows.sort(key=lambda r: (0 if r.get("status") == "doing" else 1, r.get("id") or ""))
     native = codex_native.snapshot()
@@ -1189,7 +1251,8 @@ def call_tool(name, args):
     }
     native_mutation_tools = {
         "codex_native_create_section", "codex_native_start_thread",
-        "codex_native_move_thread",
+        "codex_native_move_thread", "codex_native_dispatch_task",
+        "codex_native_follow_up",
     }
     if name in native_mutation_tools:
         guard = control_state.mutation_guard()
@@ -1200,6 +1263,23 @@ def call_tool(name, args):
         elif name == "codex_native_start_thread":
             cwd = (args.get("cwd") or "").strip()
             result, error = codex_native.start_thread(cwd, args.get("section_id"))
+        elif name == "codex_native_dispatch_task":
+            result, error = codex_native.dispatch_task(
+                (args.get("cwd") or "").strip(),
+                args.get("prompt"),
+                args.get("section_id"),
+            )
+            if not error:
+                _append_native_route(
+                    args["ledger_id"],
+                    result,
+                    status="dispatched",
+                )
+        elif name == "codex_native_follow_up":
+            result, error = codex_native.follow_up(
+                (args.get("thread_id") or "").strip(),
+                args.get("prompt"),
+            )
         else:
             result, error = codex_native.move_thread(
                 (args.get("thread_id") or "").strip(),
