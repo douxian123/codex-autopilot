@@ -2317,21 +2317,33 @@ def _run_verify_gates(wt: Path) -> tuple:
 
 
 def _push_main_with_one_retry(wt: Path) -> str:
-    """推送 trunk HEAD 到 main；若远端前进则同步一次、重跑同一批验证门禁后重试一次。"""
+    """推送 trunk HEAD 到 main；若远端前进则同步并重跑验证后重试，最多 5 次。
+
+    并发 daemon 会在 land 的 fetch 与 push 之间把 main 推前，第一次 push 收到
+    ``(fetch first)`` 并不代表失败：同步 origin/main 后重试通常就成功。早前只
+    重试一次，实测同一个分支会先 landed rc=0、几拍后又因第二次被并发 push 顶掉
+    而抛 RuntimeError（daemon.log 21:48 source-coverage-map），把已落盘记成
+    last_failures。真正的空合并没有新内容要带，若同步后远端已包含 HEAD，等同
+    已落盘，不再重跑验证。
+    """
     last = ""
-    for attempt in range(2):
+    for attempt in range(5):
         pushed = subprocess.run(["git", "-C", str(wt), "push", "origin", "HEAD:main"],
                                 capture_output=True, text=True)
         if pushed.returncode == 0:
             return (pushed.stdout + pushed.stderr).strip()
         last = (pushed.stdout + pushed.stderr).strip()
-        if attempt:
+        if attempt >= 4:
             break
-        print("× push 被拒，远端可能前进；自动同步 origin/main 后重试一次")
+        print(f"× push 被拒（第 {attempt + 1} 次），远端可能前进；同步 origin/main 后重试")
         fetched = subprocess.run(["git", "-C", str(wt), "fetch", "origin", MAIN],
                                  capture_output=True, text=True)
         if fetched.returncode != 0:
             raise RuntimeError(f"push 后 fetch origin/{MAIN} 失败: {fetched.stderr.strip()[:500]}")
+        remote = git("rev-parse", f"origin/{MAIN}")
+        if remote == git("rev-parse", "HEAD"):
+            print("  远端 origin/main 已包含 trunk HEAD；空合并等同已落盘")
+            return ("origin/main 已包含 HEAD（空合并，无需重复推送）")
         synced = subprocess.run(
             ["git", "-C", str(wt), "merge", "--no-ff", f"origin/{MAIN}",
              "-m", "train: sync origin/main before landing"],
