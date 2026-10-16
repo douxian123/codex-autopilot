@@ -2001,12 +2001,34 @@ def _trunk_worktree():
     return wt
 
 
+def _fetch_origin_main(attempts: int = 5, delay: float = 3.0) -> None:
+    """fetch origin/main，带重试。
+
+    原来的 _align_main() 只 fetch 一次：git 代理（http.https://github.com.proxy）
+    抖一下就让整轮 land 抛 RuntimeError 并计入 last_failures，而分支其实早已落盘
+    ——是「假失败」。实测 daemon.log 里就有 Failed to connect to 127.0.0.1 port 9674
+    导致的误判。网络抖动是暂态，重试能消掉绝大多数；真失败（认证/仓库不存在）
+    重试几次后照样抛出，错误信息原样保留。
+    """
+    last = ""
+    for attempt in range(attempts):
+        fetched = subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
+                                 capture_output=True, text=True)
+        if fetched.returncode == 0:
+            if attempt:
+                print(f"  fetch origin/{MAIN} 第 {attempt + 1} 次成功（前 {attempt} 次为暂态失败）")
+            return
+        last = fetched.stderr.strip()
+        if attempt < attempts - 1:
+            print(f"  ! fetch origin/{MAIN} 第 {attempt + 1} 次失败，{delay:g}s 后重试："
+                  f"{last[:200]}")
+            time.sleep(delay)
+    raise RuntimeError(f"fetch origin/{MAIN} 失败（重试 {attempts} 次后仍失败）: {last}")
+
+
 def _align_main():
     """落盘前先把本地 main 引用对齐 origin/main，拒绝在分叉引用上继续。"""
-    fetched = subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
-                             capture_output=True, text=True)
-    if fetched.returncode != 0:
-        raise RuntimeError(f"fetch origin/{MAIN} 失败: {fetched.stderr.strip()}")
+    _fetch_origin_main()
     local = git("rev-parse", MAIN)
     remote = git("rev-parse", f"origin/{MAIN}")
     if local == remote:
