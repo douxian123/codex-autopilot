@@ -15,6 +15,7 @@ Chromium，用与 Codex 宿主同一条 postMessage 桥驱动面板，把渲染�
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,15 +31,29 @@ BRIDGE = """
 <script>
 (function(){
   var payload = %s;
-  window.addEventListener("message", function(ev){
-    var msg = ev.data;
-    if (!msg || msg.jsonrpc !== "2.0" || !msg.method) return;
-    var name = (msg.params && msg.params.name) || "";
+  var nativePostMessage = window.postMessage.bind(window);
+  window.postMessage = function(message, targetOrigin, transfer){
+    if (!message || message.jsonrpc !== "2.0" || message.method !== "tools/call") {
+      return nativePostMessage(message, targetOrigin, transfer);
+    }
+    var name = (message.params && message.params.name) || "";
     var out = (name === "autopilot_status") ? payload : {ok: true, __text__: ""};
-    window.postMessage({jsonrpc: "2.0", id: msg.id,
-      result: {isError: false, structuredContent: out,
-               content: [{type: "text", text: ""}]}}, "*");
-  });
+    setTimeout(function(){
+      window.dispatchEvent(new MessageEvent("message", {
+        data: {
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            isError: false,
+            structuredContent: out,
+            content: [{type: "text", text: ""}]
+          }
+        },
+        source: window
+      }));
+    }, 0);
+    return undefined;
+  };
 })();
 </script>
 """
@@ -72,7 +87,18 @@ def _run(chromium, workdir, args):
             "--hide-scrollbars", "--force-device-scale-factor=2",
             "--window-size=560,1600",
             "--user-data-dir=" + str(workdir / "profile")]
-    return subprocess.run(base + args, capture_output=True, text=True)
+    try:
+        return subprocess.run(base + args, capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or b""
+        stderr = exc.stderr or b""
+        if isinstance(stdout, str):
+            stdout = stdout.encode("utf-8", "replace")
+        if isinstance(stderr, str):
+            stderr = stderr.encode("utf-8", "replace")
+        return subprocess.CompletedProcess(
+            exc.cmd, 124, stdout.decode("utf-8", "replace"),
+            (stderr + b"\nchromium timeout after 30s").decode("utf-8", "replace"))
 
 
 def main(argv):
@@ -110,27 +136,40 @@ def main(argv):
         print((dom_proc.stderr or "")[-600:])
         return 1
 
+    # 注入的 payload 和面板源码都在 <script> 里。比对前必须移除脚本，
+    # 否则脚本中的答案会把「页面已渲染」伪装成通过。
+    rendered = re.sub(r"<script\b[^>]*>.*?</script>", "", dom,
+                      flags=re.IGNORECASE | re.DOTALL)
+
     def visible(text):
         """渲染后的 DOM 里文本会被转义，比对前还原常见实体。"""
         if not text:
             return False
         probe = (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
-        return probe in dom or text in dom
+        return probe in rendered or text in rendered
 
     checks = [
         ("首屏显示绑定项目名", project.get("name")),
         ("首屏显示绑定项目路径", project.get("path")),
         ("首屏显示总状态文案", payload.get("state_label")),
+        ("首屏显示正在做什么", payload.get("doing")),
         ("首屏显示原生直连结论", (payload.get("native") or {}).get("label")),
-        ("有「需要你处理」区块", "需要你处理"),
-        ("有「当前工作」区块", "当前工作"),
-        ("有「产品路线」区块", "产品路线"),
+        ("有「项目文件夹」区块", "项目文件夹"),
+        ("有「需要你介入」区块", "需要你介入"),
+        ("有「工作项走到哪了」区块", "工作项走到哪了"),
+        ("有「工程详情与证据」区块", "工程详情与证据"),
     ]
+    folders = ((payload.get("project_folders") or {}).get("folders") or [])
+    if folders:
+        checks.append(("项目文件夹显示当前步骤", folders[0].get("current_step")))
     if next_step:
         checks.append(("路线里显示下一步", next_step))
 
     fails = 0
     print("Codex 自动挡 面板渲染检查")
+    if "读取中" in rendered:
+        print("  FAIL  首屏仍停留在读取中，控制层数据没有真的渲染进去")
+        fails += 1
     for label, expected in checks:
         if visible(expected):
             print(f"  PASS  {label}")

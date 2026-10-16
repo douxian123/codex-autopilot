@@ -127,7 +127,7 @@ console.log(JSON.stringify({
   hierarchyProject: read("hierProject"),
   hierarchyRoad: read("hierRoad"),
   hierarchyWork: read("hierWork"),
-  routeWorkItems: read("routeWorkItems"),
+  folderBox: read("folderBox"),
   stateLabel: read("stateLabel"),
   subtitle: read("subtitle"),
   masterState: read("masterState"),
@@ -227,10 +227,16 @@ def main(argv):
         expected_work = ((current_items[0].get("title") or current_items[0].get("detail"))
                          if current_items else "等待下一条需求")
         fails += has("路线图显示当前工作项", out["hierarchyWork"], expected_work)
-        if current_items:
-            fails += has("路线图列出工作项状态", out["routeWorkItems"],
-                         current_items[0].get("title") or current_items[0].get("detail"),
-                         "进行中" if payload.get("doing_items") else "待处理")
+        folders = ((payload.get("project_folders") or {}).get("folders") or [])
+        if folders:
+            folder = folders[0]
+            folder_items = (folder.get("doing_items") or folder.get("todo_items") or [])
+            fails += has("项目文件夹显示项目名", out["folderBox"], folder.get("name"))
+            fails += has("项目文件夹显示当前步骤", out["folderBox"], folder.get("current_step"))
+            if folder_items:
+                fails += has("项目文件夹列出工作项", out["folderBox"],
+                             folder_items[0].get("title") or folder_items[0].get("detail"),
+                             "进行中" if folder.get("doing_items") else "待处理")
         fails += has("首屏显示总状态文案", out["stateLabel"], payload.get("state_label"))
         fails += has("首屏显示正在做什么", out["heroSub"], payload.get("doing"))
         if human_acc:
