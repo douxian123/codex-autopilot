@@ -125,8 +125,9 @@ def main(argv):
         ("有「需要你处理」区块", "需要你处理"),
         ("有「当前工作」区块", "当前工作"),
         ("有「产品路线」区块", "产品路线"),
-        ("路线里显示下一步", next_step),
     ]
+    if next_step:
+        checks.append(("路线里显示下一步", next_step))
 
     fails = 0
     print("Codex 自动挡 面板渲染检查")

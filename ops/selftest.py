@@ -1198,8 +1198,18 @@ def test_panel_contract():
     assert project.get("name"), "绑定项目没有名字，面板会显示未绑定"
     assert project.get("path"), "绑定项目没有路径，用户无法确认是哪一个"
 
+    # 首屏必须按「项目 → 路线 → 工作项 → 验收」归口，而不是把所有台账混成一口锅。
+    folders = payload.get("project_folders") or {}
+    rows = folders.get("folders") or []
+    assert rows, "控制层没有产出项目文件夹，面板无法按项目归类"
+    folder = rows[0]
+    assert folder.get("path") == project.get("path"), "项目文件夹没有绑定当前项目"
+    assert folder.get("current_step"), "项目文件夹没有当前步骤"
+    for key in ("doing_items", "todo_items", "human_acceptance", "counts"):
+        assert key in folder, f"项目文件夹缺少 {key}"
+
     print(f"selftest ok: 面板元素（{len(used_ids)} 个）与工具（{len(called)} 个）"
-          f"全部真实存在，开关项都在控制层里。")
+          f"全部真实存在，项目文件夹按项目归口，开关项都在控制层里。")
 
 
 def test_codex_native_bridge():

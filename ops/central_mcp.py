@@ -656,6 +656,67 @@ def _roadmap():
     return rows
 
 
+def _project_folders():
+    """项目文件夹：把「项目 → 产品路线 → 工作项 → 验收」归一成面板能扫描的一层。
+
+    当前控制面只绑定一个项目，所以默认合成一个 folder。后续要把多个项目/对话
+    放进来时，只需在 `ops/truth/project_folders.json` 写同一形状的数组；面板
+    不改渲染逻辑，也不需要把不同项目硬塞进同一口大锅。
+    """
+    current = str(Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve())
+    ml = _mainline_summary()
+    board = _acceptance_board()
+    road = _roadmap()
+    current_step = next((r for r in road if r.get("status") == "doing"), None)
+    if not current_step:
+        current_step = next((r for r in road if r.get("status") == "next"), None)
+    current_step = current_step or next((r for r in road if r.get("status") != "done"), None)
+
+    registry = _json_file(_truth_dir() / "project_folders.json")
+    configured = registry.get("folders") if isinstance(registry, dict) else None
+    if isinstance(configured, list) and configured:
+        return {"source": "ops/truth/project_folders.json", "folders": configured}
+
+    route_tasks = []
+    for row in (_route_summary(timeout=0.0).get("tasks") or []):
+        route_tasks.append({
+            "id": row.get("id"),
+            "title": row.get("title") or "",
+            "status": row.get("status"),
+            "lane": row.get("lane"),
+            "branch": row.get("branch"),
+            "worktree": row.get("worktree"),
+            "thread_id": row.get("thread_id") or ((row.get("native_route") or {}).get("thread_id")),
+        })
+
+    folder = {
+        "id": Path(current).name or "current",
+        "name": Path(current).name or "当前项目",
+        "kind": "project",
+        "path": current,
+        "active": True,
+        "product": ml.get("product") or Path(current).name,
+        "one_liner": ml.get("one_liner") or "",
+        "stage": ml.get("stage") or "",
+        "current_step": (current_step or {}).get("step") or "路线待拆解",
+        "current_step_status": (current_step or {}).get("status") or "todo",
+        "roadmap": road,
+        "open_items": (board.get("doing") or []) + (board.get("todo") or []),
+        "doing_items": board.get("doing") or [],
+        "todo_items": board.get("todo") or [],
+        "human_acceptance": board.get("human") or [],
+        "machine_verified": board.get("machine") or [],
+        "route_tasks": route_tasks,
+        "counts": {
+            "doing": len(board.get("doing") or []),
+            "todo": board.get("todo_count") or 0,
+            "human": len(board.get("human") or []),
+            "machine": board.get("machine_count") or 0,
+        },
+    }
+    return {"source": "当前绑定项目（单项目模式）", "folders": [folder]}
+
+
 def _read_jsonl(path):
     try:
         raw = Path(path).read_text(encoding="utf-8")
@@ -1175,6 +1236,7 @@ def _status_payload(fast=True):
         # fast=True 是面板/开关那条路：只读缓存，不连宿主，绝不因此变慢。
         "route": _route_summary(timeout=0.0 if fast else None),
         "roadmap": _roadmap(),
+        "project_folders": _project_folders(),
         "doing_items": board["doing"],
         "todo_items": board["todo"],
         "todo_count": board["todo_count"],
