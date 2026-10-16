@@ -1,0 +1,67 @@
+{
+ "tasks": [
+  {
+   "slug": "panel-project-route-ia",
+   "branch": "codex/panel-project-route-ia",
+   "base_main": "7c7d8ddaf58c7582293f4b11bec9e9dcef1f0342",
+   "source_head": "19e3f6375587b50188b4167c4d574f093e75e0c9",
+   "source_commits": [
+    "19e3f6375587b50188b4167c4d574f093e75e0c9",
+    "07679c3aee746184138705c0f68a9b793c38f6eb",
+    "db5d13f4cff6cdee7a955e6910cf57ce77df9c6f",
+    "143af791e4432915f4e412c8589a877e2fdf6231",
+    "07fa6bcd3bd0325cc006b2e1a649e29476e9e088",
+    "f4e13aec71c0f3e53c33b10571c0e7bcf45e93ff",
+    "9cb202ae984704558cf8a6b0926c75d3dffb7de1",
+    "b9b28a9d89e0a093811aa3d2035f4828772eb02c"
+   ],
+   "conflict_files": [
+    "docs/PRODUCT_MAINLINE.md",
+    "ops/panel_logic_check.py",
+    "ops/selftest.py",
+    "plugin/.codex-plugin/plugin.json",
+    "plugin/ui/panel.html"
+   ],
+   "unresolved_files": [
+    "docs/PRODUCT_MAINLINE.md",
+    "ops/panel_logic_check.py",
+    "ops/selftest.py",
+    "plugin/.codex-plugin/plugin.json",
+    "plugin/ui/panel.html"
+   ],
+   "auto_resolved_jsonl": [],
+   "created": "2026-10-17 07:17:30",
+   "updated": "2026-10-17 07:17:30",
+   "status": "abandoned",
+   "reason": "面板三问/项目文件夹/菜单栏层级与渲染门禁已由 f1942be 落盘；旧分支剩余差异含版本回退与旧 truth 内容，不应整支合并"
+  },
+  {
+   "slug": "closure-rate-metric",
+   "branch": "codex/closure-rate-metric",
+   "base_main": "7c7d8ddaf58c7582293f4b11bec9e9dcef1f0342",
+   "source_head": "0f0c23e75f8a5298fdc6557df710d56ae5ae1d77",
+   "source_commits": [
+    "0f0c23e75f8a5298fdc6557df710d56ae5ae1d77",
+    "f0c49022f59e226a3e1a338533d1fe5400c23b65",
+    "177d8ea81646747714590e7a908e3b3b0e894031",
+    "129a090719f0b1dc3d539137285974ca471ef249"
+   ],
+   "conflict_files": [
+    "ops/codex_native.py",
+    "ops/panel_logic_check.py",
+    "plugin/ui/panel.html"
+   ],
+   "unresolved_files": [
+    "ops/codex_native.py",
+    "ops/panel_logic_check.py",
+    "plugin/ui/panel.html"
+   ],
+   "auto_resolved_jsonl": [],
+   "created": "2026-10-17 07:17:30",
+   "updated": "2026-10-17 07:17:30",
+   "status": "abandoned",
+   "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
+  }
+ ],
+ "updated": "2026-10-17 07:17:30"
+}
