@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-17 06:57:17　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-17 07:58:33　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -47,8 +47,6 @@
 
 ## 最近在推进
 
-- [在途] 菜单栏 Companion 的附件从「只报数量」改成逐条可见（回形针图标 + 文件名 + 悬停看全路径）并可单独移除，契约测试锁住不许退回成数字；真编译通过（arm64 macOS13）。
-- [在途] install.sh 新增 --verify：装完立刻跑同一份验收报告（落地物/菜单栏应用/原生自检/总闸/面板首屏逻辑），退出码等于失败项数。用户不用记两条命令。
 - [在途] 派活自动归入项目窗口集合；按官方 schema 修正 thread/section/move 与嵌套 section.id；新增真二进制协议自检
 - [已落盘] @ c002d8269c codex/panel-project-followup 验证门禁通过，已落盘 main @ c002d8269c；改动 6 个文件：ops/central.config.json（+41/-0）、ops/central_mcp.py（+62/-0）、ops/panel_logic_check.py（+11/-5）、ops/panel_render_check.py（+54/-14）、ops/selftest.py（+11/-1），另有 1 个文件｜6 files changed, 278 insertions(+), 76 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [在途] 主 checkout 脏改动审计：判定为旧面板/旧版本回退，未暂存 kgctl 是把已合入的 5 次重试改回 2 次，无合理新进展需要合并；主 checkout 不应直接安装或合入
@@ -57,11 +55,11 @@
 - [在途] 本机已安装 0.6.0-preview.7：最新面板三问/项目文件夹/北星闭环率能力已随插件缓存与 Companion 配置生效
 - [在途] preview.7 已安装落盘：面板三问/项目文件夹/北星闭环率/菜单栏新版全部进入本机，唯一剩余阻塞是 remote-control ChatGPT 登录/配对
 - [在途] 原生探测升级：socket 存在但不可派活时，直接报 remote-control ChatGPT 登录/配对硬闸，面板/MCP/Companion 可读 blocked_by=remote-control-chatgpt-pairing
+- [已落盘] @ bba484606d codex/port-panel-route-closure-2 验证门禁通过，已落盘 main @ bba484606d；改动 2 个文件：CONTEXT.md（+4/-4）、plugin/.codex-plugin/plugin.json（+1/-1）｜2 files changed, 5 insertions(+), 5 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [在途] preview.9 发布前强验证：Companion 真编译 + 真实 codex 协议全部通过，本机安装仍未发布
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0012` [P0] 面板首屏（含关闭态）每个值都来自真实控制层数据
-  - 证据：python3 ops/panel_logic_check.py -> 14 项全过：真执行面板脚本，核对绑定项目（名+路径+悬停）、总状态、正在做什么、原生直连结论、收到/已合入/待你验收三个计数、最近完成，以及关掉总闸后的明确关闭态
 - `A-0013` [P0] 装出来的副本自带绑定：kgctl 认得出项目、MCP 能应答（不带任何环境变量）
   - 证据：隔离 HOME 里 bash install.sh --no-seed --no-companion <项目> -> 取装出来的 releases/0.6.0-preview.1 副本，清空 KG_REPO/KG_TRUNK 后：kgctl status 自己解析出项目；MCP initialize + tools/list 正常应答
 - `A-0015` [P0] 全量自检 22 组通过（含后台常驻开关真启停，机器自证）
@@ -82,6 +80,8 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0026` [P1] 本机已安装 0.6.0-preview.6，marketplace/install-state/Codex 缓存全部指向 preview.6
   - 证据：bash install.sh --state-root /Users/danta/Documents/Codex/codex-autopilot-native-autopilot --no-seed --verify --refresh-plugin (cwd=/Users/danta/Documents/Codex/codex-autopilot-panel-project…
+- `A-0028` [P1] codex/port-panel-route-closure-2 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0029` [P1] 本机已安装 0.6.0-preview.8，marketplace/install-state/Codex 缓存/Companion 配置全部指向 preview.8
   - 证据：bash install.sh --state-root /Users/danta/Documents/Codex/codex-autopilot-native-autopilot --no-seed --refresh-plugin (cwd=/Users/danta/Documents/Codex/codex-autopilot-panel-project-followup…
 
@@ -127,11 +127,12 @@
 - `A-0023` [P1] codex/panel-project-followup 落盘验收
 - `A-0026` [P1] 本机已安装 0.6.0-preview.6，marketplace/install-state/Codex 缓存全部指向 preview.6
 - `A-0029` [P1] 本机已安装 0.6.0-preview.8，marketplace/install-state/Codex 缓存/Companion 配置全部指向 preview.8
+- `A-0028` [P1] codex/port-panel-route-closure-2 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：1 条
-- 累计落盘：2 条
+- 累计落盘：3 条
 - 未决问题：4 条
-- 已验收：19 条
+- 已验收：20 条
 
