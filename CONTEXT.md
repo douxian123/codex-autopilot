@@ -3,6 +3,7 @@
 > 这份文件是**这个项目 + 相关对话**的唯一事实来源。opencode 和 codex 都改它，以它为准。
 > 任何 agent 开工前先读它；改动产品行为、决策、进度、卡点后，**回写对应小节**，不要另起文档。
 > 生成/核对时间：2026-10-15（当日现场核对，非转述）。
+> 2026-10-15 深夜 opencode 现场复核（见 12.7）：本机**不是沙箱**，已真跑安装并通过 5/6 验收；原「三条卡点」里的安装/网络两条已在本机解除，原生直连失败的根因**重新定位为 socket 选错（不是权限）**——第四节事实 4 已被推翻并更正。
 > 仓库：`/Users/danta/Documents/Codex/codex-autopilot-native-autopilot`（分支 `main`）
 
 ---
@@ -13,8 +14,9 @@
 
 - 形态：Codex 插件（原生风格面板） + macOS 菜单栏 Companion（状态锚点，不是第二套产品）
 - 版本：`0.6.0-preview.1`，阶段：内部可用
-- 13 步产品路线：**7 步已完成、6 步进行中、0 步未开始**，全部剩余工作都卡在「需要真实桌面环境/网络」这一条边界上
+- 13 步产品路线：**7 步已完成、6 步进行中、0 步未开始**
 - 21 条验收：**17 条机器已自证**，4 条必须人在真机点
+- 本机实测（opencode，2026-10-15 深夜）：本机非沙箱，`bash install.sh --verify` 真跑通过，实装到 `~/plugins/codex-autopilot/releases/0.6.0-preview.1`、Companion 已装进 `~/Applications` 并已运行；验收 6 项 **5 PASS / 1 FAIL**，唯一 FAIL = 原生直连（根因见 12.7）
 - 自检：`python3 ops/selftest.py` → **24 组全过、退出码 0、约 58 秒**；再开真编译 + 真二进制两个开关 → **26 组全过**
 
 ---
@@ -42,14 +44,6 @@
 > 我觉得还是需要有一个面板的，刚刚说像 musing 这种，它只是一个交互入口。没有形态的话，我就不知道它在哪里、怎么用。
 
 所以：借鉴 musing 的「从当前上下文快速提交」，但面板不可省。桌宠人格动画、灵动岛视觉暂缓，它们只能做皮肤，不能承担工程语义。
-
-### 2026-10-16 面板信息架构调整
-
-- 主面板首屏明确回答：当前状态、正在做什么、当前步骤，以及工作归属的项目与路线。
-- 路线关系以「项目 → 产品路线/当前阶段 → 当前工作项 → 验收/收口」呈现；路线列表突出进行中和待处理工作项。
-- 当前状态服务只提供单一绑定项目，不能把多个项目或 Codex 对话伪装成可分组文件夹。多项目注册表与对话归属展示仍是后续能力。
-- 菜单栏 Companion 是轻量状态锚点：展示状态、项目、当前工作/步骤和待处理事项；保留派活、截图、附件、打开完整面板，诊断与路径类动作收进「更多」。
-- 灵动岛与桌宠不承担路线管理和工程追踪；未来可做入口或轻量状态外观。工程状态需要稳定、可扫描、可验证的主面板。
 
 ### 明确不做
 
@@ -101,11 +95,13 @@
 1. **Codex 桌面端本体 = `/Applications/ChatGPT.app`，bundle id `com.openai.codex`**（从 Info.plist 核实）。已注册 `codex://` URL scheme。
 2. **官方 app-server 方法名**：移动会话进/出窗口集合是 `thread/section/move`（不是 `threadSection/move`，旧写法会被服务器判成 unknown variant）。列表/创建分别是 `threadSection/list`、`threadSection/create`。项目里 6 个原生调用点已逐条对真实服务器（144 个可接受方法）核对通过。
 3. **会话归属窗口集合的字段是嵌套的** `thread.section.id`（旧代码按扁平 `sectionId` 读，面板会永远显示「暂无窗口」）。
-4. **桌面宿主控制 socket**：`~/.codex/ipc/ipc.sock`。文件存在，但受限进程连接返回 `Operation not permitted`。
-5. `codex` CLI 在 `/Users/danta/.local/bin/codex`，版本 `codex-cli 0.148.0-alpha.15`。
-6. 用隔离状态目录（`CODEX_HOME=<临时目录>`）时，真实 `codex app-server` 能初始化并建出原生会话——所以桥接代码本身是通的。
-7. 历史数据库 `~/.codex/thread_history_1.sqlite` 只读打开，永不写宿主状态。
-8. 开关当前实况：总开关 on、未暂停、自动合入开、自动解冲突开、自动实现开、常驻开、**自动 port 关**。
+4. **`~/.codex/ipc/ipc.sock` 不是 app-server 控制 socket**（2026-10-15 opencode 实测更正，推翻旧说法）。它是桌面端的进程间 IPC / IDE 上下文通道：帧带 4 字节长度前缀（在 `ChatGPT.app/Contents/Resources/app.asar` 里可见 `Buffer.allocUnsafe(4)` 与 `IDE context socket…`），对它直接发 app-server 的 JSONL 会被对端**立刻关闭**；用 `codex app-server proxy --sock ipc.sock`（本地 0.148 与桌面自带 0.162 都一样）报 `failed to relay data between stdio and socket`、退出码 1。实测三连：raw socket 连接秒通但 recv 得 `b''`（对端关闭）、proxy 报 relay 失败、`codex doctor` 挂住。
+5. **真正的 app-server 控制 socket 路径是 `~/.codex/app-server-control/app-server-control.sock`**，只在装了官方 standalone daemon（`codex app-server daemon start` / `codex remote-control start`，需先 `curl -fsSL https://chatgpt.com/codex/install.sh | sh` 独立安装）并令桌面用本地 daemon（`CODEX_APP_SERVER_USE_LOCAL_DAEMON=1`）时才存在。本机该目录只有 `app-server-startup.lock`、没有控制 socket；`codex app-server daemon start` 报 `managed standalone Codex install not found`。
+6. `codex` CLI 在 `/Users/danta/.local/bin/codex`，版本 `codex-cli 0.148.0-alpha.15`；桌面端自带 `/Applications/ChatGPT.app/Contents/Resources/codex-cli/.../codex` 是 `0.162.0-alpha.17.2`（两者版本不一致）。
+7. 还有 `~/.codex/ipc/codex-center-control-20260814b.sock`，是陈旧残留，连接报 `Connection refused`。
+8. 用隔离状态目录（`CODEX_HOME=<临时目录>`）时，真实 `codex app-server` 能初始化并建出原生会话——所以桥接代码本身是通的（但那是**独立实例**，不等于桌面宿主）。
+9. 历史数据库 `~/.codex/thread_history_1.sqlite` 只读打开，永不写宿主状态。
+10. 开关当前实况：总开关 on、未暂停、自动合入开、自动解冲突开、自动实现开、常驻开、**自动 port 关**。
 
 ---
 
@@ -124,7 +120,7 @@
 | 进行中 | 路线与人机验收可见 | 面板已展示路线与人工验收项 |
 | 进行中 | 跨应用入口 | 四个入口都实现完，待真机逐个验证 |
 | 进行中 | 菜单栏 Companion | 可编译可安装，待真桌面启动验证 |
-| 进行中 | 原生 thread 直连派活 | 协议对齐真实二进制并验证；派进用户桌面窗口需不受限环境 |
+| 进行中 | 原生 thread 直连派活 | 协议本身已对齐真实二进制；但**桌面宿主当前没有可连的 app-server 控制 socket**（`ipc.sock` 是 IDE 信道、非控制口，见第四节 4/5）→ 把任务派进桌面窗口目前不可达，需装 standalone daemon 或改走别的路线（见 12.7） |
 | 进行中 | 真实端到端演示与预览发布 | 定义见第九节，缺真实环境 |
 
 ---
@@ -163,15 +159,16 @@
 
 ---
 
-## 七、卡点清单（3 个，全部是环境边界，不是代码问题）
+## 七、卡点清单（2026-10-15 深夜 opencode 复核后重写）
 
-| 卡点 | 现象（原文） | 谁能解除 | 解除后能验什么 |
+原来的「三条沙箱卡点」在本机（opencode 运行环境）**全部不成立**——本机可写 `~/Applications`、`~/Library/LaunchAgents`，网络与 DNS 都通。逐条走查后，真实卡点只剩下面这两条：
+
+| 卡点 | 现象（原文） | 谁能解 | 解除后能验什么 |
 | --- | --- | --- | --- |
-| 安装写入被沙箱挡 | 沙箱进程写不了 `~/Applications`、`~/plugins`、`~/Library/LaunchAgents` | 用户在自己终端跑 `bash install.sh --verify` | A-0005、A-0006、A-0007 的前置条件 |
-| 桌面宿主 socket 连不上 | `failed to connect to socket at /Users/danta/.codex/ipc/ipc.sock` / `Operation not permitted` | 在不受该限制的终端里跑 `python3 ops/codex_native.py probe` | 任务能否真派进桌面 Codex 窗口 |
-| 真实模型回合跑不了 | 受限进程网络出口封闭（DNS 都解析不了） | 在用户正常网络环境跑端到端 | A-0008 |
+| 桌面宿主没有可连的控制 socket | 对 `~/.codex/ipc/ipc.sock` 发 app-server 的 JSONL 被立刻关闭；`codex app-server proxy --sock ipc.sock` → `failed to relay data between stdio and socket`；真正的 `app-server-control/app-server-control.sock` 不存在（`codex app-server daemon start` → `managed standalone Codex install not found`） | 用户拍板走哪条路：①装官方 standalone daemon（`curl … install.sh \| sh` 后 `codex remote-control start`）；②改产品路线、不依赖「派进桌面窗口」 | A-0008 里「子对话出现在你桌面的 Codex 里」这一条 |
+| 真实模型回合跑不了（旧记录） | 受限进程网络出口封闭 | **本机已不成立**：`curl https://example.com` → 200、DNS 正常解析 | A-0008 端到端（现在可在本机全跑） |
 
-**重要**：这三个都不是「代码有 bug」，而是「执行这个沙箱进程没有那些权限」。桥接代码本身已被证明是通的（隔离状态目录下真实 app-server 能建出原生会话）。
+**重要**：安装写入、网络出口这两条**在 opencode 本机已确认解除**（已真跑安装，见 12.7）。剩下唯一真卡点是「桌面宿主控制 socket」——而且它不是权限问题，是 **socket 选错 / 桌面没有对外暴露控制口** 的协议问题。桥接代码本身是通的（隔离 `CODEX_HOME` 下真实 app-server 能建出原生会话），但那是独立实例，不代表能派进桌面窗口。
 
 ---
 
@@ -195,11 +192,11 @@ open ~/Applications/CodexAutopilotCompanion.app
 ```
 看到什么算过：菜单栏出现图标（不是 Dock 图标）。点它应弹出小面板，里面有总开关、当前任务、需要处理、派活的输入框、「截图」「附件」「打开 Codex」「完整面板」按钮。
 
-**第 3 步：确认原生直连的真实结论**（必须在不带沙箱限制的终端里跑）
+**第 3 步：确认原生直连的真实结论**
 ```bash
 python3 ops/codex_native.py probe
 ```
-看到什么算过：会打印 `can_dispatch`。`true` 说明能把任务派进你桌面的 Codex 窗口；`false` 会如实说明原因（比如 Codex 没启动）。
+看到什么算过：会打印 `can_dispatch`。**当前本机实测 = `false`**，且不是「Codex 没启动」（桌面端正在跑）——原因见 12.7：`ipc.sock` 不是 app-server 控制口。`true` 只有在装了 standalone daemon 并让桌面用它之后才可能出现。
 
 **第 4 步：按 ⌥⌘D 回到 Codex 里的完整面板**
 看到什么算过：Codex 里显示自动挡面板，首屏有「是否开启 / 当前项目 / 正在处理什么 / 下一步 / 需要你处理」。关掉总开关，首屏应变成明确的关闭态。
@@ -357,6 +354,73 @@ python3 ops/codex_native.py probe
 ```
 
 **下一轮的优先顺序**：① 拿到 `install.sh --verify` 输出逐条关 A-0005/A-0006/A-0007；② 陪跑 A-0008 全程留证；③ 收口 `0.6.0-preview.1` → 正式预览包；④ 推 `main` 到 `origin`。
+
+### 12.7 opencode 接手复核（2026-10-15 深夜，现场实测，非转述）
+
+这一步是 opencode 在**本机真实环境**里跑出来的，用来核对「上一轮结论里哪些还成立」。命令与原文都留在这里，谁都能复核。
+
+**（1）本机不是沙箱——原「三条边界」有两条当场证伪**
+
+```bash
+touch "$HOME/Applications/.ap-write-probe"        # → OK（旧的「写不了 ~/Applications」不成立）
+touch "$HOME/Library/LaunchAgents/.ap-write-probe" # → OK（launchd 目录可写）
+curl -sS -m 5 -o /dev/null -w "%{http_code}" https://example.com   # → 200（网络通）
+python3 -c "import socket;print(socket.gethostbyname('example.com'))"  # → 解析成功（DNS 通）
+```
+
+所以「沙箱挡安装」「网络出口封闭」在本机都不存在。
+
+**（2）真跑了安装 + 验收（此前一直没做成的第一步）**
+
+```bash
+bash install.sh --verify     # 退出码 1
+```
+
+结果：`5 PASS / 1 FAIL`。PASS：版本目录落地、菜单栏应用已安装/可执行/已签名、插件市场指向该版本、Companion 配置已写入、总闸统一控制通道可用、面板首屏数据流正常。FAIL（唯一）：
+
+```
+[4] 原生直连自检
+  FAIL  原生直连不可派活（只读历史可用）
+        原因：app-server 未在限定时间内返回方法结果（只能只读看历史，不能派活）
+```
+
+随后 `codex plugin add codex-autopilot@personal` 刷新缓存成功 → `codex plugin list` 显示 `codex-autopilot@personal  installed, enabled  0.6.0-preview.1  …/releases/0.6.0-preview.1`；`~/Applications/CodexAutopilotCompanion.app` 已在跑（进程在）。
+
+**（3）原生直连失败的根因：socket 选错，不是权限**
+
+在现场桌面端**正在运行**（`/Applications/ChatGPT.app`、其 app-server 子进程都在）的前提下，逐个排查：
+
+```bash
+# a) raw 连接：连得上，但一发 JSONL 就被对端关闭
+python3 - <<'PY'  # connect ipc.sock, send initialize, recv → b''（对端立刻关闭）
+...
+PY
+
+# b) 官方代理：报 relay 失败
+codex app-server proxy --sock ~/.codex/ipc/ipc.sock
+# → Error: failed to relay data between stdio and socket   (退出码 1)
+# 桌面自带的 0.162 二进制同样失败
+
+# c) 真正的控制 socket 不存在
+ls ~/.codex/app-server-control/     # 只有 app-server-startup.lock，没有 *.sock
+codex app-server daemon start       # → managed standalone Codex install not found
+codex app-server daemon version     # → failed to connect to …/app-server-control.sock (No such file)
+```
+
+**结论**：`~/.codex/ipc/ipc.sock` 是桌面端的进程间 IPC / IDE 上下文通道（帧是 4 字节长度前缀，见 `app.asar` 里的 `IDE context socket…`），**不是 app-server 的 stdio 控制口**；对它发 app-server 协议，对端会直接关闭连接。真正的 app-server 控制 socket 在 `~/.codex/app-server-control/app-server-control.sock`，只有官方 standalone daemon 起来时才存在（本机没装）。**这跟沙箱权限无关**——opencode 用满权限、桌面在跑，依然连不上，因为压根连的是另一条 socket。
+
+**（4）附带发现：Codex 侧在同一仓库并发工作**
+
+复核期间，`main` 上多出一个提交 `6866f00 docs(context): 全量上下文落盘（CONTEXT.md/AGENTS.md）+ 宿主不回话时控制面按预算降级`（作者 douxian123，23:02:55），把 CONTEXT.md/AGENTS.md + 上一轮的 `ops/codex_native.py`/`central_mcp.py`/`selftest.py` 收了进来。同时本机有常驻在跑：`central_daemon.py --loop`、`kgctl.py land codex/agent-sync-ledger`，以及自动挡把一条需求 `L-0080` 派给 opencode 执行（`opencode run --agent 司令`）。→ **本仓库此刻有并发写者**，动手前先 `git status`，只做加法、别覆盖别人的在途改动。
+
+**（5）开放决策（需要用户拍板）**
+
+原生 thread 直连派活有两条路，互斥：
+
+- **路线 A（装 daemon）**：`curl -fsSL https://chatgpt.com/codex/install.sh | sh` 装官方 standalone Codex，再 `codex remote-control start` 起带控制 socket 的 daemon。风险/未知：该 daemon 与桌面端是否共用同一份 thread 状态、子对话能否出现在你桌面窗口集合里，**尚未验证**。
+- **路线 B（改产品路线）**：承认「派进桌面窗口」在当前桌面版不可达，原生直连降级为「独立 app-server 建会话 + 只读历史」，派活仍走「台账 + worktree + 门禁」主链路（这条已机器自证）。代价：子对话不再自动出现在桌面 Codex 里。
+
+**下一轮的优先顺序**：① 拿到 `install.sh --verify` 输出逐条关 A-0005/A-0006/A-0007（本机已跑，5/6 PASS，A-0005 前置已满足）；② 用户拍板原生直连走 A 还是 B；③ 陪跑 A-0008 全程留证；④ 收口 `0.6.0-preview.1` → 正式预览包；⑤ 推 `main` 到 `origin`（本机网络已确认可用）。
 
 ---
 

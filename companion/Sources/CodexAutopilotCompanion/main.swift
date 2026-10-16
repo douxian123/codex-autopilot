@@ -401,36 +401,37 @@ struct CompanionView: View {
                 .foregroundStyle(.secondary)
 
             if let project = model.status.project {
-                Label {
-                    Text((project as NSString).lastPathComponent)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(project)
-                } icon: {
-                    Image(systemName: "folder")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Text(project)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if model.status.daemon?.live != true, let project = model.status.daemon?.project {
+                Text("后台守护当前服务：\(project)")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .lineLimit(2)
+            }
+            if !model.nativeLine.isEmpty {
+                Text(model.nativeLine)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
             if let task = model.status.current_task {
                 Divider()
-                Text("现在在做")
-                    .font(.caption2.weight(.semibold))
+                Text(task.stage ?? "当前任务")
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                 Text(task.title ?? task.detail ?? "正在处理")
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(3)
-                if let stage = task.stage, !stage.isEmpty {
-                    Label("当前步骤 · \(stage)", systemImage: "arrow.right.circle")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                    .font(.subheadline)
+                    .lineLimit(2)
             }
             if let attention = model.status.attention, !attention.isEmpty {
                 Divider()
-                Text("需要你介入")
-                    .font(.caption2.weight(.semibold))
+                Text("需要你处理")
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
                 ForEach(attention.prefix(3), id: \.self) { item in
                     Text("· " + item).font(.caption).lineLimit(2)
@@ -470,50 +471,18 @@ struct CompanionView: View {
                 .textFieldStyle(.roundedBorder)
                 .onSubmit { model.submit() }
             HStack(spacing: 6) {
-                Button {
-                    model.submit()
-                } label: {
-                    Label("派活", systemImage: "paperplane")
-                }
-                .controlSize(.small)
-                Button {
-                    model.capture()
-                } label: {
-                    Label("截图", systemImage: "camera")
-                }
-                .controlSize(.small)
-                Button {
-                    model.chooseFiles()
-                } label: {
-                    Label("附件", systemImage: "paperclip")
-                }
-                .controlSize(.small)
-                Spacer()
+                Button("派活") { model.submit() }.controlSize(.small)
+                Button("截图") { model.capture() }.controlSize(.small)
+                Button("附件") { model.chooseFiles() }.controlSize(.small)
+                Button("刷新") { model.refresh() }.controlSize(.small)
             }
             HStack(spacing: 6) {
-                Button {
-                    model.openPanel()
-                } label: {
-                    Label("打开完整面板", systemImage: "rectangle.3.group")
-                }
-                .controlSize(.small)
-                Button {
-                    model.refresh()
-                } label: {
-                    Label("刷新", systemImage: "arrow.clockwise")
-                }
-                .controlSize(.small)
+                Button("打开 Codex") { model.openCodex() }.controlSize(.small)
+                Button("完整面板") { model.openPanel() }.controlSize(.small)
+                Button("HTML 驾驶舱") { model.openCockpit() }.controlSize(.small)
+                Button("原生自检") { model.nativeProbe() }.controlSize(.small)
+                Button("状态文件") { model.openStatus() }.controlSize(.small)
                 Spacer()
-                Menu {
-                    Button("打开 Codex") { model.openCodex() }
-                    Button("HTML 驾驶舱") { model.openCockpit() }
-                    Button("原生自检") { model.nativeProbe() }
-                    Button("打开状态文件") { model.openStatus() }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .menuStyle(.borderlessButton)
-                .help("更多操作")
             }
             if !model.message.isEmpty {
                 Text(model.message)

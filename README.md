@@ -269,84 +269,16 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 - 冲突收拢（`converge`）只做**机械合并**：建分支、并入源分支、保留冲突 marker。真正解冲突仍需一个 agent 在 convergence worktree 里做，它不假装能替你判断「谁对」。
 - 自动移植（`port` / `auto_port`）只保证「git 能干净套用且有等价判据」这一层，**不替你做语义合并**：只要 cherry-pick 有文本冲突或超出 `max_unlanded`，它就放弃，把分支留给 `converge` 或留给你。
 
-## 长驻窗口的生命周期（为什么需要轮换）
-
-自动挡可以挂在一个「司令台」对话上长期跑（Codex 的 heartbeat / automation）。这类窗口有一个**结构性缺陷**，不处理就会越跑越笨：
-
-- 每拍要做的核对（几条 `git` / `curl` / `gh`）会把工具输出**永久写进该窗口的上下文**；
-- 自动压缩追不上增长，上下文越长，模型越倾向「用最短的一句话结束轮次」；
-- 实测一例：一个司令台窗口 24 小时内从单轮 input ~90k 涨到 ~150k（窗口上限 380k），
-  rollout 141MB、累计 3.16 亿 token；同批心跳在窗口年轻时跑 23–110 次工具调用，
-  退化后同一件事**0 次工具调用、13 秒、只回一句「距上次才几分钟」**。
-
-所以本插件不假设「一个窗口永远跑下去」，而是给它一个生命周期：
-
-| 组件 | 作用 |
-|---|---|
-| `ops/cockpit_pulse.py` | **一页体检**。把 7 条命令压成 1 条命令、≤1.5KB 一页：HEAD vs 主干、服务健康、自动挡计数、CI、合并队列、**本窗口预算自检**，外加 automation 漂移与真相层矛盾的体检结论。心跳每拍只读这一页，检查过程不再进上下文。 |
-| `ops/cockpit_rotate.py` | **预算超标即轮换**。默认只预演；`--go` 才执行：生成交接包（身份 + 纪律原文 + 现场 + 第一批任务）→ 起新线程 → 只改 `target_thread_id`（prompt 里的旧线程 id 一并替换，否则新窗口会去监控上一代）→ 备份 + 回读校验 + 原子替换。 |
-| `kgctl doctor` | **体检**。① automation 漂移（prompt 写的频次 vs `rrule`）② 真相层矛盾（已 verified 的验收项 vs 方向文件里的「未跑/未验证」表述）③ 每个挂 automation 的窗口预算。有待处理项时退出码为 1，便于 cron/看门狗报警。 |
-
-用法（`<名字>` 是 `~/.codex/automations/<名字>/automation.toml` 的目录名）：
-
-```bash
-python3 ops/cockpit_pulse.py  --automation <名字>   # 一页体检（推荐：按名字解析，轮换后不会过期）
-python3 ops/cockpit_rotate.py --automation <名字>   # 预演：打出交接包与将要改的那一行
-python3 ops/cockpit_rotate.py --automation <名字> --go   # 执行轮换（改前自动备份）
-python3 ops/kgctl.py doctor                          # 三项体检，有问题退出码 1
-```
-
-一键关（文件即开关）：`~/.codex/cockpit-pulse.OFF` 关体检页、`~/.codex/cockpit-rotate.OFF` 关轮换。
-
-**为什么不能只「换个 id」**：新窗口是空的，不知道自己是司令台、不知道纪律、不知道在途任务。
-所以轮换必须同时交身份与纪律（从 `automation.toml` 原文带过去）、现场（一页体检）和第一批任务。
-
-**自动建线程的安全前置（fail-closed）**：本机 PATH 上的 `codex` 是官方二进制，不设 `CODEX_HOME`
-就会写共用 `~/.codex` 并重建 `sessions`（曾因此清掉 5 个月历史）。所以自动建线程前必须先证明历史防护
-是活的（launchd 里有 `codex-guard` 且最近成功快照 <45 分钟），否则**拒绝执行**、把决定交回给人，绝不在
-无保护状态下动共享历史。另外 `codex-off` 不能用：它把 `CODEX_HOME` 指到 `~/.codex-official`，
-那里没有代理配置，会退回官方订阅——不是同一个窗口。
-
-## 落盘记录必须说得出「干了什么」
-
-`land` 成功时会往 `ops/truth/progress.jsonl` 写的不再只是一句「已通过构建」，而是三件用户的验收对象：
-
-1. **变更清单** —— `git diff --stat` 的文件与增删行数（写进 `files` 字段与 `summary`）；
-2. **门禁证据** —— 每条验证门禁的 `name / cmd / cwd / exit`（写进验收台账的 `evidence`）；
-3. **阶段位置** —— 这次改动对应 `mainline.json` 的 roadmap 哪一步（靠每步可选的关键词表 `match` 匹配，
-   命不中就留空，**不编**「已推进阶段 N」）。
-
-三种情况必须说三句不同的话，混为一谈就是「把『没有』和『不知道』说成同一句」：
-
-| 情况 | 输出 |
-|---|---|
-| 有改动 | `改动 1 个文件：backend/test/x.mjs（+98/-3）｜1 file changed …｜门禁：build exit 0` |
-| 空合并（分支内容早已在主干） | `改动：本次合并未带进新内容（分支内容已在主干，属空合并）` |
-| 取数失败 | `改动：清单取数失败（不是「没有改动」，请自行 git show 核对）` |
-
-## 跨线程委派要用模板
-
-心跳/监督/实现三类窗口之间用 Codex 的 `send_message_to_thread` 委派时，接收方可能把整条委派
-误判成「上下文确认」而空回（实测：一条正文完整的委派被回成「收到，当前日期按中国时区记为…」，
-任务一字未处理——同轮注入里的 `<codex_apps_client_time_context>` 排在委派正文之前所致）。
-
-`ops/DELEGATION_TEMPLATE.md` 给了固定形状：**`【任务】` 必须打头**，后接 `【期望输出】/【证据】/【禁止】`。
-配套硬规则：不要在「正文里」追加补充（要补就重发完整带头的重述）；发出后下一拍核对接收方最后一条
-assistant 消息是否真的在回应【任务】。
-
 ## 目录
 
 ```text
 运行时（跟着插件走，安装时复制到 ~/plugins/codex-autopilot/ops/）
-  kgctl.py            唯一执行入口：输入归一 + 分支盘点 + 串行落盘 + 体检（doctor）
+  kgctl.py            唯一执行入口：输入归一 + 分支盘点 + 串行落盘
   truthctl.py         项目真相层唯一读写入口：主线/决策/问题/进展/验收
-  cockpit_pulse.py    一页体检：把每拍的多条核对压成一条命令、一页输出
-  cockpit_rotate.py   长驻窗口轮换：预算超标 → 交接包 → 换 target_thread_id（默认只预演）
   central_mcp.py      把 CLI 暴露成 MCP 工具（stdio）
   central_daemon.py   常驻执行器（安全子集）
   state_root.py       状态根统一解析（避免多本账）
   central_config.py   项目相关旋钮：主干/前缀/worktree/验证门禁/泳道
-  DELEGATION_TEMPLATE.md  跨线程委派模板（【任务】打头，避免被当成上下文确认而空回）
 
 账本（留在你项目里，可提交、可 diff）
   ops/tasks/          inbox.jsonl（唯一入口）· lanes.json（固定泳道）· convergence.json（收拢记录）

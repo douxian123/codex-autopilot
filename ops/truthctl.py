@@ -862,22 +862,6 @@ def cmd_synthesize(args):
         L.append('- （还没有进展记录）')
     L.append('')
 
-    # 验收证据索引：验收项的 evidence 里带着真实门禁结果（命令 + 退出码 + 样本），
-    # 但在别处只出现 id。缺了这一段，宏观看板会与验收台账形成「矛盾印象」：
-    # 例如 mainline.json 的 evidence_boundary 写「网页 live 未跑」，
-    # 而同一天的 A-0085 已记 exit 0 —— 委派方因此向司令台发过重复工单。
-    # 这里只做索引（id + 结论首句），不替人改方向文件。
-    if verified:
-        L += ['## 关键验收证据（核对用，不替代 mainline.json）', '']
-        for r in sorted(verified, key=lambda x: x.get('ts', ''))[-12:]:
-            ev = re.split(r'[\n]', (r.get('evidence') or '').strip())[0]
-            if len(ev) > 190:
-                ev = ev[:190] + '…'
-            L.append('- `%s` [%s] %s' % (r['id'], r.get('level', ''), r.get('title', '')))
-            if ev:
-                L.append('  - 证据：%s' % ev)
-        L.append('')
-
     L += ['## 还差什么', '']
     by_kind = {}
     for r in open_led:

@@ -39,7 +39,6 @@ import json
 import os
 import re
 import shutil
-import sqlite3
 import subprocess
 import sys
 import time
@@ -2037,109 +2036,10 @@ def _verify_evidence(verify_results: list) -> str:
     return "\n".join(lines)
 
 
-def _land_manifest(wt: Path, branch: str, merge_commit: str, pre_main: str) -> dict:
-    """落盘清单：这次 land 到底把什么带进了 main。
-
-    为什么要它：用户看到的落盘记录原本只有一句「已通过真实 npm run build，并落盘 main @ xxx」，
-    `files: []` 空着。于是「走几步就说合并了、不知道他干了什么、也不知道做完没有」
-    ——用户不是错觉，是台账里确实没有这三件验收对象：
-
-      ① 改了什么   -> git diff --stat：文件清单 + 增删行数
-      ② 过了什么   -> 每条验证门禁的 name/cmd/cwd/exit
-      ③ 推进到哪   -> 这次改动落在哪条泳道、有没有对应的验收项
-
-    只读、幂等：任何一步取不到就留空，绝不让落盘因诊断而失败。
-    """
-    out: dict = {"branch": branch, "merge_commit": merge_commit,
-                 "changed_files": [], "total_stat": "", "gates": [],
-                 "acceptance": [], "lane": branch, "probe_failed": False}
-    # ① 变更清单：合并提交相对它的第一个父提交（= 合并前的 main）
-    # 注意 git() 已内置 `-C REPO`，不能重复传 -C；这里直接用 subprocess 指到工作树。
-    # probe_failed 与「空 diff」必须分开：空 diff 是「本次没带进内容」（合法且常见，
-    # 例如分支内容已通过别的路径进了主干），取数失败是「不知道」——两者不能同话。
-    try:
-        base = f"{merge_commit}^1"
-        numstat = subprocess.run(
-            ["git", "-C", str(wt), "diff", "--numstat", base, merge_commit],
-            capture_output=True, text=True, errors="replace")
-        stat = subprocess.run(
-            ["git", "-C", str(wt), "diff", "--stat", base, merge_commit],
-            capture_output=True, text=True, errors="replace")
-        if numstat.returncode != 0 or stat.returncode != 0:
-            out["probe_failed"] = True
-        else:
-            files = []
-            for line in (numstat.stdout or "").splitlines():
-                parts = line.split("\t")
-                if len(parts) == 3:
-                    add, dele, path = parts
-                    files.append({"path": path, "added": add, "deleted": dele})
-            out["changed_files"] = files[:60]
-            out["total_stat"] = (stat.stdout or "").strip().splitlines()[-1].strip() \
-                if (stat.stdout or "").strip() else ""
-    except Exception:
-        out["probe_failed"] = True
-    # ③ 泳道对应的验收项（本次 land 前已登记的，用于把「改动」挂到「验收」上）
-    try:
-        rows = read_jsonl(REPO / "ops" / "truth" / "acceptance.jsonl")
-        latest = latest_by_id(rows)
-        for rec in latest.values():
-            if rec.get("lane") == branch:
-                out["acceptance"].append({"id": rec.get("id"), "title": rec.get("title"),
-                                          "status": rec.get("status")})
-    except Exception:
-        pass
-    return out
-
-
-def _manifest_text(m: dict, gates: list) -> str:
-    """把落盘清单压成给人读的几行（写进 progress 的 summary，也是终端输出）。
-
-    规则：不带裸标识符，先给人话，再给可核对证据。
-
-    关键：必须分清三种情况，不能都说成「未取到」——
-      · 真的带进了改动        → 报文件数与清单
-      · 合并是空 diff（分支内容早已在主干） → 明说「没带进新内容」
-      · 取数失败              → 明确标 `probe_failed`，别让读者以为是「没有」
-    后两者混为一谈就是「把'没有'和'不知道'说成同一句」。
-    """
-    L = []
-    files = m.get("changed_files") or []
-    probe_failed = bool(m.get("probe_failed"))
-    if probe_failed:
-        L.append("改动：清单取数失败（不是「没有改动」，请自行 git show 核对）")
-    elif files:
-        shown = "、".join(f"{f['path']}（+{f['added']}/-{f['deleted']}）" for f in files[:5])
-        more = f"，另有 {len(files) - 5} 个文件" if len(files) > 5 else ""
-        L.append(f"改动 {len(files)} 个文件：{shown}{more}")
-    else:
-        L.append("改动：本次合并未带进新内容（分支内容已在主干，属空合并）")
-    if m.get("total_stat"):
-        L.append(m["total_stat"])
-    if gates:
-        gs = "；".join(f"{g.get('name')} exit {0 if g.get('ok') else '非0'}" for g in gates)
-        L.append(f"门禁：{gs}")
-    if m.get("acceptance"):
-        a = "、".join(str(x.get("id")) for x in m["acceptance"][:4])
-        L.append(f"对应验收项：{a}")
-    return "｜".join(L)
-
-
-def _record_land_progress(wt: Path, branch: str, commit: str, verify_results: list,
-                          manifest: dict = None, pre_main: str = "") -> None:
-    """把真实落盘事件和真实验收证据写进台账，并作为同一批 push 的一部分提交。
-
-    写三类东西，缺一不可（用户的验收对象）：
-      · progress   —— 这次落盘「做了什么」：变更清单 + 门禁 + 阶段位置
-      · acceptance —— 「怎么证明」：逐条门禁的命令/cwd/退出码
-      · 变更文件清单 —— 写进 progress 的 files 字段，供面板与 synthesize 直接引用
-    """
-    manifest = manifest or {}
+def _record_land_progress(wt: Path, branch: str, commit: str, verify_results: list) -> None:
+    """把真实落盘事件和真实验收证据写进台账，并作为同一批 push 的一部分提交。"""
     verified = bool(verify_results) and all(r.get("ok") for r in verify_results)
     gate_note = "验证门禁通过" if verified else "未通过验证门禁"
-    human = _manifest_text(manifest, verify_results)
-    changed = [f.get("path") for f in (manifest.get("changed_files") or []) if f.get("path")]
-    stage_note = _roadmap_touch(manifest, changed)
     env = os.environ.copy()
     env.update({
         "KG_REPO": str(wt),
@@ -2147,12 +2047,9 @@ def _record_land_progress(wt: Path, branch: str, commit: str, verify_results: li
         "KG_TRUTH_COMMIT": commit,
         "KG_TRUTH_LANDED": "1",
         "KG_TRUTH_STATUS": "done",
-        "KG_TRUTH_FILES": ":".join(changed[:40]),
-        "KG_TRUTH_SUMMARY": f"{branch} {gate_note}，已落盘 {MAIN} @ {commit[:10]}；{human}"
-                            + (f"；{stage_note}" if stage_note else ""),
+        "KG_TRUTH_SUMMARY": f"{branch} {gate_note}，已落盘 {MAIN} @ {commit[:10]}",
         "KG_TRUTH_SOURCE": "kgctl land",
     })
-
     added = subprocess.run(
         [sys.executable, str(RUNTIME_OPS / "truthctl.py"), "add", "progress",
          f"落盘 {branch}"],
@@ -2190,49 +2087,6 @@ def _record_land_progress(wt: Path, branch: str, commit: str, verify_results: li
         raise RuntimeError(f"提交真相台账失败: {committed.stderr.strip()[:500]}")
     print(f"  进展台账 {added.stdout.strip()}")
     print(f"  验收台账 {accepted.stdout.strip()}")
-    print(f"  本次落盘：{human}")
-
-
-def _roadmap_touch(manifest: dict, changed: list) -> str:
-    """阶段位置：这次落盘的改动碰到产品路线的哪一步。
-
-    判据只取**可核对且足够特异**的东西，避免把 stage 5「入口适配器：Codex 与 Obsidian」
-    这种通用词命中（分支名里到处都是 codex/）。顺序：
-
-      1. `ops/truth/mainline.json` 的 roadmap 每步若能给出 `match` 关键词表，就用它；
-      2. 否则用**泳道的业务名**（去掉 `codex/` 前缀后的 slug）与每步的 step/expected/
-         deliverables 做词交集，且要求命中词长度 >= 5、不是通用词。
-      3. 都不命中就返回空串——宁可不说，也不编一句「已推进阶段 1」。
-    """
-    try:
-        ml = json.loads((REPO / "ops" / "truth" / "mainline.json").read_text())
-    except Exception:
-        return ""
-
-    # 通用词黑名单：这些词在任何一步都会出现，不能作为命中依据。
-    GENERIC = {"codex", "stage", "web", "test", "index", "main", "frontend", "backend",
-               "src", "docs", "json", "ts", "css", "app", "code", "the", "and"}
-    lane = (manifest.get("lane") or "")
-    slug = re.sub(r"^codex/", "", lane).lower()
-    tokens = {t for t in re.split(r"[^a-z0-9]+", slug + " " + " ".join(changed).lower())
-              if len(t) >= 5 and t not in GENERIC}
-    if not tokens:
-        return ""
-    for step in (ml.get("roadmap") or []):
-        if not isinstance(step, dict):
-            continue
-        # ① 显式关键词表（若人在 mainline.json 里给了 match）
-        explicit = [str(x).lower() for x in (step.get("match") or [])]
-        if explicit and any(e in slug for e in explicit):
-            return f"对应产品路线「{step.get('step')}」（当前标 {step.get('status', '?')}）"
-        # ② 词交集
-        text = " ".join([str(step.get("step", "")), str(step.get("expected", "")),
-                         " ".join(step.get("deliverables") or [])]).lower()
-        for t in tokens:
-            if t in text:
-                return (f"对应产品路线「{step.get('step')}」"
-                        f"（当前标 {step.get('status', '?')}）")
-    return ""
 
 
 def _mirror_truth_into_trunk(wt: Path) -> None:
@@ -3132,8 +2986,7 @@ def cmd_land(args):
             sys.exit(1)
         merge_commit = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
                                       capture_output=True, text=True).stdout.strip()
-        manifest = _land_manifest(wt, branch, merge_commit, pre)
-        _record_land_progress(wt, branch, merge_commit, gate_results, manifest, pre)
+        _record_land_progress(wt, branch, merge_commit, gate_results)
         pushed = _push_main_with_one_retry(wt)
         if pushed:
             print("  " + pushed.replace("\n", "\n  "))
@@ -3305,162 +3158,12 @@ def cmd_tick(args):
     _truth("next")
 
 
-def cmd_doctor(args):
-    """体检：把「会悄悄变坏」的东西查出来，而不是等人肉感觉到不对劲。
-
-    三项，全部只读、fail-open（任何一项取不到就打印「取不到」，绝不让体检本身报错）：
-
-      ① automation 漂移 —— 心跳类 config 里 prompt 写的频次与 rrule 是否一致。
-         事故：prompt 写「每 30 分钟一拍」，rrule 写 INTERVAL=10，模型拿这个矛盾给自己开脱。
-      ② 真相层矛盾   —— 已 verified 的验收项，其关键词是否还出现在方向文件的
-         「未跑/未验证/待办」表述里。事故：A-0085 已 exit 0，mainline.json 仍写「网页 live 未跑」。
-      ③ 长驻窗口预算 —— 每个挂 automation 的线程的 rollout 体量 / 累计 token /
-         最近一轮 input 是否已进入「越长越懒」区间。
-    """
-    problems: list[str] = []
-    INFOS: list[str] = []
-
-    # ① automation 漂移
-    auto_root = Path.home() / ".codex" / "automations"
-    if not auto_root.exists():
-        INFOS.append("① automation：取不到 ~/.codex/automations（跳过）")
-    else:
-        checked = 0
-        for cfg in sorted(auto_root.glob("*/automation.toml")):
-            try:
-                text = cfg.read_text()
-            except Exception:
-                continue
-            checked += 1
-            rrule = ""
-            m = re.search(r'^rrule\s*=\s*"([^"]+)"', text, re.M)
-            if m:
-                rrule = m.group(1)
-            mins = None
-            mm = re.search(r"INTERVAL=(\d+)", rrule)
-            if mm and "MINUTELY" in rrule:
-                mins = int(mm.group(1))
-            elif "DAILY" in rrule:
-                mins = -1  # 日级，不做分钟比对
-            # prompt 里声明的「每 N 分钟一拍」
-            pm = re.search(r"每\s*(\d+)\s*分钟", text)
-            if mins and mins > 0 and pm and int(pm.group(1)) != mins:
-                problems.append(
-                    f"① {cfg.parent.name}：prompt 写「每 {pm.group(1)} 分钟」，"
-                    f"rrule 是 {mins} 分钟 —— 文字与字段矛盾，模型会拿它给自己开脱")
-        INFOS.append(f"① automation：检查 {checked} 个心跳配置，"
-                     f"漂移 {sum(1 for p in problems if p.startswith('①'))} 处")
-
-    # ② 真相层矛盾：verified 的验收项 vs 方向文件里的否定表述
-    acc_path = REPO / "ops" / "truth" / "acceptance.jsonl"
-    ml_path = REPO / "ops" / "truth" / "mainline.json"
-    try:
-        acc = list(latest_by_id(read_jsonl(acc_path)).values())
-        ml_text = ml_path.read_text()
-    except Exception:
-        acc, ml_text = [], ""
-    if not acc or not ml_text:
-        INFOS.append("② 真相层：取不到验收台账或方向文件（跳过）")
-    else:
-        NEG = ("未跑", "未验证", "未实测", "unverified", "待跑", "尚未")
-        conflicts = 0
-        verified = [r for r in acc if r.get("status") == "verified"]
-        for rec in verified:
-            lane = str(rec.get("lane") or "")
-            slug = re.sub(r"^codex/", "", lane).lower()
-            key = re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", slug)
-            if len(key) < 6:
-                continue
-            # 该验收项的关键词是否出现在方向文件的否定句里
-            for sent in re.split(r"[。；\n]", ml_text):
-                if any(n in sent for n in NEG) and key[:12] in re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", sent.lower()):
-                    problems.append(
-                        f"② {rec.get('id')} 已 verified（lane={lane}），但方向文件里仍有否定表述："
-                        f"「{sent.strip()[:70]}」")
-                    conflicts += 1
-                    break
-        INFOS.append(f"② 真相层：{len(verified)} 条已机器验收，疑似矛盾 {conflicts} 条")
-
-    # ③ 长驻窗口预算
-    db = Path.home() / ".codex" / "state_5.sqlite"
-    if not auto_root.exists() or not db.exists():
-        INFOS.append("③ 窗口预算：取不到 automations 或 codex 状态库（跳过）")
-    else:
-        targets = {}
-        for cfg in sorted(auto_root.glob("*/automation.toml")):
-            try:
-                t = cfg.read_text()
-            except Exception:
-                continue
-            tm = re.search(r'^target_thread_id\s*=\s*"([^"]+)"', t, re.M)
-            if tm:
-                targets[cfg.parent.name] = tm.group(1)
-        probed = 0
-        for name, tid in targets.items():
-            # 关键：这里**不能**用 except: continue 静默跳过。
-            # 探针自己坏掉时若静默变成「没发现问题」，就是全盘假阴性
-            # （本节第一版正是如此：sqlite3 未导入 → NameError 被吞 → 体检报「一切正常」）。
-            try:
-                c = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-                row = c.execute("select rollout_path, tokens_used from threads where id=?",
-                                (tid,)).fetchone()
-                c.close()
-            except Exception as exc:
-                problems.append(f"③ {name}：窗口预算探针失败（{type(exc).__name__}: {exc}）"
-                                "——这说明体检工具自己坏了，不是窗口没问题")
-                continue
-            probed += 1
-            if not row:
-                INFOS.append(f"③ {name}：线程 {tid[:8]} 在状态库里找不到（可能已归档）")
-                continue
-            rp, tk = row
-            mb = None
-            try:
-                mb = round(os.path.getsize(rp) / 1e6, 1)
-            except Exception:
-                pass
-            badge = ""
-            if mb and mb > 80:
-                badge = " ⚠️ 体量已大"
-            if (tk or 0) > 150_000_000:
-                badge += " ⚠️ 累计 token 已高"
-            INFOS.append(f"③ {name}：rollout {mb}MB，累计 {round((tk or 0)/1e6,1)}M token{badge}")
-            if badge:
-                problems.append(f"③ {name}：窗口 {tid[:8]} 已进入退化区间（{mb}MB / "
-                                f"{round((tk or 0)/1e6,1)}M token）→ 建议换新窗口并改 target_thread_id")
-        if probed == 0 and targets:
-            problems.append("③ 窗口预算：一个线程都没探测成功——探针失效，别把「无输出」当正常")
-
-    print("=== 自动挡体检 ===")
-    for line in INFOS:
-        print("  " + line)
-    print()
-    skipped = sum(1 for line in INFOS if "跳过" in line)
-    if not INFOS:
-        print("× 三项全部无法执行——不是「没问题」，是体检没跑起来。请检查路径与依赖。")
-        return 1
-    if skipped == len(INFOS):
-        print(f"× {skipped} 项全部跳过（路径或依赖取不到）——这不是「没问题」，"
-              "是体检没跑起来。别把它当成绿灯。")
-        return 1
-    if problems:
-        print(f"发现 {len(problems)} 个需要处理的项：")
-        for p in problems:
-            print("  × " + p)
-        print("\n（体检只读。轮换用 ops/cockpit_rotate.py；委派用 ops/DELEGATION_TEMPLATE.md）")
-    else:
-        note = f"（其中 {skipped} 项因取不到而跳过，结论不完整）" if skipped else ""
-        print("没有发现问题：automation 无漂移、真相层无矛盾、窗口预算正常。" + note)
-    return 1 if problems else 0
-
-
 CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route, "suggest": cmd_suggest,
         "matrix": cmd_matrix, "queue": cmd_queue, "converge": cmd_converge,
         "replan": cmd_replan,
         "context": cmd_context, "dash": cmd_dash,
         "clash": cmd_clash, "reap": cmd_reap, "land": cmd_land, "supersede": cmd_supersede,
         "port": cmd_port, "resolve": cmd_resolve, "sync": cmd_sync,
-        "doctor": cmd_doctor,
         "status": cmd_status, "board": cmd_board, "next": cmd_next, "tick": cmd_tick}
 
 if __name__ == "__main__":
@@ -3468,9 +3171,4 @@ if __name__ == "__main__":
         print(__doc__)
         print("命令：" + " | ".join(CMDS))
         sys.exit(1)
-    # doctor 用退出码报告「有待处理项」（便于 cron / 看门狗据此报警）：
-    # 只有显式返回 int 才作为进程退出码；返回 None 一律当 0。
-    # 注意：命令内部的用法提示（sys.exit("用法: ...")）本来就会以非 0 退出，
-    # 这是原有行为，不在这里改写。
-    _rc = CMDS[sys.argv[1]](sys.argv[2:])
-    sys.exit(_rc if isinstance(_rc, int) else 0)
+    CMDS[sys.argv[1]](sys.argv[2:])
