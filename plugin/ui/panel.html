@@ -136,6 +136,9 @@
   .folder-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;padding:11px 13px}
   .folder-title{font-size:13px;font-weight:650;color:var(--ink);overflow-wrap:anywhere}
   .folder-meta{margin-top:3px;color:var(--ink-3);font-size:11.5px;overflow-wrap:anywhere}
+  .folder-source{margin-top:4px;color:var(--ink-3);font-size:11px;overflow-wrap:anywhere}
+  .folder-source b{color:var(--ink-2);font-weight:600}
+  .folder-error{margin-top:6px;color:var(--warn);font-size:11.5px;overflow-wrap:anywhere}
   .folder-step{margin-top:5px;color:var(--brand-700);font-size:12px;font-weight:600;overflow-wrap:anywhere}
   .folder-stats{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
   .fstat{font-size:10.5px;border-radius:999px;padding:2px 8px;background:var(--surface);border:1px solid var(--line);color:var(--ink-3);white-space:nowrap}
@@ -772,7 +775,16 @@
       meta.textContent = [f.product || "", f.path || ""].filter(Boolean).join(" · ");
       var step = document.createElement("div"); step.className = "folder-step";
       step.textContent = "当前步骤：" + (f.current_step || "路线待拆解");
-      info.appendChild(title); info.appendChild(meta); info.appendChild(step);
+      var source = document.createElement("div"); source.className = "folder-source";
+      var sourceThread = f.source_thread_id || "";
+      source.textContent = "来源对话 " + (sourceThread ? sourceThread.slice(0, 12) : "未标注来源") +
+        " · 路线 " + (f.current_step || "待拆解");
+      info.appendChild(title); info.appendChild(meta); info.appendChild(step); info.appendChild(source);
+      if (f.readable === false){
+        var err = document.createElement("div"); err.className = "folder-error";
+        err.textContent = "项目账本读不到：" + (f.read_error || "未知原因");
+        info.appendChild(err);
+      }
       var stats = document.createElement("div"); stats.className = "folder-stats";
       var c = f.counts || {};
       [["doing", c.doing || 0, "进行"], ["todo", c.todo || 0, "待办"], ["human", c.human || 0, "验收"]].forEach(function(row){
@@ -799,7 +811,8 @@
           var line = document.createElement("div"); line.className = "folder-work-row";
           var id = document.createElement("span"); id.className = "id"; id.textContent = row.x.id || "";
           var name = document.createElement("span"); name.className = "name";
-          name.textContent = (laneLabel(row.x.lane || row.x.kind)) + " · " + (row.x.title || row.x.detail || "未命名工作项");
+          name.textContent = (laneLabel(row.x.lane || row.x.kind)) + " · " + (row.x.title || row.x.detail || "未命名工作项") +
+            (row.x.source_thread_id ? " · 来自对话 " + String(row.x.source_thread_id).slice(0, 12) : "");
           var state = document.createElement("span"); state.className = "state"; state.textContent = row.state;
           line.appendChild(id); line.appendChild(name); line.appendChild(state); work.appendChild(line);
         });
