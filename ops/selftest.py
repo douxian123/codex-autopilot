@@ -17,6 +17,13 @@ OPS = Path(__file__).resolve().parent
 KGCTL = OPS / "kgctl.py"
 
 
+def _installed_version() -> str:
+    import json
+    return json.loads(
+        (OPS.parent / "plugin" / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )["version"]
+
+
 def run(cmd, cwd=None, env=None, check=True):
     p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
     if check and p.returncode != 0:
@@ -665,8 +672,11 @@ def test_installer():
     import json as _json
 
     install = OPS.parent / "install.sh"
+    installed_version = _installed_version()
+    release_path = f"./plugins/codex-autopilot/releases/{installed_version}"
     with tempfile.TemporaryDirectory(prefix="autopilot-install-test-") as tmp:
         home = Path(tmp) / "home"
+        release_dir = home / "plugins" / "codex-autopilot" / "releases" / installed_version
         old_plugin = home / "plugins" / "codex-autopilot"
         old_plugin.mkdir(parents=True)
         sentinel = old_plugin / "user-preserved.txt"
@@ -694,10 +704,10 @@ def test_installer():
         data = _json.loads(market.read_text(encoding="utf-8"))
         entry = next(p for p in data["plugins"] if p["name"] == "codex-autopilot")
         other = next(p for p in data["plugins"] if p["name"] == "other-plugin")
-        assert entry["source"]["path"] == "./plugins/codex-autopilot/releases/0.6.0-preview.3"
+        assert entry["source"]["path"] == release_path
         assert other["source"]["path"] == "./plugins/other"
         assert sentinel.read_text(encoding="utf-8") == "keep\n"
-        release = home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.3"
+        release = release_dir
         assert (release / "ops" / "central_mcp.py").is_file()
         # Companion 源码必须随版本目录一起装：以后能从这个目录重建菜单栏应用。
         assert (release / "companion" / "build.sh").is_file()
@@ -735,6 +745,7 @@ def test_installer_shell_portability():
     """
     import re
 
+    installed_version = _installed_version()
     pattern = re.compile(rb"\$[A-Za-z_][A-Za-z0-9_]*")
     for path in sorted(OPS.parent.rglob("*.sh")):
         if ".git" in path.parts or ".build" in path.parts:
@@ -768,7 +779,7 @@ def test_installer_shell_portability():
         combined = result.stdout + result.stderr
         assert "unbound variable" not in combined, f"bash 3.2 变量解析崩了:\n{combined}"
         assert result.returncode == 0, f"完整安装路径没跑完:\n{combined}"
-        assert (home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.3"
+        assert (home / "plugins" / "codex-autopilot" / "releases" / installed_version
                 / "ops" / "central_mcp.py").is_file()
         # 同一份安装不带 Companion 时也必须照样成功。
         result2 = run(["bash", str(install), "--no-seed", "--no-marketplace",
@@ -813,6 +824,7 @@ def test_installed_copy_binding():
     import json as _json
 
     install = OPS.parent / "install.sh"
+    installed_version = _installed_version()
     with tempfile.TemporaryDirectory(prefix="autopilot-installed-bind-") as tmp:
         home = Path(tmp) / "home"
         home.mkdir(parents=True)
@@ -836,7 +848,7 @@ def test_installed_copy_binding():
                       "--no-companion", str(project)], env=env, check=False)
         assert result.returncode == 0, f"安装失败:\n{result.stdout}\n{result.stderr}"
 
-        release = home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.3"
+        release = home / "plugins" / "codex-autopilot" / "releases" / installed_version
         binding = _json.loads((release / ".mcp.json").read_text(encoding="utf-8"))
         bound = binding["mcpServers"]["codex-autopilot"]["env"]["KG_REPO"]
         assert bound == str(project), f"插件没有把项目写进绑定：{bound}"

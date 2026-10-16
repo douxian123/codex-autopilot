@@ -25,6 +25,18 @@ SNAPSHOT_TIMEOUT = float(os.environ.get("CODEX_AUTOPILOT_NATIVE_TIMEOUT", "6"))
 _next_id = 0
 
 
+def _plugin_version() -> str:
+    """客户端协议版本与插件清单一致，避免版本号散落多处后漂移。"""
+    base = Path(__file__).resolve().parent
+    for candidate in (base.parent / "plugin" / ".codex-plugin" / "plugin.json",
+                      base.parent / ".codex-plugin" / "plugin.json"):
+        try:
+            return json.loads(candidate.read_text(encoding="utf-8"))["version"]
+        except (OSError, ValueError, KeyError):
+            continue
+    return "0.0.0"
+
+
 def _request_id():
     global _next_id
     _next_id += 1
@@ -130,7 +142,7 @@ def _open_session(command, timeout=30):
             "id": init_id, "method": "initialize",
             "params": {"clientInfo": {"name": "codex-autopilot",
                                       "title": "Codex Autopilot",
-                                      "version": "0.6.0-preview.2"},
+                                      "version": _plugin_version()},
                        "capabilities": {}},
         }) + "\n")
         proc.stdin.flush()
