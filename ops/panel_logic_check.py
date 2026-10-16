@@ -107,6 +107,10 @@ if (!scripts.length) { console.log(JSON.stringify({ error: "面板里没有脚�
 
 const msg = handlers.find(function (h) { return h.type === "message"; });
 if (!msg) { console.log(JSON.stringify({ error: "面板没有监听宿主消息" })); process.exit(0); }
+const alertText = makeEl("alert-text");
+document.getElementById("need").querySelector = function (selector) {
+  return selector === ".al-tx" ? alertText : null;
+};
 
 // 走 Codex 宿主同一条通知：structuredContent 就是控制层状态
 msg.fn({
@@ -128,6 +132,7 @@ console.log(JSON.stringify({
   subtitle: read("subtitle"),
   masterState: read("masterState"),
   heroSub: read("heroSub"),
+  needText: alertText.textContent,
   nativeState: read("nativeState"),
   received: read("cReceived"),
   landned: read("cLanded"),
@@ -228,6 +233,15 @@ def main(argv):
                          "进行中" if payload.get("doing_items") else "待处理")
         fails += has("首屏显示总状态文案", out["stateLabel"], payload.get("state_label"))
         fails += has("首屏显示正在做什么", out["heroSub"], payload.get("doing"))
+        if human_acc:
+            review = dict(payload)
+            review["state"] = "blocked"
+            review["state_label"] = "需要你验收"
+            review["need_action"] = "需要你验收：真实桌面验收"
+            review["human_acceptance"] = [{"title": "真实桌面验收"}]
+            review_out = run_once(review)
+            fails += has("人工验收升级为明确状态", review_out["stateLabel"], "需要你验收")
+            fails += has("人工验收在提示条里明确出现", review_out["needText"], "需要你验收")
         fails += has("首屏开关文案与控制层一致", out["masterState"],
                      "已关闭" if not payload.get("enabled") else "正在运行")
         fails += has("原生直连结论如实显示", out["nativeState"],

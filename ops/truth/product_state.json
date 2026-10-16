@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-13",
+ "updated": "2026-10-16",
  "modules": [
   {
    "area": "唯一入口",
@@ -70,6 +70,13 @@
     "plugin/skills/central-command/SKILL.md"
    ],
    "updated": "2026-10-13"
+  },
+  {
+   "area": "主动注意提醒",
+   "behavior": "出现人工验收、需要拍板或异常时，主面板显示明确待处理状态，菜单栏切换警示图标并通过 macOS 通知中心提醒；同一批待办只提醒一次。",
+   "why": "",
+   "files": [],
+   "updated": "2026-10-16"
   }
  ]
 }

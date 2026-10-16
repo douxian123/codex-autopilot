@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-15 18:11:55　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-16 02:37:00　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -38,6 +38,7 @@
 - **合并编排**：每个任务独立 worktree；合并前用 git merge-tree 预演，门禁通过且无冲突时自动 land 并同步 main 引用，不把要不要合推回用户。
 - **常驻守护与面板**：面板显示运行状态、当前处理的分支合并逻辑、开关与必要信息；支持暂停/自动合入/自动拆冲突/常驻。
 - **视觉/设计方案提示词**：做视觉/设计前先当产品经理+产品设计师，尊重用户、保护注意力：先截图看现状再改，改完再截图对比，只允许正向改动，不能更丑、更乱、更难读。
+- **主动注意提醒**：出现人工验收、需要拍板或异常时，主面板显示明确待处理状态，菜单栏切换警示图标并通过 macOS 通知中心提醒；同一批待办只提醒一次。
 
 ## 决策脉络
 
@@ -54,10 +55,39 @@
 - [在途] install.sh 新增 --verify：装完立刻跑同一份验收报告（落地物/菜单栏应用/原生自检/总闸/面板首屏逻辑），退出码等于失败项数。用户不用记两条命令。
 - [在途] 派活自动归入项目窗口集合；按官方 schema 修正 thread/section/move 与嵌套 section.id；新增真二进制协议自检
 
+## 关键验收证据（核对用，不替代 mainline.json）
+
+- `A-0009` [P0] 预览包验收可用一条命令跑完并如实报错
+  - 证据：bash preview-check.sh --no-open（HOME=临时目录）-> PASS 安装/版本目录/应用可执行/已签名/市场指向/配置；EXIT 仅因沙箱内原生直连而 >0
+- `A-0010` [P0] 统一入口真实端到端：派单→自动归类→台账→主线→面板
+  - 证据：python3 ops/companion_api.py intake "<真实需求>" -> 自动归类 bug、落 L-0002、刷新 docs/PRODUCT_MAINLINE.md 与 CONTROL_PLANE.html、提交 chore(truth) 提交
+- `A-0011` [P0] 全量自检 20 组通过（覆盖 A-0002 的组数）
+  - 证据：AUTOPILOT_SELFTEST_COMPANION=1 python3 ops/selftest.py -> 20 组全过（新增预览验收契约）
+- `A-0012` [P0] 面板首屏（含关闭态）每个值都来自真实控制层数据
+  - 证据：python3 ops/panel_logic_check.py -> 14 项全过：真执行面板脚本，核对绑定项目（名+路径+悬停）、总状态、正在做什么、原生直连结论、收到/已合入/待你验收三个计数、最近完成，以及关掉总闸后的明确关闭态
+- `A-0013` [P0] 装出来的副本自带绑定：kgctl 认得出项目、MCP 能应答（不带任何环境变量）
+  - 证据：隔离 HOME 里 bash install.sh --no-seed --no-companion <项目> -> 取装出来的 releases/0.6.0-preview.1 副本，清空 KG_REPO/KG_TRUNK 后：kgctl status 自己解析出项目；MCP initialize + tools/list 正常应答
+- `A-0015` [P0] 全量自检 22 组通过（含后台常驻开关真启停，机器自证）
+  - 证据：python3 ops/selftest.py -> 22 组全过（退出码 0）；新增断言：总闸关掉时 enable_daemon 被拒、开启/关闭真调 central_daemon --install/--uninstall、安装失败不写 daemon_enabled=true；本条覆盖 A-0014 登记时的默认 todo 状态
+- `A-0016` [P0] 派活自动归入项目窗口集合：同名复用、不重复创建、失败不拦派活
+  - 证据：python3 ops/selftest.py -> 23 组全过；新增断言：第一次派活自动建窗口集合、第二次复用同一集合不重复建、集合 API 不可用时照常派活但如实返回 section_note
+- `A-0017` [P0] 原生协议与真实 codex 二进制对齐：修正窗口集合移动方法名并真机验证
+  - 证据：对 codex app-server 0.148.0-alpha.15 生成的官方 JSON schema：threadSection/move 不存在，正确方法名是 thread/section/move；实机验证旧名返回 unknown variant、新名被识别；AUTOPILOT_SELFTEST_REAL_CODEX=1 用真实 codex 二进制建出原生会话与窗口集…
+- `A-0018` [P0] 全量自检 23 组通过（含真二进制开关 24 组）
+  - 证据：python3 ops/selftest.py -> 23 组全过；AUTOPILOT_SELFTEST_REAL_CODEX=1 python3 ops/selftest.py -> 24 组全过（含真实 codex 二进制协议验证）
+- `A-0019` [P0] 面板按官方嵌套字段显示窗口集合内的子对话
+  - 证据：官方 Thread schema 里集合是嵌套 section.id（无扁平 sectionId）；panel_logic_check.py 新增真实形状用例，并做反向验证：把面板改回扁平字段后该用例失败（rc=1），还原后全过
+- `A-0020` [P1] 菜单栏完整面板回到 Codex 本体，HTML 驾驶舱降为备用
+  - 证据：Companion 契约自检新增断言：openCodexPanel/onOpenCockpit 存在，且主面板路径不含 call(["panel"])；AUTOPILOT_SELFTEST_COMPANION=1 真编译 .app 通过
+- `A-0021` [P0] 原生方法名全量对真实服务器核对（6/6 存在）
+  - 证据：AUTOPILOT_SELFTEST_REAL_CODEX=1：从真实 codex app-server 取接受方法列表（144 个），项目里 6 个原生调用方法全部存在；AUTOPILOT_SELFTEST_COMPANION=1 AUTOPILOT_SELFTEST_REAL_CODEX=1 python3 ops/selftest.py -> 25 组全过
+
 ## 还差什么
 
-**bug（1 待处理）**
+**bug（3 待处理）**
 - `L-0001` 复用 Codex 原生 app-server/thread、Projects/窗口集合与 scheduled automations，形成主司令窗到子对话窗的真
+- `L-0003` 对话面板线上仍频繁显示“模型暂时没连上/已停止”，用户无法正常问答；同时右侧面板首卡、失败提示、17 个引用芯片、重复历史气泡混在一起，信息过多、没有轻重。需要
+- `L-0004` 自动挡在需要用户决策、人工验收或注意时，必须主动出现明确提示；同时回到产品路线，列出总体预期、剩余工作、卡点、未推进原因和下一步，不要只展示静态状态。
 
 ## 需要你验收
 
@@ -69,6 +99,8 @@
   - 1) 在任意 app 里按 ⌥⌘S 截图并加一句话派活 2) 把文件拖到菜单栏图标上派活 3) 选中一段文本 → 服务 → 发送到 Codex 自动挡 4) 每次派完，面板里都应出现对应的新任务，而不是各存一份
 - `A-0008` [P0] 一条真实需求端到端走完并留证据
   - 1) 用任意入口提一条真实小需求 2) 观察它自动归类、面板出现阶段变化 3) 每个阶段面板与菜单栏状态一致 4) 结束时能看到真实验证命令与收口结果，而不是只有一句完成
+- `A-0022` [P0] 需要用户决策/验收时主动提醒并说明下一步
+  - 1) 在正常 macOS 终端安装并打开 Companion 2) 制造或等待一项人工验收/需要拍板事项 3) 确认菜单栏出现警示图标和 macOS 通知 4) 打开 Codex 面板确认写清具体动作 5) 清掉事项后确认不再重复提醒
 
 ## 已机器验收
 
@@ -93,6 +125,6 @@
 
 - 累计关闭问题：1 条
 - 累计落盘：1 条
-- 未决问题：1 条
+- 未决问题：3 条
 - 已验收：16 条
 
