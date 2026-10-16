@@ -1177,8 +1177,12 @@
     var text = native.label || (native.socket_present ? "原生直连：未自检" : "原生直连：Codex 未运行");
     if (probe && probe.at) { text += "（自检于 " + probe.at + "）"; }
     box.textContent = text;
+    var tip = (probe && probe.reason) ? probe.reason : "";
+    if (probe && probe.hint && probe.blocked_by === "remote-control-chatgpt-pairing") {
+      tip = (tip ? tip + " " : "") + probe.hint;
+    }
     var btn = el("nativeProbe");
-    if (btn) { btn.disabled = false; btn.title = (probe && probe.reason) ? probe.reason : "真跑一次原生直连自检"; }
+    if (btn) { btn.disabled = false; btn.title = tip || "真跑一次原生直连自检"; }
   }
 
   function renderRoute(route){

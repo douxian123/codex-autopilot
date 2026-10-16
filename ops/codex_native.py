@@ -131,6 +131,47 @@ def _drain_stderr(proc, timeout=1.0, limit=800):
     return "".join(chunks).strip()[-limit:]
 
 
+def _chatgpt_pairing_hint(reason=""):
+    """只读检测官方 remote-control 的 ChatGPT 登录/配对硬闸，给出可执行的提示。"""
+    if not reason:
+        return None
+    hints = []
+    if "remote control requires ChatGPT authentication" in reason:
+        hints.append("官方 remote-control 要求 ChatGPT 登录；当前 CLI 是 API key，不能用于配对。")
+        hints.append("若保留 API key：请接受原生派活不可达，继续走只读历史 + 本地 worktree 主链路。")
+        hints.append("若接受切换登录：先备份并确认当前 config/provider，再执行 `codex login --device-auth`，"
+                     "完成 ChatGPT 登录后执行 `codex remote-control start` 与 `codex remote-control pair --json`。")
+        return "\n".join(hints)
+    if "enrollment" in reason:
+        hints.append("remote-control enrollment/配对尚未完成。")
+        hints.append("先确认当前 CLI 是 ChatGPT 登录而不是 API key：`codex login status`；"
+                     "再用 `codex remote-control start --json` 与 `codex remote-control pair --json` 完成配对。")
+        return "\n".join(hints)
+    return None
+
+
+def _remote_control_requires_chatgpt():
+    """读 daemon 日志，判断是否卡在官方 remote-control 的 ChatGPT 登录/配对硬闸。"""
+    candidates = [
+        CODEX_HOME / "app-server-daemon" / "daemon.stderr.log",
+        CODEX_HOME / "app-server" / "daemon.stderr.log",
+        CODEX_HOME / "app-server-daemon.log",
+        CODEX_HOME / "app-server" / "daemon.log",
+    ]
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            for line in reversed(lines):
+                if "remote control requires ChatGPT authentication; API key auth is not supported" in line:
+                    return True
+            return False
+        except OSError:
+            continue
+    return False
+
+
 def _open_session(command, timeout=30):
     """Open one official app-server session for dependent requests."""
     try:
@@ -493,9 +534,17 @@ def probe(timeout=12, progress=None):
     elif not info["socket_present"]:
         info["hint"] = "先启动 Codex 桌面端；它起来之后才会创建控制 socket。"
     elif not info["connected"]:
-        # 连不上但没报权限错：多半是宿主没在等超时时间内回应。给可执行的下一步。
-        info["hint"] = ("桌面宿主没有在这个时间内回应。先确认 Codex 正在运行；"
-                        "仍不通就跑 `bash preview-check.sh` 看完整结论。")
+        pairing_hint = _chatgpt_pairing_hint(info.get("reason") or "")
+        if not pairing_hint and _remote_control_requires_chatgpt():
+            pairing_hint = _chatgpt_pairing_hint(
+                "remote control requires ChatGPT authentication; API key auth is not supported")
+        if pairing_hint:
+            info["hint"] = pairing_hint
+            info["blocked_by"] = "remote-control-chatgpt-pairing"
+        else:
+            # 连不上但没报权限错：多半是宿主没在等超时时间内回应。给可执行的下一步。
+            info["hint"] = ("桌面宿主没有在这个时间内回应。先确认 Codex 正在运行；"
+                            "仍不通就跑 `bash preview-check.sh` 看完整结论。")
     return info
 
 

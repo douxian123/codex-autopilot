@@ -1256,7 +1256,10 @@ def _native_status():
     elif probe.get("connected"):
         state["label"] = "原生直连：已连通，可派活到 Codex 窗口"
     else:
-        state["label"] = "原生直连：不可派活，只能只读历史"
+        if probe.get("blocked_by") == "remote-control-chatgpt-pairing":
+            state["label"] = "原生直连：需 ChatGPT 登录/配对后才能派活"
+        else:
+            state["label"] = "原生直连：不可派活，只能只读历史"
     return state
 
 
