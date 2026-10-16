@@ -130,6 +130,26 @@
   .journey-step.current .journey-label{color:var(--ink);font-weight:650}
   .orientation-note{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);font-size:12px;color:var(--ink-2)}
   .orientation-note b{color:var(--ink);font-weight:650}
+  .folders{display:grid;gap:9px}
+  .folder{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2);overflow:hidden}
+  .folder.active{border-color:var(--brand-200);background:var(--brand-50)}
+  .folder-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;padding:11px 13px}
+  .folder-title{font-size:13px;font-weight:650;color:var(--ink);overflow-wrap:anywhere}
+  .folder-meta{margin-top:3px;color:var(--ink-3);font-size:11.5px;overflow-wrap:anywhere}
+  .folder-step{margin-top:5px;color:var(--brand-700);font-size:12px;font-weight:600;overflow-wrap:anywhere}
+  .folder-stats{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+  .fstat{font-size:10.5px;border-radius:999px;padding:2px 8px;background:var(--surface);border:1px solid var(--line);color:var(--ink-3);white-space:nowrap}
+  .fstat.warn{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+  .fstat.live{background:var(--brand-50);border-color:var(--brand-100);color:var(--brand-700)}
+  .folder-work{border-top:1px solid var(--line-2);background:var(--surface)}
+  .folder-work-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:baseline;padding:7px 13px;border-bottom:1px solid var(--line-2);font-size:11.5px}
+  .folder-work-row:last-child{border-bottom:0}
+  .folder-work-row .id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink-3);font-size:10.5px}
+  .folder-work-row .name{min-width:0;color:var(--ink-2);overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .folder-work-row .state{color:var(--ink-3);white-space:nowrap}
+  .lane-group{margin-top:10px}
+  .lane-head{display:flex;align-items:baseline;gap:7px;margin:0 0 6px;color:var(--ink-3);font-size:11px;font-weight:650}
+  .lane-head span{font-weight:500}
   .route-hierarchy{display:grid;grid-template-columns:minmax(0,1fr) 28px minmax(0,1.15fr) 28px minmax(0,1fr);align-items:stretch;gap:5px;margin-top:13px}
   .route-node{min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:var(--r-xs);background:var(--surface-2)}
   .route-node.active{border-color:var(--brand-200);background:var(--brand-50)}
@@ -137,15 +157,6 @@
   .route-node .v{display:block;margin-top:3px;color:var(--ink);font-size:12px;font-weight:650;line-height:1.35;overflow-wrap:anywhere}
   .route-node.active .v{color:var(--brand-700)}
   .route-arrow{display:grid;place-items:center;color:var(--ink-3);font-size:15px}
-  .route-work{display:grid;gap:0;margin-top:9px}
-  .route-work-row{display:grid;grid-template-columns:7px minmax(0,1fr) auto;gap:8px;align-items:center;padding:7px 9px;border-bottom:1px solid var(--line-2);font-size:11.5px}
-  .route-work-row:last-child{border-bottom:0}
-  .route-work-row .dot{width:7px;height:7px;border-radius:50%;background:var(--line)}
-  .route-work-row.doing .dot{background:var(--brand)}
-  .route-work-row.blocked .dot{background:var(--warn)}
-  .route-work-row .name{min-width:0;overflow-wrap:anywhere;color:var(--ink-2)}
-  .route-work-row.doing .name{color:var(--ink);font-weight:650}
-  .route-work-row .state{font-size:10.5px;color:var(--ink-3);white-space:nowrap}
   @media(max-width:520px){
     .route-hierarchy{grid-template-columns:minmax(0,1fr);gap:4px}
     .route-arrow{height:13px;transform:rotate(90deg)}
@@ -359,7 +370,7 @@
     <div class="hero-context">
       <span><b>项目</b> <span id="heroProject">读取中…</span></span>
       <span><b>产品</b> <span id="heroProduct">读取中…</span></span>
-      <span><b>当前阶段</b> <span id="heroStage">读取中…</span></span>
+      <span><b>产品路线步骤</b> <span id="heroStage">读取中…</span></span>
     </div>
     <div class="hero-bar" aria-hidden="true"><span></span></div>
     <div class="execnow" id="execNow" hidden><span class="edot"></span><span class="etx" id="execNowText"></span></div>
@@ -379,26 +390,31 @@
     </div>
   </section>
 
-  <section class="orientation">
+  <section class="card" id="folderCard">
+    <div class="chead"><h2>项目文件夹</h2><span class="count" id="folderNote"></span></div>
+    <div class="folders" id="folderBox"></div>
+  </section>
+
+  <section class="orientation" id="routeOverview">
     <div class="orientation-head">
-      <h2>这件事属于哪条路线</h2>
-      <span id="routeScope">单项目绑定</span>
+      <h2>工作项走到哪了</h2>
+      <span id="routeScope">项目 → 路线 → 工作项 → 验收</span>
     </div>
     <div class="journey" aria-label="需求到验收的产品路线">
       <div class="journey-step done" id="journeyNeed">
-        <div class="journey-dot">1</div><div class="journey-label">模糊需求</div>
+        <div class="journey-dot">1</div><div class="journey-label">需求</div>
       </div>
       <div class="journey-step done" id="journeyProduct">
-        <div class="journey-dot">2</div><div class="journey-label">项目 / 产品</div>
+        <div class="journey-dot">2</div><div class="journey-label">项目</div>
       </div>
       <div class="journey-step current" id="journeyRoad">
-        <div class="journey-dot">3</div><div class="journey-label">产品路线</div>
+        <div class="journey-dot">3</div><div class="journey-label">路线</div>
       </div>
       <div class="journey-step" id="journeyWork">
         <div class="journey-dot">4</div><div class="journey-label">工作项</div>
       </div>
       <div class="journey-step next" id="journeyAccept">
-        <div class="journey-dot">5</div><div class="journey-label">验收 / 收口</div>
+        <div class="journey-dot">5</div><div class="journey-label">验收</div>
       </div>
     </div>
     <div class="route-hierarchy" aria-label="项目路线与当前工作项">
@@ -408,14 +424,7 @@
       <div class="route-arrow" aria-hidden="true">→</div>
       <div class="route-node"><span class="k">当前工作项</span><span class="v" id="hierWork">读取中…</span></div>
     </div>
-    <div class="route-work" id="routeWorkItems" aria-label="路线工作项"></div>
     <div class="orientation-note" id="orientationNote">正在读取当前路线…</div>
-  </section>
-
-  <section class="card">
-    <div class="chead"><h2>工作项</h2><span class="count" id="workCount"></span></div>
-    <div class="meta" id="workContext" style="margin-top:-5px;margin-bottom:10px"></div>
-    <div id="progressBox"></div>
   </section>
 
   <section class="card" id="acceptCard">
@@ -442,6 +451,12 @@
         <span><b id="cLanded">0</b>已合入</span>
         <span><b id="cResolved">0</b>已收口</span>
       </div>
+    </section>
+
+    <section class="card">
+      <div class="chead"><h2>全部工作项</h2><span class="count" id="workCount"></span></div>
+      <div class="meta" id="workContext" style="margin-top:-5px;margin-bottom:10px"></div>
+      <div id="progressBox"></div>
     </section>
 
     <section class="card">
@@ -723,6 +738,7 @@
     renderJudgments(s.judgments || []);
     renderVerify(s.last_verification);
     renderRoadmap(s.roadmap || [], s.mainline || {});
+    renderFolders(s.project_folders || {}, s);
     renderOrientation(s);
     renderAcceptance(humanAcc, s.machine_verified || []);
     renderRecent(s.recent_completed || []);
@@ -731,6 +747,65 @@
     renderMainline(s.mainline || {});
     var intakeButton = el("intakeSubmit");
     if (intakeButton) intakeButton.disabled = !s.enabled || !!s.error;
+  }
+
+  var LANE_LABEL = {design:"体验 / 视觉", bug:"Bug", arch:"架构", gate:"门禁", reprocess:"待重排"};
+  function laneLabel(lane){ return LANE_LABEL[lane] || lane || "未分泳道"; }
+  function renderFolders(folders, s){
+    var box = el("folderBox"); if (!box) return;
+    box.innerHTML = "";
+    var list = (folders && folders.folders) || [];
+    var note = el("folderNote");
+    if (note) note.textContent = list.length ? (list.length + " 个项目") : "";
+    if (!list.length){
+      box.innerHTML = '<div class="empty">还没有项目文件夹。当前绑定项目会作为一个文件夹显示。</div>';
+      return;
+    }
+    list.forEach(function(f){
+      var card = document.createElement("div");
+      card.className = "folder" + (f.active ? " active" : "");
+      var head = document.createElement("div"); head.className = "folder-head";
+      var info = document.createElement("div");
+      var title = document.createElement("div"); title.className = "folder-title";
+      title.textContent = f.name || f.id || "未命名项目";
+      var meta = document.createElement("div"); meta.className = "folder-meta";
+      meta.textContent = [f.product || "", f.path || ""].filter(Boolean).join(" · ");
+      var step = document.createElement("div"); step.className = "folder-step";
+      step.textContent = "当前步骤：" + (f.current_step || "路线待拆解");
+      info.appendChild(title); info.appendChild(meta); info.appendChild(step);
+      var stats = document.createElement("div"); stats.className = "folder-stats";
+      var c = f.counts || {};
+      [["doing", c.doing || 0, "进行"], ["todo", c.todo || 0, "待办"], ["human", c.human || 0, "验收"]].forEach(function(row){
+        if (!row[1] && row[0] !== "doing") return;
+        var tag = document.createElement("span");
+        tag.className = "fstat" + (row[0] === "human" && row[1] ? " warn" : row[0] === "doing" && row[1] ? " live" : "");
+        tag.textContent = row[2] + " " + row[1];
+        stats.appendChild(tag);
+      });
+      head.appendChild(info); head.appendChild(stats); card.appendChild(head);
+      var work = document.createElement("div"); work.className = "folder-work";
+      // 工作项只在这里展开一次；路线图只负责「现在走到哪一步」，不复制明细。
+      var doingRows = (f.doing_items || []).map(function(x){ return {x:x, state:"进行中"}; });
+      var todoRows = (f.todo_items || []).map(function(x){ return {x:x, state:"待处理"}; });
+      var rows = doingRows.concat(todoRows);
+      if (!rows.length){
+        var empty = document.createElement("div"); empty.className = "folder-work-row";
+        empty.textContent = (f.human_acceptance || []).length
+          ? "工作项已完成，下面需要你验收。"
+          : "当前项目没有未决工作项。";
+        work.appendChild(empty);
+      } else {
+        rows.slice(0, 4).forEach(function(row){
+          var line = document.createElement("div"); line.className = "folder-work-row";
+          var id = document.createElement("span"); id.className = "id"; id.textContent = row.x.id || "";
+          var name = document.createElement("span"); name.className = "name";
+          name.textContent = (laneLabel(row.x.lane || row.x.kind)) + " · " + (row.x.title || row.x.detail || "未命名工作项");
+          var state = document.createElement("span"); state.className = "state"; state.textContent = row.state;
+          line.appendChild(id); line.appendChild(name); line.appendChild(state); work.appendChild(line);
+        });
+      }
+      card.appendChild(work); box.appendChild(card);
+    });
   }
 
   function renderOrientation(s){
@@ -757,38 +832,6 @@
     if (projectNode) projectNode.textContent = projectName;
     if (roadNodeLabel) roadNodeLabel.textContent = product + " · " + stage;
     if (workNodeLabel) workNodeLabel.textContent = workTitle;
-    var workList = el("routeWorkItems");
-    if (workList){
-      workList.innerHTML = "";
-      var visibleItems = doingItems.slice(0, 2).map(function(item){
-        return { item: item, status: "doing", label: "进行中" };
-      }).concat(todoItems.slice(0, Math.max(0, 4 - Math.min(doingItems.length, 2))).map(function(item){
-        return { item: item, status: "todo", label: "待处理" };
-      }));
-      if (!visibleItems.length){
-        var empty = document.createElement("div");
-        empty.className = "empty";
-        empty.textContent = human ? "路线工作项已完成，等待人工验收。" : "这条路线当前没有进行中或待处理的工作项。";
-        workList.appendChild(empty);
-      } else {
-        visibleItems.forEach(function(entry){
-          var row = document.createElement("div");
-          row.className = "route-work-row " + entry.status;
-          var dot = document.createElement("span");
-          dot.className = "dot";
-          var name = document.createElement("span");
-          name.className = "name";
-          name.textContent = entry.item.title || entry.item.detail || "未命名工作项";
-          var status = document.createElement("span");
-          status.className = "state";
-          status.textContent = entry.label;
-          row.appendChild(dot);
-          row.appendChild(name);
-          row.appendChild(status);
-          workList.appendChild(row);
-        });
-      }
-    }
     var note = el("orientationNote");
     if (note){
       var action = doing ? "正在推进工作项" : human ? "等待你验收" : blocked ? "卡住，等待处理" : "等待下一条需求";
