@@ -1,0 +1,41 @@
+{
+  "main_branch": "main",
+  "branch_prefix": "codex/",
+  "trunk_dir": "/Users/danta/Documents/Codex/codex-autopilot-native-autopilot-trunk",
+  "shared_dir": null,
+  "link_dirs": [],
+  "build": {
+    "cmd": "python3 ops/selftest.py",
+    "cwd": "."
+  },
+  "verify": [
+    {
+      "name": "selftest",
+      "cmd": "python3 ops/selftest.py",
+      "cwd": "."
+    },
+    {
+      "name": "panel-logic",
+      "cmd": "python3 ops/panel_logic_check.py",
+      "cwd": "."
+    },
+    {
+      "name": "panel-render",
+      "cmd": "python3 ops/panel_render_check.py --no-shot",
+      "cwd": "."
+    }
+  ],
+  "auto_port": {
+    "enabled": false,
+    "max_unlanded": 2
+  },
+  "default_lane": "bug",
+  "auto_exec": {
+    "enabled": true,
+    "max_per_cycle": 1,
+    "timeout": 3600,
+    "sandbox": "workspace-write",
+    "model": null,
+    "retries": 3
+  }
+}
