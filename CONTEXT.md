@@ -3,7 +3,8 @@
 > 这份文件是**这个项目 + 相关对话**的唯一事实来源。opencode 和 codex 都改它，以它为准。
 > 任何 agent 开工前先读它；改动产品行为、决策、进度、卡点后，**回写对应小节**，不要另起文档。
 > 生成/核对时间：2026-10-15（当日现场核对，非转述）。
-> 2026-10-15 深夜 opencode 现场复核（见 12.7）：本机**不是沙箱**，已真跑安装并通过 5/6 验收；原「三条卡点」里的安装/网络两条已在本机解除，原生直连失败的根因**重新定位为 socket 选错（不是权限）**——第四节事实 4 已被推翻并更正。
+> 2026-10-17 复核：本机已安装并启用 `0.6.0-preview.7`；原生直连唯一 FAIL 已进一步定位为官方 remote-control 的 **ChatGPT 登录/配对硬闸**（不是 socket 路径或权限）。2026-10-15 深夜的「socket 选错」记录是当时的历史结论，详见 12.7/12.8，不要拿它覆盖当前事实。
+> 2026-10-15 深夜 opencode 现场复核（见 12.7）：本机**不是沙箱**，已真跑安装并通过 5/6 验收；原「三条卡点」里的安装/网络两条已在本机解除，原生直连失败的根因当时**重新定位为 socket 选错（不是权限）**——第四节事实 4 已被推翻并更正。
 > 仓库：`/Users/danta/Documents/Codex/codex-autopilot-native-autopilot`（分支 `main`）
 
 ---
@@ -13,10 +14,10 @@
 **Codex 自动挡**是给 Codex 加的一层「工程控制面」：你平时打字的那个 Codex 输入框就是总输入框，零散需求进去，归类、落账、隔离工作区、跑验证、能合的自动合、收口、回写主线，全由它串起来。
 
 - 形态：Codex 插件（原生风格面板） + macOS 菜单栏 Companion（状态锚点，不是第二套产品）
-- 版本：`0.6.0-preview.1`，阶段：内部可用
+- 版本：`0.6.0-preview.7`，阶段：内部可用
 - 13 步产品路线：**7 步已完成、6 步进行中、0 步未开始**
-- 21 条验收：**17 条机器已自证**，4 条必须人在真机点
-- 本机实测（opencode，2026-10-16 中午三线并行后）：仓库与已安装都是 **`0.6.0-preview.3`**；验收 6 项 **5 PASS / 1 FAIL**（唯一 FAIL = 原生直连）；A-0008 在隔离项目过 7/9（差桌面目视 2 条）；路线 A 部分通——standalone 0.163 + daemon + 控制 socket 都有了，但控制 socket 要配对/鉴权握手，协议还没走通（见 12.8）
+- 验收：机器已自证项持续增加；当前 A-0005/A-0006/A-0007/A-0008 仍需真人/桌面操作
+- 本机实测（2026-10-17）：仓库与已安装都是 **`0.6.0-preview.7`**；`preview-check.sh --no-install` 除原生直连外全部 PASS；原生直连唯一 FAIL = 官方 remote-control 要求 ChatGPT 登录/配对（当前 CLI 是 API key），不是 socket 路径或权限
 - 自检：`python3 ops/selftest.py` → **24 组全过、退出码 0、约 58 秒**；再开真编译 + 真二进制两个开关 → **26 组全过**
 
 ---
@@ -106,10 +107,10 @@
 2. **官方 app-server 方法名**：移动会话进/出窗口集合是 `thread/section/move`（不是 `threadSection/move`，旧写法会被服务器判成 unknown variant）。列表/创建分别是 `threadSection/list`、`threadSection/create`。项目里 6 个原生调用点已逐条对真实服务器（144 个可接受方法）核对通过。
 3. **会话归属窗口集合的字段是嵌套的** `thread.section.id`（旧代码按扁平 `sectionId` 读，面板会永远显示「暂无窗口」）。
 4. **`~/.codex/ipc/ipc.sock` 不是 app-server 控制 socket**（2026-10-15 opencode 实测更正，推翻旧说法）。它是桌面端的进程间 IPC / IDE 上下文通道：帧带 4 字节长度前缀（在 `ChatGPT.app/Contents/Resources/app.asar` 里可见 `Buffer.allocUnsafe(4)` 与 `IDE context socket…`），对它直接发 app-server 的 JSONL 会被对端**立刻关闭**；用 `codex app-server proxy --sock ipc.sock`（本地 0.148 与桌面自带 0.162 都一样）报 `failed to relay data between stdio and socket`、退出码 1。实测三连：raw socket 连接秒通但 recv 得 `b''`（对端关闭）、proxy 报 relay 失败、`codex doctor` 挂住。
-5. **真正的 app-server 控制 socket 路径是 `~/.codex/app-server-control/app-server-control.sock`**，只在装了官方 standalone daemon（`codex app-server daemon start` / `codex remote-control start`，需先 `curl -fsSL https://chatgpt.com/codex/install.sh | sh` 独立安装）并令桌面用本地 daemon（`CODEX_APP_SERVER_USE_LOCAL_DAEMON=1`）时才存在。本机该目录只有 `app-server-startup.lock`、没有控制 socket；`codex app-server daemon start` 报 `managed standalone Codex install not found`。
-6. `codex` CLI 在 `/Users/danta/.local/bin/codex`，版本 `codex-cli 0.148.0-alpha.15`；桌面端自带 `/Applications/ChatGPT.app/Contents/Resources/codex-cli/.../codex` 是 `0.162.0-alpha.17.2`（两者版本不一致）。
+5. **真正的 app-server 控制 socket 路径是 `~/.codex/app-server-control/app-server-control.sock`**，由官方 standalone daemon 创建。**本机当前事实**：该 socket 已存在（`codex app-server daemon version` → running，`appServerVersion 0.163.0`）；2026-10-15 深夜「本机没装 daemon / 没有控制 socket」只描述当时状态，不是现在。当前卡点是官方 remote-control 要求 ChatGPT 登录/配对，`daemon.stderr.log` 原文为 `remote control requires ChatGPT authentication; API key auth is not supported`。
+6. `codex` CLI 已随 standalone 安装升到 **`0.163.0`**；桌面端自带二进制版本可能仍与 CLI 不同，以实际 `codex --version` / `codex app-server daemon version` 为准，不要写死旧版本。
 7. 还有 `~/.codex/ipc/codex-center-control-20260814b.sock`，是陈旧残留，连接报 `Connection refused`。
-8. 用隔离状态目录（`CODEX_HOME=<临时目录>`）时，真实 `codex app-server` 能初始化并建出原生会话——所以桥接代码本身是通的（但那是**独立实例**，不等于桌面宿主）。
+8. 用隔离状态目录（`CODEX_HOME=<临时目录>`）时，真实 `codex app-server` 能初始化并建出原生会话——所以桥接代码本身是通的（但那是**独立实例**，不等于桌面宿主）；本地 standalone daemon 与桌面端打开同一状态库 inode，协议一旦通过鉴权/配对，thread 可以互通。
 9. 历史数据库 `~/.codex/thread_history_1.sqlite` 只读打开，永不写宿主状态。
 10. 开关当前实况：总开关 on、未暂停、自动合入开、自动解冲突开、自动实现开、常驻开、**自动 port 关**。
 
@@ -130,7 +131,7 @@
 | 进行中 | 路线与人机验收可见 | 面板已展示路线与人工验收项 |
 | 进行中 | 跨应用入口 | 四个入口都实现完，待真机逐个验证 |
 | 进行中 | 菜单栏 Companion | 可编译可安装，待真桌面启动验证 |
-| 进行中 | 原生 thread 直连派活 | 协议本身已对齐真实二进制；但**桌面宿主当前没有可连的 app-server 控制 socket**（`ipc.sock` 是 IDE 信道、非控制口，见第四节 4/5）→ 把任务派进桌面窗口目前不可达，需装 standalone daemon 或改走别的路线（见 12.7） |
+| 进行中 | 原生 thread 直连派活 | 协议本身已对齐真实二进制，standalone daemon 与控制 socket 已就位；当前不可派活的最后一道闸是官方 remote-control 要求 ChatGPT 登录/配对（CLI 现为 API key）。见第四节 5、第七节和 D-0003 |
 | 进行中 | 真实端到端演示与预览发布 | 定义见第九节，缺真实环境 |
 
 ---
@@ -213,7 +214,7 @@ open ~/Applications/CodexAutopilotCompanion.app
 ```bash
 python3 ops/codex_native.py probe
 ```
-看到什么算过：会打印 `can_dispatch`。**当前本机实测 = `false`**，且不是「Codex 没启动」（桌面端正在跑）——原因见 12.7：`ipc.sock` 不是 app-server 控制口。`true` 只有在装了 standalone daemon 并让桌面用它之后才可能出现。
+看到什么算过：会打印 `can_dispatch`。**当前本机实测 = `false`**，且不是「Codex 没启动」；控制 socket 已存在，真正原因是官方 remote-control 要求 ChatGPT 登录/配对（`codex login status` 当前是 API key）。`true` 需要先用 ChatGPT 身份完成 enrollment/pairing，再重新 `probe`。
 
 **第 4 步：按 ⌥⌘D 回到 Codex 里的完整面板**
 看到什么算过：Codex 里显示自动挡面板，首屏有「是否开启 / 当前项目 / 正在处理什么 / 下一步 / 需要你处理」。关掉总开关，首屏应变成明确的关闭态。
@@ -324,13 +325,15 @@ AUTOPILOT_SELFTEST_COMPANION=1 AUTOPILOT_SELFTEST_REAL_CODEX=1 python3 ops/selft
 
 ### 12.4 反复卡住的三条边界（用户不满的真实来源）
 
-这三条都不是代码 bug，而是**执行它的那个进程没有那些权限**（详见第七节）：
+这三条是**历史阶段**记录，不是当前事实。它们不是代码 bug，而是当时执行进程的权限/环境边界：
 
 | 卡点 | 现象（原文） | 谁能解 |
 | --- | --- | --- |
 | 安装写入被沙箱挡 | 写不了 `~/Applications`、`~/plugins`、`~/Library/LaunchAgents` | 用户在自己终端跑 `bash install.sh --verify` |
 | 桌面宿主 socket 连不上 | `failed to connect to socket at /Users/danta/.codex/ipc/ipc.sock` / `Operation not permitted` | 在不受限终端跑 `python3 ops/codex_native.py probe` |
 | 真实模型回合跑不了 | 受限进程网络出口封闭（DNS 都解析不了） | 在正常网络环境跑端到端 |
+
+2026-10-17 复核：安装写入、网络、socket 权限三条均已解除；当前唯一未解除的是**官方 remote-control 的 ChatGPT 登录/配对硬闸**，见第七节。
 
 ### 12.5 上一轮的卡点已修（2026-10-15 现场核对）
 
@@ -439,7 +442,7 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 
 **下一轮的优先顺序**：① 拿到 `install.sh --verify` 输出逐条关 A-0005/A-0006/A-0007（本机已跑，5/6 PASS，A-0005 前置已满足）；② 用户拍板原生直连走 A 还是 B；③ 陪跑 A-0008 全程留证；④ 收口 `0.6.0-preview.1` → 正式预览包；⑤ 推 `main` 到 `origin`（本机网络已确认可用）。
 
-### 12.8 三线并行结果（2026-10-16 中午，用户拍板路线 A 后）
+### 12.8 三线并行结果（2026-10-16 中午，用户拍板路线 A 后；历史过程，不是当前结论）
 
 用户说「A 可以并行推」，于是三条线同时开跑。三条线的 agent 都已返回，下面是结论（证据文件在 `/tmp`，命令原文都在里面）。
 
@@ -447,9 +450,9 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 
 - 官方 standalone 装上了：`codex` 从 `0.148.0-alpha.15` 升到 **`0.163.0`**（`curl -fsSL https://chatgpt.com/codex/install.sh | sh`，无 sudo、无交互，退出码 0）。
 - daemon 起来了：`codex app-server daemon version` → `running`，`appServerVersion 0.163.0`；**`~/.codex/app-server-control/app-server-control.sock` 已出现**（之前只有 lock 文件）。注意 `codex remote-control start` 本身退出码 1（`connection is errored`），但 daemon 本体健康。
-- 但派活还是不通：`probe` 依然 `can_dispatch=false`。一是代码只认 `ipc.sock`（还没改）；二是对着新控制 socket 发 JSONL/长度前缀/proxy/HTTP 四种载荷**全部无响应**（proxy 报 `Broken pipe`）。怀疑要配对（pairing）或另有鉴权握手，下一个卡点在这里。
+- 但派活还是不通：当时 `probe` 依然 `can_dispatch=false`。当时代码只认 `ipc.sock`（后续已改成默认探测 `app-server-control.sock`）；当时对着新控制 socket 发 JSONL/长度前缀/proxy/HTTP 四种载荷全部无响应（proxy 报 `Broken pipe`）。后续进一步定位为配对/鉴权硬闸：`remote control requires ChatGPT authentication; API key auth is not supported`。
 - 附带好消息：daemon 和桌面端打开的是**同一 inode** 的状态库（`state_5.sqlite`、`thread_history_1.sqlite`，1251 个 thread），文件层是同一份——协议一旦走通，线程就是互通的。
-- 仓库零修改（只给了改法，没动手）：`ops/codex_native.py` 把控制 socket 放优先、`ipc.sock` 回落；但改完也还差“握手/鉴权”这一关，所以没急着改。
+- 仓库当时零修改（只给了改法，没动手）：`ops/codex_native.py` 把控制 socket 放优先、`ipc.sock` 回落；该改动后续已落盘，但完成它仍差 ChatGPT 登录/配对这一关。
 
 **线 2 · A-0008 留证：9 条里过了 7 条**
 
@@ -479,13 +482,15 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 **用户（只有这几件，别的不用管）**：
 1. 人工验收 A-0005/A-0006/A-0007（机器已证 9 项，剩的全是人眼人手：菜单栏图标、点图标、⌥⌘D/⌥⌘S/拖文件/服务菜单、面板观感、关总闸——具体步骤见第六节， checklist 在 `/tmp/ap-accept-checklist.md`）。
 2. A-0008 差的 2 条（面板“最近完成”+菜单栏一致性）需在真实桌面补目视。
-3. 拍板：控制 socket 的握手/鉴权查清之前，原生直连代码不动（保持只读历史降级）。
+3. 拍板原生派活最后一条路（二选一，见 D-0003）：
+   - A：`codex login --device-auth` 切换到 ChatGPT 登录并完成 remote-control pairing。后果：CLI 登录身份会从当前 API key 切换，需要重新确认模型 provider/config 仍可用；完成后原生派活可走桌面宿主真实窗口。
+   - B：不切换登录，原生派活明确降级为本地 app-server 独立实例。后果：子对话不会自动出现在当前桌面窗口，产品文案/验收定义需同步改成“独立原生会话”，不能写 `can_dispatch=true` 冒充桌面宿主。
 
 **agent（下一步可做的）**：
 - 把更多真实项目登记进 `ops/truth/project_folders.json`（每个项目自带 `ops/truth` 与来源对话），再用面板确认各自路线和工作项不串项目；目前只登记了本仓库。
-- 查清控制 socket 握手（官方文档/`generate-json-schema`/配对），走通一次 `thread/list` 再改 `ops/codex_native.py`（改完必跑自检）。
+- 已确认控制 socket 存在；剩余是官方 remote-control 的 ChatGPT 登录/配对。用户拍板 A 后按 D-0003 流程走通 `thread/list` 再验收；用户拍板 B 后按独立 app-server 调整文案与验收定义。
 - 人工验收结果回来后，逐条关闭 A-0005 / A-0006 / A-0007（改台账，不改生成物）。
-- 收口预览发布（`0.6.0-preview.3` → 正式预览包）。
+- 收口预览发布（`0.6.0-preview.7` → 正式预览包）。
 - `main` 已推平；有新提交继续保持推平。
 
 ---
