@@ -49,7 +49,8 @@
 
 - 主面板首屏明确回答：当前状态、正在做什么、当前步骤，以及工作归属的项目与路线。
 - 路线关系以「项目 → 产品路线/当前阶段 → 当前工作项 → 验收/收口」呈现；路线列表突出进行中和待处理工作项。
-- 当前状态服务只提供单一绑定项目，不能把多个项目或 Codex 对话伪装成可分组文件夹。多项目注册表与对话归属展示仍是后续能力。
+- 项目归属已落成 `ops/truth/project_folders.json` 注册表：每个项目文件夹带自己的仓库根、产品、路线和工作项；面板从各项目自己的 `ops/truth` 读取，绝不把别的项目工作项混进当前项目。当前注册表先登记本仓库一个项目，多项目不再是一次性概念。
+- 项目文件夹和每条工作项都显示来源对话（`source_thread_id`）；没有登记来源就明确写「未标注来源」，不伪造对话 ID。项目账本读不到时保留文件夹并显示读取失败，不显示成 0 个工作项。
 - 菜单栏 Companion 是轻量状态锚点：展示状态、项目、当前工作/步骤和待处理事项；保留派活、截图、附件、打开完整面板，诊断与路径类动作收进「更多」。
 - 出现人工验收、需要拍板或异常时，主面板升级为明确的待处理状态；菜单栏显示警示图标并通过 macOS 通知中心提醒。同一批待办只提醒一次，待办清空后新一批重新提醒。
 - 灵动岛与桌宠不承担路线管理和工程追踪；未来可做入口或轻量状态外观。工程状态需要稳定、可扫描、可验证的主面板。
@@ -464,6 +465,13 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 
 **版本对齐**：仓库与已安装都是 **`0.6.0-preview.3`**（preview.1/2/3 三个版本目录都在，当前指向 preview.3）；`codex` 已升 0.163；自检 24 组绿；`main` 已推平（0 ahead / 0 behind）。
 
+### 12.9 面板项目归口落盘（2026-10-16 下午）
+
+- 已落盘并推送 `origin/main`：`codex/project-folders-multiproject`，主提交 `5564d8b` / 落盘台账 `3941506`。
+- 能力：新增 `ops/truth/project_folders.json` 项目注册表；状态服务按注册表读取每个项目自己的 `ops/truth`；面板的项目文件夹显示项目、路径、产品、当前步骤、来源对话、进行/待办/验收计数，以及最多 4 条工作项和来源对话。
+- 诚实边界：只登记了本仓库一个真实项目，没有伪造第二个项目；跨项目账本读不到时显示读取失败原因，不显示成 0。当前项目的来源对话是 `01a14331-6d8b-70c0-aba2-fc214034b9c5`。
+- 机器门禁：`python3 ops/selftest.py` → 25 组全过、退出码 0；`python3 ops/panel_logic_check.py` → 24 项全过、退出码 0；`AUTOPILOT_CHROMIUM='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' python3 ops/panel_render_check.py --no-shot` → 10 项全过、退出码 0。三条都写进 `A-0024` 验收证据。
+
 ---
 
 ## 十三、下一步（谁该做什么）
@@ -474,6 +482,7 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 3. 拍板：控制 socket 的握手/鉴权查清之前，原生直连代码不动（保持只读历史降级）。
 
 **agent（下一步可做的）**：
+- 把更多真实项目登记进 `ops/truth/project_folders.json`（每个项目自带 `ops/truth` 与来源对话），再用面板确认各自路线和工作项不串项目；目前只登记了本仓库。
 - 查清控制 socket 握手（官方文档/`generate-json-schema`/配对），走通一次 `thread/list` 再改 `ops/codex_native.py`（改完必跑自检）。
 - 人工验收结果回来后，逐条关闭 A-0005 / A-0006 / A-0007（改台账，不改生成物）。
 - 收口预览发布（`0.6.0-preview.3` → 正式预览包）。
