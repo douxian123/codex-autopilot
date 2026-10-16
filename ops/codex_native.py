@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
-SOCKET = Path(os.environ.get("CODEX_APP_SERVER_SOCKET", CODEX_HOME / "ipc" / "ipc.sock"))
+SOCKET = Path(os.environ.get("CODEX_APP_SERVER_SOCKET", CODEX_HOME / "app-server-control" / "app-server-control.sock"))
 HISTORY_DB = Path(os.environ.get("CODEX_THREAD_HISTORY_DB",
                                  CODEX_HOME / "thread_history_1.sqlite"))
 CLI = os.environ.get("CODEX_CLI", "codex")
