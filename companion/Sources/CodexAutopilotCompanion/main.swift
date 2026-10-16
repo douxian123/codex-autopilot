@@ -412,68 +412,139 @@ final class CompanionModel: ObservableObject {
 struct CompanionView: View {
     @ObservedObject var model: CompanionModel
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(model.status.enabled ? Color.green : Color.secondary)
-                    .frame(width: 8, height: 8)
-                Text("Codex 自动挡").font(.headline)
-                Spacer()
-                Button(model.status.enabled ? "关闭" : "开启") { model.toggle() }
-                    .controlSize(.small)
-            }
-            Text(model.status.enabled ? "正在运行" : "已关闭，Codex 回到原生状态")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    private var enabled: Bool { model.status.enabled }
+    private var projectName: String? {
+        guard let path = model.status.project, !path.isEmpty else { return nil }
+        return (path as NSString).lastPathComponent
+    }
 
-            if let project = model.status.project {
-                Label {
-                    Text((project as NSString).lastPathComponent)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(project)
-                } icon: {
-                    Image(systemName: "folder")
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+                .padding(.bottom, 12)
+
+            Divider()
+
+            if let attention = model.status.attention, !attention.isEmpty {
+                attentionBlock(attention)
+                Divider()
+            }
+
+            workBlock
+            Divider()
+
+            intakeBlock
+                .padding(.top, 12)
+
+            if !model.message.isEmpty {
+                Text(model.message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 10)
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
+    }
+
+    // 状态锚点：开没开、有没有事要你处理，一眼看到。
+    private var header: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(enabled ? Color.green : Color.secondary)
+                .frame(width: 9, height: 9)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Codex 自动挡")
+                    .font(.headline)
+                Text(statusLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            Button(enabled ? "关闭" : "开启") { model.toggle() }
+                .controlSize(.small)
+        }
+    }
+
+    private var statusLine: String {
+        if let error = model.status.error, !error.isEmpty { return "状态异常" }
+        if !enabled { return "已关闭，Codex 回到原生状态" }
+        if model.status.paused { return "已暂停，不再推进新工作" }
+        return "正在运行"
+    }
+
+    // 需要你介入：最高优先级，放在当前工作之上。
+    private func attentionBlock(_ items: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("需要你介入 · \(items.count)", systemImage: "exclamationmark.circle.fill")
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.orange)
+            ForEach(items.prefix(3), id: \.self) { item in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("•").font(.callout).foregroundStyle(.orange)
+                    Text(item)
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            }
+            if items.count > 3 {
+                Text("还有 \(items.count - 3) 项，打开完整面板查看")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 12)
+    }
+
+    // 现在在干嘛 + 在哪一步：正文级字号，不做成长路径噪点。
+    private var workBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let projectName = projectName {
+                Label(projectName, systemImage: "folder")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(model.status.project ?? "")
             }
             if let task = model.status.current_task {
-                Divider()
-                Text("现在在做")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text(task.title ?? task.detail ?? "正在处理")
-                    .font(.subheadline.weight(.medium))
-                    .lineLimit(3)
-                if let stage = task.stage, !stage.isEmpty {
-                    Label("当前步骤 · \(stage)", systemImage: "arrow.right.circle")
-                        .font(.caption2)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("现在在做")
+                        .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    Text(task.title ?? task.detail ?? "正在处理")
+                        .font(.body.weight(.medium))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let stage = task.stage, !stage.isEmpty {
+                        Label(stage, systemImage: "arrow.right.circle")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
-            }
-            if let attention = model.status.attention, !attention.isEmpty {
-                Divider()
-                Text("需要你介入")
-                    .font(.caption2.weight(.semibold))
+            } else {
+                Text("现在没有正在进行的工作")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
-                ForEach(attention.prefix(3), id: \.self) { item in
-                    Text("· " + item).font(.caption).lineLimit(2)
-                }
             }
-            Divider()
+        }
+        .padding(.vertical, 12)
+    }
+
+    private var intakeBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
             if !model.attachments.isEmpty {
-                // 附件要看得见、撤得掉：只报数量的话，派出去的活带了什么自己都不知道。
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text("附件 \(model.attachments.count) 个")
-                        .font(.caption2)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                     ForEach(model.attachments, id: \.self) { path in
-                        HStack(spacing: 5) {
+                        HStack(spacing: 6) {
                             Image(systemName: "paperclip")
-                                .font(.caption2)
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
                             Text((path as NSString).lastPathComponent)
                                 .font(.caption)
@@ -542,15 +613,7 @@ struct CompanionView: View {
                 .menuStyle(.borderlessButton)
                 .help("更多操作")
             }
-            if !model.message.isEmpty {
-                Text(model.message)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(3)
-            }
         }
-        .padding(12)
-        .frame(width: 320)
     }
 }
 
@@ -700,6 +763,9 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
     private var hotKeys: HotKeyCenter?
     private var timer: Timer?
     private var cancellables = Set<AnyCancellable>()
+    /// 点弹窗外部 / 按 Esc 时用来把它收起来的事件监控。
+    private var globalMonitor: Any?
+    private var localMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -779,18 +845,61 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate {
 
     private func togglePopover() {
         if popover.isShown {
-            popover.performClose(nil)
+            closePopover()
         } else {
             showPopover()
         }
     }
 
+    /// 状态栏弹窗就该「点外面/按 Esc 立刻收起」。之前手动 makeKey + 强制激活
+    /// app 恰好破坏了 transient 的自动关闭，导致弹窗关不掉；这里改成显式监控。
     private func showPopover() {
         guard let button = statusItem.button else { return }
         model.refresh()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.makeKey()
-        NSApp.activate(ignoringOtherApps: true)
+        installDismissMonitors()
+    }
+
+    private func closePopover() {
+        popover.performClose(nil)
+        removeDismissMonitors()
+    }
+
+    private func installDismissMonitors() {
+        removeDismissMonitors()
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        ) { [weak self] _ in
+            self?.closePopover()
+        }
+        localMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]
+        ) { [weak self] event in
+            guard let self else { return event }
+            if event.type == .keyDown, event.keyCode == 53 {  // Esc
+                self.closePopover()
+                return nil
+            }
+            if event.type == .keyDown {
+                return event
+            }
+            // 落在弹窗里 = 弹窗内操作；落在状态栏图标上 = 交给图标自己开合。
+            if let window = self.popover.contentViewController?.view.window,
+               event.window === window {
+                return event
+            }
+            if let buttonWindow = self.statusItem.button?.window,
+               event.window === buttonWindow {
+                return event
+            }
+            self.closePopover()
+            return event
+        }
+    }
+
+    private func removeDismissMonitors() {
+        if let monitor = globalMonitor { NSEvent.removeMonitor(monitor); globalMonitor = nil }
+        if let monitor = localMonitor { NSEvent.removeMonitor(monitor); localMonitor = nil }
     }
 
     /// 完整面板在 Codex 本体里：菜单栏只负责把你送回去，不再另开一个面板。

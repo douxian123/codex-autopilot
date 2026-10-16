@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 """面板渲染检查：用真浏览器渲染真面板，喂真实控制层数据，核对首屏文字。
 
-静态检查（元素 id、工具名对得上）只能证明「面板看着对」，证明不了首屏真的把
-「开没开 / 当前项目 / 正在处理什么 / 需要你处理」渲染出来。这里起一个 headless
-Chromium，用与 Codex 宿主同一条 postMessage 桥驱动面板，把渲染后的 DOM 文本与
-真实状态逐条对照，并顺手存一张首屏截图。
+为什么必须用 iframe：面板是往 window.parent 发消息的。旧版本把面板直接放
+在顶层窗口里，parent 等于自己，消息被自己接住，画面永远停在“读取中”，
+而门禁又在整页文本里搜注入脚本里的数据，于是出现“画面没渲染却全部 PASS”
+的假通过。这里按真实宿主结构（父窗口 + iframe）驱动，只看 iframe 内的文本。
 
 用法：
   python3 ops/panel_render_check.py              # 检查 + 截图
@@ -27,34 +27,37 @@ REPO = OPS.parent
 PANEL = REPO / "plugin" / "ui" / "panel.html"
 SHOT = REPO / "docs" / "panel-first-screen.png"
 
-BRIDGE = """
+WRAPPER = """<!doctype html><meta charset="utf-8">
+<style>html,body{margin:0;background:#fff}#f{width:560px;height:1500px;border:0;display:block}</style>
+<iframe id="f" src="panel.html"></iframe>
 <script>
-(function(){
-  var payload = %s;
-  var nativePostMessage = window.postMessage.bind(window);
-  window.postMessage = function(message, targetOrigin, transfer){
-    if (!message || message.jsonrpc !== "2.0" || message.method !== "tools/call") {
-      return nativePostMessage(message, targetOrigin, transfer);
-    }
-    var name = (message.params && message.params.name) || "";
-    var out = (name === "autopilot_status") ? payload : {ok: true, __text__: ""};
-    setTimeout(function(){
-      window.dispatchEvent(new MessageEvent("message", {
-        data: {
-          jsonrpc: "2.0",
-          id: message.id,
-          result: {
-            isError: false,
-            structuredContent: out,
-            content: [{type: "text", text: ""}]
-          }
-        },
-        source: window
-      }));
-    }, 0);
-    return undefined;
-  };
-})();
+var payload = __PAYLOAD__;
+window.addEventListener("message", function(ev){
+  var msg = ev.data;
+  if (!msg || msg.jsonrpc !== "2.0" || !msg.method) return;
+  var name = (msg.params && msg.params.name) || "";
+  var out = (name === "autopilot_status") ? payload : {ok: true, __text__: ""};
+  ev.source.postMessage({jsonrpc: "2.0", id: msg.id,
+    result: {isError: false, structuredContent: out,
+             content: [{type: "text", text: ""}]}}, "*");
+});
+setTimeout(function(){
+  var d = document.getElementById("f").contentDocument;
+  var out = {};
+  ["stateLabel","statusTime","projectLine","focusStatus","focusDoing","focusStep",
+   "hierProject","hierRoad","hierWork"].forEach(function(id){
+    var n = d.getElementById(id);
+    out[id] = n ? n.textContent.trim() : "";
+      out["__body__"] = (d.body ? d.body.innerText : "");
+      var ns = d.getElementById("nativeState");
+      out["nativeState"] = ns ? ns.textContent.trim() : "";
+  });
+  var pre = document.createElement("pre");
+  pre.id = "panel-mirror";
+  pre.style.display = "none";
+  pre.textContent = JSON.stringify(out);
+  document.body.appendChild(pre);
+}, 5000);
 </script>
 """
 
@@ -74,11 +77,13 @@ def find_chromium():
         for cand in sorted(home.glob(pattern)):
             if cand.is_file():
                 return str(cand)
-    for name in ("chromium", "google-chrome", "chrome",
-                 "Google Chrome"):
+    for name in ("chromium", "google-chrome", "chrome", "Google Chrome"):
         found = shutil.which(name)
         if found:
             return found
+    mac = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    if Path(mac).is_file():
+        return mac
     return None
 
 
@@ -109,8 +114,12 @@ def main(argv):
 
     payload = central_mcp._status_payload(fast=True)
     project = payload.get("project") or {}
-    next_step = next((r.get("step") for r in (payload.get("roadmap") or [])
-                      if r.get("status") == "next"), None)
+    # 路线里未必有显式 "next"。有就用 next，否则用进行中的步骤，都没有则跳过这条。
+    roadmap = payload.get("roadmap") or []
+    next_step = next((r.get("step") for r in roadmap if r.get("status") == "next"), None)
+    if not next_step:
+        next_step = next((r.get("step") for r in roadmap if r.get("status") == "doing"), None)
+    step_check = ("路线里显示下一步", next_step) if next_step else None
 
     chromium = find_chromium()
     if not chromium:
@@ -119,20 +128,32 @@ def main(argv):
         return 2
 
     workdir = Path(tempfile.mkdtemp(prefix="autopilot-panel-render-"))
-    harness = workdir / "panel-harness.html"
     html = PANEL.read_text(encoding="utf-8")
     if "</body>" not in html:
         print("面板 HTML 结构异常：没有 </body>")
         return 1
-    harness.write_text(
-        html.replace("</body>", BRIDGE % json.dumps(payload, ensure_ascii=False) + "</body>", 1),
+    (workdir / "panel.html").write_text(html, encoding="utf-8")
+    wrapper = workdir / "panel-harness.html"
+    wrapper.write_text(
+        WRAPPER.replace("__PAYLOAD__", json.dumps(payload, ensure_ascii=False)),
         encoding="utf-8")
 
-    dom_proc = _run(chromium, workdir, ["--virtual-time-budget=8000", "--dump-dom",
-                                        harness.as_uri()])
+    dom_proc = _run(chromium, workdir, ["--virtual-time-budget=9000", "--dump-dom",
+                                        "--allow-file-access-from-files",
+                                        wrapper.as_uri()])
     dom = dom_proc.stdout or ""
-    if "绑定项目" not in dom:
-        print("面板没有渲染出来（可能是浏览器启动失败）。stderr 摘要：")
+    import re
+    m = re.search(r'id="panel-mirror"[^>]*>(.*?)</pre>', dom, re.S)
+    snapshot = {}
+    if m:
+        raw = (m.group(1).replace("&quot;", '"').replace("&amp;", "&")
+               .replace("&lt;", "<").replace("&gt;", ">"))
+        try:
+            snapshot = json.loads(raw)
+        except Exception:
+            snapshot = {}
+    if not snapshot:
+        print("面板没有渲染出快照（浏览器可能启动失败）。stderr 摘要：")
         print((dom_proc.stderr or "")[-600:])
         return 1
 
@@ -142,17 +163,18 @@ def main(argv):
                       flags=re.IGNORECASE | re.DOTALL)
 
     def visible(text):
-        """渲染后的 DOM 里文本会被转义，比对前还原常见实体。"""
         if not text:
             return False
-        probe = (text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
-        return probe in rendered or text in rendered
+        return any(text in v for v in snapshot.values())
 
     checks = [
         ("首屏显示绑定项目名", project.get("name")),
         ("首屏显示绑定项目路径", project.get("path")),
         ("首屏显示总状态文案", payload.get("state_label")),
-        ("首屏显示正在做什么", payload.get("doing")),
+        # 三问②的显示优先级：需要人行动的最优先（与 J-0001 一致）——
+        # 有人工验收时显示验收项，否则显示正在做的事。
+        ("首屏显示正在做什么", (payload.get("human_acceptance") or [{}])[0].get("title")
+         if payload.get("human_acceptance") else payload.get("doing")),
         ("首屏显示原生直连结论", (payload.get("native") or {}).get("label")),
         ("有「项目文件夹」区块", "项目文件夹"),
         ("有「需要你介入」区块", "需要你介入"),
@@ -162,14 +184,20 @@ def main(argv):
     folders = ((payload.get("project_folders") or {}).get("folders") or [])
     if folders:
         checks.append(("项目文件夹显示当前步骤", folders[0].get("current_step")))
-    if next_step:
-        checks.append(("路线里显示下一步", next_step))
+    if step_check:
+        checks.append(step_check)
 
     fails = 0
     print("Codex 自动挡 面板渲染检查")
-    if "读取中" in rendered:
-        print("  FAIL  首屏仍停留在读取中，控制层数据没有真的渲染进去")
+
+    stuck = [i for i in ("stateLabel", "projectLine", "focusStatus", "focusStep")
+             if snapshot.get(i, "").strip() in ("", "读取中", "读取中…")]
+    if stuck:
+        print("  FAIL  首屏停在“读取中”：" + ", ".join(stuck))
         fails += 1
+    else:
+        print("  PASS  首屏已渲染真实数据（非“读取中”）")
+
     for label, expected in checks:
         if visible(expected):
             print(f"  PASS  {label}")
@@ -179,8 +207,9 @@ def main(argv):
 
     if want_shot:
         shot_proc = _run(chromium, workdir, [f"--screenshot={SHOT}",
-                                             "--virtual-time-budget=8000",
-                                             harness.as_uri()])
+                                             "--virtual-time-budget=9000",
+                                             "--allow-file-access-from-files",
+                                             wrapper.as_uri()])
         if SHOT.is_file() and SHOT.stat().st_size > 0:
             print(f"  PASS  首屏截图已存：{SHOT}")
         else:

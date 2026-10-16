@@ -72,7 +72,7 @@
   .brand{width:34px;height:34px;border-radius:11px;background:linear-gradient(150deg,var(--brand-mark-a),var(--brand-mark-b));display:grid;place-items:center;flex:0 0 auto;box-shadow:0 1px 2px rgba(51,58,132,.30),inset 0 1px 0 rgba(255,255,255,.22)}
   .brand svg{width:18px;height:18px}
   .hdr-tx{flex:1 1 auto;min-width:0}
-  .hdr-title{font-size:15px;font-weight:650;letter-spacing:0;color:var(--ink)}
+  .hdr-title{font-size:16px;font-weight:650;letter-spacing:0;color:var(--ink)}
   .hdr-sub{font-size:12.5px;color:var(--ink-3);margin-top:1px}
   .hdr-act{display:flex;gap:7px;flex:0 0 auto}
   .iconbtn{width:31px;height:31px;border-radius:9px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);display:grid;place-items:center;cursor:pointer;padding:0;box-shadow:var(--shadow-1);transition:background .14s,color .14s,border-color .14s}
@@ -86,16 +86,28 @@
   .pulse{width:9px;height:9px;border-radius:50%;background:var(--acc);flex:0 0 auto;position:relative}
   body.s-working .pulse::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--acc);opacity:.5;animation:ping 1.6s ease-out infinite}
   @keyframes ping{0%{transform:scale(.6);opacity:.55}100%{transform:scale(1.5);opacity:0}}
-  .hero-state{font-size:17px;font-weight:650;color:var(--ink);letter-spacing:0}
+  .hero-state{font-size:20px;font-weight:680;color:var(--ink);letter-spacing:0}
   .hero-time{margin-left:auto;font-size:11.5px;color:var(--ink-3);white-space:nowrap;font-variant-numeric:tabular-nums}
   .hero-sub{font-size:13px;color:var(--ink-2);margin-top:7px}
   .hero-context{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:11px;color:var(--ink-3);font-size:11.5px}
   .hero-context span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .hero-context b{color:var(--ink-2);font-weight:600}
+  .northstar{display:flex;align-items:baseline;gap:7px;margin-top:11px;padding-top:10px;border-top:1px dashed var(--line)}
+  .northstar .ns-k{font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+  .northstar .ns-v{font-size:13px;font-weight:650;color:var(--ink)}
+  .northstar .ns-d{font-size:11.5px;color:var(--ink-3);margin-left:auto;font-variant-numeric:tabular-nums}
+  .northstar.unknown .ns-v{color:var(--ink-2);font-weight:500}
+  .northstar.missing{opacity:.6}
   .hero-bar{height:3px;border-radius:999px;background:var(--surface-3);margin-top:13px;overflow:hidden}
   .hero-bar span{display:block;height:100%;width:34%;border-radius:999px;background:var(--acc);opacity:0}
   body.s-working .hero-bar span{opacity:1;animation:slide 1.7s ease-in-out infinite}
   @keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(400%)}}
+  .triple{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:14px}
+  .triple .cell{border:1px solid var(--line);border-radius:var(--r-xs);background:var(--surface-2);padding:10px 11px;min-width:0}
+  .triple .cell .k{display:block;font-size:12px;font-weight:650;color:var(--ink-3);letter-spacing:.01em}
+  .triple .cell .v{display:block;margin-top:5px;font-size:15px;font-weight:640;color:var(--ink);line-height:1.4;overflow-wrap:anywhere}
+  .triple .cell.work{border-color:var(--brand-200);background:var(--brand-50)}
+  .triple .cell.work .v{color:var(--brand-700)}
   .execnow{margin-top:12px;border-radius:var(--r-xs);padding:9px 12px;background:var(--brand-50);color:var(--brand-700);font-size:12.5px;display:flex;gap:8px;align-items:flex-start;border:1px solid var(--brand-100)}
   .execnow[hidden]{display:none}
   .execnow .edot{width:7px;height:7px;border-radius:50%;background:var(--brand-500);margin-top:6px;flex:0 0 auto;animation:fade 1.5s ease-in-out infinite}
@@ -107,7 +119,7 @@
   .alert{--lv:var(--brand-600);display:flex;gap:11px;align-items:flex-start;border-radius:var(--r-sm);padding:12px 15px;margin-bottom:11px;font-size:13px;background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--lv);box-shadow:var(--shadow-1);color:var(--ink)}
   .alert .al-ic{width:17px;height:17px;flex:0 0 auto;margin-top:1px;color:var(--lv)}
   .alert .al-ic svg{width:17px;height:17px}
-  .alert .al-tx{flex:1 1 auto;min-width:0;font-weight:600;line-height:1.5;color:var(--ink)}
+  .alert .al-tx{flex:1 1 auto;min-width:0;font-size:14px;font-weight:600;line-height:1.5;color:var(--ink)}
   .alert.lv-ok{--lv:var(--ok)}
   .alert.lv-brand{--lv:var(--brand-600)}
   .alert.lv-warn{--lv:var(--warn)}
@@ -117,7 +129,7 @@
   .track{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px 14px;margin-bottom:11px;box-shadow:var(--shadow-1)}
   .orientation{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:15px 18px 16px;margin-bottom:11px;box-shadow:var(--shadow-1)}
   .orientation-head{display:flex;align-items:baseline;gap:8px;margin-bottom:13px}
-  .orientation-head h2{margin:0;font-size:14px;font-weight:650}
+  .orientation-head h2{margin:0;font-size:15px;font-weight:650}
   .orientation-head span{font-size:11.5px;color:var(--ink-3)}
   .journey{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0;position:relative}
   .journey::before{content:"";position:absolute;left:9%;right:9%;top:14px;height:1px;background:var(--line)}
@@ -157,12 +169,14 @@
   .route-node{min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:var(--r-xs);background:var(--surface-2)}
   .route-node.active{border-color:var(--brand-200);background:var(--brand-50)}
   .route-node .k{display:block;color:var(--ink-3);font-size:10.5px;font-weight:600}
-  .route-node .v{display:block;margin-top:3px;color:var(--ink);font-size:12px;font-weight:650;line-height:1.35;overflow-wrap:anywhere}
+  .route-node .v{display:block;margin-top:3px;color:var(--ink);font-size:12px;font-weight:650;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .route-node.active .v{color:var(--brand-700)}
   .route-arrow{display:grid;place-items:center;color:var(--ink-3);font-size:15px}
+
   @media(max-width:520px){
     .route-hierarchy{grid-template-columns:minmax(0,1fr);gap:4px}
     .route-arrow{height:13px;transform:rotate(90deg)}
+    .triple{grid-template-columns:1fr}
     .orientation{padding:13px}
   }
   .stages{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
@@ -179,11 +193,11 @@
   /* ---- card ---- */
   .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;margin-bottom:11px;box-shadow:var(--shadow-1)}
   .chead{display:flex;align-items:center;gap:9px;margin-bottom:12px}
-  .chead h2{font-size:13.5px;margin:0;color:var(--ink);font-weight:650;letter-spacing:0}
+  .chead h2{font-size:15px;margin:0;color:var(--ink);font-weight:650;letter-spacing:0}
   .chead .count{margin-left:auto;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;background:var(--surface-3);border-radius:999px;padding:2px 9px;white-space:nowrap}
   .chead .count:empty{display:none}
   h2{font-size:13.5px}
-  .subhead{font-size:11px;font-weight:650;color:var(--ink-3);margin:14px 0 7px;letter-spacing:.02em}
+  .subhead{font-size:12.5px;font-weight:650;color:var(--ink-3);margin:14px 0 7px;letter-spacing:.01em}
   .subhead:first-child{margin-top:0}
   .meta{margin-top:10px;color:var(--ink-3);font-size:11.5px;line-height:1.6}
   .empty{color:var(--ink-3);font-size:12.5px}
@@ -369,11 +383,24 @@
       <span class="hero-state" id="stateLabel">读取中</span>
       <span class="hero-time" id="statusTime"></span>
     </div>
-    <div class="hero-sub" id="heroSub">正在读取状态…</div>
-    <div class="hero-context">
-      <span><b>项目</b> <span id="heroProject">读取中…</span></span>
-      <span><b>产品</b> <span id="heroProduct">读取中…</span></span>
-      <span><b>产品路线步骤</b> <span id="heroStage">读取中…</span></span>
+    <div class="triple" aria-label="一眼三问">
+      <div class="cell">
+        <span class="k">① 现在是什么状态</span>
+        <span class="v" id="focusStatus">读取中…</span>
+      </div>
+      <div class="cell work">
+        <span class="k">② 现在在干嘛</span>
+        <span class="v" id="focusDoing">读取中…</span>
+      </div>
+      <div class="cell">
+        <span class="k">③ 现在在哪个步骤</span>
+        <span class="v" id="focusStep">读取中…</span>
+      </div>
+    </div>
+    <div class="northstar missing" id="northStar">
+      <span class="ns-k">首问闭环率</span>
+      <span class="ns-v" id="nsValue">取不到</span>
+      <span class="ns-d" id="nsDetail"></span>
     </div>
     <div class="hero-bar" aria-hidden="true"><span></span></div>
     <div class="execnow" id="execNow" hidden><span class="edot"></span><span class="etx" id="execNowText"></span></div>
@@ -591,6 +618,7 @@
   var pending = {};
   var nextId = 1;
   var state = null;
+  var loadError = null;
   if (/[?&]adv=1/.test(location.search)) document.body.classList.add("adv");
 
   function request(method, params){
@@ -633,9 +661,40 @@
 
   function loadStatus(fast){
     return callTool("autopilot_status", {fast: fast !== false}).then(function(sc){
-      if (sc && sc.state) { state = sc; render(state); }
+      if (sc && sc.state) { state = sc; loadError = null; render(state); }
       return sc;
-    }).catch(function(){});
+    }).catch(function(err){
+      loadError = (err && err.message) || "状态服务没有响应";
+      renderLoadError();
+    });
+  }
+
+  // 取不到就说取不到，并告诉用户能做什么；绝不降级成 0 / 正常 / 一直读取中。
+  function renderLoadError(){
+    var reason = loadError || "状态服务没有响应";
+    document.body.className = "s-error";
+    setText("stateLabel", "读不到状态");
+    setText("subtitle", "自动挡面板读不到当前状态");
+    setText("statusTime", "更新失败");
+    setText("projectLine", "绑定项目：读不到");
+    setText("focusStatus", "读不到");
+    setText("focusDoing", "读不到");
+    setText("focusStep", "读不到");
+    var crBox = el("northStar");
+    if (crBox) {
+      crBox.classList.remove("missing");
+      crBox.classList.add("unknown");
+      setText("nsValue", "取不到");
+      setText("nsDetail", "状态读不到");
+      crBox.title = reason;
+    }
+    var box = el("need");
+    if (box) {
+      box.className = "alert lv-err";
+      var icn = box.querySelector(".al-ic"); if (icn) icn.innerHTML = IC_WARN;
+      var tx = box.querySelector(".al-tx"); if (tx) tx.textContent = "读不到自动挡状态：" + reason;
+    }
+    var en = el("execNow"); if (en) en.hidden = true;
   }
 
   function el(id){ return document.getElementById(id); }
@@ -672,8 +731,8 @@
     var wasAdv = document.body.classList.contains("adv");
     document.body.className = "s-" + (s.state || "idle") + (wasAdv ? " adv" : "");
     setText("stateLabel", s.state_label);
-    setText("heroSub", s.doing);
     setText("statusTime", "更新于 " + fmtTime(s.generated_at));
+    renderNorthStar(s.closure_rate);
     setAlert(s);
     renderExecNow(s.exec_now);
     var c = s.counters || {};
@@ -710,12 +769,10 @@
       pl.title = proj.path || "";
     }
     var ml = s.mainline || {};
-    setText("heroProject", proj.name || "未绑定");
-    setText("heroProduct", ml.product || proj.name || "当前项目");
     var road = s.roadmap || [];
     var activeRoad = road.filter(function(r){ return r.status === "doing"; })[0]
       || road.filter(function(r){ return r.status === "next"; })[0];
-    setText("heroStage", activeRoad ? (activeRoad.step || "路线已建立") : "路线待拆解");
+    setFocusAnswers(s, activeRoad);
     el("runBtn").disabled = !s.enabled || !!s.paused;
     el("pauseBtn").disabled = !s.enabled;
     renderNative(s);
@@ -842,9 +899,9 @@
     var projectNode = el("hierProject");
     var roadNodeLabel = el("hierRoad");
     var workNodeLabel = el("hierWork");
-    if (projectNode) projectNode.textContent = projectName;
-    if (roadNodeLabel) roadNodeLabel.textContent = product + " · " + stage;
-    if (workNodeLabel) workNodeLabel.textContent = workTitle;
+    if (projectNode) { projectNode.textContent = projectName; projectNode.title = proj.path || projectName; }
+    if (roadNodeLabel) { roadNodeLabel.textContent = product + " · " + stage; roadNodeLabel.title = product + " · " + stage; }
+    if (workNodeLabel) { workNodeLabel.textContent = workTitle; workNodeLabel.title = workTitle; }
     var note = el("orientationNote");
     if (note){
       var action = doing ? "正在推进工作项" : human ? "等待你验收" : blocked ? "卡住，等待处理" : "等待下一条需求";
@@ -865,6 +922,51 @@
     }
     var wc = el("workContext");
     if (wc) wc.textContent = (ml.product || proj.name || "当前项目") + " · " + stage;
+  }
+
+  function setFocusAnswers(s, activeRoad){
+    var proj = s.project || {};
+    var doingItems = s.doing_items || [];
+    var human = s.human_acceptance || [];
+    var blocked = s.blocked || {};
+    var hasBlock = (blocked.failures && blocked.failures.length) ||
+      (blocked.resolve && blocked.resolve.length) || (blocked.exec && blocked.exec.length);
+    var statusText = (s.enabled === false ? "已关闭" : (s.paused ? "已暂停" : (s.error ? "异常" : "运行中"))) +
+      " · " + (s.state_label || "读取中");
+    if (s.error) statusText = "异常 · " + s.error;
+    else if (human.length) statusText = "运行中 · 等你验收";
+    else if (hasBlock) statusText = "运行中 · 有卡点要处理";
+    var workText;
+    if (human.length) workText = "等待你验收：" + (human[0].title || "人工验收");
+    else if (s.exec_now) workText = (s.exec_now.id ? s.exec_now.id + " · " : "") + (s.exec_now.title || "正在自动实现");
+    else if (doingItems.length) workText = doingItems[0].title || doingItems[0].detail || "正在处理工作项";
+    else if (hasBlock) workText = "等待处理卡点";
+    else workText = "当前没有进行中的工作";
+    var stepText = activeRoad
+      ? (activeRoad.step || "当前路线") + " · " + (activeRoad.status === "doing" ? "进行中" : "下一步")
+      : "路线待拆解 · 项目：" + (proj.name || "未绑定");
+    setText("focusStatus", statusText);
+    setText("focusDoing", workText);
+    setText("focusStep", stepText);
+  }
+
+  // 北极星首问闭环率：只有算得出才给数字；算不出就明写「取不到」，
+  // 绝不用 0% / 正常去冒充（「没有」和「不知道」是两回事）。
+  function renderNorthStar(cr){
+    var box = el("northStar"), val = el("nsValue"), det = el("nsDetail");
+    if (!box) return;
+    cr = cr || {};
+    box.classList.remove("unknown", "missing");
+    if (cr.status === "ok"){
+      setText("nsValue", (cr.rate_pct == null ? "—" : cr.rate_pct + "%"));
+      setText("nsDetail", cr.numerator + "/" + cr.denominator + " 已闭环");
+      box.title = cr.policy || "";
+    } else {
+      box.classList.add(cr.status === "no_data" ? "missing" : "unknown");
+      setText("nsValue", "取不到");
+      setText("nsDetail", cr.status === "no_data" ? "还没有需求台账" : "指标算不出来");
+      box.title = cr.reason || "闭环率取不到，不能当成 0% 或正常";
+    }
   }
 
   function renderExecNow(en){

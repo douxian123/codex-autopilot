@@ -88,6 +88,9 @@ def _status():
     cfg = control_state.load()
     snapshot = _status_payload(fast=True)
     active = (snapshot.get("doing_items") or [])[:3]
+    roadmap = snapshot.get("roadmap") or []
+    current_road = next((r for r in roadmap if r.get("status") == "doing"), None)
+    current_road = current_road or next((r for r in roadmap if r.get("status") == "next"), None)
     attention = (
         (snapshot.get("human_acceptance") or [])
         + (snapshot.get("blocked", {}).get("failures") or [])
@@ -110,9 +113,9 @@ def _status():
             {
                 "title": (snapshot.get("exec_now") or {}).get("title")
                 or (active[0].get("title") if active else None),
-                "stage": "自动实现中" if snapshot.get("exec_now") else (
-                    "处理中" if active else "空闲"
-                ),
+                "stage": ((current_road or {}).get("step")
+                          or ("自动实现中" if snapshot.get("exec_now")
+                              else ("处理中" if active else "空闲"))),
                 "detail": snapshot.get("doing"),
             }
             if snapshot.get("exec_now") or active
@@ -158,6 +161,7 @@ def main(argv):
             "ok": True,
             "enabled": bool(config.get("enabled")),
             "lifecycle": control_state.lifecycle_status(config),
+            "message": "自动挡已开启" if action == "enable" else "自动挡已关闭，Codex 回到原生状态",
         })
 
     if action == "intake":

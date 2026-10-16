@@ -2354,6 +2354,69 @@ def test_mcp_contract():
     print("selftest ok: MCP resources 合约、暂停闸门、状态/控制工具全部通过。")
 
 
+def test_closure_rate():
+    """北极星首问闭环率：必须算得出真数，算不出必须红，不许冒充 0%。"""
+    import closure_rate
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="autopilot-closure-rate-") as tmp:
+        truth = Path(tmp) / "ops" / "truth"
+        truth.mkdir(parents=True)
+        ledger = truth / "ledger.jsonl"
+
+        def write(rows):
+            ledger.write_text(
+                "\n".join(_json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
+                encoding="utf-8")
+
+        # 3 条：1 条带证据闭环、1 条仍 open、1 条标 done 却没有证据。
+        write([
+            {"id": "L-0001", "type": "ledger", "status": "done",
+             "evidence": "python3 ops/selftest.py -> exit 0"},
+            {"id": "L-0002", "type": "ledger", "status": "open"},
+            {"id": "L-0003", "type": "ledger", "status": "done",
+             "evidence": "   "},
+        ])
+        res = closure_rate.compute(tmp)
+        assert res["status"] == "ok", res
+        assert res["denominator"] == 3 and res["numerator"] == 1, res
+        assert res["rate_pct"] == 33.3, res
+        assert res["done_without_evidence"] == ["L-0003"], \
+            "标 done 却没有证据的必须按未闭环并单独报出来"
+        assert "33.3%" in closure_rate.human_line(res), closure_rate.human_line(res)
+
+        # 分母为 0：必须是 no_data +「取不到」，绝不能算成 0% 或「正常」。
+        write([])
+        res = closure_rate.compute(tmp)
+        assert res["status"] == "no_data" and res["rate_pct"] is None, res
+        assert "取不到" in closure_rate.human_line(res), closure_rate.human_line(res)
+
+        # 台账损坏：unreadable 行会让比例失真，必须 fail-closed 成 unknown。
+        ledger.write_text("{\"broken\":\n", encoding="utf-8")
+        res = closure_rate.compute(tmp)
+        assert res["status"] == "unknown" and res["rate_pct"] is None, res
+        assert "取不到" in closure_rate.human_line(res), closure_rate.human_line(res)
+
+        # 台账缺失：同样是 unknown，不能静默成「没有问题」。
+        ledger.unlink()
+        res = closure_rate.compute(tmp)
+        assert res["status"] == "unknown", res
+
+        # 门禁退出码：算得出=0，算不出=2（先放回一条正常台账，再删掉验红）。
+        write([{"id": "L-0009", "type": "ledger", "status": "done",
+                "evidence": "cmd -> exit 0"}])
+        assert closure_rate.main(["--repo", tmp]) == 0
+        ledger.unlink()
+        assert closure_rate.main(["--repo", tmp]) == 2
+
+    # 面板与状态文本必须带上这个字段，否则首屏看不到北极星。
+    import central_mcp
+    payload = central_mcp._status_payload(fast=True)
+    assert "closure_rate" in payload, "状态快照缺少 closure_rate"
+    line = central_mcp._closure_rate_line(payload.get("closure_rate"))
+    assert "首问闭环率" in line, line
+    print("selftest ok: 北极星首问闭环率三态、fail-closed 退出码与面板接线全部通过。")
+
+
 if __name__ == "__main__":
     main()
     test_replan()
@@ -2376,3 +2439,4 @@ if __name__ == "__main__":
     test_verify_and_truth()
     test_auto_exec()
     test_mcp_contract()
+    test_closure_rate()

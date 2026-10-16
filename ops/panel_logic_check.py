@@ -131,7 +131,12 @@ console.log(JSON.stringify({
   stateLabel: read("stateLabel"),
   subtitle: read("subtitle"),
   masterState: read("masterState"),
-  heroSub: read("heroSub"),
+  focusStatus: read("focusStatus"),
+  focusDoing: read("focusDoing"),
+  focusStep: read("focusStep"),
+  northStarValue: read("nsValue"),
+  northStarDetail: read("nsDetail"),
+  northStarClass: document.getElementById("northStar").className,
   needText: alertText.textContent,
   nativeState: read("nativeState"),
   received: read("cReceived"),
@@ -238,7 +243,16 @@ def main(argv):
                              folder_items[0].get("title") or folder_items[0].get("detail"),
                              "进行中" if folder.get("doing_items") else "待处理")
         fails += has("首屏显示总状态文案", out["stateLabel"], payload.get("state_label"))
-        fails += has("首屏显示正在做什么", out["heroSub"], payload.get("doing"))
+        fails += has("一眼三问：状态", out["focusStatus"], "运行中" if payload.get("enabled") else "已关闭")
+        if human_acc:
+            fails += has("一眼三问：等你验收优先显示", out["focusDoing"],
+                         human_acc[0].get("title") or "人工验收")
+        elif current_items:
+            fails += has("一眼三问：现在在做", out["focusDoing"],
+                         current_items[0].get("title") or current_items[0].get("detail"))
+        else:
+            fails += has("一眼三问：没有进行中工作时给空态", out["focusDoing"], "没有进行中")
+        fails += has("一眼三问：当前步骤", out["focusStep"], expected_stage)
         if human_acc:
             review = dict(payload)
             review["state"] = "blocked"
@@ -260,6 +274,20 @@ def main(argv):
             fails += has("首屏显示最近完成了什么", out["recentBox"], recent[0])
         else:
             fails += has("没有收口记录时给出空态说明", out["recentBox"] or document_empty(out), "还没有收口记录")
+
+        # 北极星首问闭环率必须在首屏；算得出给数字，算不出必须显示「取不到」，
+        # 绝不许用 0% 冒充（这条是产品价值成立与否的唯一数字）。
+        cr = payload.get("closure_rate") or {}
+        if cr.get("status") == "ok":
+            fails += has("首屏显示北极星闭环率数字", out["northStarValue"],
+                         str(cr.get("rate_pct")) + "%")
+            fails += has("首屏显示闭环率分子分母", out["northStarDetail"],
+                         f"{cr.get('numerator')}/{cr.get('denominator')}")
+        else:
+            fails += has("闭环率取不到时首屏明写取不到", out["northStarValue"], "取不到")
+            if "0%" in str(out["northStarValue"]):
+                print("  FAIL  闭环率取不到时显示了 0%，会伪装成「测过了但没达标」")
+                fails += 1
 
         # 关掉总闸后必须有一个明确的关闭态，而不是还显示「正在运行」。
         closed = dict(payload)
