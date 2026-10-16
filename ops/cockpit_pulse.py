@@ -77,11 +77,31 @@ def git(repo: str, *args: str, timeout: int = 8) -> str:
 
 
 def http_code(url: str, timeout: int = 4) -> str:
+    """探一次；只有拿到非 200 才用更长超时复测一次。
+
+    为什么需要复测：这套服务会在真实工作负载下短暂变慢（实测后端处理
+    POST /api/understanding 3888ms、POST /mcp 6829ms，health 直跑 curl 也有过
+    14s 才回 200）。固定 4s 单次探测会把「慢」记成「000」，于是司令台每拍都
+    误报服务红灯，而同一刻直跑 curl --max-time 30 其实是 200（见 L-0080）。
+    快探 + 慢复测既保住「真挂了」的判定（复测仍非 200 才算挂），也不会因为
+    一次慢就直接判红。
+    """
     rc, out = run(
         ["curl", "-sS", "-o", "/dev/null", "-m", str(timeout), "-w", "%{http_code}", url],
         timeout=timeout + 2,
     )
-    return out or "ERR"
+    first = out or "ERR"
+    if first == "200":
+        return "200"
+    # 慢复测：给它更长的时间窗，把「健康但慢」和「真的不可用」分开。
+    rc2, out2 = run(
+        ["curl", "-sS", "-o", "/dev/null", "-m", "20", "-w", "%{http_code}", url],
+        timeout=22,
+    )
+    slow = out2 or "ERR"
+    if slow == "200":
+        return "200"  # 复测通过按健康处理，避免把慢误报成不可用
+    return slow if slow != "ERR" else first
 
 
 def daemon_state() -> dict:

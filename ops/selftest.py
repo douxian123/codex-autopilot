@@ -17,6 +17,13 @@ OPS = Path(__file__).resolve().parent
 KGCTL = OPS / "kgctl.py"
 
 
+def _installed_version() -> str:
+    import json
+    return json.loads(
+        (OPS.parent / "plugin" / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+    )["version"]
+
+
 def run(cmd, cwd=None, env=None, check=True):
     p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
     if check and p.returncode != 0:
@@ -665,8 +672,11 @@ def test_installer():
     import json as _json
 
     install = OPS.parent / "install.sh"
+    installed_version = _installed_version()
+    release_path = f"./plugins/codex-autopilot/releases/{installed_version}"
     with tempfile.TemporaryDirectory(prefix="autopilot-install-test-") as tmp:
         home = Path(tmp) / "home"
+        release_dir = home / "plugins" / "codex-autopilot" / "releases" / installed_version
         old_plugin = home / "plugins" / "codex-autopilot"
         old_plugin.mkdir(parents=True)
         sentinel = old_plugin / "user-preserved.txt"
@@ -694,10 +704,10 @@ def test_installer():
         data = _json.loads(market.read_text(encoding="utf-8"))
         entry = next(p for p in data["plugins"] if p["name"] == "codex-autopilot")
         other = next(p for p in data["plugins"] if p["name"] == "other-plugin")
-        assert entry["source"]["path"] == "./plugins/codex-autopilot/releases/0.6.0-preview.3"
+        assert entry["source"]["path"] == release_path
         assert other["source"]["path"] == "./plugins/other"
         assert sentinel.read_text(encoding="utf-8") == "keep\n"
-        release = home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.3"
+        release = release_dir
         assert (release / "ops" / "central_mcp.py").is_file()
         # Companion 源码必须随版本目录一起装：以后能从这个目录重建菜单栏应用。
         assert (release / "companion" / "build.sh").is_file()
@@ -735,6 +745,7 @@ def test_installer_shell_portability():
     """
     import re
 
+    installed_version = _installed_version()
     pattern = re.compile(rb"\$[A-Za-z_][A-Za-z0-9_]*")
     for path in sorted(OPS.parent.rglob("*.sh")):
         if ".git" in path.parts or ".build" in path.parts:
@@ -768,7 +779,7 @@ def test_installer_shell_portability():
         combined = result.stdout + result.stderr
         assert "unbound variable" not in combined, f"bash 3.2 变量解析崩了:\n{combined}"
         assert result.returncode == 0, f"完整安装路径没跑完:\n{combined}"
-        assert (home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.3"
+        assert (home / "plugins" / "codex-autopilot" / "releases" / installed_version
                 / "ops" / "central_mcp.py").is_file()
         # 同一份安装不带 Companion 时也必须照样成功。
         result2 = run(["bash", str(install), "--no-seed", "--no-marketplace",
@@ -813,6 +824,7 @@ def test_installed_copy_binding():
     import json as _json
 
     install = OPS.parent / "install.sh"
+    installed_version = _installed_version()
     with tempfile.TemporaryDirectory(prefix="autopilot-installed-bind-") as tmp:
         home = Path(tmp) / "home"
         home.mkdir(parents=True)
@@ -836,7 +848,7 @@ def test_installed_copy_binding():
                       "--no-companion", str(project)], env=env, check=False)
         assert result.returncode == 0, f"安装失败:\n{result.stdout}\n{result.stderr}"
 
-        release = home / "plugins" / "codex-autopilot" / "releases" / "0.6.0-preview.3"
+        release = home / "plugins" / "codex-autopilot" / "releases" / installed_version
         binding = _json.loads((release / ".mcp.json").read_text(encoding="utf-8"))
         bound = binding["mcpServers"]["codex-autopilot"]["env"]["KG_REPO"]
         assert bound == str(project), f"插件没有把项目写进绑定：{bound}"
@@ -2342,6 +2354,69 @@ def test_mcp_contract():
     print("selftest ok: MCP resources 合约、暂停闸门、状态/控制工具全部通过。")
 
 
+def test_closure_rate():
+    """北极星首问闭环率：必须算得出真数，算不出必须红，不许冒充 0%。"""
+    import closure_rate
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="autopilot-closure-rate-") as tmp:
+        truth = Path(tmp) / "ops" / "truth"
+        truth.mkdir(parents=True)
+        ledger = truth / "ledger.jsonl"
+
+        def write(rows):
+            ledger.write_text(
+                "\n".join(_json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
+                encoding="utf-8")
+
+        # 3 条：1 条带证据闭环、1 条仍 open、1 条标 done 却没有证据。
+        write([
+            {"id": "L-0001", "type": "ledger", "status": "done",
+             "evidence": "python3 ops/selftest.py -> exit 0"},
+            {"id": "L-0002", "type": "ledger", "status": "open"},
+            {"id": "L-0003", "type": "ledger", "status": "done",
+             "evidence": "   "},
+        ])
+        res = closure_rate.compute(tmp)
+        assert res["status"] == "ok", res
+        assert res["denominator"] == 3 and res["numerator"] == 1, res
+        assert res["rate_pct"] == 33.3, res
+        assert res["done_without_evidence"] == ["L-0003"], \
+            "标 done 却没有证据的必须按未闭环并单独报出来"
+        assert "33.3%" in closure_rate.human_line(res), closure_rate.human_line(res)
+
+        # 分母为 0：必须是 no_data +「取不到」，绝不能算成 0% 或「正常」。
+        write([])
+        res = closure_rate.compute(tmp)
+        assert res["status"] == "no_data" and res["rate_pct"] is None, res
+        assert "取不到" in closure_rate.human_line(res), closure_rate.human_line(res)
+
+        # 台账损坏：unreadable 行会让比例失真，必须 fail-closed 成 unknown。
+        ledger.write_text("{\"broken\":\n", encoding="utf-8")
+        res = closure_rate.compute(tmp)
+        assert res["status"] == "unknown" and res["rate_pct"] is None, res
+        assert "取不到" in closure_rate.human_line(res), closure_rate.human_line(res)
+
+        # 台账缺失：同样是 unknown，不能静默成「没有问题」。
+        ledger.unlink()
+        res = closure_rate.compute(tmp)
+        assert res["status"] == "unknown", res
+
+        # 门禁退出码：算得出=0，算不出=2（先放回一条正常台账，再删掉验红）。
+        write([{"id": "L-0009", "type": "ledger", "status": "done",
+                "evidence": "cmd -> exit 0"}])
+        assert closure_rate.main(["--repo", tmp]) == 0
+        ledger.unlink()
+        assert closure_rate.main(["--repo", tmp]) == 2
+
+    # 面板与状态文本必须带上这个字段，否则首屏看不到北极星。
+    import central_mcp
+    payload = central_mcp._status_payload(fast=True)
+    assert "closure_rate" in payload, "状态快照缺少 closure_rate"
+    line = central_mcp._closure_rate_line(payload.get("closure_rate"))
+    assert "首问闭环率" in line, line
+    print("selftest ok: 北极星首问闭环率三态、fail-closed 退出码与面板接线全部通过。")
+
+
 if __name__ == "__main__":
     main()
     test_replan()
@@ -2364,3 +2439,4 @@ if __name__ == "__main__":
     test_verify_and_truth()
     test_auto_exec()
     test_mcp_contract()
+    test_closure_rate()

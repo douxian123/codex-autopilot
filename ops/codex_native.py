@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 CODEX_HOME = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).expanduser()
-SOCKET = Path(os.environ.get("CODEX_APP_SERVER_SOCKET", CODEX_HOME / "ipc" / "ipc.sock"))
+SOCKET = Path(os.environ.get("CODEX_APP_SERVER_SOCKET", CODEX_HOME / "app-server-control" / "app-server-control.sock"))
 HISTORY_DB = Path(os.environ.get("CODEX_THREAD_HISTORY_DB",
                                  CODEX_HOME / "thread_history_1.sqlite"))
 CLI = os.environ.get("CODEX_CLI", "codex")
@@ -23,6 +23,18 @@ DEFAULT_SECTION_NAME = os.environ.get("CODEX_AUTOPILOT_SECTION", "Codex 自动�
 # 控制面（面板开关、Companion、MCP status）绝不能被它拖住。
 SNAPSHOT_TIMEOUT = float(os.environ.get("CODEX_AUTOPILOT_NATIVE_TIMEOUT", "6"))
 _next_id = 0
+
+
+def _plugin_version() -> str:
+    """客户端协议版本与插件清单一致，避免版本号散落多处后漂移。"""
+    base = Path(__file__).resolve().parent
+    for candidate in (base.parent / "plugin" / ".codex-plugin" / "plugin.json",
+                      base.parent / ".codex-plugin" / "plugin.json"):
+        try:
+            return json.loads(candidate.read_text(encoding="utf-8"))["version"]
+        except (OSError, ValueError, KeyError):
+            continue
+    return "0.0.0"
 
 
 def _request_id():
@@ -119,6 +131,47 @@ def _drain_stderr(proc, timeout=1.0, limit=800):
     return "".join(chunks).strip()[-limit:]
 
 
+def _chatgpt_pairing_hint(reason=""):
+    """只读检测官方 remote-control 的 ChatGPT 登录/配对硬闸，给出可执行的提示。"""
+    if not reason:
+        return None
+    hints = []
+    if "remote control requires ChatGPT authentication" in reason:
+        hints.append("官方 remote-control 要求 ChatGPT 登录；当前 CLI 是 API key，不能用于配对。")
+        hints.append("若保留 API key：请接受原生派活不可达，继续走只读历史 + 本地 worktree 主链路。")
+        hints.append("若接受切换登录：先备份并确认当前 config/provider，再执行 `codex login --device-auth`，"
+                     "完成 ChatGPT 登录后执行 `codex remote-control start` 与 `codex remote-control pair --json`。")
+        return "\n".join(hints)
+    if "enrollment" in reason:
+        hints.append("remote-control enrollment/配对尚未完成。")
+        hints.append("先确认当前 CLI 是 ChatGPT 登录而不是 API key：`codex login status`；"
+                     "再用 `codex remote-control start --json` 与 `codex remote-control pair --json` 完成配对。")
+        return "\n".join(hints)
+    return None
+
+
+def _remote_control_requires_chatgpt():
+    """读 daemon 日志，判断是否卡在官方 remote-control 的 ChatGPT 登录/配对硬闸。"""
+    candidates = [
+        CODEX_HOME / "app-server-daemon" / "daemon.stderr.log",
+        CODEX_HOME / "app-server" / "daemon.stderr.log",
+        CODEX_HOME / "app-server-daemon.log",
+        CODEX_HOME / "app-server" / "daemon.log",
+    ]
+    for path in candidates:
+        try:
+            if not path.is_file():
+                continue
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            for line in reversed(lines):
+                if "remote control requires ChatGPT authentication; API key auth is not supported" in line:
+                    return True
+            return False
+        except OSError:
+            continue
+    return False
+
+
 def _open_session(command, timeout=30):
     """Open one official app-server session for dependent requests."""
     try:
@@ -130,7 +183,7 @@ def _open_session(command, timeout=30):
             "id": init_id, "method": "initialize",
             "params": {"clientInfo": {"name": "codex-autopilot",
                                       "title": "Codex Autopilot",
-                                      "version": "0.6.0-preview.2"},
+                                      "version": _plugin_version()},
                        "capabilities": {}},
         }) + "\n")
         proc.stdin.flush()
@@ -287,7 +340,15 @@ def follow_up(thread_id, prompt):
         _close_session(proc)
 
 
-def _history_snapshot():
+_HISTORY_CACHE = {"t": 0.0, "rows": []}
+_HISTORY_CACHE_TTL = 5.0
+
+
+def _history_snapshot(force=False):
+    """只读历史快照，短 TTL 缓存让面板/开关快路不反复扫整个 SQLite。"""
+    now = time.monotonic()
+    if not force and _HISTORY_CACHE["rows"] and (now - _HISTORY_CACHE["t"]) < _HISTORY_CACHE_TTL:
+        return _HISTORY_CACHE["rows"]
     if not HISTORY_DB.is_file():
         return []
     try:
@@ -321,6 +382,7 @@ def _history_snapshot():
             result.append({"id": thread_id, "name": title or "Codex 对话",
                            "updatedAt": updated, "status": {"type": status or "idle"},
                            "source": "history-read-only"})
+        _HISTORY_CACHE.update(t=now, rows=result)
         return result
     except (OSError, sqlite3.Error):
         return []
@@ -472,9 +534,17 @@ def probe(timeout=12, progress=None):
     elif not info["socket_present"]:
         info["hint"] = "先启动 Codex 桌面端；它起来之后才会创建控制 socket。"
     elif not info["connected"]:
-        # 连不上但没报权限错：多半是宿主没在等超时时间内回应。给可执行的下一步。
-        info["hint"] = ("桌面宿主没有在这个时间内回应。先确认 Codex 正在运行；"
-                        "仍不通就跑 `bash preview-check.sh` 看完整结论。")
+        pairing_hint = _chatgpt_pairing_hint(info.get("reason") or "")
+        if not pairing_hint and _remote_control_requires_chatgpt():
+            pairing_hint = _chatgpt_pairing_hint(
+                "remote control requires ChatGPT authentication; API key auth is not supported")
+        if pairing_hint:
+            info["hint"] = pairing_hint
+            info["blocked_by"] = "remote-control-chatgpt-pairing"
+        else:
+            # 连不上但没报权限错：多半是宿主没在等超时时间内回应。给可执行的下一步。
+            info["hint"] = ("桌面宿主没有在这个时间内回应。先确认 Codex 正在运行；"
+                            "仍不通就跑 `bash preview-check.sh` 看完整结论。")
     return info
 
 
