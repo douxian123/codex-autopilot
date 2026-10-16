@@ -1208,6 +1208,49 @@ def test_panel_contract():
     for key in ("doing_items", "todo_items", "human_acceptance", "counts"):
         assert key in folder, f"项目文件夹缺少 {key}"
 
+    # 多项目不是把工作项堆在同一口锅：注册表另一个项目必须按自己的 path 单独出现。
+    # 用临时状态根隔离测试，绝不写当前项目的真实注册表。
+    with tempfile.TemporaryDirectory(prefix="autopilot-project-folder-") as tmp:
+        state = Path(tmp) / "current"
+        foreign = Path(tmp) / "foreign"
+        (state / "ops" / "truth").mkdir(parents=True)
+        (foreign / "ops" / "truth").mkdir(parents=True)
+        import json as _json
+        (state / "ops" / "truth" / "mainline.json").write_text(
+            _json.dumps({"product": "当前产品"}, ensure_ascii=False), encoding="utf-8")
+        (foreign / "ops" / "truth" / "mainline.json").write_text(
+            _json.dumps({"product": "另一个产品"}, ensure_ascii=False), encoding="utf-8")
+        (foreign / "ops" / "truth" / "ledger.jsonl").write_text(
+            _json.dumps({"id": "L-9001", "title": "另一个项目的工作项", "status": "doing",
+                         "source_thread_id": "thread-foreign"}, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        registry = state / "ops" / "truth" / "project_folders.json"
+        registry.write_text(_json.dumps({"folders": [
+            {"id": "foreign", "name": "另一个项目", "path": str(foreign),
+             "active": False, "source_thread_id": "thread-foreign"}]}, ensure_ascii=False),
+            encoding="utf-8")
+        script = (
+            "import json,sys\n"
+            "sys.path.insert(0,%r)\n"
+            "import central_mcp\n"
+            "p=central_mcp._status_payload(fast=True)['project_folders']\n"
+            "print(json.dumps(p,ensure_ascii=False))\n" % str(OPS))
+        env = os.environ.copy()
+        env["KG_REPO"] = str(state)
+        probe = subprocess.run([sys.executable, "-c", script], cwd=str(OPS.parent), env=env,
+                               capture_output=True, text=True)
+        assert probe.returncode == 0, f"多项目状态探针失败：{probe.stderr[-500:]}"
+        multi = _json.loads(probe.stdout.strip().splitlines()[-1])
+        rows2 = multi.get("folders") or []
+        assert len(rows2) >= 2, "注册表里的第二个项目没有出现在项目文件夹里"
+        row = next((r for r in rows2
+                    if Path(str(r.get("path") or "")).resolve() == foreign.resolve()), None)
+        assert row is not None, "第二个项目没有按自己的 path 单独成组"
+        assert row.get("readable") is True, "读得到的项目被标成不可读"
+        assert row.get("doing_items") and row["doing_items"][0].get("id") == "L-9001", \
+            "跨项目工作项没有按项目归属"
+        assert row.get("source_thread_id") == "thread-foreign", "跨项目来源对话丢失"
+
     print(f"selftest ok: 面板元素（{len(used_ids)} 个）与工具（{len(called)} 个）"
           f"全部真实存在，项目文件夹按项目归口，开关项都在控制层里。")
 

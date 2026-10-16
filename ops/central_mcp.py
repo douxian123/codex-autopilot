@@ -656,29 +656,112 @@ def _roadmap():
     return rows
 
 
-def _project_folders():
+def _project_folder_project_ids():
+    """Resolve registry entries to the local project roots that own their truth."""
+    raw = _json_file(_truth_dir() / "project_folders.json")
+    folders = raw.get("folders") if isinstance(raw, dict) else []
+    out = []
+    if not isinstance(folders, list):
+        return out
+    for item in folders:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        if not path:
+            continue
+        try:
+            root = Path(str(path)).expanduser().resolve()
+        except (OSError, ValueError):
+            continue
+        out.append({
+            "id": item.get("id") or root.name,
+            "name": item.get("name") or root.name,
+            "path": str(root),
+            "active": bool(item.get("active")),
+            "product": item.get("product") or root.name,
+            "one_liner": item.get("one_liner") or "",
+            "stage": item.get("stage") or "",
+            "source_thread_id": item.get("source_thread_id"),
+        })
+    return out
+
+
+def _read_project_truth(root):
+    """Read one project folder without mutating either the current or foreign tree."""
+    root = Path(root)
+    truth = root / "ops" / "truth"
+    latest = {}
+    for record in _read_jsonl(truth / "ledger.jsonl"):
+        if record.get("id"):
+            latest[record["id"]] = record
+    opens = [r for r in latest.values() if r.get("status") in ("open", "doing")]
+    doing = [r for r in opens if r.get("status") == "doing"]
+    todo = [r for r in opens if r.get("status") != "doing"]
+
+    acc_latest = {}
+    for record in _read_jsonl(truth / "acceptance.jsonl"):
+        if record.get("id"):
+            acc_latest[record["id"]] = record
+    acc = list(acc_latest.values())
+    human = [r for r in acc
+             if r.get("needs_human") and r.get("status") in ("todo", "wip", "blocked")]
+    machine = [r for r in acc if r.get("status") == "verified" and not r.get("needs_human")]
+    route_latest = {}
+    for row in _read_jsonl(truth / "native_routes.jsonl"):
+        if row.get("ledger_id"):
+            route_latest[row["ledger_id"]] = row
+    route_tasks = list(route_latest.values())
+
+    ml = _json_file(truth / "mainline.json")
+    mainline_product = ml.get("product") or ""
+    mainline_one_liner = ml.get("one_liner") or ""
+    mainline_stage = ml.get("stage") or ""
+    road = []
+    for item in (ml.get("roadmap") or []):
+        if isinstance(item, str):
+            road.append({"step": item, "expected": "", "status": "todo"})
+        elif isinstance(item, dict):
+            road.append({"step": item.get("step", ""), "expected": item.get("expected", ""),
+                         "status": item.get("status") or "todo"})
+    current_step = next((r for r in road if r.get("status") == "doing"), None)
+    if not current_step:
+        current_step = next((r for r in road if r.get("status") == "next"), None)
+    current_step = current_step or next((r for r in road if r.get("status") != "done"), None)
+    return {
+        "roadmap": road,
+        "current_step": (current_step or {}).get("step") or "路线待拆解",
+        "current_step_status": (current_step or {}).get("status") or "todo",
+        "doing_items": doing,
+        "todo_items": todo,
+        "human_acceptance": human,
+        "machine_verified": machine,
+        "route_tasks": route_tasks,
+        "product": mainline_product,
+        "one_liner": mainline_one_liner,
+        "stage": mainline_stage,
+    }
+
+
+def _project_folders(fast=True):
     """项目文件夹：把「项目 → 产品路线 → 工作项 → 验收」归一成面板能扫描的一层。
 
-    当前控制面只绑定一个项目，所以默认合成一个 folder。后续要把多个项目/对话
-    放进来时，只需在 `ops/truth/project_folders.json` 写同一形状的数组；面板
-    不改渲染逻辑，也不需要把不同项目硬塞进同一口大锅。
+    当前绑定项目永远会出现；`ops/truth/project_folders.json` 里的其他项目只读它们
+    自己的 ops/truth，绝不写回，也不把别的项目工作项混进当前项目。读不到某个项目
+    账本时，该文件夹保留并明确标成无法读取，不静默显示 0。
     """
     current = str(Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve())
     ml = _mainline_summary()
     board = _acceptance_board()
     road = _roadmap()
+    current_meta = next((m for m in _project_folder_project_ids()
+                         if m.get("path") == current), {})
     current_step = next((r for r in road if r.get("status") == "doing"), None)
     if not current_step:
         current_step = next((r for r in road if r.get("status") == "next"), None)
     current_step = current_step or next((r for r in road if r.get("status") != "done"), None)
 
-    registry = _json_file(_truth_dir() / "project_folders.json")
-    configured = registry.get("folders") if isinstance(registry, dict) else None
-    if isinstance(configured, list) and configured:
-        return {"source": "ops/truth/project_folders.json", "folders": configured}
-
     route_tasks = []
-    for row in (_route_summary(timeout=0.0).get("tasks") or []):
+    for row in (_route_summary(timeout=0.0 if fast else None).get("tasks") or []):
         route_tasks.append({
             "id": row.get("id"),
             "title": row.get("title") or "",
@@ -689,32 +772,105 @@ def _project_folders():
             "thread_id": row.get("thread_id") or ((row.get("native_route") or {}).get("thread_id")),
         })
 
-    folder = {
+    def summarize_folder(meta, data):
+        doing = data.get("doing_items") or []
+        todo = data.get("todo_items") or []
+        human = data.get("human_acceptance") or []
+        machine = data.get("machine_verified") or []
+        return {
+            "id": meta.get("id") or Path(meta.get("path") or current).name,
+            "name": meta.get("name") or Path(meta.get("path") or current).name,
+            "kind": "project",
+            "path": meta.get("path") or current,
+            "active": bool(meta.get("active") or (meta.get("path") or current) == current),
+            "product": data.get("product") or meta.get("product") or Path(meta.get("path") or current).name,
+            "one_liner": data.get("one_liner") or meta.get("one_liner") or "",
+            "stage": data.get("stage") or meta.get("stage") or "",
+            "source_thread_id": meta.get("source_thread_id"),
+            "current_step": data.get("current_step") or "路线待拆解",
+            "current_step_status": data.get("current_step_status") or "todo",
+            "roadmap": data.get("roadmap") or [],
+            "open_items": doing + todo,
+            "doing_items": doing,
+            "todo_items": todo,
+            "human_acceptance": human,
+            "machine_verified": machine,
+            "route_tasks": data.get("route_tasks") or [],
+            "counts": {
+                "doing": len(doing),
+                "todo": len(todo),
+                "human": len(human),
+                "machine": len(machine),
+            },
+            "readable": data.get("readable", True),
+            "read_error": data.get("read_error"),
+        }
+
+    current_folder = summarize_folder({
         "id": Path(current).name or "current",
         "name": Path(current).name or "当前项目",
-        "kind": "project",
         "path": current,
         "active": True,
         "product": ml.get("product") or Path(current).name,
         "one_liner": ml.get("one_liner") or "",
         "stage": ml.get("stage") or "",
+        "source_thread_id": current_meta.get("source_thread_id"),
+    }, {
+        "roadmap": road,
         "current_step": (current_step or {}).get("step") or "路线待拆解",
         "current_step_status": (current_step or {}).get("status") or "todo",
-        "roadmap": road,
-        "open_items": (board.get("doing") or []) + (board.get("todo") or []),
         "doing_items": board.get("doing") or [],
         "todo_items": board.get("todo") or [],
         "human_acceptance": board.get("human") or [],
         "machine_verified": board.get("machine") or [],
         "route_tasks": route_tasks,
-        "counts": {
-            "doing": len(board.get("doing") or []),
-            "todo": board.get("todo_count") or 0,
-            "human": len(board.get("human") or []),
-            "machine": board.get("machine_count") or 0,
-        },
+    })
+
+    folders = [current_folder]
+    seen = {current}
+    for meta in _project_folder_project_ids():
+        path = meta.get("path")
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        truth_dir = Path(path) / "ops" / "truth"
+        if not truth_dir.is_dir():
+            data = {
+                "readable": False,
+                "read_error": "没有找到 ops/truth，无法读取项目账本",
+                "roadmap": [],
+                "current_step": "项目账本不可读",
+                "current_step_status": "blocked",
+                "doing_items": [],
+                "todo_items": [],
+                "human_acceptance": [],
+                "machine_verified": [],
+                "route_tasks": [],
+            }
+        else:
+            try:
+                data = _read_project_truth(path)
+                data["readable"] = True
+            except OSError as exc:
+                data = {
+                    "readable": False,
+                    "read_error": str(exc),
+                    "roadmap": [],
+                    "current_step": "项目账本读取失败",
+                    "current_step_status": "blocked",
+                    "doing_items": [],
+                    "todo_items": [],
+                    "human_acceptance": [],
+                    "machine_verified": [],
+                    "route_tasks": [],
+                }
+        folders.append(summarize_folder(meta, data))
+
+    return {
+        "source": "ops/truth/project_folders.json + 当前绑定项目",
+        "count": len(folders),
+        "folders": folders,
     }
-    return {"source": "当前绑定项目（单项目模式）", "folders": [folder]}
 
 
 def _read_jsonl(path):
@@ -850,11 +1006,17 @@ def _acceptance_board():
 
     def brief(r):
         return {"id": r.get("id"), "kind": r.get("kind"), "title": r.get("title", ""),
-                "status": r.get("status"), "lane": r.get("lane")}
+                "status": r.get("status"), "lane": r.get("lane"),
+                "project_id": r.get("project_id"), "route_id": r.get("route_id"),
+                "work_item_id": r.get("work_item_id"),
+                "source_thread_id": r.get("source_thread_id") or r.get("thread_id")}
 
     def acc_brief(r):
         return {"id": r.get("id"), "title": r.get("title", ""), "level": r.get("level"),
-                "status": r.get("status"), "steps": r.get("steps") or "", "lane": r.get("lane")}
+                "status": r.get("status"), "steps": r.get("steps") or "", "lane": r.get("lane"),
+                "project_id": r.get("project_id"), "route_id": r.get("route_id"),
+                "work_item_id": r.get("work_item_id"),
+                "source_thread_id": r.get("source_thread_id") or r.get("thread_id")}
 
     return {
         "doing": [brief(r) for r in doing[:8]],
