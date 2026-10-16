@@ -89,6 +89,9 @@
   .hero-state{font-size:17px;font-weight:650;color:var(--ink);letter-spacing:0}
   .hero-time{margin-left:auto;font-size:11.5px;color:var(--ink-3);white-space:nowrap;font-variant-numeric:tabular-nums}
   .hero-sub{font-size:13px;color:var(--ink-2);margin-top:7px}
+  .hero-context{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:11px;color:var(--ink-3);font-size:11.5px}
+  .hero-context span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hero-context b{color:var(--ink-2);font-weight:600}
   .hero-bar{height:3px;border-radius:999px;background:var(--surface-3);margin-top:13px;overflow:hidden}
   .hero-bar span{display:block;height:100%;width:34%;border-radius:999px;background:var(--acc);opacity:0}
   body.s-working .hero-bar span{opacity:1;animation:slide 1.7s ease-in-out infinite}
@@ -112,6 +115,42 @@
 
   /* ---- track ---- */
   .track{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px 14px;margin-bottom:11px;box-shadow:var(--shadow-1)}
+  .orientation{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:15px 18px 16px;margin-bottom:11px;box-shadow:var(--shadow-1)}
+  .orientation-head{display:flex;align-items:baseline;gap:8px;margin-bottom:13px}
+  .orientation-head h2{margin:0;font-size:14px;font-weight:650}
+  .orientation-head span{font-size:11.5px;color:var(--ink-3)}
+  .journey{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0;position:relative}
+  .journey::before{content:"";position:absolute;left:9%;right:9%;top:14px;height:1px;background:var(--line)}
+  .journey-step{position:relative;z-index:1;display:grid;justify-items:center;gap:6px;text-align:center;min-width:0}
+  .journey-dot{width:29px;height:29px;border-radius:50%;display:grid;place-items:center;background:var(--surface);border:2px solid var(--line);color:var(--ink-3);font-size:11px;font-weight:700}
+  .journey-step.done .journey-dot{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)}
+  .journey-step.current .journey-dot{background:var(--brand-50);border-color:var(--brand);color:var(--brand-700);box-shadow:0 0 0 4px var(--brand-50)}
+  .journey-step.next .journey-dot{background:var(--warn-soft);border-color:var(--warn);color:var(--warn)}
+  .journey-label{font-size:11px;color:var(--ink-3);line-height:1.35;overflow-wrap:anywhere}
+  .journey-step.current .journey-label{color:var(--ink);font-weight:650}
+  .orientation-note{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);font-size:12px;color:var(--ink-2)}
+  .orientation-note b{color:var(--ink);font-weight:650}
+  .route-hierarchy{display:grid;grid-template-columns:minmax(0,1fr) 28px minmax(0,1.15fr) 28px minmax(0,1fr);align-items:stretch;gap:5px;margin-top:13px}
+  .route-node{min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:var(--r-xs);background:var(--surface-2)}
+  .route-node.active{border-color:var(--brand-200);background:var(--brand-50)}
+  .route-node .k{display:block;color:var(--ink-3);font-size:10.5px;font-weight:600}
+  .route-node .v{display:block;margin-top:3px;color:var(--ink);font-size:12px;font-weight:650;line-height:1.35;overflow-wrap:anywhere}
+  .route-node.active .v{color:var(--brand-700)}
+  .route-arrow{display:grid;place-items:center;color:var(--ink-3);font-size:15px}
+  .route-work{display:grid;gap:0;margin-top:9px}
+  .route-work-row{display:grid;grid-template-columns:7px minmax(0,1fr) auto;gap:8px;align-items:center;padding:7px 9px;border-bottom:1px solid var(--line-2);font-size:11.5px}
+  .route-work-row:last-child{border-bottom:0}
+  .route-work-row .dot{width:7px;height:7px;border-radius:50%;background:var(--line)}
+  .route-work-row.doing .dot{background:var(--brand)}
+  .route-work-row.blocked .dot{background:var(--warn)}
+  .route-work-row .name{min-width:0;overflow-wrap:anywhere;color:var(--ink-2)}
+  .route-work-row.doing .name{color:var(--ink);font-weight:650}
+  .route-work-row .state{font-size:10.5px;color:var(--ink-3);white-space:nowrap}
+  @media(max-width:520px){
+    .route-hierarchy{grid-template-columns:minmax(0,1fr);gap:4px}
+    .route-arrow{height:13px;transform:rotate(90deg)}
+    .orientation{padding:13px}
+  }
   .stages{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
   .stage{border-radius:var(--r-xs);padding:11px 12px;background:var(--surface-2);border:1px solid var(--line)}
   .stage .n{font-size:23px;font-weight:700;line-height:1.1;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink-3);transition:color .2s}
@@ -317,6 +356,11 @@
       <span class="hero-time" id="statusTime"></span>
     </div>
     <div class="hero-sub" id="heroSub">正在读取状态…</div>
+    <div class="hero-context">
+      <span><b>项目</b> <span id="heroProject">读取中…</span></span>
+      <span><b>产品</b> <span id="heroProduct">读取中…</span></span>
+      <span><b>当前阶段</b> <span id="heroStage">读取中…</span></span>
+    </div>
     <div class="hero-bar" aria-hidden="true"><span></span></div>
     <div class="execnow" id="execNow" hidden><span class="edot"></span><span class="etx" id="execNowText"></span></div>
   </section>
@@ -327,7 +371,7 @@
   </div>
 
   <section class="intake">
-    <label for="intakeText">派一个新任务</label>
+    <label for="intakeText">把问题交给自动挡</label>
     <textarea id="intakeText" placeholder="说说你发现的问题或想完成的事"></textarea>
     <div class="intake-actions">
       <button class="btn primary" id="intakeSubmit">提交任务</button>
@@ -335,23 +379,57 @@
     </div>
   </section>
 
+  <section class="orientation">
+    <div class="orientation-head">
+      <h2>这件事属于哪条路线</h2>
+      <span id="routeScope">单项目绑定</span>
+    </div>
+    <div class="journey" aria-label="需求到验收的产品路线">
+      <div class="journey-step done" id="journeyNeed">
+        <div class="journey-dot">1</div><div class="journey-label">模糊需求</div>
+      </div>
+      <div class="journey-step done" id="journeyProduct">
+        <div class="journey-dot">2</div><div class="journey-label">项目 / 产品</div>
+      </div>
+      <div class="journey-step current" id="journeyRoad">
+        <div class="journey-dot">3</div><div class="journey-label">产品路线</div>
+      </div>
+      <div class="journey-step" id="journeyWork">
+        <div class="journey-dot">4</div><div class="journey-label">工作项</div>
+      </div>
+      <div class="journey-step next" id="journeyAccept">
+        <div class="journey-dot">5</div><div class="journey-label">验收 / 收口</div>
+      </div>
+    </div>
+    <div class="route-hierarchy" aria-label="项目路线与当前工作项">
+      <div class="route-node"><span class="k">项目</span><span class="v" id="hierProject">读取中…</span></div>
+      <div class="route-arrow" aria-hidden="true">→</div>
+      <div class="route-node active"><span class="k">产品路线 · 当前阶段</span><span class="v" id="hierRoad">读取中…</span></div>
+      <div class="route-arrow" aria-hidden="true">→</div>
+      <div class="route-node"><span class="k">当前工作项</span><span class="v" id="hierWork">读取中…</span></div>
+    </div>
+    <div class="route-work" id="routeWorkItems" aria-label="路线工作项"></div>
+    <div class="orientation-note" id="orientationNote">正在读取当前路线…</div>
+  </section>
+
   <section class="card">
-    <div class="chead"><h2>当前工作</h2><span class="count" id="workCount"></span></div>
+    <div class="chead"><h2>工作项</h2><span class="count" id="workCount"></span></div>
+    <div class="meta" id="workContext" style="margin-top:-5px;margin-bottom:10px"></div>
     <div id="progressBox"></div>
   </section>
 
   <section class="card" id="acceptCard">
-    <div class="chead"><h2>需要你处理</h2><span class="count" id="accNote"></span></div>
+    <div class="chead"><h2>需要你介入</h2><span class="count" id="accNote"></span></div>
     <div id="acceptBox"></div>
   </section>
 
   <section class="card" id="recentCard">
-    <div class="chead"><h2>最近完成</h2><span class="count" id="recentNote"></span></div>
+    <div class="chead"><h2>最近收口</h2><span class="count" id="recentNote"></span></div>
     <div id="recentBox"></div>
   </section>
 
   <details class="overview-detail">
-    <summary>路线与工程详情</summary>
+    <summary>工程详情与证据</summary>
     <section class="track">
       <div class="stages">
         <div class="stage" id="stageTodo"><div class="n" id="stTodo">0</div><div class="l">待处理</div></div>
@@ -613,6 +691,13 @@
       pl.textContent = "绑定项目：" + (proj.name || "未绑定") + (proj.path ? "（" + proj.path + "）" : "");
       pl.title = proj.path || "";
     }
+    var ml = s.mainline || {};
+    setText("heroProject", proj.name || "未绑定");
+    setText("heroProduct", ml.product || proj.name || "当前项目");
+    var road = s.roadmap || [];
+    var activeRoad = road.filter(function(r){ return r.status === "doing"; })[0]
+      || road.filter(function(r){ return r.status === "next"; })[0];
+    setText("heroStage", activeRoad ? (activeRoad.step || "路线已建立") : "路线待拆解");
     el("runBtn").disabled = !s.enabled || !!s.paused;
     el("pauseBtn").disabled = !s.enabled;
     renderNative(s);
@@ -638,6 +723,7 @@
     renderJudgments(s.judgments || []);
     renderVerify(s.last_verification);
     renderRoadmap(s.roadmap || [], s.mainline || {});
+    renderOrientation(s);
     renderAcceptance(humanAcc, s.machine_verified || []);
     renderRecent(s.recent_completed || []);
     renderProgress(doingItems, s.todo_items || [], todoCount);
@@ -645,6 +731,84 @@
     renderMainline(s.mainline || {});
     var intakeButton = el("intakeSubmit");
     if (intakeButton) intakeButton.disabled = !s.enabled || !!s.error;
+  }
+
+  function renderOrientation(s){
+    var proj = s.project || {};
+    var ml = s.mainline || {};
+    var road = s.roadmap || [];
+    var current = road.filter(function(r){ return r.status === "doing"; })[0]
+      || road.filter(function(r){ return r.status === "next"; })[0];
+    var doingItems = s.doing_items || [];
+    var todoItems = s.todo_items || [];
+    var doing = doingItems.length || (s.exec_now ? 1 : 0);
+    var human = (s.human_acceptance || []).length;
+    var blocked = s.state === "blocked" || s.state === "error";
+    var stage = current ? (current.step || "当前路线") : "路线待拆解";
+    var product = ml.product || proj.name || "当前项目";
+    var projectName = proj.name || (proj.path ? proj.path.split("/").pop() : "未绑定项目");
+    var currentWork = doingItems[0] || s.exec_now || todoItems[0] || null;
+    var workTitle = currentWork
+      ? (currentWork.title || currentWork.detail || "正在处理")
+      : human ? "等待人工验收" : blocked ? "等待解除卡点" : "等待下一条需求";
+    var projectNode = el("hierProject");
+    var roadNodeLabel = el("hierRoad");
+    var workNodeLabel = el("hierWork");
+    if (projectNode) projectNode.textContent = projectName;
+    if (roadNodeLabel) roadNodeLabel.textContent = product + " · " + stage;
+    if (workNodeLabel) workNodeLabel.textContent = workTitle;
+    var workList = el("routeWorkItems");
+    if (workList){
+      workList.innerHTML = "";
+      var visibleItems = doingItems.slice(0, 2).map(function(item){
+        return { item: item, status: "doing", label: "进行中" };
+      }).concat(todoItems.slice(0, Math.max(0, 4 - Math.min(doingItems.length, 2))).map(function(item){
+        return { item: item, status: "todo", label: "待处理" };
+      }));
+      if (!visibleItems.length){
+        var empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = human ? "路线工作项已完成，等待人工验收。" : "这条路线当前没有进行中或待处理的工作项。";
+        workList.appendChild(empty);
+      } else {
+        visibleItems.forEach(function(entry){
+          var row = document.createElement("div");
+          row.className = "route-work-row " + entry.status;
+          var dot = document.createElement("span");
+          dot.className = "dot";
+          var name = document.createElement("span");
+          name.className = "name";
+          name.textContent = entry.item.title || entry.item.detail || "未命名工作项";
+          var status = document.createElement("span");
+          status.className = "state";
+          status.textContent = entry.label;
+          row.appendChild(dot);
+          row.appendChild(name);
+          row.appendChild(status);
+          workList.appendChild(row);
+        });
+      }
+    }
+    var note = el("orientationNote");
+    if (note){
+      var action = doing ? "正在推进工作项" : human ? "等待你验收" : blocked ? "卡住，等待处理" : "等待下一条需求";
+      note.textContent = product + " · 当前路线：" + stage + " · " + action + "。";
+    }
+    var ids = ["journeyNeed","journeyProduct","journeyRoad","journeyWork","journeyAccept"];
+    ids.forEach(function(id){ var n = el(id); if (n) n.className = "journey-step"; });
+    var roadNode = el("journeyRoad"), workNode = el("journeyWork"), acceptNode = el("journeyAccept");
+    if (roadNode) roadNode.classList.add(doing || human || blocked ? "done" : "current");
+    if (doing && workNode) workNode.classList.add("current");
+    else if (workNode) workNode.classList.add("next");
+    if (human || blocked) {
+      if (workNode) workNode.classList.remove("next");
+      if (workNode && doing) workNode.classList.add("done");
+      if (acceptNode) acceptNode.classList.add("current");
+    } else if (acceptNode) {
+      acceptNode.classList.add("next");
+    }
+    var wc = el("workContext");
+    if (wc) wc.textContent = (ml.product || proj.name || "当前项目") + " · " + stage;
   }
 
   function renderExecNow(en){
@@ -830,7 +994,7 @@
     var box = el("progressBox"); if (!box) return; box.innerHTML = "";
     var cnt = el("workCount"); if (cnt) cnt.textContent = (doing.length + todoCount) ? ((doing.length + todoCount) + " 项") : "";
     if (!doing.length && !todo.length){
-      box.innerHTML = '<div class="empty">当前没有未决的工作项。你提的需求会先进问题台账，再从这里被推进到收口。</div>';
+      box.innerHTML = '<div class="empty">当前没有未决工作项。新需求会先归入项目路线，再拆成可追踪的工作项。</div>';
       return;
     }
     if (doing.length){

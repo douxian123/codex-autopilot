@@ -130,7 +130,7 @@ def _open_session(command, timeout=30):
             "id": init_id, "method": "initialize",
             "params": {"clientInfo": {"name": "codex-autopilot",
                                       "title": "Codex Autopilot",
-                                      "version": "0.6.0-preview.1"},
+                                      "version": "0.6.0-preview.2"},
                        "capabilities": {}},
         }) + "\n")
         proc.stdin.flush()

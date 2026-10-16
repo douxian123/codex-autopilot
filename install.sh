@@ -68,6 +68,17 @@ if [ -z "$PY" ]; then
   echo "找不到 python3，请先安装后再运行。" >&2
   exit 1
 fi
+# 重装时**沿用已有的解释器路径**，不要静默换成另一个 python3。
+# 为什么：`command -v python3` 的结果取决于 PATH；从不同 shell 跑 install.sh 会得到不同
+# 解释器（实测在 /opt/homebrew/bin/python3 与 /usr/bin/python3 之间来回跳）。那会让一次
+# 「只刷新代码」的重装顺手改写一份本来能用的配置——属于「静默改变别人的东西」。
+EXISTING_MCP="$PLUGIN_ROOT/codex-autopilot/.mcp.json"
+if [ -f "$EXISTING_MCP" ]; then
+  PREV_PY="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["mcpServers"]["codex-autopilot"]["command"])' "$EXISTING_MCP" 2>/dev/null || true)"
+  if [ -n "$PREV_PY" ] && [ -x "$PREV_PY" ]; then
+    PY="$PREV_PY"
+  fi
+fi
 
 if [ "$LIST_RELEASES" -eq 1 ]; then
   if [ -d "$RELEASE_ROOT" ]; then
@@ -182,7 +193,9 @@ mkdir -p "$STAGE/ops"
 trap 'if [ -n "${STAGE:-}" ] && [ -d "$STAGE" ]; then rm -rf -- "$STAGE"; fi' EXIT
 cp -R "$PLUGIN_DIR/." "$STAGE/"
 cp "$REPO"/ops/*.py "$STAGE/ops/"
-cp "$REPO/ops/central.config.example.json" "$STAGE/ops/"
+# 运行时可能带非 .py 的配套文件（模板/示例配置）。一并复制，避免安装后缺文件。
+cp "$REPO"/ops/*.md "$STAGE/ops/" 2>/dev/null || true
+cp "$REPO"/ops/*.json "$STAGE/ops/" 2>/dev/null || true
 # Companion 源码随版本目录一起装：以后任何一次升级都能从版本目录重建菜单栏应用，
 # 不依赖原始仓库还在不在。
 mkdir -p "$STAGE/companion"
