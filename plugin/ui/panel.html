@@ -958,7 +958,7 @@
     cr = cr || {};
     box.classList.remove("unknown", "missing");
     if (cr.status === "ok"){
-      setText("nsValue", (cr.rate_pct == null ? "—" : cr.rate_pct + "%"));
+      setText("nsValue", (cr.rate_pct == null ? "—" : Number(cr.rate_pct).toFixed(1) + "%"));
       setText("nsDetail", cr.numerator + "/" + cr.denominator + " 已闭环");
       box.title = cr.policy || "";
     } else {
