@@ -16,7 +16,7 @@
 - 版本：`0.6.0-preview.1`，阶段：内部可用
 - 13 步产品路线：**7 步已完成、6 步进行中、0 步未开始**
 - 21 条验收：**17 条机器已自证**，4 条必须人在真机点
-- 本机实测（opencode，2026-10-15 深夜）：本机非沙箱，`bash install.sh --verify` 真跑通过，实装到 `~/plugins/codex-autopilot/releases/0.6.0-preview.1`、Companion 已装进 `~/Applications` 并已运行；验收 6 项 **5 PASS / 1 FAIL**，唯一 FAIL = 原生直连（根因见 12.7）
+- 本机实测（opencode，2026-10-16 中午三线并行后）：仓库与已安装都是 **`0.6.0-preview.3`**；验收 6 项 **5 PASS / 1 FAIL**（唯一 FAIL = 原生直连）；A-0008 在隔离项目过 7/9（差桌面目视 2 条）；路线 A 部分通——standalone 0.163 + daemon + 控制 socket 都有了，但控制 socket 要配对/鉴权握手，协议还没走通（见 12.8）
 - 自检：`python3 ops/selftest.py` → **24 组全过、退出码 0、约 58 秒**；再开真编译 + 真二进制两个开关 → **26 组全过**
 
 ---
@@ -174,10 +174,10 @@
 
 | 卡点 | 现象（原文） | 谁能解 | 解除后能验什么 |
 | --- | --- | --- | --- |
-| 桌面宿主没有可连的控制 socket | 对 `~/.codex/ipc/ipc.sock` 发 app-server 的 JSONL 被立刻关闭；`codex app-server proxy --sock ipc.sock` → `failed to relay data between stdio and socket`；真正的 `app-server-control/app-server-control.sock` 不存在（`codex app-server daemon start` → `managed standalone Codex install not found`） | 用户拍板走哪条路：①装官方 standalone daemon（`curl … install.sh \| sh` 后 `codex remote-control start`）；②改产品路线、不依赖「派进桌面窗口」 | A-0008 里「子对话出现在你桌面的 Codex 里」这一条 |
-| 真实模型回合跑不了（旧记录） | 受限进程网络出口封闭 | **本机已不成立**：`curl https://example.com` → 200、DNS 正常解析 | A-0008 端到端（现在可在本机全跑） |
+| 控制 socket 有了，但要配对/鉴权握手 | `app-server-control.sock` 已存在（daemon 0.163 running），但 JSONL/长度前缀/proxy/HTTP 四种载荷全部无响应（proxy 报 `Broken pipe`）；`codex remote-control start` 报 `connection is errored`；代码还只认 `ipc.sock`（没改，等握手查清再动） | 查官方文档/`generate-json-schema`/配对流程，或试 `codex app-server daemon start`（非 remote-control）再测；桌面端自带 0.163 二进制交叉验证 | 原生直连 `can_dispatch=true`，A-0008 全 9 条 |
+| 真实模型回合跑不了（旧记录） | 受限进程网络出口封闭 | **本机已不成立**：`curl https://example.com` → 200、DNS 正常解析 | A-0008 端到端（隔离项目已过 7/9，见 12.8） |
 
-**重要**：安装写入、网络出口这两条**在 opencode 本机已确认解除**（已真跑安装，见 12.7）。剩下唯一真卡点是「桌面宿主控制 socket」——而且它不是权限问题，是 **socket 选错 / 桌面没有对外暴露控制口** 的协议问题。桥接代码本身是通的（隔离 `CODEX_HOME` 下真实 app-server 能建出原生会话），但那是独立实例，不代表能派进桌面窗口。
+**重要**：安装写入、网络出口**已确认解除**；`ipc.sock` 选错已定位；路线 A 把 standalone/daemon/控制 socket 都建起来了（daemon 与桌面共用同一份状态库文件），只差“控制 socket 的握手/鉴权”这最后一关。桥接代码本身是通的，但没查清握手之前不改代码。
 
 ---
 
@@ -431,18 +431,46 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 
 **下一轮的优先顺序**：① 拿到 `install.sh --verify` 输出逐条关 A-0005/A-0006/A-0007（本机已跑，5/6 PASS，A-0005 前置已满足）；② 用户拍板原生直连走 A 还是 B；③ 陪跑 A-0008 全程留证；④ 收口 `0.6.0-preview.1` → 正式预览包；⑤ 推 `main` 到 `origin`（本机网络已确认可用）。
 
+### 12.8 三线并行结果（2026-10-16 中午，用户拍板路线 A 后）
+
+用户说「A 可以并行推」，于是三条线同时开跑。三条线的 agent 都已返回，下面是结论（证据文件在 `/tmp`，命令原文都在里面）。
+
+**线 1 · 路线 A（原生派活）：部分通，没全通**
+
+- 官方 standalone 装上了：`codex` 从 `0.148.0-alpha.15` 升到 **`0.163.0`**（`curl -fsSL https://chatgpt.com/codex/install.sh | sh`，无 sudo、无交互，退出码 0）。
+- daemon 起来了：`codex app-server daemon version` → `running`，`appServerVersion 0.163.0`；**`~/.codex/app-server-control/app-server-control.sock` 已出现**（之前只有 lock 文件）。注意 `codex remote-control start` 本身退出码 1（`connection is errored`），但 daemon 本体健康。
+- 但派活还是不通：`probe` 依然 `can_dispatch=false`。一是代码只认 `ipc.sock`（还没改）；二是对着新控制 socket 发 JSONL/长度前缀/proxy/HTTP 四种载荷**全部无响应**（proxy 报 `Broken pipe`）。怀疑要配对（pairing）或另有鉴权握手，下一个卡点在这里。
+- 附带好消息：daemon 和桌面端打开的是**同一 inode** 的状态库（`state_5.sqlite`、`thread_history_1.sqlite`，1251 个 thread），文件层是同一份——协议一旦走通，线程就是互通的。
+- 仓库零修改（只给了改法，没动手）：`ops/codex_native.py` 把控制 socket 放优先、`ipc.sock` 回落；但改完也还差“握手/鉴权”这一关，所以没急着改。
+
+**线 2 · A-0008 留证：9 条里过了 7 条**
+
+- 在全新 scratch 项目里跑完全程：intake→归类（`L-0001`，`gate` 泳道）→独立 worktree→门禁（修前 FAIL、修后三次 0）→自动合入→台账关闭→主线综合，全程命令+cwd+退出码+commit。证据：`/tmp/ap-e2e-evidence.md`。
+- 没过的 2 条（第 2、8 条）都是“要在真实桌面面板/菜单栏亲眼看到”，缺桌面环境——机器侧已尽。
+- **两起越界事故（已修好，如实披露）**：① agent 一条 `--help` 探测误落到本仓库账本并推了 `L-0005`（`1ee314b`）→ 已删该两行并推 `03f197a` 修复；② agent 没设 `KG_TRUNK`，把本仓库的 trunk 目录征用成了 scratch 的落盘树 → 已删掉被污染的目录，按项目自带逻辑重建了干净 trunk worktree（detached HEAD，主线一致）。
+
+**线 3 · A-0005/6/7 机器确认：9 项 PASS**
+
+- `preview-check.sh --no-install`：版本目录、菜单栏应用（已装/可执行/已签名）、市场指向、配置、总闸、面板首屏数据流——9 项 PASS；唯一 FAIL 仍是原生直连（和线 1 一致）。
+- Companion 进程在跑，控制通道能读到真实状态；快捷键（⌥⌘A/S/D）、服务菜单、拖入三项代码都在；`panel_logic_check.py` 22 项全过。清单：`/tmp/ap-accept-checklist.md`。
+- 剩下**必须人来**的：菜单栏图标亲眼确认、点图标看面板、⌥⌘D/⌥⌘S/拖文件/服务菜单逐个真按一遍、面板首屏观感、关总闸看关闭态（值都已机器证，只差人眼人手）。
+
+**版本对齐**：仓库与已安装都是 **`0.6.0-preview.3`**（preview.1/2/3 三个版本目录都在，当前指向 preview.3）；`codex` 已升 0.163；自检 24 组绿；`main` 已推平（0 ahead / 0 behind）。
+
 ---
 
 ## 十三、下一步（谁该做什么）
 
 **用户（只有这几件，别的不用管）**：
-跑第八节第 1 步（`bash install.sh --verify`），把输出贴回来。然后按第 2–6 步，把 4 条人工验收逐条过掉。
+1. 人工验收 A-0005/A-0006/A-0007（机器已证 9 项，剩的全是人眼人手：菜单栏图标、点图标、⌥⌘D/⌥⌘S/拖文件/服务菜单、面板观感、关总闸——具体步骤见第六节， checklist 在 `/tmp/ap-accept-checklist.md`）。
+2. A-0008 差的 2 条（面板“最近完成”+菜单栏一致性）需在真实桌面补目视。
+3. 拍板：控制 socket 的握手/鉴权查清之前，原生直连代码不动（保持只读历史降级）。
 
 **agent（下一步可做的）**：
-- 拿到用户安装输出后，逐条关闭 A-0005 / A-0006 / A-0007
-- 陪用户跑 A-0008，全程记录命令、cwd、退出码、commit
-- 真实端到端通过后，收口预览发布（`0.6.0-preview.1` → 正式预览包）
-- 把 `main` 推到 `origin`（当前领先 20 个提交，`merge-tree` 干净，需要网络）
+- 查清控制 socket 握手（官方文档/`generate-json-schema`/配对），走通一次 `thread/list` 再改 `ops/codex_native.py`（改完必跑自检）。
+- 人工验收结果回来后，逐条关闭 A-0005 / A-0006 / A-0007（改台账，不改生成物）。
+- 收口预览发布（`0.6.0-preview.3` → 正式预览包）。
+- `main` 已推平；有新提交继续保持推平。
 
 ---
 
