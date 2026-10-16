@@ -280,7 +280,7 @@ def main(argv):
         cr = payload.get("closure_rate") or {}
         if cr.get("status") == "ok":
             fails += has("首屏显示北极星闭环率数字", out["northStarValue"],
-                         str(cr.get("rate_pct")) + "%")
+                         format(float(cr.get("rate_pct")), ".1f") + "%")
             fails += has("首屏显示闭环率分子分母", out["northStarDetail"],
                          f"{cr.get('numerator')}/{cr.get('denominator')}")
         else:

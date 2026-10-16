@@ -175,10 +175,10 @@
 
 | 卡点 | 现象（原文） | 谁能解 | 解除后能验什么 |
 | --- | --- | --- | --- |
-| 控制 socket 有了，但要配对/鉴权握手 | `app-server-control.sock` 已存在（daemon 0.163 running），但 JSONL/长度前缀/proxy/HTTP 四种载荷全部无响应（proxy 报 `Broken pipe`）；`codex remote-control start` 报 `connection is errored`；代码还只认 `ipc.sock`（没改，等握手查清再动） | 查官方文档/`generate-json-schema`/配对流程，或试 `codex app-server daemon start`（非 remote-control）再测；桌面端自带 0.163 二进制交叉验证 | 原生直连 `can_dispatch=true`，A-0008 全 9 条 |
+| 控制 socket 有了，但要 ChatGPT 登录/配对 | `app-server-control.sock` 已存在（daemon 0.163 running），但 daemon 日志明确 `remote control requires ChatGPT authentication; API key auth is not supported`，`remote-control pair` 报 enrollment 未完成；代码已默认探测 `app-server-control.sock`，实际是 auth/配对硬闸 | 用 ChatGPT 登录身份完成 remote-control enrollment/pairing，或把原生派活改成明确的本地 app-server 独立实例（不冒充桌面宿主） | 原生直连 `can_dispatch=true`，A-0008 全 9 条 |
 | 真实模型回合跑不了（旧记录） | 受限进程网络出口封闭 | **本机已不成立**：`curl https://example.com` → 200、DNS 正常解析 | A-0008 端到端（隔离项目已过 7/9，见 12.8） |
 
-**重要**：安装写入、网络出口**已确认解除**；`ipc.sock` 选错已定位；路线 A 把 standalone/daemon/控制 socket 都建起来了（daemon 与桌面共用同一份状态库文件），只差“控制 socket 的握手/鉴权”这最后一关。桥接代码本身是通的，但没查清握手之前不改代码。
+**重要**：安装写入、网络出口已确认解除；路线 A 已建起 standalone/daemon/控制 socket，且 daemon 与桌面共用同一份状态库文件；剩下最后一关是官方 remote-control 要求 ChatGPT 登录/配对（当前 CLI 是 API key），不是代码能绕过的问题。
 
 ### 2026-10-16 中央窗生命周期修正
 
