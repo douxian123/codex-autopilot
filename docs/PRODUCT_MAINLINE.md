@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-16 02:37:00　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-17 06:57:17　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -43,26 +43,23 @@
 ## 决策脉络
 
 - Companion 打开 Codex 用 bundle id 而不是路径 —— Codex 桌面端本体是 /Applications/ChatGPT.app（已从 Info.plist 核实 CFBundleIdentifier=com.openai.codex）；按 bundle id 解析路径比写死 /Applications/ChatGPT.app 稳，名字换了也不会失效
+- 北极星首问闭环率的唯一口径 —— 北极星一直是文案不是数字：被统计的是 landed/resolved/superseded 这类机器动作数，产品价值所在的比例没有分子分母、不会红，这是「做着做着达不到预期」的结构性根因。把它变成会红、可复现的数字，行为才会从「刷动作数」转向「真把需求做闭环」。
 
 ## 最近在推进
 
-- [已落盘] @ codex/nati 已接入 Codex 原生 thread/section 协议适配与面板映射；独立 app-server 不可用时只读历史降级，未把独立服务冒充当前桌面宿主实时连接。
-- [在途] @ 0a46cef 已提交 Codex app-server thread/section 适配、只读历史降级、窗口集合面板展示与协议模拟测试。真实 app-server 因 state runtime 初始化失败未能连通；turn/start 调度、台账自动绑定、桌面实时状态和 scheduled automation 闭环仍未完成，L-0001 保持 open。
-- [在途] 新增 preview-check.sh：把真实安装、落地物校验、菜单栏应用、原生直连、总闸状态压成一条命令；自检新增契约测试守住它不许退化成只打印通过
-- [在途] 原生直连卡点定位到系统权限：直接对 /Users/danta/.codex/ipc/ipc.sock 发起 connect 得到 EPERM(Operation not permitted)，并由沙箱 write-probe 确认 ~/plugins 与 ~/Applications 同样不可写。结论：这是当前受限进程的环境边界，不是宿主或协议问题；在终端/已安装插件进程里跑 probe 才是有效结论。
-- [在途] 发现面板首屏缺「最近完成」：控制层只把「自动合入过的分支」当最近完成，在没有常驻守护、只走台账闭环的项目里永远为空。改为「真相层已收口的问题 + 刚合入的分支」，并在首屏新增「最近完成」区块；控制层新增绑定项目字段（名字+路径）供首屏显示。
 - [在途] 菜单栏 Companion 的附件从「只报数量」改成逐条可见（回形针图标 + 文件名 + 悬停看全路径）并可单独移除，契约测试锁住不许退回成数字；真编译通过（arm64 macOS13）。
 - [在途] install.sh 新增 --verify：装完立刻跑同一份验收报告（落地物/菜单栏应用/原生自检/总闸/面板首屏逻辑），退出码等于失败项数。用户不用记两条命令。
 - [在途] 派活自动归入项目窗口集合；按官方 schema 修正 thread/section/move 与嵌套 section.id；新增真二进制协议自检
+- [已落盘] @ c002d8269c codex/panel-project-followup 验证门禁通过，已落盘 main @ c002d8269c；改动 6 个文件：ops/central.config.json（+41/-0）、ops/central_mcp.py（+62/-0）、ops/panel_logic_check.py（+11/-5）、ops/panel_render_check.py（+54/-14）、ops/selftest.py（+11/-1），另有 1 个文件｜6 files changed, 278 insertions(+), 76 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [在途] 主 checkout 脏改动审计：判定为旧面板/旧版本回退，未暂存 kgctl 是把已合入的 5 次重试改回 2 次，无合理新进展需要合并；主 checkout 不应直接安装或合入
+- [在途] 真机核对：control socket 已存在（app-server daemon 0.163 remoteControlEnabled=true），但对 app-server-control.sock 的 stdio initialize 仍超时；remote-control pair 报 enrollment 未完成；卡点是官方 remote-control enrollment/配对，不是 socket 路径或权限。
+- [在途] remote-control enrollment 未完成根因进一步定位：CLI 当前 login status = API key，而 daemon 字符串明确 remote control requires ChatGPT authentication；API key auth is not supported。需要 ChatGPT 账号身份 + remote-control pair 才能握手。
+- [在途] 本机已安装 0.6.0-preview.7：最新面板三问/项目文件夹/北星闭环率能力已随插件缓存与 Companion 配置生效
+- [在途] preview.7 已安装落盘：面板三问/项目文件夹/北星闭环率/菜单栏新版全部进入本机，唯一剩余阻塞是 remote-control ChatGPT 登录/配对
+- [在途] 原生探测升级：socket 存在但不可派活时，直接报 remote-control ChatGPT 登录/配对硬闸，面板/MCP/Companion 可读 blocked_by=remote-control-chatgpt-pairing
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0009` [P0] 预览包验收可用一条命令跑完并如实报错
-  - 证据：bash preview-check.sh --no-open（HOME=临时目录）-> PASS 安装/版本目录/应用可执行/已签名/市场指向/配置；EXIT 仅因沙箱内原生直连而 >0
-- `A-0010` [P0] 统一入口真实端到端：派单→自动归类→台账→主线→面板
-  - 证据：python3 ops/companion_api.py intake "<真实需求>" -> 自动归类 bug、落 L-0002、刷新 docs/PRODUCT_MAINLINE.md 与 CONTROL_PLANE.html、提交 chore(truth) 提交
-- `A-0011` [P0] 全量自检 20 组通过（覆盖 A-0002 的组数）
-  - 证据：AUTOPILOT_SELFTEST_COMPANION=1 python3 ops/selftest.py -> 20 组全过（新增预览验收契约）
 - `A-0012` [P0] 面板首屏（含关闭态）每个值都来自真实控制层数据
   - 证据：python3 ops/panel_logic_check.py -> 14 项全过：真执行面板脚本，核对绑定项目（名+路径+悬停）、总状态、正在做什么、原生直连结论、收到/已合入/待你验收三个计数、最近完成，以及关掉总闸后的明确关闭态
 - `A-0013` [P0] 装出来的副本自带绑定：kgctl 认得出项目、MCP 能应答（不带任何环境变量）
@@ -81,13 +78,20 @@
   - 证据：Companion 契约自检新增断言：openCodexPanel/onOpenCockpit 存在，且主面板路径不含 call(["panel"])；AUTOPILOT_SELFTEST_COMPANION=1 真编译 .app 通过
 - `A-0021` [P0] 原生方法名全量对真实服务器核对（6/6 存在）
   - 证据：AUTOPILOT_SELFTEST_REAL_CODEX=1：从真实 codex app-server 取接受方法列表（144 个），项目里 6 个原生调用方法全部存在；AUTOPILOT_SELFTEST_COMPANION=1 AUTOPILOT_SELFTEST_REAL_CODEX=1 python3 ops/selftest.py -> 25 组全过
+- `A-0023` [P1] codex/panel-project-followup 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0026` [P1] 本机已安装 0.6.0-preview.6，marketplace/install-state/Codex 缓存全部指向 preview.6
+  - 证据：bash install.sh --state-root /Users/danta/Documents/Codex/codex-autopilot-native-autopilot --no-seed --verify --refresh-plugin (cwd=/Users/danta/Documents/Codex/codex-autopilot-panel-project…
+- `A-0029` [P1] 本机已安装 0.6.0-preview.8，marketplace/install-state/Codex 缓存/Companion 配置全部指向 preview.8
+  - 证据：bash install.sh --state-root /Users/danta/Documents/Codex/codex-autopilot-native-autopilot --no-seed --refresh-plugin (cwd=/Users/danta/Documents/Codex/codex-autopilot-panel-project-followup…
 
 ## 还差什么
 
-**bug（3 待处理）**
+**bug（4 待处理）**
 - `L-0001` 复用 Codex 原生 app-server/thread、Projects/窗口集合与 scheduled automations，形成主司令窗到子对话窗的真
 - `L-0003` 对话面板线上仍频繁显示“模型暂时没连上/已停止”，用户无法正常问答；同时右侧面板首卡、失败提示、17 个引用芯片、重复历史气泡混在一起，信息过多、没有轻重。需要
 - `L-0004` 自动挡在需要用户决策、人工验收或注意时，必须主动出现明确提示；同时回到产品路线，列出总体预期、剩余工作、卡点、未推进原因和下一步，不要只展示静态状态。
+- `L-0005` 原生直连仍卡在官方 remote-control ChatGPT enrollment/配对；安装、面板、菜单栏其余验收可继续机器自证
 
 ## 需要你验收
 
@@ -120,11 +124,14 @@
 - `A-0019` [P0] 面板按官方嵌套字段显示窗口集合内的子对话
 - `A-0020` [P1] 菜单栏完整面板回到 Codex 本体，HTML 驾驶舱降为备用
 - `A-0021` [P0] 原生方法名全量对真实服务器核对（6/6 存在）
+- `A-0023` [P1] codex/panel-project-followup 落盘验收
+- `A-0026` [P1] 本机已安装 0.6.0-preview.6，marketplace/install-state/Codex 缓存全部指向 preview.6
+- `A-0029` [P1] 本机已安装 0.6.0-preview.8，marketplace/install-state/Codex 缓存/Companion 配置全部指向 preview.8
 
 ## 进度概览
 
 - 累计关闭问题：1 条
-- 累计落盘：1 条
-- 未决问题：3 条
-- 已验收：16 条
+- 累计落盘：2 条
+- 未决问题：4 条
+- 已验收：19 条
 
