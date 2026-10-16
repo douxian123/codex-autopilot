@@ -1579,6 +1579,18 @@ def test_native_call_budget():
         assert connected == [], "快路仍然去连了宿主：%s" % connected
         assert cached["available"] is False and cached["reason"], cached
         assert elapsed < 0.5, "快路不该等：%.1fs" % elapsed
+
+        # 即使本机历史库巨大，快路也不许读它：历史兜底只在慢路降级时用。
+        old_db = codex_native.HISTORY_DB
+        codex_native.HISTORY_DB = Path("/definitely/not/a/small/history.sqlite")
+        try:
+            started = _time.monotonic()
+            cached = codex_native.snapshot(timeout=0)
+            elapsed = _time.monotonic() - started
+            assert cached["threads"] == [], "快路读了历史兜底：%s" % cached["threads"]
+            assert elapsed < 0.5, "快路被历史库拖住：%.1fs" % elapsed
+        finally:
+            codex_native.HISTORY_DB = old_db
     finally:
         codex_native._open_session = real_open
         codex_native._server_commands = real_commands
