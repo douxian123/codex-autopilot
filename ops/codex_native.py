@@ -24,6 +24,11 @@ DEFAULT_SECTION_NAME = os.environ.get("CODEX_AUTOPILOT_SECTION", "Codex 自动�
 SNAPSHOT_TIMEOUT = float(os.environ.get("CODEX_AUTOPILOT_NATIVE_TIMEOUT", "6"))
 _next_id = 0
 
+# 历史兜底（慢路降级时用）：3.4GB 的历史库不能每拍都扫。
+# 缓存 2 秒，兼顾「面板别被拖住」和「历史变化能及时出现」。
+_HISTORY_CACHE = {"ts": 0.0, "rows": []}
+_HISTORY_CACHE_TTL = float(os.environ.get("CODEX_AUTOPILOT_HISTORY_CACHE_TTL", "2"))
+
 
 def _plugin_version() -> str:
     """客户端协议版本与插件清单一致，避免版本号散落多处后漂移。"""
@@ -340,14 +345,16 @@ def follow_up(thread_id, prompt):
         _close_session(proc)
 
 
-_HISTORY_CACHE = {"t": 0.0, "rows": []}
-_HISTORY_CACHE_TTL = 5.0
+# 历史兜底（慢路降级时用）：3.4GB 的历史库不能每拍都扫。
+# 缓存 2 秒，兼顾「面板别被拖住」和「历史变化能及时出现」。
+_HISTORY_CACHE = {"ts": 0.0, "rows": []}
+_HISTORY_CACHE_TTL = float(os.environ.get("CODEX_AUTOPILOT_HISTORY_CACHE_TTL", "2"))
 
 
-def _history_snapshot(force=False):
-    """只读历史快照，短 TTL 缓存让面板/开关快路不反复扫整个 SQLite。"""
+def _history_snapshot():
+    """只读历史快照，短 TTL 缓存让慢路降级不反复扫整个 SQLite。"""
     now = time.monotonic()
-    if not force and _HISTORY_CACHE["rows"] and (now - _HISTORY_CACHE["t"]) < _HISTORY_CACHE_TTL:
+    if now - _HISTORY_CACHE["ts"] < _HISTORY_CACHE_TTL:
         return _HISTORY_CACHE["rows"]
     if not HISTORY_DB.is_file():
         return []
@@ -382,7 +389,7 @@ def _history_snapshot(force=False):
             result.append({"id": thread_id, "name": title or "Codex 对话",
                            "updatedAt": updated, "status": {"type": status or "idle"},
                            "source": "history-read-only"})
-        _HISTORY_CACHE.update(t=now, rows=result)
+        _HISTORY_CACHE.update(ts=time.monotonic(), rows=result)
         return result
     except (OSError, sqlite3.Error):
         return []
@@ -397,7 +404,7 @@ def snapshot(timeout=None):
     if timeout is not None and float(timeout) <= 0:
         return {"available": False, "transport": "not-queried",
                 "reason": "本次只读缓存状态，没有连宿主",
-                "sections": [], "threads": _history_snapshot()}
+                "sections": [], "threads": []}
     deadline = time.monotonic() + max(
         1.0, float(SNAPSHOT_TIMEOUT if timeout is None else timeout))
     sections, section_error = _rpc("threadSection/list", {"limit": 100},
