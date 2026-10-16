@@ -34,6 +34,31 @@ KGCTL = OPS_DIR / "kgctl.py"
 TRUTHCTL = OPS_DIR / "truthctl.py"
 
 
+def _closure_rate_summary():
+    """北极星「首问闭环率」的三态摘要。
+
+    取不到就说取不到：这里绝不把失败降级成 0% 或「正常」，否则面板会用一个
+    假绿灯掩盖「根本没在测」这件事（本项目自己的硬规则 10）。
+    """
+    try:
+        import closure_rate
+        res = closure_rate.compute(os.environ.get("KG_REPO") or REPO)
+    except Exception as exc:  # 模块坏了本身就是要上报的问题，不能静默成「没问题」
+        res = {"status": "unknown",
+               "reason": "闭环率计算失败（%s）" % exc,
+               "denominator": 0, "numerator": 0, "rate_pct": None}
+    return res
+
+
+def _closure_rate_line(res):
+    """给模型/人看的一行；算不出来必须说「取不到」，不能伪装成 0% 或正常。"""
+    res = res or {}
+    if res.get("status") == "ok":
+        return "北极星首问闭环率：%s%%（%s/%s 已闭环）" % (
+            res.get("rate_pct"), res.get("numerator"), res.get("denominator"))
+    return "北极星首问闭环率取不到：%s" % (res.get("reason") or "原因未记录")
+
+
 def _server_version() -> str:
     """版本以插件清单为准，避免 MCP 里再写死一份导致漂移。"""
     for rel in (".codex-plugin/plugin.json", "plugin/.codex-plugin/plugin.json"):
@@ -1394,6 +1419,7 @@ def _status_payload(fast=True):
         "product_state": _product_state(),
         "judgments": _active_judgments(),
         "last_verification": _last_verification(),
+        "closure_rate": _closure_rate_summary(),
         "mainline": _mainline_summary(),
         # fast=True 是面板/开关那条路：只读缓存，不连宿主，绝不因此变慢。
         "route": _route_summary(timeout=0.0 if fast else None),
@@ -1420,6 +1446,7 @@ def _status_text(payload):
         payload["recent"],
         payload["need_action"],
         "",
+        _closure_rate_line(payload.get("closure_rate")),
         "开关：自动合入=%s  自动拆冲突=%s  自动移植=%s  后台常驻=%s"
         % ("开" if sw["auto_land"] else "关",
            "开" if sw["auto_resolve"] else "关",

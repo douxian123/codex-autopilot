@@ -299,7 +299,15 @@ def follow_up(thread_id, prompt):
         _close_session(proc)
 
 
-def _history_snapshot():
+_HISTORY_CACHE = {"t": 0.0, "rows": []}
+_HISTORY_CACHE_TTL = 5.0
+
+
+def _history_snapshot(force=False):
+    """只读历史快照，短 TTL 缓存让面板/开关快路不反复扫整个 SQLite。"""
+    now = time.monotonic()
+    if not force and _HISTORY_CACHE["rows"] and (now - _HISTORY_CACHE["t"]) < _HISTORY_CACHE_TTL:
+        return _HISTORY_CACHE["rows"]
     if not HISTORY_DB.is_file():
         return []
     try:
@@ -333,6 +341,7 @@ def _history_snapshot():
             result.append({"id": thread_id, "name": title or "Codex 对话",
                            "updatedAt": updated, "status": {"type": status or "idle"},
                            "source": "history-read-only"})
+        _HISTORY_CACHE.update(t=now, rows=result)
         return result
     except (OSError, sqlite3.Error):
         return []
