@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-18 04:09:08　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-18 04:11:46　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -47,7 +47,6 @@
 
 ## 最近在推进
 
-- [已落盘] @ 552dc650a0 codex/release-preview10 验证门禁通过，已落盘 main @ 552dc650a0；改动 1 个文件：docs/PREVIEW.md（+1/-1）｜1 file changed, 1 insertion(+), 1 deletion(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0032、A-0033、A-0034
 - [在途] 官方 app-server daemon 拉起后，控制 socket 恢复；codex_native probe 返回 connected=true can_dispatch=true；preview-check.sh --no-install --no-open 全部通过（0 failures）；面板渲染检查全部通过。preview.11 原生直连验收卡点已解除。
 - [已落盘] @ d35c988f19 codex/native-socket-lstat-v7 验证门禁通过，已落盘 main @ d35c988f19；改动 4 个文件：ops/central.config.json（+1/-1）、ops/codex_native.py（+27/-7）、ops/panel_render_check.py（+28/-5）、ops/selftest.py（+46/-0）｜4 files changed, 102 insertions(+), 13 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [在途] 真实桌面证据：open ~/Applications/CodexAutopilotCompanion.app -> exit 0，进程 pid=86143；原生 dispatch -> thread_id=01a14ade-cd10-7ae0-9e59-f63e81317eaf/turn_id=01a14ade-ceae-7790-989c-25b67e0815b4，history status completed；companion_api status enabled=true native.can_dispatch=true；codex plugin list 显示 preview.11。A-0005 仍保留真人桌面验收，机器证据记为 A-0044。
@@ -57,6 +56,7 @@
 - [在途] 把机器已验证证据清单和真人待验清单固化进 PRODUCT_VALUE.md；preview/panel-logic/panel-render/selftest/probe/closure-rate/A-0045/A-0046 是机器证据，A-0005/A-0006/A-0007/A-0008/A-0022 未人工确认前保持 todo
 - [在途] 实机验证总闸关闭态：companion_api disable -> enabled=false lifecycle=off；关闭后 intake 返回 AUTOPILOT_DISABLED exit 2；panel_render_check 在关闭态仍渲染真实面板；随后 enable 恢复 enabled=true lifecycle=on。A-0006 仍保留真人确认首屏观感与总闸交互
 - [在途] 尝试自动化唤出菜单栏 Companion 弹窗：osascript 发送 ⌥⌘A 后 CGWindowList 未出现 Companion popover 窗口，screencapture 只拍到壁纸；System Events 对 CodexAutopilotCompanion 的 menu bar item 返回 missing value。结论：当前虚拟桌面无法由机器补足 A-0005 视觉证据，仍需真人验收
+- [在途] 取得可复核边界证据：System Events 的 CodexAutopilotCompanion 辅助功能树含 AXMenuBarItem description=Codex 自动挡，但 ControlCenter 状态项/屏上 CGWindowList 均无对应菜单栏图标窗口；结论为“已注册但当前虚拟桌面不渲染状态项”，A-0005 保留真人桌面验收
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
