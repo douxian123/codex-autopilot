@@ -9,6 +9,7 @@ import os
 import selectors
 import socket
 import sqlite3
+import stat
 import struct
 import subprocess
 import sys
@@ -194,9 +195,25 @@ def _request_id():
     return _next_id
 
 
+def _socket_present():
+    """路径入口存在且看起来是控制 socket，不要求能 stat 到目标。
+
+    macOS 受限进程里常见 `~/.codex/app-server-control/...sock` 是指向
+    /private/tmp 的 symlink。`Path.is_socket()` 会沿目标 stat，被系统权限
+    挡住时返回 False，于是把存在且实际在运行的 socket 误报成「没有找到」。
+    这里只看 lstat 的入口类型，把“路径在不在”和“能不能连”分开报告；
+    具体访问失败由 probe 的原始错误继续诊断。
+    """
+    try:
+        st = SOCKET.lstat()
+    except OSError:
+        return False
+    return stat.S_ISSOCK(st.st_mode) or stat.S_ISLNK(st.st_mode)
+
+
 def _server_command():
     """Prefer the running Codex host; fall back to an isolated app-server."""
-    if SOCKET.is_socket():
+    if _socket_present():
         return [CLI, "app-server", "proxy", "--sock", str(SOCKET)]
     return [CLI, "app-server"]
 
@@ -356,7 +373,7 @@ def _session(host_only=False, timeout=30):
     """在同一个预算内逐个试候选服务，不按候选数把等待翻倍。"""
     deadline = time.monotonic() + max(1.0, float(timeout))
     last_error = None
-    if SOCKET.is_socket():
+    if _socket_present():
         remaining = deadline - time.monotonic()
         ws, error = _open_ws_session(SOCKET, timeout=max(1.0, remaining))
         if ws is not None:
@@ -618,7 +635,7 @@ def snapshot(timeout=None):
         timeout=max(1.0, deadline - time.monotonic()))
     if sections is not None and threads is not None:
         return {"available": True,
-                "transport": "codex-app-server-websocket" if SOCKET.is_socket()
+                "transport": "codex-app-server-websocket" if _socket_present()
                 else "codex-app-server-stdio",
                 "reason": None, "sections": sections.get("data", []),
                 "threads": threads.get("data", [])}
@@ -712,7 +729,7 @@ def probe(timeout=12, progress=None):
     """
     info = {
         "socket": str(SOCKET),
-        "socket_present": SOCKET.is_socket(),
+        "socket_present": _socket_present(),
         "history_db": HISTORY_DB.is_file(),
         "transport": "unavailable",
         "connected": False,
@@ -727,12 +744,15 @@ def probe(timeout=12, progress=None):
                              {"limit": 1, "useStateDbOnly": True}, host_only=True,
                              timeout=timeout)
         if error is None:
-            info.update(transport="codex-app-server-websocket" if SOCKET.is_socket()
+            info.update(transport="codex-app-server-websocket" if _socket_present()
                         else "codex-app-server-stdio", connected=True,
                         can_dispatch=True, reason=None,
                         sample=len((result or {}).get("data") or []))
             return info
-        info["reason"] = error
+        if "Operation not permitted" in error or "Permission" in error:
+            info["reason"] = f"Codex 控制 socket 存在，但当前进程无法访问：{error}"
+        else:
+            info["reason"] = error
     else:
         info["reason"] = f"没有找到 Codex 桌面端控制 socket：{SOCKET}"
     if info["history_db"]:
@@ -768,7 +788,7 @@ def history(limit=100):
 
 def socket_state():
     """便宜的状态：只回答「socket 在不在」，不做连接（可以高频调用）。"""
-    return {"socket": str(SOCKET), "socket_present": SOCKET.is_socket(),
+    return {"socket": str(SOCKET), "socket_present": _socket_present(),
             "history_db": HISTORY_DB.is_file()}
 
 
