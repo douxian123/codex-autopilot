@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-17 10:08:51　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-17 10:17:17　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -60,8 +60,6 @@
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0015` [P0] 全量自检 22 组通过（含后台常驻开关真启停，机器自证）
-  - 证据：python3 ops/selftest.py -> 22 组全过（退出码 0）；新增断言：总闸关掉时 enable_daemon 被拒、开启/关闭真调 central_daemon --install/--uninstall、安装失败不写 daemon_enabled=true；本条覆盖 A-0014 登记时的默认 todo 状态
 - `A-0016` [P0] 派活自动归入项目窗口集合：同名复用、不重复创建、失败不拦派活
   - 证据：python3 ops/selftest.py -> 23 组全过；新增断言：第一次派活自动建窗口集合、第二次复用同一集合不重复建、集合 API 不可用时照常派活但如实返回 section_note
 - `A-0017` [P0] 原生协议与真实 codex 二进制对齐：修正窗口集合移动方法名并真机验证
@@ -84,6 +82,8 @@
   - 证据：bash install.sh --state-root /Users/danta/Documents/Codex/codex-autopilot-native-autopilot --no-seed --refresh-plugin (cwd=/Users/danta/Documents/Codex/codex-autopilot-panel-project-followup…
 - `A-0031` [P1] codex/verify-preview9-real-codex 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0032` [P0] 真实需求 auto_exec 机器闭环：入口->归类->独立 worktree->真实 codex->门禁->land->收口
+  - 证据：scratch=/tmp/ap-e2e-20261017-clean-1792202425-32217; KG_REPO=/Users/danta/Documents/Codex/2026-10-17/record-preview9/../../../../tmp/ap-e2e-20261017-clean-1792202425-32217/state; python3 ops…
 
 ## 还差什么
 
@@ -129,11 +129,12 @@
 - `A-0029` [P1] 本机已安装 0.6.0-preview.8，marketplace/install-state/Codex 缓存/Companion 配置全部指向 preview.8
 - `A-0028` [P1] codex/port-panel-route-closure-2 落盘验收
 - `A-0031` [P1] codex/verify-preview9-real-codex 落盘验收
+- `A-0032` [P0] 真实需求 auto_exec 机器闭环：入口->归类->独立 worktree->真实 codex->门禁->land->收口
 
 ## 进度概览
 
 - 累计关闭问题：1 条
 - 累计落盘：6 条
 - 未决问题：4 条
-- 已验收：21 条
+- 已验收：22 条
 
