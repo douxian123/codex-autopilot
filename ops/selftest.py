@@ -1399,6 +1399,51 @@ def test_codex_native_bridge():
     print("selftest ok: app-server 初始化顺序、原生窗口集合移动、turn/start 输入协议与只读历史降级通过。")
 
 
+def test_native_socket_lstat():
+    """socket 是 symlink 入口时也要能识别，不能把权限挡住的路径说成不存在。"""
+    import importlib
+
+    sys.path.insert(0, str(OPS))
+    import codex_native
+    importlib.reload(codex_native)
+
+    real_socket = codex_native.SOCKET
+    real_open = codex_native._open_session
+    try:
+        with tempfile.TemporaryDirectory(prefix="codex-native-socket-lstat-") as tmp:
+            root = Path(tmp)
+            codex_native._open_session = lambda command, timeout=30: (
+                None, "Operation not permitted")
+
+            # macOS 受限进程的真实形态：入口是 symlink，目标可被系统权限挡住。
+            link = root / "codex-control.sock"
+            link.symlink_to(root / "missing-target.sock")
+            codex_native.SOCKET = link
+            assert codex_native._socket_present(), "lstat 没识别 symlink 入口"
+            state = codex_native.socket_state()
+            assert state["socket_present"] is True, state
+            result = codex_native.probe(timeout=1)
+            assert result["socket_present"] is True, result
+            assert result["connected"] is False, result
+            assert "无法访问" in result["reason"], result
+            assert "当前进程被系统权限挡住" in result["hint"], result
+
+            # 普通文件与缺失路径仍要如实报“没有找到”，不能因放宽而谎报存在。
+            plain = root / "plain.txt"
+            plain.write_text("x", encoding="utf-8")
+            codex_native.SOCKET = plain
+            assert codex_native._socket_present() is False
+            result = codex_native.probe(timeout=1)
+            assert result["socket_present"] is False and "没有找到" in result["reason"], result
+
+            codex_native.SOCKET = root / "absent.sock"
+            assert codex_native._socket_present() is False
+    finally:
+        codex_native.SOCKET = real_socket
+        codex_native._open_session = real_open
+    print("selftest ok: socket symlink 入口按 lstat 识别，权限挡目标不再误报成不存在。")
+
+
 FAKE_SECTION_SERVER = """
 import json, os, sys
 state_path = os.environ["FAKE_STATE"]
@@ -2502,6 +2547,7 @@ if __name__ == "__main__":
     test_installed_copy_binding()
     test_panel_first_screen()
     test_codex_native_bridge()
+    test_native_socket_lstat()
     test_native_section_grouping()
     test_native_call_budget()
     test_real_codex_app_server()
