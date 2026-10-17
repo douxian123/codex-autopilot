@@ -363,6 +363,11 @@ def follow_up(thread_id, prompt, allow_isolated=False):
     if error:
         return None, error
     try:
+        resumed, resume_error = _session_request(proc, "thread/resume", {
+            "threadId": thread_id,
+        })
+        if resume_error and "thread not found" not in resume_error.lower():
+            return None, "thread/resume 失败：" + resume_error
         return _session_request(proc, "turn/start", {
             "threadId": thread_id,
             "input": _turn_input(prompt),

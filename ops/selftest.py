@@ -1365,11 +1365,15 @@ def test_codex_native_bridge():
         close_mock.assert_called_once_with(fake_proc)
 
     with mock.patch.object(codex_native, "_session", return_value=(fake_proc, None)) as session_mock, \
-            mock.patch.object(codex_native, "_session_request",
-                              return_value=({"turn": {"id": "turn-follow-up"}}, None)), \
+            mock.patch.object(codex_native, "_session_request", side_effect=[
+                ({"thread": {"id": "thread-dispatch"}}, None),
+                ({"turn": {"id": "turn-follow-up"}}, None),
+            ]) as request_mock, \
             mock.patch.object(codex_native, "_close_session"):
         continued, error = codex_native.follow_up("thread-dispatch", "继续处理并回报卡点")
         assert error is None and continued["turn"]["id"] == "turn-follow-up"
+        assert [call.args[1] for call in request_mock.call_args_list] == [
+            "thread/resume", "turn/start"]
         session_mock.assert_called_once_with(host_only=True)
 
     with mock.patch.object(codex_native, "_rpc", side_effect=[
