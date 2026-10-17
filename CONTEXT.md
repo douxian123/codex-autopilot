@@ -4,6 +4,7 @@
 > 任何 agent 开工前先读它；改动产品行为、决策、进度、卡点后，**回写对应小节**，不要另起文档。
 > 生成/核对时间：2026-10-15（当日现场核对，非转述）。
 > 2026-10-17 复核：仓库/远程/本机已安装 `0.6.0-preview.11`（含 WebSocket 原生直连桥）；上一版 `0.6.0-preview.10` 保留可回滚。原生直连已取得新突破：**本地 app-server 控制 socket 是 WebSocket 协议，新增纯 stdlib 桥后已真机直连真实桌面宿主，`can_dispatch=true`**。此前「必须 ChatGPT 登录/配对」是 stdio/远端 remote-control 路径的旧结论，不能再覆盖当前事实。
+> 2026-10-18 复核：源码 main 与 preview.11 运行时已修复状态根解析（无 KG_REPO 时 main 优先于 -trunk），真实桌面证据 A-0044/P-0041 已落盘 origin/main；A-0005 仍保留真人桌面验收。
 > 2026-10-15 深夜 opencode 现场复核（见 12.7）：本机**不是沙箱**，已真跑安装并通过 5/6 验收；原「三条卡点」里的安装/网络两条已在本机解除，原生直连失败的根因当时**重新定位为 socket 选错（不是权限）**——第四节事实 4 已被推翻并更正。
 > 仓库：`/Users/danta/Documents/Codex/codex-autopilot-native-autopilot`（分支 `main`）
 
