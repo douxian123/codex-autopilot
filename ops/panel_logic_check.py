@@ -230,7 +230,8 @@ def main(argv):
         fails += has("路线图显示产品路线与当前阶段", out["hierarchyRoad"], expected_product, expected_stage)
         current_items = payload.get("doing_items") or payload.get("todo_items") or []
         expected_work = ((current_items[0].get("title") or current_items[0].get("detail"))
-                         if current_items else "等待下一条需求")
+                         if current_items
+                         else ("等待人工验收" if human_acc else "等待下一条需求"))
         fails += has("路线图显示当前工作项", out["hierarchyWork"], expected_work)
         folders = ((payload.get("project_folders") or {}).get("folders") or [])
         if folders:

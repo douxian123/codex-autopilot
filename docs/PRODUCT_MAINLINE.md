@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-17 10:45:13　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-17 11:13:57　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -47,9 +47,6 @@
 
 ## 最近在推进
 
-- [在途] pgrep 找到 /Users/danta/Applications/CodexAutopilotCompanion.app/Contents/MacOS/CodexAutopilotCompanion (pid 90619)；bash preview-check.sh --no-install (cwd=/Users/danta/Documents/Codex/codex-autopilot-panel-project-followup) -> exit 1，除原生直连外全 PASS
-- [在途] 真实独立 app-server 中 follow --allow-isolated 先 thread/resume 再 turn/start，返回真实 turn id；自检新增 thread/resume 断言全过。独立 daemon 控制 socket 为 WebSocket 升级，且 remote-control 仍报 ChatGPT 登录硬闸，故不能把独立实例写成桌面原生派活闭环。
-- [在途] 本地 app-server-control.sock 实测为 WebSocket 协议；ops/codex_native.py 新增纯 stdlib RFC6455 客户端，默认优先连真实宿主。python3 ops/codex_native.py probe -> transport=codex-app-server-websocket, connected=true, can_dispatch=true, sample=1；临时独立 daemon 亦完成 dispatch/follow。旧「必须 ChatGPT 登录/配对」结论被推翻。
 - [已落盘] @ 8c850036bb codex/verify-preview9-real-codex 验证门禁通过，已落盘 main @ 8c850036bb；改动 5 个文件：CONTEXT.md（+13/-15）、ops/codex_native.py（+177/-2）、ops/selftest.py（+6/-0）、ops/truth/closure_rate.json（+1/-1）、ops/truth/progress.jsonl（+7/-0）｜5 files changed, 204 insertions(+), 18 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [在途] scratch=/tmp/ap-e2e-20261017-clean-1792202425-32217; KG_REPO=.../state; KG_TRUNK=.../state-trunk; KG_DAEMON_HOME=.../home; python3 ops/central_daemon.py --once -> exit 0; real codex exec created hello-ok.txt in state-exec-l-0001-hello-ok-txt; kgctl land pushed c0573b47->f6b0b66 to scratch origin/main; truthctl close L-0001 -> done
 - [已落盘] @ 8de7ba3649 codex/release-preview10 验证门禁通过，已落盘 main @ 8de7ba3649；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0032
@@ -57,6 +54,9 @@
 - [在途] 原生直连卡点已解除：2026-10-17 真机 probe 使用 app-server-control.sock WebSocket 直连真实桌面宿主，transport=codex-app-server-websocket、connected=true、can_dispatch=true；dispatch 成功创建 native thread/turn/section，thread_id=01a147a9-b3ca-7412-80ff-2dc35cb816a1。旧 remote-control ChatGPT 配对结论被推翻。
 - [在途] preview-check.sh 已把真实安装/落地物/菜单栏应用/原生直连/总闸/面板首屏压成一条命令；2026-10-17 preview-check.sh --no-install 输出全部 PASS、exit 0。install.sh --verify 同一条命令可装完即验。
 - [在途] 原生 app-server/thread、Projects/窗口集合、turn/start、follow 均已通过真实 codex 二进制与真实桌面宿主验证：AUTOPILOT_SELFTEST_REAL_CODEX=1 selftest 全过；2026-10-17 probe can_dispatch=true；dispatch 创建 native thread/turn/section。scheduled automations 仍属于后续外部生命周期能力，不再伪装成本轮已实现。
+- [在途] 机器侧闭环已推进到底：preview.10 门禁全过（preview-check 0 failure、selftest、panel_logic_check、panel_render_check、codex_native probe can_dispatch=true）；A-0005/A-0006/A-0007/A-0008 仍为真人桌面验收，不可由机器自检替代。
+- [在途] 该票属于 knowledge-graph 项目（真实来源 /Users/danta/.newmax/workspace/knowledge-graph/ops/truth/ledger.jsonl），所指文件在本仓库不存在，不应由自动挡账本持有；已在原项目继续闭环。
+- [在途] 主动提醒能力已实现：Companion 有通知授权与 notifyIfNeeded 去重提醒、面板有人工验收/拍板/异常待处理态；A-0022 为真机人工验收，闭环边界见 A-0022。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
@@ -87,9 +87,7 @@
 
 ## 还差什么
 
-**bug（2 待处理）**
-- `L-0003` 对话面板线上仍频繁显示“模型暂时没连上/已停止”，用户无法正常问答；同时右侧面板首卡、失败提示、17 个引用芯片、重复历史气泡混在一起，信息过多、没有轻重。需要
-- `L-0004` 自动挡在需要用户决策、人工验收或注意时，必须主动出现明确提示；同时回到产品路线，列出总体预期、剩余工作、卡点、未推进原因和下一步，不要只展示静态状态。
+- 台账里没有未决问题
 
 ## 需要你验收
 
@@ -133,8 +131,8 @@
 
 ## 进度概览
 
-- 累计关闭问题：3 条
+- 累计关闭问题：5 条
 - 累计落盘：7 条
-- 未决问题：2 条
+- 未决问题：0 条
 - 已验收：24 条
 
