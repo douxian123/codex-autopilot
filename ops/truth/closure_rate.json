@@ -1,0 +1,14 @@
+{
+ "status": "ok",
+ "reason": null,
+ "generated_at": "2026-10-17T08:32:10+08:00",
+ "denominator": 8,
+ "numerator": 2,
+ "rate_pct": 25.0,
+ "done_without_evidence": [],
+ "not_closed": {
+  "open": 6
+ },
+ "unreadable_lines": 0,
+ "policy": "closed = status==done 且 evidence 非空；done 无证据按未闭环算"
+}
