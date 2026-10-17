@@ -492,7 +492,7 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 - 已确认控制 socket 存在并用 WebSocket 桥直连真实桌面宿主：`probe can_dispatch=true`。下一步是真实需求端到端与人工验收，具体见第六/九节。
 - 独立 app-server 链路已补 `thread/resume` 续轮并真机通过；本地控制 socket 的 WebSocket 桥已把“原生派活闭环”从独立实例推进到真实桌面宿主：`probe can_dispatch=true`。
 - 人工验收结果回来后，逐条关闭 A-0005 / A-0006 / A-0007（改台账，不改生成物）。
-- 收口预览发布（`0.6.0-preview.10` → 正式预览包）。
+- 收口预览发布（`0.6.0-preview.11` → 正式预览包）。
 - `main` 已推平；有新提交继续保持推平。
 
 ---
