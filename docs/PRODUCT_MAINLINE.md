@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-17 07:58:33　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-17 10:08:51　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -47,21 +47,19 @@
 
 ## 最近在推进
 
-- [在途] 派活自动归入项目窗口集合；按官方 schema 修正 thread/section/move 与嵌套 section.id；新增真二进制协议自检
-- [已落盘] @ c002d8269c codex/panel-project-followup 验证门禁通过，已落盘 main @ c002d8269c；改动 6 个文件：ops/central.config.json（+41/-0）、ops/central_mcp.py（+62/-0）、ops/panel_logic_check.py（+11/-5）、ops/panel_render_check.py（+54/-14）、ops/selftest.py（+11/-1），另有 1 个文件｜6 files changed, 278 insertions(+), 76 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [在途] 主 checkout 脏改动审计：判定为旧面板/旧版本回退，未暂存 kgctl 是把已合入的 5 次重试改回 2 次，无合理新进展需要合并；主 checkout 不应直接安装或合入
-- [在途] 真机核对：control socket 已存在（app-server daemon 0.163 remoteControlEnabled=true），但对 app-server-control.sock 的 stdio initialize 仍超时；remote-control pair 报 enrollment 未完成；卡点是官方 remote-control enrollment/配对，不是 socket 路径或权限。
-- [在途] remote-control enrollment 未完成根因进一步定位：CLI 当前 login status = API key，而 daemon 字符串明确 remote control requires ChatGPT authentication；API key auth is not supported。需要 ChatGPT 账号身份 + remote-control pair 才能握手。
-- [在途] 本机已安装 0.6.0-preview.7：最新面板三问/项目文件夹/北星闭环率能力已随插件缓存与 Companion 配置生效
-- [在途] preview.7 已安装落盘：面板三问/项目文件夹/北星闭环率/菜单栏新版全部进入本机，唯一剩余阻塞是 remote-control ChatGPT 登录/配对
-- [在途] 原生探测升级：socket 存在但不可派活时，直接报 remote-control ChatGPT 登录/配对硬闸，面板/MCP/Companion 可读 blocked_by=remote-control-chatgpt-pairing
 - [已落盘] @ bba484606d codex/port-panel-route-closure-2 验证门禁通过，已落盘 main @ bba484606d；改动 2 个文件：CONTEXT.md（+4/-4）、plugin/.codex-plugin/plugin.json（+1/-1）｜2 files changed, 5 insertions(+), 5 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [在途] preview.9 发布前强验证：Companion 真编译 + 真实 codex 协议全部通过，本机安装仍未发布
+- [已落盘] @ c68273f705 codex/release-preview9 验证门禁通过，已落盘 main @ c68273f705；改动 1 个文件：CONTEXT.md（+3/-3）｜1 file changed, 3 insertions(+), 3 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [在途] 本机已安装 0.6.0-preview.9：插件缓存与 Companion 均指向 preview.9，上一版 preview.8 保留可回滚；唯一 FAIL 仍为 remote-control ChatGPT 登录/配对硬闸
+- [已落盘] @ 8158739a8c codex/record-install-preview9 验证门禁通过，已落盘 main @ 8158739a8c；改动 3 个文件：CONTEXT.md（+4/-4）、ops/truth/acceptance.jsonl（+2/-0）、ops/truth/progress.jsonl（+2/-0）｜3 files changed, 8 insertions(+), 4 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [在途] AUTOPILOT_SELFTEST_COMPANION=1 AUTOPILOT_SELFTEST_REAL_CODEX=1 python3 ops/selftest.py -> exit 0；Companion 真编译出可安装 .app；真实 codex app-server 建出原生会话/窗口集合并核对全部原生方法存在
+- [在途] pgrep 找到 /Users/danta/Applications/CodexAutopilotCompanion.app/Contents/MacOS/CodexAutopilotCompanion (pid 90619)；bash preview-check.sh --no-install (cwd=/Users/danta/Documents/Codex/codex-autopilot-panel-project-followup) -> exit 1，除原生直连外全 PASS
+- [在途] 真实独立 app-server 中 follow --allow-isolated 先 thread/resume 再 turn/start，返回真实 turn id；自检新增 thread/resume 断言全过。独立 daemon 控制 socket 为 WebSocket 升级，且 remote-control 仍报 ChatGPT 登录硬闸，故不能把独立实例写成桌面原生派活闭环。
+- [在途] 本地 app-server-control.sock 实测为 WebSocket 协议；ops/codex_native.py 新增纯 stdlib RFC6455 客户端，默认优先连真实宿主。python3 ops/codex_native.py probe -> transport=codex-app-server-websocket, connected=true, can_dispatch=true, sample=1；临时独立 daemon 亦完成 dispatch/follow。旧「必须 ChatGPT 登录/配对」结论被推翻。
+- [已落盘] @ 8c850036bb codex/verify-preview9-real-codex 验证门禁通过，已落盘 main @ 8c850036bb；改动 5 个文件：CONTEXT.md（+13/-15）、ops/codex_native.py（+177/-2）、ops/selftest.py（+6/-0）、ops/truth/closure_rate.json（+1/-1）、ops/truth/progress.jsonl（+7/-0）｜5 files changed, 204 insertions(+), 18 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [在途] scratch=/tmp/ap-e2e-20261017-clean-1792202425-32217; KG_REPO=.../state; KG_TRUNK=.../state-trunk; KG_DAEMON_HOME=.../home; python3 ops/central_daemon.py --once -> exit 0; real codex exec created hello-ok.txt in state-exec-l-0001-hello-ok-txt; kgctl land pushed c0573b47->f6b0b66 to scratch origin/main; truthctl close L-0001 -> done
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0013` [P0] 装出来的副本自带绑定：kgctl 认得出项目、MCP 能应答（不带任何环境变量）
-  - 证据：隔离 HOME 里 bash install.sh --no-seed --no-companion <项目> -> 取装出来的 releases/0.6.0-preview.1 副本，清空 KG_REPO/KG_TRUNK 后：kgctl status 自己解析出项目；MCP initialize + tools/list 正常应答
 - `A-0015` [P0] 全量自检 22 组通过（含后台常驻开关真启停，机器自证）
   - 证据：python3 ops/selftest.py -> 22 组全过（退出码 0）；新增断言：总闸关掉时 enable_daemon 被拒、开启/关闭真调 central_daemon --install/--uninstall、安装失败不写 daemon_enabled=true；本条覆盖 A-0014 登记时的默认 todo 状态
 - `A-0016` [P0] 派活自动归入项目窗口集合：同名复用、不重复创建、失败不拦派活
@@ -84,6 +82,8 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0029` [P1] 本机已安装 0.6.0-preview.8，marketplace/install-state/Codex 缓存/Companion 配置全部指向 preview.8
   - 证据：bash install.sh --state-root /Users/danta/Documents/Codex/codex-autopilot-native-autopilot --no-seed --refresh-plugin (cwd=/Users/danta/Documents/Codex/codex-autopilot-panel-project-followup…
+- `A-0031` [P1] codex/verify-preview9-real-codex 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
 
@@ -128,11 +128,12 @@
 - `A-0026` [P1] 本机已安装 0.6.0-preview.6，marketplace/install-state/Codex 缓存全部指向 preview.6
 - `A-0029` [P1] 本机已安装 0.6.0-preview.8，marketplace/install-state/Codex 缓存/Companion 配置全部指向 preview.8
 - `A-0028` [P1] codex/port-panel-route-closure-2 落盘验收
+- `A-0031` [P1] codex/verify-preview9-real-codex 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：1 条
-- 累计落盘：3 条
+- 累计落盘：6 条
 - 未决问题：4 条
-- 已验收：20 条
+- 已验收：21 条
 
