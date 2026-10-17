@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-17 10:17:17　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-17 10:35:07　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -47,8 +47,6 @@
 
 ## 最近在推进
 
-- [已落盘] @ bba484606d codex/port-panel-route-closure-2 验证门禁通过，已落盘 main @ bba484606d；改动 2 个文件：CONTEXT.md（+4/-4）、plugin/.codex-plugin/plugin.json（+1/-1）｜2 files changed, 5 insertions(+), 5 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [已落盘] @ c68273f705 codex/release-preview9 验证门禁通过，已落盘 main @ c68273f705；改动 1 个文件：CONTEXT.md（+3/-3）｜1 file changed, 3 insertions(+), 3 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [在途] 本机已安装 0.6.0-preview.9：插件缓存与 Companion 均指向 preview.9，上一版 preview.8 保留可回滚；唯一 FAIL 仍为 remote-control ChatGPT 登录/配对硬闸
 - [已落盘] @ 8158739a8c codex/record-install-preview9 验证门禁通过，已落盘 main @ 8158739a8c；改动 3 个文件：CONTEXT.md（+4/-4）、ops/truth/acceptance.jsonl（+2/-0）、ops/truth/progress.jsonl（+2/-0）｜3 files changed, 8 insertions(+), 4 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [在途] AUTOPILOT_SELFTEST_COMPANION=1 AUTOPILOT_SELFTEST_REAL_CODEX=1 python3 ops/selftest.py -> exit 0；Companion 真编译出可安装 .app；真实 codex app-server 建出原生会话/窗口集合并核对全部原生方法存在
@@ -57,11 +55,11 @@
 - [在途] 本地 app-server-control.sock 实测为 WebSocket 协议；ops/codex_native.py 新增纯 stdlib RFC6455 客户端，默认优先连真实宿主。python3 ops/codex_native.py probe -> transport=codex-app-server-websocket, connected=true, can_dispatch=true, sample=1；临时独立 daemon 亦完成 dispatch/follow。旧「必须 ChatGPT 登录/配对」结论被推翻。
 - [已落盘] @ 8c850036bb codex/verify-preview9-real-codex 验证门禁通过，已落盘 main @ 8c850036bb；改动 5 个文件：CONTEXT.md（+13/-15）、ops/codex_native.py（+177/-2）、ops/selftest.py（+6/-0）、ops/truth/closure_rate.json（+1/-1）、ops/truth/progress.jsonl（+7/-0）｜5 files changed, 204 insertions(+), 18 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [在途] scratch=/tmp/ap-e2e-20261017-clean-1792202425-32217; KG_REPO=.../state; KG_TRUNK=.../state-trunk; KG_DAEMON_HOME=.../home; python3 ops/central_daemon.py --once -> exit 0; real codex exec created hello-ok.txt in state-exec-l-0001-hello-ok-txt; kgctl land pushed c0573b47->f6b0b66 to scratch origin/main; truthctl close L-0001 -> done
+- [已落盘] @ 8de7ba3649 codex/release-preview10 验证门禁通过，已落盘 main @ 8de7ba3649；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0032
+- [在途] real desktop host native dispatch succeeded via ops/codex_native.py dispatch; thread=01a147a9-b3ca-7412-80ff-2dc35cb816a1, turn=01a147a9-b4ef-7c43-949e-b5b83cb16773, section=01a147a9-b328-7c73-9d7d-0d84e3b11e9e; probe can_dispatch=true; section name Codex 自动挡真机验证; prompt requested no file changes
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0016` [P0] 派活自动归入项目窗口集合：同名复用、不重复创建、失败不拦派活
-  - 证据：python3 ops/selftest.py -> 23 组全过；新增断言：第一次派活自动建窗口集合、第二次复用同一集合不重复建、集合 API 不可用时照常派活但如实返回 section_note
 - `A-0017` [P0] 原生协议与真实 codex 二进制对齐：修正窗口集合移动方法名并真机验证
   - 证据：对 codex app-server 0.148.0-alpha.15 生成的官方 JSON schema：threadSection/move 不存在，正确方法名是 thread/section/move；实机验证旧名返回 unknown variant、新名被识别；AUTOPILOT_SELFTEST_REAL_CODEX=1 用真实 codex 二进制建出原生会话与窗口集…
 - `A-0018` [P0] 全量自检 23 组通过（含真二进制开关 24 组）
@@ -84,6 +82,8 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0032` [P0] 真实需求 auto_exec 机器闭环：入口->归类->独立 worktree->真实 codex->门禁->land->收口
   - 证据：scratch=/tmp/ap-e2e-20261017-clean-1792202425-32217; KG_REPO=/Users/danta/Documents/Codex/2026-10-17/record-preview9/../../../../tmp/ap-e2e-20261017-clean-1792202425-32217/state; python3 ops…
+- `A-0033` [P1] codex/release-preview10 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
 
@@ -130,11 +130,12 @@
 - `A-0028` [P1] codex/port-panel-route-closure-2 落盘验收
 - `A-0031` [P1] codex/verify-preview9-real-codex 落盘验收
 - `A-0032` [P0] 真实需求 auto_exec 机器闭环：入口->归类->独立 worktree->真实 codex->门禁->land->收口
+- `A-0033` [P1] codex/release-preview10 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：1 条
-- 累计落盘：6 条
+- 累计落盘：7 条
 - 未决问题：4 条
-- 已验收：22 条
+- 已验收：23 条
 
