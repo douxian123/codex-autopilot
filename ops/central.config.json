@@ -21,7 +21,7 @@
     },
     {
       "name": "panel-render",
-      "cmd": "AUTOPILOT_CHROMIUM='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' python3 ops/panel_render_check.py --no-shot",
+      "cmd": "python3 ops/panel_render_check.py --no-shot",
       "cwd": "."
     }
   ],
