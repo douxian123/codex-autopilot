@@ -111,8 +111,10 @@
 6. `codex` CLI 已随 standalone 安装升到 **`0.163.0`**；桌面端自带二进制版本可能仍与 CLI 不同，以实际 `codex --version` / `codex app-server daemon version` 为准，不要写死旧版本。
 7. 还有 `~/.codex/ipc/codex-center-control-20260814b.sock`，是陈旧残留，连接报 `Connection refused`。
 8. 用隔离状态目录（`CODEX_HOME=<临时目录>`）时，真实 `codex app-server` 能初始化并建出原生会话——所以桥接代码本身是通的（但那是**独立实例**，不等于桌面宿主）；本地 standalone daemon 与桌面端打开同一状态库 inode，协议一旦通过鉴权/配对，thread 可以互通。
-9. 历史数据库 `~/.codex/thread_history_1.sqlite` 只读打开，永不写宿主状态。
-10. 开关当前实况：总开关 on、未暂停、自动合入开、自动解冲突开、自动实现开、常驻开、**自动 port 关**。
+9. 独立实例续轮必须走官方 `thread/resume` + `turn/start`：直接对新 app-server 会话里的旧 thread 开 `turn/start` 会报 `thread not found`，先 `thread/resume` 能恢复并真实返回新 turn id（2026-10-17 真机验证）。
+10. 独立 daemon 的本地控制 socket 是 WebSocket 升级协议，现有 stdio JSONL 桥不能直接连它；即使 `codex app-server daemon enable-remote-control` 成功，daemon 日志仍因 API key 身份报 `remote control requires ChatGPT authentication`。因此“独立 app-server 能建会话”不等于“原生派活已闭环”，两条边界必须分开写。
+11. 历史数据库 `~/.codex/thread_history_1.sqlite` 只读打开，永不写宿主状态。
+12. 开关当前实况：总开关 on、未暂停、自动合入开、自动解冲突开、自动实现开、常驻开、**自动 port 关**。
 
 ---
 
@@ -489,6 +491,7 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 **agent（下一步可做的）**：
 - 把更多真实项目登记进 `ops/truth/project_folders.json`（每个项目自带 `ops/truth` 与来源对话），再用面板确认各自路线和工作项不串项目；目前只登记了本仓库。
 - 已确认控制 socket 存在；剩余是官方 remote-control 的 ChatGPT 登录/配对。用户拍板 A 后按 D-0003 流程走通 `thread/list` 再验收；用户拍板 B 后按独立 app-server 调整文案与验收定义。
+- 独立 app-server 链路已补 `thread/resume` 续轮并真机通过；独立 daemon 控制通道仍未过 ChatGPT 登录/配对闸，不能把“能建独立会话”写成“原生派活闭环”。
 - 人工验收结果回来后，逐条关闭 A-0005 / A-0006 / A-0007（改台账，不改生成物）。
 - 收口预览发布（`0.6.0-preview.9` → 正式预览包）。
 - `main` 已推平；有新提交继续保持推平。
