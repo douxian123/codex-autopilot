@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-18 03:10:43　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-18 03:15:45　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -60,20 +60,20 @@
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0026` [P1] 本机已安装 0.6.0-preview.6，marketplace/install-state/Codex 缓存全部指向 preview.6
-  - 证据：bash install.sh --state-root /Users/danta/Documents/Codex/codex-autopilot-native-autopilot --no-seed --verify --refresh-plugin (cwd=/Users/danta/Documents/Codex/codex-autopilot-panel-project…
-- `A-0028` [P1] codex/port-panel-route-closure-2 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0029` [P1] 本机已安装 0.6.0-preview.8，marketplace/install-state/Codex 缓存/Companion 配置全部指向 preview.8
-  - 证据：bash install.sh --state-root /Users/danta/Documents/Codex/codex-autopilot-native-autopilot --no-seed --refresh-plugin (cwd=/Users/danta/Documents/Codex/codex-autopilot-panel-project-followup…
+- `A-0030` [P1] preview.9 发布树机器验收：Companion 真编译 + 真实 codex 协议
+  - 证据：AUTOPILOT_SELFTEST_COMPANION=1 AUTOPILOT_SELFTEST_REAL_CODEX=1 python3 ops/selftest.py (cwd=/Users/danta/Documents/Codex/codex-autopilot-panel-project-followup) -> exit 0; Companion 真编译出可安装 …
 - `A-0031` [P1] codex/verify-preview9-real-codex 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0032` [P0] 真实需求 auto_exec 机器闭环：入口->归类->独立 worktree->真实 codex->门禁->land->收口
   - 证据：scratch=/tmp/ap-e2e-20261017-clean-1792202425-32217; KG_REPO=/Users/danta/Documents/Codex/2026-10-17/record-preview9/../../../../tmp/ap-e2e-20261017-clean-1792202425-32217/state; python3 ops…
 - `A-0033` [P1] codex/release-preview10 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0034` [P0] 真实桌面宿主原生派活：dispatch 建 native thread/turn/section
+  - 证据：python3 ops/codex_native.py dispatch --cwd /tmp --prompt "只回复两个字：收到。不要改任何文件，不要运行任何命令。" --section "Codex 自动挡真机验证" -> ok true; thread_id=01a147a9-b3ca-7412-80ff-2dc35cb816a1; turn_id=01a147a9-…
 - `A-0036` [P0] preview.10 机器全量验收：自检/面板逻辑/真实渲染/原生直连/安装产物全部通过
   - 证据：preview-check.sh --no-install -> 0 failures (version=0.6.0-preview.10); python3 ops/selftest.py -> exit 0; python3 ops/panel_logic_check.py -> all pass; AUTOPILOT_CHROMIUM=... python3 ops/pa…
+- `A-0037` [P1] Companion 真机运行与环境入口就绪（进程、服务菜单、通知、截图快捷键、拖拽入口均有真实注册）
+  - 证据：pgrep -> /Users/danta/Applications/CodexAutopilotCompanion.app/Contents/MacOS/CodexAutopilotCompanion 进程在跑; launchctl print gui/501 -> com.douxian.codex-autopilot.companion 已注册, ServiceProvi…
 - `A-0038` [P1] Companion 真机运行与环境入口就绪（机器自证已验）
   - 证据：pgrep -> /Users/danta/Applications/CodexAutopilotCompanion.app/Contents/MacOS/CodexAutopilotCompanion 进程在跑; launchctl print gui/501 -> com.douxian.codex-autopilot.companion 已注册, ServiceProvi…
 - `A-0039` [P1] codex/release-preview10 落盘验收
@@ -115,6 +115,7 @@
 - `A-0011` [P0] 全量自检 20 组通过（覆盖 A-0002 的组数）
 - `A-0012` [P0] 面板首屏（含关闭态）每个值都来自真实控制层数据
 - `A-0013` [P0] 装出来的副本自带绑定：kgctl 认得出项目、MCP 能应答（不带任何环境变量）
+- `A-0014` [P0] 全量自检 22 组通过（含后台常驻开关真启停）
 - `A-0015` [P0] 全量自检 22 组通过（含后台常驻开关真启停，机器自证）
 - `A-0016` [P0] 派活自动归入项目窗口集合：同名复用、不重复创建、失败不拦派活
 - `A-0017` [P0] 原生协议与真实 codex 二进制对齐：修正窗口集合移动方法名并真机验证
@@ -123,13 +124,17 @@
 - `A-0020` [P1] 菜单栏完整面板回到 Codex 本体，HTML 驾驶舱降为备用
 - `A-0021` [P0] 原生方法名全量对真实服务器核对（6/6 存在）
 - `A-0023` [P1] codex/panel-project-followup 落盘验收
+- `A-0024` [P0] 北极星首问闭环率会算、算不出就红、且首屏可见
 - `A-0026` [P1] 本机已安装 0.6.0-preview.6，marketplace/install-state/Codex 缓存全部指向 preview.6
 - `A-0029` [P1] 本机已安装 0.6.0-preview.8，marketplace/install-state/Codex 缓存/Companion 配置全部指向 preview.8
 - `A-0028` [P1] codex/port-panel-route-closure-2 落盘验收
+- `A-0030` [P1] preview.9 发布树机器验收：Companion 真编译 + 真实 codex 协议
 - `A-0031` [P1] codex/verify-preview9-real-codex 落盘验收
 - `A-0032` [P0] 真实需求 auto_exec 机器闭环：入口->归类->独立 worktree->真实 codex->门禁->land->收口
 - `A-0033` [P1] codex/release-preview10 落盘验收
+- `A-0034` [P0] 真实桌面宿主原生派活：dispatch 建 native thread/turn/section
 - `A-0036` [P0] preview.10 机器全量验收：自检/面板逻辑/真实渲染/原生直连/安装产物全部通过
+- `A-0037` [P1] Companion 真机运行与环境入口就绪（进程、服务菜单、通知、截图快捷键、拖拽入口均有真实注册）
 - `A-0038` [P1] Companion 真机运行与环境入口就绪（机器自证已验）
 - `A-0039` [P1] codex/release-preview10 落盘验收
 - `A-0041` [P0] preview.11 原生直连与全量预览验收通过
@@ -141,5 +146,5 @@
 - 累计关闭问题：5 条
 - 累计落盘：9 条
 - 未决问题：0 条
-- 已验收：29 条
+- 已验收：34 条
 

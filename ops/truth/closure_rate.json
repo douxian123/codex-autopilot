@@ -1,11 +1,15 @@
 {
  "status": "ok",
  "reason": null,
- "generated_at": "2026-10-17T09:48:57+08:00",
- "denominator": 8,
- "numerator": 2,
- "rate_pct": 25.0,
- "done_without_evidence": [],
+ "generated_at": "2026-10-18T03:14:20+08:00",
+ "denominator": 13,
+ "numerator": 4,
+ "rate_pct": 30.8,
+ "done_without_evidence": [
+  "L-0005",
+  "L-0003",
+  "L-0004"
+ ],
  "not_closed": {
   "open": 6
  },
