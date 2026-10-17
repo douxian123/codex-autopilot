@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-18 03:52:24　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-18 04:00:04　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -47,7 +47,6 @@
 
 ## 最近在推进
 
-- [在途] 本机真实运行证据：CodexAutopilotCompanion 进程在跑；launchctl 注册 com.douxian.codex-autopilot.companion；Info.plist LSUIElement/NSServices=sendToAutopilot 已注册；main.swift 含截图快捷键/拖拽/通知授权；codex_native probe connected=true can_dispatch=true。登记为 A-0038 机器自证。A-0005/A-0006/A-0007/A-0008 仍保留为真人验收。
 - [在途] 尝试用真实截图与 macOS 辅助功能自动化核验菜单栏图标：screencapture 成功但本机是无实体显示器的 1920x1080 虚拟屏，截图为壁纸内容；System Events 辅助功能可用，Companion 被系统识别为 background-only 进程，但无法用菜单栏项目证明视觉图标。A-0005 保留为真人桌面验收。
 - [已落盘] @ 552dc650a0 codex/release-preview10 验证门禁通过，已落盘 main @ 552dc650a0；改动 1 个文件：docs/PREVIEW.md（+1/-1）｜1 file changed, 1 insertion(+), 1 deletion(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0032、A-0033、A-0034
 - [在途] 官方 app-server daemon 拉起后，控制 socket 恢复；codex_native probe 返回 connected=true can_dispatch=true；preview-check.sh --no-install --no-open 全部通过（0 failures）；面板渲染检查全部通过。preview.11 原生直连验收卡点已解除。
@@ -57,6 +56,7 @@
 - [在途] 产品价值页、北极星闭环率、机器/人工验收边界已固化；6 条有证据的机器验收项同步 verified，A-0027 因无证据保持 todo；preview-check/panel-logic/panel-render/selftest/closure_rate 均过；A-0005/A-0006/A-0007/A-0008/A-0022 待真人桌面验收
 - [在途] 端到端落位验收已走到台账确认：入口->归类->账本->面板逻辑检查全部闭环
 - [在途] 把机器已验证证据清单和真人待验清单固化进 PRODUCT_VALUE.md；preview/panel-logic/panel-render/selftest/probe/closure-rate/A-0045/A-0046 是机器证据，A-0005/A-0006/A-0007/A-0008/A-0022 未人工确认前保持 todo
+- [在途] 实机验证总闸关闭态：companion_api disable -> enabled=false lifecycle=off；关闭后 intake 返回 AUTOPILOT_DISABLED exit 2；panel_render_check 在关闭态仍渲染真实面板；随后 enable 恢复 enabled=true lifecycle=on。A-0006 仍保留真人确认首屏观感与总闸交互
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
