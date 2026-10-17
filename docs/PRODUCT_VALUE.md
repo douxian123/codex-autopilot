@@ -29,6 +29,29 @@ Codex 自动挡不是再做一个调度界面，而是给 Codex 装一层本机�
 - 机器自证和人工验收分开：命令、cwd、退出码是机器证据；菜单栏可见、点开弹窗、
   真实手感、关总闸后的关闭态必须真人确认。
 
+## 当前验收边界（证据分开）
+
+机器已验证（命令 + 退出码，2026-10-18）：
+
+- preview.11 安装态全量检查：`preview-check.sh --no-install` -> 0 failures，exit 0
+- `python3 ops/selftest.py` -> exit 0
+- `python3 ops/panel_logic_check.py` -> exit 0，含人工待处理态与总闸关闭态分支
+- `AUTOPILOT_CHROMIUM=<chrome> python3 ops/panel_render_check.py` -> exit 0
+- `python3 ops/closure_rate.py --gate` -> 33.3%（5/15），exit 0，闭环率算不出会红
+- `python3 ops/codex_native.py probe` -> connected=true, can_dispatch=true
+- 真实入口端到端机器闭环：Companion 派需求 -> 归类 L-0006 -> 面板逻辑检查 ->
+  `truthctl close L-0006` 收口，登记为 A-0045
+- Companion 已注册为菜单栏 UIElement：`lsappinfo` type=UIElement、checkin ok，
+  `companion_api panel` 可打开驾驶舱，登记为 A-0046
+
+真人待验（机器证据不能替代，未确认前保持 todo）：
+
+- `A-0005` 菜单栏图标、弹窗内容、`⌥⌘D` 回 Codex 完整面板
+- `A-0006` Codex 面板首屏真实状态；关总闸后有明确关闭态
+- `A-0007` `⌥⌘S` 截图派活、拖文件、服务菜单三种入口逐个真用
+- `A-0008` 用任意入口提一条真实小需求，观察归类、阶段变化、验证命令和收口
+- `A-0022` 出现人工验收/拍板事项时菜单栏警示图标 + macOS 通知 + 面板下一步说明
+
 ## 当前偏差
 
 - 机器侧闭环已经基本打通，但真实桌面人工验收还没完成，不能把 A-0005/A-0006/
