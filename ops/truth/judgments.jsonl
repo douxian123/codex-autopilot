@@ -1,3 +1,4 @@
 
 {"id": "J-0001", "ts": "2026-10-16 02:37:00", "type": "judgment", "title": "需要用户行动的状态必须同时在主面板和菜单栏显性出现：面板说明要做什么，菜单栏负责把注意力拉回来；同一批待办去重提醒。", "statement": "需要用户行动的状态必须同时在主面板和菜单栏显性出现：面板说明要做什么，菜单栏负责把注意力拉回来；同一批待办去重提醒。", "why": "决策、人工验收和异常都意味着自动挡不能继续替用户推进；必须让用户看见并知道下一步，且提醒不能因轮询重复轰炸。", "scope": "product", "source": "agent", "status": "active"}
 {"id": "J-0002", "ts": "2026-10-17 06:26:37", "type": "judgment", "title": "原生直连派活的最后一道闸是官方 remote-control 的 ChatGPT 登录/配对，不是 socket 路径或协议；不能用 API key 冒充 ChatGPT 身份，也不应把独立 app-server 会话包装成桌面宿主实时窗口。", "lane": null, "files": [], "source": "agent", "statement": "原生直连派活的最后一道闸是官方 remote-control 的 ChatGPT 登录/配对，不是 socket 路径或协议；不能用 API key 冒充 ChatGPT 身份，也不应把独立 app-server 会话包装成桌面宿主实时窗口。", "why": "", "scope": "process", "status": "active"}
+{"id": "J-0003", "ts": "2026-10-18 03:10:01", "type": "judgment", "title": "机器闭环和人工验收不能混为一谈", "statement": "机器闭环和人工验收不能混为一谈", "why": "", "scope": "product", "source": "agent", "status": "active"}

@@ -11,13 +11,14 @@
   ],
   "current_focus": [
     "问题一次提出就闭环",
-    "产品讨论自动长成主线"
+    "产品讨论自动长成主线",
+    "机器闭环与真实桌面人工验收分界明确"
   ],
   "not_doing": [
     "自建多 agent 框架（编排复用 Codex 会话 / worktree / skill）",
     "改动共享 checkout 里别人的在途工作"
   ],
-  "updated": "2026-10-15",
+  "updated": "2026-10-18",
   "roadmap": [
     {
       "step": "唯一入口收需求",

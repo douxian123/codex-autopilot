@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-17 11:13:57　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-18 03:10:43　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -10,7 +10,7 @@
 - 阶段：内部可用
 - 北极星：用户提一次需求就闭环的比例
 - 路径：输入归一：零散需求进唯一入口 → 真相沉淀：主线/决策/问题/进展/验收落盘 → 自运行：能合的自动合、能收口的自己收口 → 自追踪：产品主线自动综合
-- 当前焦点：问题一次提出就闭环；产品讨论自动长成主线
+- 当前焦点：问题一次提出就闭环；产品讨论自动长成主线；机器闭环与真实桌面人工验收分界明确
 - 本阶段不做：自建多 agent 框架（编排复用 Codex 会话 / worktree / skill）；改动共享 checkout 里别人的在途工作
 
 ## 产品路线（每一步到哪了）
@@ -47,29 +47,19 @@
 
 ## 最近在推进
 
-- [已落盘] @ 8c850036bb codex/verify-preview9-real-codex 验证门禁通过，已落盘 main @ 8c850036bb；改动 5 个文件：CONTEXT.md（+13/-15）、ops/codex_native.py（+177/-2）、ops/selftest.py（+6/-0）、ops/truth/closure_rate.json（+1/-1）、ops/truth/progress.jsonl（+7/-0）｜5 files changed, 204 insertions(+), 18 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [在途] scratch=/tmp/ap-e2e-20261017-clean-1792202425-32217; KG_REPO=.../state; KG_TRUNK=.../state-trunk; KG_DAEMON_HOME=.../home; python3 ops/central_daemon.py --once -> exit 0; real codex exec created hello-ok.txt in state-exec-l-0001-hello-ok-txt; kgctl land pushed c0573b47->f6b0b66 to scratch origin/main; truthctl close L-0001 -> done
-- [已落盘] @ 8de7ba3649 codex/release-preview10 验证门禁通过，已落盘 main @ 8de7ba3649；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0032
-- [在途] real desktop host native dispatch succeeded via ops/codex_native.py dispatch; thread=01a147a9-b3ca-7412-80ff-2dc35cb816a1, turn=01a147a9-b4ef-7c43-949e-b5b83cb16773, section=01a147a9-b328-7c73-9d7d-0d84e3b11e9e; probe can_dispatch=true; section name Codex 自动挡真机验证; prompt requested no file changes
-- [在途] 原生直连卡点已解除：2026-10-17 真机 probe 使用 app-server-control.sock WebSocket 直连真实桌面宿主，transport=codex-app-server-websocket、connected=true、can_dispatch=true；dispatch 成功创建 native thread/turn/section，thread_id=01a147a9-b3ca-7412-80ff-2dc35cb816a1。旧 remote-control ChatGPT 配对结论被推翻。
-- [在途] preview-check.sh 已把真实安装/落地物/菜单栏应用/原生直连/总闸/面板首屏压成一条命令；2026-10-17 preview-check.sh --no-install 输出全部 PASS、exit 0。install.sh --verify 同一条命令可装完即验。
-- [在途] 原生 app-server/thread、Projects/窗口集合、turn/start、follow 均已通过真实 codex 二进制与真实桌面宿主验证：AUTOPILOT_SELFTEST_REAL_CODEX=1 selftest 全过；2026-10-17 probe can_dispatch=true；dispatch 创建 native thread/turn/section。scheduled automations 仍属于后续外部生命周期能力，不再伪装成本轮已实现。
 - [在途] 机器侧闭环已推进到底：preview.10 门禁全过（preview-check 0 failure、selftest、panel_logic_check、panel_render_check、codex_native probe can_dispatch=true）；A-0005/A-0006/A-0007/A-0008 仍为真人桌面验收，不可由机器自检替代。
 - [在途] 该票属于 knowledge-graph 项目（真实来源 /Users/danta/.newmax/workspace/knowledge-graph/ops/truth/ledger.jsonl），所指文件在本仓库不存在，不应由自动挡账本持有；已在原项目继续闭环。
 - [在途] 主动提醒能力已实现：Companion 有通知授权与 notifyIfNeeded 去重提醒、面板有人工验收/拍板/异常待处理态；A-0022 为真机人工验收，闭环边界见 A-0022。
+- [在途] 本机真实运行证据：CodexAutopilotCompanion 进程在跑；launchctl 注册 com.douxian.codex-autopilot.companion；Info.plist LSUIElement/NSServices=sendToAutopilot 已注册；main.swift 含截图快捷键/拖拽/通知授权；codex_native probe connected=true can_dispatch=true。登记为 A-0038 机器自证。A-0005/A-0006/A-0007/A-0008 仍保留为真人验收。
+- [在途] 尝试用真实截图与 macOS 辅助功能自动化核验菜单栏图标：screencapture 成功但本机是无实体显示器的 1920x1080 虚拟屏，截图为壁纸内容；System Events 辅助功能可用，Companion 被系统识别为 background-only 进程，但无法用菜单栏项目证明视觉图标。A-0005 保留为真人桌面验收。
+- [已落盘] @ 552dc650a0 codex/release-preview10 验证门禁通过，已落盘 main @ 552dc650a0；改动 1 个文件：docs/PREVIEW.md（+1/-1）｜1 file changed, 1 insertion(+), 1 deletion(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0032、A-0033、A-0034
+- [在途] 官方 app-server daemon 拉起后，控制 socket 恢复；codex_native probe 返回 connected=true can_dispatch=true；preview-check.sh --no-install --no-open 全部通过（0 failures）；面板渲染检查全部通过。preview.11 原生直连验收卡点已解除。
+- [已落盘] @ d35c988f19 codex/native-socket-lstat-v7 验证门禁通过，已落盘 main @ d35c988f19；改动 4 个文件：ops/central.config.json（+1/-1）、ops/codex_native.py（+27/-7）、ops/panel_render_check.py（+28/-5）、ops/selftest.py（+46/-0）｜4 files changed, 102 insertions(+), 13 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [在途] 真实桌面证据：open ~/Applications/CodexAutopilotCompanion.app -> exit 0，进程 pid=86143；原生 dispatch -> thread_id=01a14ade-cd10-7ae0-9e59-f63e81317eaf/turn_id=01a14ade-ceae-7790-989c-25b67e0815b4，history status completed；companion_api status enabled=true native.can_dispatch=true；codex plugin list 显示 preview.11。A-0005 仍保留真人桌面验收，机器证据记为 A-0044。
+- [在途] 补产品价值立足点文档 PRODUCT_VALUE.md，明确北极星闭环率与人工验收边界，更新 mainline 与判断逻辑，并综合主线；A-0005/A-0006/A-0007/A-0008/A-0022 仍待真人桌面验收
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0018` [P0] 全量自检 23 组通过（含真二进制开关 24 组）
-  - 证据：python3 ops/selftest.py -> 23 组全过；AUTOPILOT_SELFTEST_REAL_CODEX=1 python3 ops/selftest.py -> 24 组全过（含真实 codex 二进制协议验证）
-- `A-0019` [P0] 面板按官方嵌套字段显示窗口集合内的子对话
-  - 证据：官方 Thread schema 里集合是嵌套 section.id（无扁平 sectionId）；panel_logic_check.py 新增真实形状用例，并做反向验证：把面板改回扁平字段后该用例失败（rc=1），还原后全过
-- `A-0020` [P1] 菜单栏完整面板回到 Codex 本体，HTML 驾驶舱降为备用
-  - 证据：Companion 契约自检新增断言：openCodexPanel/onOpenCockpit 存在，且主面板路径不含 call(["panel"])；AUTOPILOT_SELFTEST_COMPANION=1 真编译 .app 通过
-- `A-0021` [P0] 原生方法名全量对真实服务器核对（6/6 存在）
-  - 证据：AUTOPILOT_SELFTEST_REAL_CODEX=1：从真实 codex app-server 取接受方法列表（144 个），项目里 6 个原生调用方法全部存在；AUTOPILOT_SELFTEST_COMPANION=1 AUTOPILOT_SELFTEST_REAL_CODEX=1 python3 ops/selftest.py -> 25 组全过
-- `A-0023` [P1] codex/panel-project-followup 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0026` [P1] 本机已安装 0.6.0-preview.6，marketplace/install-state/Codex 缓存全部指向 preview.6
   - 证据：bash install.sh --state-root /Users/danta/Documents/Codex/codex-autopilot-native-autopilot --no-seed --verify --refresh-plugin (cwd=/Users/danta/Documents/Codex/codex-autopilot-panel-project…
 - `A-0028` [P1] codex/port-panel-route-closure-2 落盘验收
@@ -84,6 +74,16 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0036` [P0] preview.10 机器全量验收：自检/面板逻辑/真实渲染/原生直连/安装产物全部通过
   - 证据：preview-check.sh --no-install -> 0 failures (version=0.6.0-preview.10); python3 ops/selftest.py -> exit 0; python3 ops/panel_logic_check.py -> all pass; AUTOPILOT_CHROMIUM=... python3 ops/pa…
+- `A-0038` [P1] Companion 真机运行与环境入口就绪（机器自证已验）
+  - 证据：pgrep -> /Users/danta/Applications/CodexAutopilotCompanion.app/Contents/MacOS/CodexAutopilotCompanion 进程在跑; launchctl print gui/501 -> com.douxian.codex-autopilot.companion 已注册, ServiceProvi…
+- `A-0039` [P1] codex/release-preview10 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0041` [P0] preview.11 原生直连与全量预览验收通过
+  - 证据：codex app-server daemon start -> started pid=56805 socketPath=~/.codex/app-server-control/app-server-control.sock; python3 ops/codex_native.py probe (cwd=/Users/danta/Documents/Codex/codex-a…
+- `A-0042` [P0] preview.11 真实桌面宿主原生派活（thread/turn/section）通过
+  - 证据：python3 ops/codex_native.py dispatch --cwd /tmp --prompt '只回复两个字：收到。不要改任何文件，不要运行任何命令。' --section 'Codex 自动挡真机验收' (cwd=/Users/danta/Documents/Codex/codex-autopilot-native-autopilot) -> ok tru…
+- `A-0043` [P1] codex/native-socket-lstat-v7 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
 
@@ -101,6 +101,8 @@
   - 1) 用任意入口提一条真实小需求 2) 观察它自动归类、面板出现阶段变化 3) 每个阶段面板与菜单栏状态一致 4) 结束时能看到真实验证命令与收口结果，而不是只有一句完成
 - `A-0022` [P0] 需要用户决策/验收时主动提醒并说明下一步
   - 1) 在正常 macOS 终端安装并打开 Companion 2) 制造或等待一项人工验收/需要拍板事项 3) 确认菜单栏出现警示图标和 macOS 通知 4) 打开 Codex 面板确认写清具体动作 5) 清掉事项后确认不再重复提醒
+- `A-0044` [P0] preview.11 真实桌面宿主原生派活与 Companion 进程就绪（机器自证，人工验收仍待确认）
+  - 1) 打开菜单栏 Companion 2) 看到自动挡图标 3) 点开看到总开关/当前任务/派活入口 4) ⌥⌘D 回到 Codex 完整面板
 
 ## 已机器验收
 
@@ -128,11 +130,16 @@
 - `A-0032` [P0] 真实需求 auto_exec 机器闭环：入口->归类->独立 worktree->真实 codex->门禁->land->收口
 - `A-0033` [P1] codex/release-preview10 落盘验收
 - `A-0036` [P0] preview.10 机器全量验收：自检/面板逻辑/真实渲染/原生直连/安装产物全部通过
+- `A-0038` [P1] Companion 真机运行与环境入口就绪（机器自证已验）
+- `A-0039` [P1] codex/release-preview10 落盘验收
+- `A-0041` [P0] preview.11 原生直连与全量预览验收通过
+- `A-0042` [P0] preview.11 真实桌面宿主原生派活（thread/turn/section）通过
+- `A-0043` [P1] codex/native-socket-lstat-v7 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：5 条
-- 累计落盘：7 条
+- 累计落盘：9 条
 - 未决问题：0 条
-- 已验收：24 条
+- 已验收：29 条
 
