@@ -3,7 +3,7 @@
 > 这份文件是**这个项目 + 相关对话**的唯一事实来源。opencode 和 codex 都改它，以它为准。
 > 任何 agent 开工前先读它；改动产品行为、决策、进度、卡点后，**回写对应小节**，不要另起文档。
 > 生成/核对时间：2026-10-15（当日现场核对，非转述）。
-> 2026-10-17 复核：仓库/远程/本机已安装 `0.6.0-preview.10`（含 WebSocket 原生直连桥）；上一版 `0.6.0-preview.9` 保留可回滚。原生直连已取得新突破：**本地 app-server 控制 socket 是 WebSocket 协议，新增纯 stdlib 桥后已真机直连真实桌面宿主，`can_dispatch=true`**。此前「必须 ChatGPT 登录/配对」是 stdio/远端 remote-control 路径的旧结论，不能再覆盖当前事实。
+> 2026-10-17 复核：仓库/远程/本机已安装 `0.6.0-preview.11`（含 WebSocket 原生直连桥）；上一版 `0.6.0-preview.10` 保留可回滚。原生直连已取得新突破：**本地 app-server 控制 socket 是 WebSocket 协议，新增纯 stdlib 桥后已真机直连真实桌面宿主，`can_dispatch=true`**。此前「必须 ChatGPT 登录/配对」是 stdio/远端 remote-control 路径的旧结论，不能再覆盖当前事实。
 > 2026-10-15 深夜 opencode 现场复核（见 12.7）：本机**不是沙箱**，已真跑安装并通过 5/6 验收；原「三条卡点」里的安装/网络两条已在本机解除，原生直连失败的根因当时**重新定位为 socket 选错（不是权限）**——第四节事实 4 已被推翻并更正。
 > 仓库：`/Users/danta/Documents/Codex/codex-autopilot-native-autopilot`（分支 `main`）
 
@@ -14,11 +14,12 @@
 **Codex 自动挡**是给 Codex 加的一层「工程控制面」：你平时打字的那个 Codex 输入框就是总输入框，零散需求进去，归类、落账、隔离工作区、跑验证、能合的自动合、收口、回写主线，全由它串起来。
 
 - 形态：Codex 插件（原生风格面板） + macOS 菜单栏 Companion（状态锚点，不是第二套产品）
-- 版本：仓库/远程/本机已安装 `0.6.0-preview.10`；上一版 `0.6.0-preview.9` 保留可回滚，阶段：内部可用
+- 版本：仓库/远程/本机已安装 `0.6.0-preview.11`；上一版 `0.6.0-preview.10` 保留可回滚，阶段：内部可用
 - 13 步产品路线：**7 步已完成、6 步进行中、0 步未开始**
 - 验收：机器已自证项持续增加；当前 A-0005/A-0006/A-0007/A-0008 仍需真人/桌面操作
-- 本机实测（2026-10-17）：仓库/远程/本机已安装 **`0.6.0-preview.10`**（上一版 `0.6.0-preview.9` 保留可回滚）；原生直连已真机直连真实桌面宿主：`python3 ops/codex_native.py probe` → `transport=codex-app-server-websocket`、`connected=true`、`can_dispatch=true`、`sample=1`
+- 本机实测（2026-10-17）：仓库/远程/本机已安装 **`0.6.0-preview.11`**（上一版 `0.6.0-preview.10` 保留可回滚）；原生直连已真机直连真实桌面宿主：`python3 ops/codex_native.py probe` → `transport=codex-app-server-websocket`、`connected=true`、`can_dispatch=true`、`sample=1`
 - 自检：`python3 ops/selftest.py` → **24 组全过、退出码 0、约 58 秒**；再开真编译 + 真二进制两个开关 → **26 组全过**
+- 自动实现（2026-10-17 补充）：`ops/central_daemon.py` 强制首步落盘并对“退出 0 但无改动”在同一 worktree 自动重试；真实 `codex exec` 已在隔离 fixture 完成 `L-0001` → `verify.txt` 内容 `hello-e2e` → 过门禁 → land → 收口。
 
 ---
 
@@ -129,12 +130,12 @@
 | 已完成 | 总开关与统一本机控制面 | 关掉回到 Codex 原生；所有入口共用一个控制通道 |
 | 已完成 | Codex 原生风格侧栏面板 | 首屏数据流已机器验证；观感需人眼过一遍 |
 | 已完成 | 版本化安装与回滚 | 不可变版本目录 + 当前指针，旧账本永不覆盖 |
-| 进行中 | 自动实现并收口 | 引擎齐备并自检通过，缺一条真实需求跑完全程 |
+| 进行中 | 自动实现并收口 | 引擎齐备、真实 auto_exec fixture 已跑通（需求→真实 codex→门禁→land→收口）；缺一条从用户真实入口进入的完整端到端 |
 | 进行中 | 路线与人机验收可见 | 面板已展示路线与人工验收项 |
 | 进行中 | 跨应用入口 | 四个入口都实现完，待真机逐个验证 |
 | 进行中 | 菜单栏 Companion | 可编译可安装，待真桌面启动验证 |
 | 进行中 | 原生 thread 直连派活 | 协议本身已对齐真实二进制；本地控制 socket 的 WebSocket 桥已真机直连真实桌面宿主，`probe can_dispatch=true`。剩真实端到端与人工验收。见第四节 5、第七节和第十三节 |
-| 进行中 | 真实端到端演示与预览发布 | 定义见第九节，缺真实环境 |
+| 进行中 | 真实端到端演示与预览发布 | 定义见第九节；auto_exec 真实需求闭环已由隔离 fixture 自证，A-0008 仍剩用户入口与真人桌面目视 |
 
 ---
 
