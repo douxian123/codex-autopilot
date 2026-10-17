@@ -2036,6 +2036,21 @@ def test_auto_exec():
     with tempfile.TemporaryDirectory(prefix="codex-autopilot-exec-") as tmp:
         base = Path(tmp)
 
+        # --- 派发提示必须把“小任务第一步先落盘”写进硬规则，防止只读检查冒充完成 ---
+        # L-0006 真机现场：codex 退出码 0、只跑 ls/find/git status 后停手，自动挡如实记
+        # no_changes。只有提示词有这条约束还不够，但提示词缺了它，模型连被要求落盘都没有。
+        repo_prompt, _, _ = fixture(base / "prompt")
+        daemon_prompt = load_daemon(repo_prompt, base / "prompt-trunk",
+                                    base / "prompt-home",
+                                    fake_codex(base, "fake-prompt.sh", 0))
+        prompt_text = daemon_prompt._exec_prompt({
+            "id": "L-0001", "kind": "gate", "title": "写 verify.txt"})
+        for needle in ("第一步就要在当前 worktree 产出改动",
+                       "只读检查不算完成",
+                       "无需改动"):
+            if needle not in prompt_text:
+                raise AssertionError(f"派发提示缺少强制落盘规则: {needle!r}\n{prompt_text}")
+
         # --- 成功路径：实现 -> 提交 -> 落盘 -> 收口，台账变 done，main 里有产物 ---
         repo, trunk, home = fixture(base / "ok")
         daemon = load_daemon(repo, trunk, home, fake_codex(base, "fake-ok.sh", 0))
