@@ -1,12 +1,13 @@
 # Codex 自动挡落位审计（2026-10-17）
 
 ## 当前基线
-origin/main = e86d492
+origin/main = bfda13a
 已安装版本 = 0.6.0-preview.10
 
 ## 机器侧已自证
 - selftest：exit 0，全部组 ok（含新增 socket 入口 lstat 用例）
 - 闭环率：30.8%（4/13），exit 0
+- 分支：`codex/native-socket-lstat-v2`（b1e3fe5）
 - 面板逻辑：全部通过
 - 安装落地产物：6 项 PASS
 
