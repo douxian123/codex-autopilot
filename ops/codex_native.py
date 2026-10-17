@@ -3,9 +3,13 @@
 """Codex native thread bridge with a read-only history fallback."""
 
 import json
+import base64
+import hashlib
 import os
 import selectors
+import socket
 import sqlite3
+import struct
 import subprocess
 import sys
 import time
@@ -28,6 +32,148 @@ _next_id = 0
 # 缓存 2 秒，兼顾「面板别被拖住」和「历史变化能及时出现」。
 _HISTORY_CACHE = {"ts": 0.0, "rows": []}
 _HISTORY_CACHE_TTL = float(os.environ.get("CODEX_AUTOPILOT_HISTORY_CACHE_TTL", "2"))
+_WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
+def _recv_exact(sock, size, deadline=None):
+    chunks = bytearray()
+    while len(chunks) < size:
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("app-server WebSocket 未在限定时间内返回")
+            sock.settimeout(min(5.0, remaining))
+        chunk = sock.recv(size - len(chunks))
+        if not chunk:
+            raise ConnectionError("app-server WebSocket 连接中断")
+        chunks.extend(chunk)
+    return bytes(chunks)
+
+
+def _ws_send_frame(ws, payload):
+    body = payload.encode("utf-8") if isinstance(payload, str) else payload
+    mask = os.urandom(4)
+    header = bytearray([0x81])
+    length = len(body)
+    if length < 126:
+        header.append(0x80 | length)
+    elif length < 65536:
+        header.extend([0x80 | 126])
+        header.extend(struct.pack(">H", length))
+    else:
+        header.extend([0x80 | 127])
+        header.extend(struct.pack(">Q", length))
+    masked = bytes(value ^ mask[index % 4] for index, value in enumerate(body))
+    ws.sock.sendall(bytes(header) + mask + masked)
+
+
+def _ws_recv_frame(ws):
+    deadline = time.monotonic() + ws.timeout
+    first, second = _recv_exact(ws.sock, 2, deadline)
+    opcode = first & 0x0F
+    masked = bool(second & 0x80)
+    length = second & 0x7F
+    if length == 126:
+        length = struct.unpack(">H", _recv_exact(ws.sock, 2, deadline))[0]
+    elif length == 127:
+        length = struct.unpack(">Q", _recv_exact(ws.sock, 8, deadline))[0]
+    mask = _recv_exact(ws.sock, 4, deadline) if masked else None
+    payload = _recv_exact(ws.sock, length, deadline)
+    if mask:
+        payload = bytes(value ^ mask[index % 4] for index, value in enumerate(payload))
+    if opcode == 0x8:
+        raise ConnectionError("app-server WebSocket 已关闭")
+    if opcode == 0x9:
+        _ws_send_frame(ws, b"")
+        return None
+    if opcode in (0x1, 0x0):
+        return payload.decode("utf-8")
+    return None
+
+
+class _WsSession:
+    kind = "ws"
+
+    def __init__(self, sock, timeout=30):
+        self.sock = sock
+        self.timeout = max(1.0, float(timeout))
+        self.stderr = None
+
+    def send(self, payload):
+        _ws_send_frame(self, json.dumps(payload, ensure_ascii=False))
+
+    def receive(self):
+        deadline = time.monotonic() + self.timeout
+        while True:
+            self.sock.settimeout(max(0.1, deadline - time.monotonic()))
+            text = _ws_recv_frame(self)
+            if text is None:
+                continue
+            return json.loads(text)
+
+    def close(self):
+        try:
+            self.sock.close()
+        except OSError:
+            pass
+
+
+def _open_ws_session(socket_path, timeout=30):
+    """Open Codex's local app-server control socket over its WebSocket protocol."""
+    deadline = time.monotonic() + max(1.0, float(timeout))
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(min(5.0, deadline - time.monotonic()))
+    try:
+        sock.connect(str(socket_path))
+        key = base64.b64encode(os.urandom(16)).decode("ascii")
+        request = (
+            "GET / HTTP/1.1\r\n"
+            "Host: localhost\r\n"
+            "Upgrade: websocket\r\n"
+            "Connection: Upgrade\r\n"
+            "Sec-WebSocket-Key: %s\r\n"
+            "Sec-WebSocket-Version: 13\r\n\r\n" % key
+        )
+        sock.sendall(request.encode("ascii"))
+        response = bytearray()
+        while b"\r\n\r\n" not in response:
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise ConnectionError("app-server WebSocket 握手被关闭")
+            response.extend(chunk)
+        text = bytes(response).decode("utf-8", "replace")
+        headers = {}
+        lines = text.splitlines()
+        if not lines or " 101 " not in lines[0]:
+            raise ConnectionError("app-server WebSocket 握手失败：" + lines[0] if lines else "空响应")
+        for line in lines[1:]:
+            if ":" in line:
+                name, value = line.split(":", 1)
+                headers[name.strip().lower()] = value.strip()
+        expected = base64.b64encode(hashlib.sha1(
+            (key + _WS_GUID).encode("ascii")).digest()).decode("ascii")
+        if headers.get("sec-websocket-accept") != expected:
+            raise ConnectionError("app-server WebSocket 握手校验失败")
+        ws = _WsSession(sock, timeout=max(1.0, deadline - time.monotonic()))
+        init_id = _request_id()
+        ws.send({
+            "id": init_id,
+            "method": "initialize",
+            "params": {"clientInfo": {"name": "codex-autopilot",
+                                      "title": "Codex Autopilot",
+                                      "version": _plugin_version()},
+                       "capabilities": {}},
+        })
+        message = ws.receive()
+        if str(message.get("id")) != str(init_id):
+            raise ConnectionError("app-server WebSocket initialize 响应缺失")
+        if message.get("error"):
+            raise ConnectionError(str(message["error"].get("message") or message["error"]))
+        ws.send({"method": "initialized"})
+        return ws, None
+    except (OSError, TimeoutError, ValueError, json.JSONDecodeError, ConnectionError) as exc:
+        sock.close()
+        return None, str(exc)
 
 
 def _plugin_version() -> str:
@@ -210,6 +356,12 @@ def _session(host_only=False, timeout=30):
     """在同一个预算内逐个试候选服务，不按候选数把等待翻倍。"""
     deadline = time.monotonic() + max(1.0, float(timeout))
     last_error = None
+    if SOCKET.is_socket():
+        remaining = deadline - time.monotonic()
+        ws, error = _open_ws_session(SOCKET, timeout=max(1.0, remaining))
+        if ws is not None:
+            return ws, None
+        last_error = error
     for command in _server_commands(include_isolated=not host_only):
         remaining = deadline - time.monotonic()
         if remaining <= 0.2:
@@ -224,6 +376,23 @@ def _session(host_only=False, timeout=30):
 
 def _session_request(proc, method, params, timeout=8):
     request_id = _request_id()
+    if getattr(proc, "kind", None) == "ws":
+        deadline = time.monotonic() + max(1.0, float(timeout))
+        try:
+            proc.send({
+                "id": request_id,
+                "method": method,
+                "params": params,
+            })
+            while True:
+                proc.sock.settimeout(max(0.1, deadline - time.monotonic()))
+                message = proc.receive()
+                if str(message.get("id")) == str(request_id):
+                    if message.get("error"):
+                        return None, str(message["error"].get("message") or message["error"])
+                    return message.get("result"), None
+        except (OSError, TimeoutError, ValueError, json.JSONDecodeError, ConnectionError) as exc:
+            return None, str(exc)
     try:
         proc.stdin.write(json.dumps({
             "id": request_id, "method": method, "params": params
@@ -240,6 +409,9 @@ def _session_request(proc, method, params, timeout=8):
 
 
 def _close_session(proc):
+    if getattr(proc, "kind", None) == "ws":
+        proc.close()
+        return
     try:
         proc.stdin.close()
     except (OSError, ValueError):
@@ -445,7 +617,9 @@ def snapshot(timeout=None):
                         "sortDirection": "desc", "useStateDbOnly": True},
         timeout=max(1.0, deadline - time.monotonic()))
     if sections is not None and threads is not None:
-        return {"available": True, "transport": "codex-app-server-stdio",
+        return {"available": True,
+                "transport": "codex-app-server-websocket" if SOCKET.is_socket()
+                else "codex-app-server-stdio",
                 "reason": None, "sections": sections.get("data", []),
                 "threads": threads.get("data", [])}
     reason = section_error or thread_error
@@ -553,7 +727,8 @@ def probe(timeout=12, progress=None):
                              {"limit": 1, "useStateDbOnly": True}, host_only=True,
                              timeout=timeout)
         if error is None:
-            info.update(transport="codex-app-server-stdio", connected=True,
+            info.update(transport="codex-app-server-websocket" if SOCKET.is_socket()
+                        else "codex-app-server-stdio", connected=True,
                         can_dispatch=True, reason=None,
                         sample=len((result or {}).get("data") or []))
             return info

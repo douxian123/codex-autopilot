@@ -1461,6 +1461,8 @@ def test_native_section_grouping():
     sys.path.insert(0, str(OPS))
     import codex_native
     importlib.reload(codex_native)
+    real_socket = codex_native.SOCKET
+    codex_native.SOCKET = Path("/definitely/not/a/socket")
 
     with tempfile.TemporaryDirectory(prefix="codex-native-section-") as tmp:
         tmp_path = Path(tmp)
@@ -1497,6 +1499,7 @@ def test_native_section_grouping():
             assert third["section_note"] and "窗口集合" in third["section_note"], third
         finally:
             codex_native._open_session = real_open
+            codex_native.SOCKET = real_socket
             os.environ.pop("FAKE_STATE", None)
             os.environ.pop("FAKE_FAIL_SECTIONS", None)
 
@@ -1519,6 +1522,8 @@ def test_native_call_budget():
     sys.path.insert(0, str(OPS))
     import codex_native
     importlib.reload(codex_native)
+    real_socket = codex_native.SOCKET
+    codex_native.SOCKET = Path("/definitely/not/a/socket")
 
     class FrozenProc:
         """活着但永远不说话（不发 EOF、不写 stdout）的假宿主进程。"""
@@ -1598,6 +1603,7 @@ def test_native_call_budget():
     finally:
         codex_native._open_session = real_open
         codex_native._server_commands = real_commands
+        codex_native.SOCKET = real_socket
         frozen.close()
     print("selftest ok: 宿主不回话时状态查询按预算降级，快路不连宿主、候选不翻倍。")
 
