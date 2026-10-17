@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-18 03:38:06　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-18 03:46:32　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -60,8 +60,6 @@
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0031` [P1] codex/verify-preview9-real-codex 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0032` [P0] 真实需求 auto_exec 机器闭环：入口->归类->独立 worktree->真实 codex->门禁->land->收口
   - 证据：scratch=/tmp/ap-e2e-20261017-clean-1792202425-32217; KG_REPO=/Users/danta/Documents/Codex/2026-10-17/record-preview9/../../../../tmp/ap-e2e-20261017-clean-1792202425-32217/state; python3 ops…
 - `A-0033` [P1] codex/release-preview10 落盘验收
@@ -84,6 +82,8 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0045` [P1] 真实入口端到端机器闭环：Companion 派需求->归类->台账->面板逻辑检查->收口
   - 证据：preview.11 运行时 companion_api intake 真实派需求 -> ok true, route -> L-0006(design), inbox routed; python3 ops/panel_logic_check.py (cwd=.) -> exit 0 全部通过; truthctl close L-0006 -> done; A-0008 仍保…
+- `A-0046` [P1] Companion 作为 UIElement 菜单栏应用在系统注册且驾驶舱可打开（机器自证）
+  - 证据：lsappinfo info -app com.douxian.codex-autopilot.companion -> bundleID com.douxian.codex-autopilot.companion, pid=86143, type=UIElement, launch time 2026-10-17 17:57:30, checkin ok; launchctl…
 
 ## 还差什么
 
@@ -141,11 +141,12 @@
 - `A-0042` [P0] preview.11 真实桌面宿主原生派活（thread/turn/section）通过
 - `A-0043` [P1] codex/native-socket-lstat-v7 落盘验收
 - `A-0045` [P1] 真实入口端到端机器闭环：Companion 派需求->归类->台账->面板逻辑检查->收口
+- `A-0046` [P1] Companion 作为 UIElement 菜单栏应用在系统注册且驾驶舱可打开（机器自证）
 
 ## 进度概览
 
 - 累计关闭问题：6 条
 - 累计落盘：9 条
 - 未决问题：0 条
-- 已验收：35 条
+- 已验收：36 条
 

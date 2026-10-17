@@ -244,7 +244,12 @@ def main(argv):
                              folder_items[0].get("title") or folder_items[0].get("detail"),
                              "进行中" if folder.get("doing_items") else "待处理")
         fails += has("首屏显示总状态文案", out["stateLabel"], payload.get("state_label"))
-        fails += has("一眼三问：状态", out["focusStatus"], "运行中" if payload.get("enabled") else "已关闭")
+        if payload.get("enabled"):
+            # 有待人工验收项时，首屏状态会叠加「等你验收」（见下方 review 分支），
+            # 这里只校验开启语义；真正关闭态由后面的 closed 分支独立强校验。
+            fails += has("一眼三问：状态", out["focusStatus"], "运行中")
+        else:
+            fails += has("一眼三问：状态", out["focusStatus"], "已关闭")
         if human_acc:
             fails += has("一眼三问：等你验收优先显示", out["focusDoing"],
                          human_acc[0].get("title") or "人工验收")
