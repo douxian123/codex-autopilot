@@ -98,6 +98,7 @@ RESOLVE_MAX_ATTEMPTS = 1
 # 里实现 -> 门禁 -> 落盘 -> 收口。默认关闭；打开后每周期最多派一条，避免一次开一堆会话。
 EXEC_DEFAULT_TIMEOUT = 3600
 EXEC_MAX_PER_CYCLE = 1
+EXEC_NO_CHANGE_RETRIES = 2
 # 基础设施抖动 vs 需求真做不出来：底层模型代理（127.0.0.1:15721）偶发 502 /
 # Transport channel closed，会让 codex 进程以非 0 退出，但需求本身没问题。同一
 # worktree 上指数退避重跑即可，默认 3 次；重试仍失败记 codex_infra_fail，与
@@ -375,6 +376,7 @@ def auto_exec_config() -> dict:
     与「需求真做不出来」区分开；只在日志尾部命中抖动特征时才生效。
     """
     out = {"enabled": True, "max_per_cycle": EXEC_MAX_PER_CYCLE,
+           "no_change_retries": EXEC_NO_CHANGE_RETRIES,
            "timeout": EXEC_DEFAULT_TIMEOUT, "sandbox": "workspace-write", "model": None,
            "retries": EXEC_INFRA_RETRIES}
     repo = _state_repo()
@@ -395,6 +397,11 @@ def auto_exec_config() -> dict:
                     pass
             try:
                 out["retries"] = max(0, int(cfg.get("retries", out["retries"])))
+            except (TypeError, ValueError):
+                pass
+            try:
+                out["no_change_retries"] = max(0, int(
+                    cfg.get("no_change_retries", out["no_change_retries"])))
             except (TypeError, ValueError):
                 pass
             if cfg.get("sandbox"):
@@ -724,28 +731,39 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
         _git(repo, "branch", "-D", branch)
         return {"id": rid, "outcome": "no_codex"}
 
-    cmd = [*codex, "exec", "-C", str(wt), "-s", cfg["sandbox"],
-           "--skip-git-repo-check"]
-    if cfg.get("model"):
-        cmd += ["-m", cfg["model"]]
-    cmd += [ _exec_prompt(item) ]
     log_path = _exec_dir() / f"{slug}.log"
     retries = max(0, int(cfg.get("retries", EXEC_INFRA_RETRIES)))
-    total = retries + 1
+    no_change_retries = max(0, int(cfg.get("no_change_retries",
+                                           EXEC_NO_CHANGE_RETRIES)))
+    total = retries + no_change_retries + 1
     code, attempt, infra = 0, 0, False
+    no_change_tries = 0
+    base_prompt = _exec_prompt(item)
     while True:
         attempt += 1
         first = attempt == 1
+        prompt = base_prompt
+        if no_change_tries:
+            prompt += ("\n\n重要：上一次自动执行没有产生任何工作区改动，不能作为完成。"
+                       "现在必须重新执行能留下改动的命令（写文件、修文本、补配置等），"
+                       "并在命令后立刻自证。不要再做一轮只读检查。")
         if first:
             log(f"[exec] 派发 {rid} -> {branch}（worktree={wt}, codex={codex[0]}）")
         else:
             log(f"[exec] {rid} 第 {attempt}/{total} 次重试"
                 f"（同一 worktree={wt}，日志 {log_path}）")
+        cmd = [*codex, "exec", "-C", str(wt), "-s", cfg["sandbox"],
+               "--skip-git-repo-check"]
+        if cfg.get("model"):
+            cmd += ["-m", cfg["model"]]
+        cmd += [prompt]
         try:
             with log_path.open("w" if first else "a", encoding="utf-8") as fh:
                 if not first:
+                    retry_reason = ("无改动需重试" if no_change_tries
+                                    else "基础设施抖动")
                     fh.write(f"\n===== auto_exec 重试 第 {attempt}/{total} 次（{_now()}，"
-                             f"上一次退出码={code}，判定为基础设施抖动）=====\n")
+                             f"上一次退出码={code}，判定为{retry_reason}）=====\n")
                     fh.flush()
                 r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=fh,
                                    stderr=subprocess.STDOUT, cwd=str(wt),
@@ -758,7 +776,14 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
             code = 125
         result["exit"] = code
         log(f"[exec] {rid} codex 退出码={code}（第 {attempt}/{total} 次，日志 {log_path}）")
+        if code == 0 and _changed_paths(wt):
+            break
         if code == 0:
+            no_change_tries += 1
+            if no_change_tries <= no_change_retries:
+                log(f"[exec] {rid} 退出 0 但无改动，第 {no_change_tries}/{no_change_retries} 次"
+                    f"重试（工作区仍保留）")
+                continue
             break
         # 超时(124) 与启动失败(125) 不重试：超时已经吃掉一整个 cfg["timeout"]，再乘 N 会把
         # 一个周期拖垮；启动失败重跑也没有新证据。只有日志尾部命中抖动特征才重跑。
@@ -787,6 +812,12 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
             blocked[rid] = {"reason": reason, "ts": _now()}
             _cleanup_exec(repo, wt, branch)
             result["outcome"] = "codex_fail"
+        return result
+    if code == 0 and not _changed_paths(wt):
+        log(f"[exec] {rid} 重试后仍没有产生改动，记为无变化")
+        blocked[rid] = {"reason": "no_changes", "ts": _now()}
+        _cleanup_exec(repo, wt, branch)
+        result["outcome"] = "no_changes"
         return result
     return _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked)
 

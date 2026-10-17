@@ -2207,11 +2207,43 @@ def test_auto_exec():
             raise AssertionError("重试成功后 main 里没有执行器的产物")
         slug_r = f"{daemon_r._exec_slug('L-0001')}-{daemon_r._exec_slug('面板按钮点着没反应')}"
         exec_log = (home_r / "exec" / f"{slug_r}.log").read_text(encoding="utf-8")
-        if "502 Bad Gateway" not in exec_log or "重试 第 2/4 次" not in exec_log:
+        if "502 Bad Gateway" not in exec_log or "重试 第 2/6 次" not in exec_log:
             raise AssertionError(f"重试没有保留第一次的现场证据: {exec_log[-600:]}")
         daemon_log = (home_r / "daemon.log").read_text(encoding="utf-8")
-        if "第 2/4 次重试" not in daemon_log or str(home_r / "exec" / f"{slug_r}.log") not in daemon_log:
+        if "第 2/6 次重试" not in daemon_log or str(home_r / "exec" / f"{slug_r}.log") not in daemon_log:
             raise AssertionError(f"daemon.log 没写明第几次重试 / 日志路径: {daemon_log[-800:]}")
+
+        # --- 退出 0 但无改动：有限重试并要求真实落盘，不把只读检查当成完成 ---
+        # L-0006/L-0001 真机现场：模型代理返回 0，但没有执行任何写命令，自动挡以前直接记
+        # no_changes 并永久暂缓。修复后应在同一 worktree 重跑提示，第二次仍无改动才收口。
+        repo_n, trunk_n, home_n = fixture(base / "no-change-retry",
+                                         exec_cfg={"no_change_retries": 1})
+        fake_nc = base / "fake-no-change.sh"
+        fake_nc_count = base / "fake-no-change.count"
+        fake_nc.write_text(
+            "#!/bin/sh\n"
+            "wt=\"\"\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
+            "done\n"
+            f"n=$(cat {fake_nc_count} 2>/dev/null || echo 0)\n"
+            "n=$((n + 1))\n"
+            f"echo $n > {fake_nc_count}\n"
+            "if [ \"$n\" = \"1\" ]; then\n"
+            "  exit 0\n"
+            "fi\n"
+            "printf 'retry wrote file\\n' > \"$wt/fake.txt\"\n"
+            "exit 0\n", encoding="utf-8")
+        fake_nc.chmod(0o755)
+        daemon_n = load_daemon(repo_n, trunk_n, home_n, fake_nc)
+        blocked_n = {}
+        results_n = daemon_n.dispatch_exec(False, blocked_n)
+        if results_n[0].get("outcome") != "landed" or results_n[0].get("attempts") != 2:
+            raise AssertionError(f"无改动重试没有最终落盘: {results_n}\nblocked={blocked_n}")
+        if blocked_n:
+            raise AssertionError(f"无改动重试成功后不应留下 blocked: {blocked_n}")
+        if git(repo_n, "show", "main:fake.txt").stdout.strip() != "retry wrote file":
+            raise AssertionError("无改动重试后 main 里没有第二次执行器产物")
 
         # --- 重试到上限仍抖动：reason 记 codex_infra_fail（与 codex_exit_1 区分）、现场保留、不重复派 ---
         repo_e, trunk_e, home_e = fixture(base / "infra-exhaust")
