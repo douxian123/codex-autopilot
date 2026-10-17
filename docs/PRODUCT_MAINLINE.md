@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-17 10:35:07　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-17 10:45:13　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -47,9 +47,6 @@
 
 ## 最近在推进
 
-- [在途] 本机已安装 0.6.0-preview.9：插件缓存与 Companion 均指向 preview.9，上一版 preview.8 保留可回滚；唯一 FAIL 仍为 remote-control ChatGPT 登录/配对硬闸
-- [已落盘] @ 8158739a8c codex/record-install-preview9 验证门禁通过，已落盘 main @ 8158739a8c；改动 3 个文件：CONTEXT.md（+4/-4）、ops/truth/acceptance.jsonl（+2/-0）、ops/truth/progress.jsonl（+2/-0）｜3 files changed, 8 insertions(+), 4 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [在途] AUTOPILOT_SELFTEST_COMPANION=1 AUTOPILOT_SELFTEST_REAL_CODEX=1 python3 ops/selftest.py -> exit 0；Companion 真编译出可安装 .app；真实 codex app-server 建出原生会话/窗口集合并核对全部原生方法存在
 - [在途] pgrep 找到 /Users/danta/Applications/CodexAutopilotCompanion.app/Contents/MacOS/CodexAutopilotCompanion (pid 90619)；bash preview-check.sh --no-install (cwd=/Users/danta/Documents/Codex/codex-autopilot-panel-project-followup) -> exit 1，除原生直连外全 PASS
 - [在途] 真实独立 app-server 中 follow --allow-isolated 先 thread/resume 再 turn/start，返回真实 turn id；自检新增 thread/resume 断言全过。独立 daemon 控制 socket 为 WebSocket 升级，且 remote-control 仍报 ChatGPT 登录硬闸，故不能把独立实例写成桌面原生派活闭环。
 - [在途] 本地 app-server-control.sock 实测为 WebSocket 协议；ops/codex_native.py 新增纯 stdlib RFC6455 客户端，默认优先连真实宿主。python3 ops/codex_native.py probe -> transport=codex-app-server-websocket, connected=true, can_dispatch=true, sample=1；临时独立 daemon 亦完成 dispatch/follow。旧「必须 ChatGPT 登录/配对」结论被推翻。
@@ -57,11 +54,12 @@
 - [在途] scratch=/tmp/ap-e2e-20261017-clean-1792202425-32217; KG_REPO=.../state; KG_TRUNK=.../state-trunk; KG_DAEMON_HOME=.../home; python3 ops/central_daemon.py --once -> exit 0; real codex exec created hello-ok.txt in state-exec-l-0001-hello-ok-txt; kgctl land pushed c0573b47->f6b0b66 to scratch origin/main; truthctl close L-0001 -> done
 - [已落盘] @ 8de7ba3649 codex/release-preview10 验证门禁通过，已落盘 main @ 8de7ba3649；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0032
 - [在途] real desktop host native dispatch succeeded via ops/codex_native.py dispatch; thread=01a147a9-b3ca-7412-80ff-2dc35cb816a1, turn=01a147a9-b4ef-7c43-949e-b5b83cb16773, section=01a147a9-b328-7c73-9d7d-0d84e3b11e9e; probe can_dispatch=true; section name Codex 自动挡真机验证; prompt requested no file changes
+- [在途] 原生直连卡点已解除：2026-10-17 真机 probe 使用 app-server-control.sock WebSocket 直连真实桌面宿主，transport=codex-app-server-websocket、connected=true、can_dispatch=true；dispatch 成功创建 native thread/turn/section，thread_id=01a147a9-b3ca-7412-80ff-2dc35cb816a1。旧 remote-control ChatGPT 配对结论被推翻。
+- [在途] preview-check.sh 已把真实安装/落地物/菜单栏应用/原生直连/总闸/面板首屏压成一条命令；2026-10-17 preview-check.sh --no-install 输出全部 PASS、exit 0。install.sh --verify 同一条命令可装完即验。
+- [在途] 原生 app-server/thread、Projects/窗口集合、turn/start、follow 均已通过真实 codex 二进制与真实桌面宿主验证：AUTOPILOT_SELFTEST_REAL_CODEX=1 selftest 全过；2026-10-17 probe can_dispatch=true；dispatch 创建 native thread/turn/section。scheduled automations 仍属于后续外部生命周期能力，不再伪装成本轮已实现。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0017` [P0] 原生协议与真实 codex 二进制对齐：修正窗口集合移动方法名并真机验证
-  - 证据：对 codex app-server 0.148.0-alpha.15 生成的官方 JSON schema：threadSection/move 不存在，正确方法名是 thread/section/move；实机验证旧名返回 unknown variant、新名被识别；AUTOPILOT_SELFTEST_REAL_CODEX=1 用真实 codex 二进制建出原生会话与窗口集…
 - `A-0018` [P0] 全量自检 23 组通过（含真二进制开关 24 组）
   - 证据：python3 ops/selftest.py -> 23 组全过；AUTOPILOT_SELFTEST_REAL_CODEX=1 python3 ops/selftest.py -> 24 组全过（含真实 codex 二进制协议验证）
 - `A-0019` [P0] 面板按官方嵌套字段显示窗口集合内的子对话
@@ -84,14 +82,14 @@
   - 证据：scratch=/tmp/ap-e2e-20261017-clean-1792202425-32217; KG_REPO=/Users/danta/Documents/Codex/2026-10-17/record-preview9/../../../../tmp/ap-e2e-20261017-clean-1792202425-32217/state; python3 ops…
 - `A-0033` [P1] codex/release-preview10 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0036` [P0] preview.10 机器全量验收：自检/面板逻辑/真实渲染/原生直连/安装产物全部通过
+  - 证据：preview-check.sh --no-install -> 0 failures (version=0.6.0-preview.10); python3 ops/selftest.py -> exit 0; python3 ops/panel_logic_check.py -> all pass; AUTOPILOT_CHROMIUM=... python3 ops/pa…
 
 ## 还差什么
 
-**bug（4 待处理）**
-- `L-0001` 复用 Codex 原生 app-server/thread、Projects/窗口集合与 scheduled automations，形成主司令窗到子对话窗的真
+**bug（2 待处理）**
 - `L-0003` 对话面板线上仍频繁显示“模型暂时没连上/已停止”，用户无法正常问答；同时右侧面板首卡、失败提示、17 个引用芯片、重复历史气泡混在一起，信息过多、没有轻重。需要
 - `L-0004` 自动挡在需要用户决策、人工验收或注意时，必须主动出现明确提示；同时回到产品路线，列出总体预期、剩余工作、卡点、未推进原因和下一步，不要只展示静态状态。
-- `L-0005` 原生直连仍卡在官方 remote-control ChatGPT enrollment/配对；安装、面板、菜单栏其余验收可继续机器自证
 
 ## 需要你验收
 
@@ -131,11 +129,12 @@
 - `A-0031` [P1] codex/verify-preview9-real-codex 落盘验收
 - `A-0032` [P0] 真实需求 auto_exec 机器闭环：入口->归类->独立 worktree->真实 codex->门禁->land->收口
 - `A-0033` [P1] codex/release-preview10 落盘验收
+- `A-0036` [P0] preview.10 机器全量验收：自检/面板逻辑/真实渲染/原生直连/安装产物全部通过
 
 ## 进度概览
 
-- 累计关闭问题：1 条
+- 累计关闭问题：3 条
 - 累计落盘：7 条
-- 未决问题：4 条
-- 已验收：23 条
+- 未决问题：2 条
+- 已验收：24 条
 
