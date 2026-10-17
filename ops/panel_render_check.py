@@ -68,6 +68,8 @@ def find_chromium():
         return override
     home = Path.home()
     patterns = (
+        "Library/Caches/ms-playwright/chromium_headless_shell-*/"
+        "chrome-headless-shell-mac-*/chrome-headless-shell",
         "Library/Caches/ms-playwright/chromium-*/chrome-mac-*/"
         "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
         "Library/Caches/ms-playwright/chromium-*/chrome-mac-*/"
@@ -88,10 +90,14 @@ def find_chromium():
 
 
 def _run(chromium, workdir, args):
-    base = [chromium, "--headless=new", "--disable-gpu", "--no-sandbox",
-            "--hide-scrollbars", "--force-device-scale-factor=2",
-            "--window-size=560,1600",
-            "--user-data-dir=" + str(workdir / "profile")]
+    single_process = Path(chromium).name == "chrome-headless-shell"
+    base = [chromium]
+    if single_process:
+        base.append("--single-process")
+    base += ["--headless=new", "--disable-gpu", "--no-sandbox",
+             "--hide-scrollbars", "--force-device-scale-factor=2",
+             "--window-size=560,1600",
+             "--user-data-dir=" + str(workdir / "profile")]
     try:
         return subprocess.run(base + args, capture_output=True, text=True, timeout=30)
     except subprocess.TimeoutExpired as exc:
@@ -141,6 +147,16 @@ def main(argv):
     dom_proc = _run(chromium, workdir, ["--virtual-time-budget=9000", "--dump-dom",
                                         "--allow-file-access-from-files",
                                         wrapper.as_uri()])
+    if not (dom_proc.stdout or "").strip() and dom_proc.returncode != 0:
+        candidates = find_chromium()
+        candidates = [c for c in candidates if c != chromium] if isinstance(candidates, list) else []
+        for fallback in candidates:
+            print(f"  ! {Path(chromium).name} 启动失败，改用 {Path(fallback).name} 重试")
+            dom_proc = _run(fallback, workdir, ["--virtual-time-budget=9000", "--dump-dom",
+                                                "--allow-file-access-from-files",
+                                                wrapper.as_uri()])
+            if (dom_proc.stdout or "").strip():
+                break
     dom = dom_proc.stdout or ""
     import re
     m = re.search(r'id="panel-mirror"[^>]*>(.*?)</pre>', dom, re.S)
@@ -166,6 +182,12 @@ def main(argv):
         if not text:
             return False
         return any(text in v for v in snapshot.values())
+
+    def visible_doing(text):
+        if not text:
+            return False
+        return any(text in v or f"等待你验收：{text}" in v
+                   or f"需要你验收：{text}" in v for v in snapshot.values())
 
     checks = [
         ("首屏显示绑定项目名", project.get("name")),
@@ -199,7 +221,8 @@ def main(argv):
         print("  PASS  首屏已渲染真实数据（非“读取中”）")
 
     for label, expected in checks:
-        if visible(expected):
+        ok = visible_doing(expected) if label == "首屏显示正在做什么" else visible(expected)
+        if ok:
             print(f"  PASS  {label}")
         else:
             print(f"  FAIL  {label}（期望文本：{expected!r}）")
