@@ -839,6 +839,9 @@ def cmd_inbox(args):
         if shown == 0:
             print("inbox 为空（没有待路由项）。新需求直接：kgctl inbox \"…\"")
         return
+    if args[0] in ('-h', '--help'):
+        print('用法: kgctl inbox "用户原话"')
+        return
     text = " ".join(args)
     rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "text": text,
            "source": os.environ.get("KG_INBOX_SOURCE", "user"),
@@ -860,6 +863,9 @@ def cmd_intake(args):
     """
     if not args:
         sys.exit('用法: kgctl intake "用户原话"')
+    if args[0] in ('-h', '--help'):
+        print('用法: kgctl intake "用户原话"')
+        return
     cmd_inbox(args)
     sys.stdout.flush()
     print("\n[1/5] route inbox", flush=True)
