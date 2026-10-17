@@ -68,7 +68,7 @@ bash install.sh
 open ~/Applications/CodexAutopilotCompanion.app
 ```
 
-1. 菜单栏出现自动挡图标（不是 Dock 图标，它常驻菜单栏）
+1. 屏幕右上角菜单栏出现自动挡图标，位置在电池/时钟左侧；图标是 macOS 系统符号，不是 Dock 图标：总闸开启时通常为路线符号 `road.lanes`，总闸关闭时为暂停圆 `pause.circle`，有待办时为警示圆 `exclamationmark.circle.fill`
 2. 点图标能看到：总开关、当前任务、需要处理的事、派活入口
 3. `⌥⌘D` 回到 Codex 里的完整面板（HTML 驾驶舱只在菜单里作备用视图）；面板首屏应显示「是否开启 / 当前项目 / 正在处理什么 / 下一步 / 需要你处理」
 
