@@ -261,24 +261,46 @@ def _thread_section_id(thread):
     return nested.get("id") or thread.get("sectionId") or None
 
 
-def dispatch_task(cwd, prompt, section_id=None, auto_section=None):
-    """Create a native thread and start its first turn in the same session."""
+def _resolve_section_id(proc, name):
+    """在同一次 app-server 会话里把集合名解析成 id；找不到时创建。"""
+    name = str(name or "").strip()
+    if not name:
+        return None, None
+    listed, error = _session_request(proc, "threadSection/list", {"limit": 100})
+    if error:
+        return None, error
+    sections = (listed or {}).get("data") or []
+    for section in sections:
+        if str((section or {}).get("name") or "").strip() == name:
+            return section.get("id"), None
+    created, error = _session_request(proc, "threadSection/create", {"name": name})
+    if error:
+        return None, error
+    return ((created or {}).get("section") or {}).get("id"), None
+
+
+def dispatch_task(cwd, prompt, section_id=None, auto_section=None, allow_isolated=False):
+    """Create a native thread and start its first turn in the same session.
+
+    Default is desktop-host only so callers do not accidentally fabricate a
+    desktop-window result. Pass allow_isolated=True when the caller explicitly
+    accepts an independent app-server session.
+    """
     path = Path(cwd).expanduser()
     if not path.is_absolute() or not path.is_dir():
         return None, "cwd 必须是已存在的绝对目录"
     if not str(prompt or "").strip():
         return None, "prompt 不能为空"
     section_note = None
-    if not section_id and auto_section:
-        section, section_error = ensure_section(auto_section)
-        if section:
-            section_id = section.get("id")
-        else:
-            section_note = "没能建/找到窗口集合「%s」：%s" % (auto_section, section_error)
-    proc, error = _session(host_only=True)
+    proc, error = _session(host_only=not allow_isolated)
     if error:
         return None, error
     try:
+        if not section_id and auto_section:
+            section_id, section_error = _resolve_section_id(proc, auto_section)
+            if section_error:
+                section_note = "没能建/找到窗口集合「%s」：%s" % (
+                    auto_section, section_error)
         params = {"cwd": str(path.resolve())}
         started, error = _session_request(proc, "thread/start", params)
         if error:
@@ -327,13 +349,17 @@ def dispatch_task(cwd, prompt, section_id=None, auto_section=None):
         _close_session(proc)
 
 
-def follow_up(thread_id, prompt):
-    """Start another turn on an existing native thread."""
+def follow_up(thread_id, prompt, allow_isolated=False):
+    """Start another turn on an existing native thread.
+
+    allow_isolated=True follows the same explicit opt-in as dispatch_task;
+    the default remains desktop-host only.
+    """
     if not thread_id:
         return None, "thread_id 不能为空"
     if not str(prompt or "").strip():
         return None, "prompt 不能为空"
-    proc, error = _session(host_only=True)
+    proc, error = _session(host_only=not allow_isolated)
     if error:
         return None, error
     try:
@@ -609,8 +635,8 @@ def _cli(argv):
     例：
         python3 ops/codex_native.py probe
         python3 ops/codex_native.py history --limit 5
-        python3 ops/codex_native.py dispatch --cwd DIR --prompt "…" [--section SECTION]
-        python3 ops/codex_native.py follow --thread THREAD --prompt "…"
+        python3 ops/codex_native.py dispatch --cwd DIR --prompt "…" [--section SECTION] [--allow-isolated]
+        python3 ops/codex_native.py follow --thread THREAD --prompt "…" [--allow-isolated]
         python3 ops/codex_native.py section --name "窗口集合名"
         python3 ops/codex_native.py move --thread THREAD --section SECTION
     """
@@ -636,10 +662,16 @@ def _cli(argv):
     elif action == "snapshot":
         payload, error = snapshot(), None
     elif action == "dispatch":
-        payload, error = dispatch_task(take("--cwd", os.getcwd()),
-                                       take("--prompt", ""), take("--section"))
+        section_arg = take("--section")
+        payload, error = dispatch_task(
+            take("--cwd", os.getcwd()),
+            take("--prompt", ""),
+            None if section_arg else None,
+            auto_section=section_arg,
+            allow_isolated="--allow-isolated" in argv)
     elif action == "follow":
-        payload, error = follow_up(take("--thread"), take("--prompt", ""))
+        payload, error = follow_up(take("--thread"), take("--prompt", ""),
+                                   allow_isolated="--allow-isolated" in argv)
     elif action == "section":
         payload, error = create_section(take("--name", ""))
     elif action == "move":
