@@ -1069,6 +1069,16 @@ def _non_executable_reason(item: dict) -> str | None:
     ))
     # Explicit human/external handoffs are hard boundaries. A nearby test
     # path does not turn a request for a person to review into code work.
+    # Benchmark/quality reviews can contain concrete test commands while
+    # still depending on human judgment or a complete live run. They must not
+    # consume a code worker slot just because the prose names a test command.
+    quality_review_marks = (
+        "真实评分", "50题真实评分", "36题", "benchmark", "质量门禁诊断",
+        "人工盲评", "中心可接受率",
+    )
+    if any(x in text for x in quality_review_marks) and any(
+            x in text for x in ("遗漏率", "可接受率", "真人", "人工", "blind")):
+        return "needs_human"
     if any(x in text for x in human_actions):
         return "needs_human"
     if any(x in text for x in human_marks) and not concrete:
@@ -2381,6 +2391,11 @@ def dispatch_exec(dry: bool, blocked: dict) -> list:
         log(f"[exec] 检测到 {len(external)} 个重载前仍在运行的 exec worktree，按占用槽位处理")
     if free <= 0:
         return finished
+    # A task already has a live worker. Filter it out before the candidate
+    # loop so dry-run and real dispatch agree and it cannot consume one of the
+    # remaining candidate slots.
+    external_task_ids = {_worktree_task_id(path) for path in external}
+    external_task_ids.discard(None)
     # needs_split is derived from the live ledger item, not a permanent block.
     # Release it before candidate scanning so a newly-added splitter can heal
     # rows written by an older daemon. Dispatch re-checks every other blocked
@@ -2392,6 +2407,8 @@ def dispatch_exec(dry: bool, blocked: dict) -> list:
     candidates = []
     for item in _ledger_open_items():
         rid = item.get("id")
+        if rid in external_task_ids:
+            continue
         slug_probe = f"{_exec_slug(rid)}-{_exec_slug(item.get('title') or '')}"
         wt_probe = Path(_state_repo()).parent / f"{Path(_state_repo()).name}-exec-{slug_probe}"
         # Recovery snapshots may be relative or use a differently-spelled path
@@ -2467,8 +2484,12 @@ def dispatch_exec(dry: bool, blocked: dict) -> list:
             continue
         if dry:
             log(f"[dry] 会派发 {rid}（{item.get('kind')}）{item.get('title')}")
+            # Prediction must scan past blocked rows rather than reporting the
+            # first non-executable ledger note as if it were runnable.
             candidates.append(item)
-            break
+            if len(candidates) >= min(cfg["max_per_cycle"], free):
+                break
+            continue
         candidates.append(item)
         if len(candidates) >= min(cfg["max_per_cycle"], free):
             break
@@ -2839,6 +2860,23 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
         log("[pause] 周期开始前被暂停：只刷新状态，不做路由/落盘")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
                 "paused": True, "summary": {}, "landed": [], "failures": []}
+    # Fill implementation slots before maintenance bookkeeping. `tick` scans
+    # historical branches and can take a minute; putting it first made every
+    # new worker wait behind it while the user saw idle capacity.
+    early_exec_results = []
+    early_exec_landed = []
+    exec_blocked = dict(load_state().get("exec_blocked") or {})
+    for _stale in _prune_exec_blocked(exec_blocked):
+        log(f"[exec] 台账已收口，清掉实现暂缓：{_stale}")
+    exec_cfg = auto_exec_config()
+    if exec_cfg["enabled"]:
+        early_exec_results = _collect_exec(exec_blocked) + dispatch_exec(False, exec_blocked)
+        save_worker_state()
+        early_exec_landed = [
+            r for r in early_exec_results if r.get("outcome") == "landed"
+        ]
+    elif not exec_cfg["enabled"]:
+        log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
     rc, out = run_kgctl(["tick"])
     save_heartbeat(current_stage="tick_done")
     log_block("tick", rc, out)
@@ -2990,20 +3028,15 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
 
     # 自动实现：把台账里还没做的待办派给一个真实 codex 会话，在独立 worktree 里
     # 实现 -> 门禁 -> 落盘 -> 收口。默认关闭（面板「自动实现需求」开关 / control.json）。
-    exec_results, exec_landed = [], []
-    exec_blocked = dict(load_state().get("exec_blocked") or {})
-    # 已收口的需求不该继续挂在「实现暂缓」名单里（代码/台账都已落定）。
-    for _stale in _prune_exec_blocked(exec_blocked):
-        log(f"[exec] 台账已收口，清掉实现暂缓：{_stale}")
-    exec_cfg = auto_exec_config()
+    exec_results, exec_landed = early_exec_results, early_exec_landed
     if dry:
         dispatch_exec(True, exec_blocked)
+    elif not exec_cfg["enabled"]:
+        pass
     elif exec_cfg["enabled"] and not (rc != 0 and not out.strip()):
         exec_results = _collect_exec(exec_blocked) + dispatch_exec(False, exec_blocked)
         save_worker_state()
         exec_landed = [r for r in exec_results if r.get("outcome") == "landed"]
-    elif not exec_cfg["enabled"]:
-        log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
 
     # 落过盘就再刷一次控制面，让看板/快照反映新 main。
     if (landed or ported or resolve_landed_any or exec_landed) and not dry:
