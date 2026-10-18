@@ -1592,9 +1592,25 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
         return _finish_exec(item, cfg, repo, wt, branch, rid,
                             {"id": rid, "branch": branch, "worktree": str(wt)}, blocked)
     if existing:
-        _git(repo, "worktree", "remove", "--force", str(wt))
+        # `worktree remove` fails when the checkout path was detached from the
+        # repository that owns the branch (a stale registration can survive a
+        # restart), so verify both commands before claiming cleanup succeeded.
+        wt_rc, _, wt_err = _git(repo, "worktree", "remove", "--force", str(wt))
+        if wt_rc != 0 and wt.exists():
+            log(f"[exec] {rid} 清理残留 worktree 失败，暂不重建：{wt_err[:300]}")
+            blocked[rid] = {"reason": "leftover_worktree", "branch": branch,
+                            "worktree": str(wt), "ts": _now()}
+            return {"id": rid, "outcome": "leftover_worktree", "branch": branch,
+                    "worktree": str(wt)}
+        branch_rc, _, branch_err = (0, "", "")
         if _git(repo, "rev-parse", "--verify", branch)[0] == 0:
-            _git(repo, "branch", "-D", branch)
+            branch_rc, _, branch_err = _git(repo, "branch", "-D", branch)
+        if branch_rc != 0:
+            log(f"[exec] {rid} 清理残留分支失败，暂不重建：{branch_err[:300]}")
+            blocked[rid] = {"reason": "leftover_branch", "branch": branch,
+                            "worktree": str(wt), "ts": _now()}
+            return {"id": rid, "outcome": "leftover_branch", "branch": branch,
+                    "worktree": str(wt)}
         log(f"[exec] {rid} 残留 worktree/分支已清掉（无未提交改动、分支无未落提交），重建")
     _git(repo, "fetch", "origin", main_branch)
     _, base, _ = _git(repo, "rev-parse", f"origin/{main_branch}")
