@@ -1706,6 +1706,18 @@ def test_auto_exec():
             "detail": "需要人工复核 50 题并导出 review-results.json",
         }) == "needs_human"
         assert daemon_p._non_executable_reason({
+            "title": "阶段1人工盲评包已生成，可直接打开做中心定义+语义信号复核",
+            "detail": "完成后在浏览器导出 review-results.json，再跑 node test/stage1-human-review.mjs summarize",
+        }) == "needs_human"
+        assert daemon_p._non_executable_reason({
+            "title": "阶段1人工复核包：离线完整性 fail-closed 可复核",
+            "detail": "只补 review package 的离线完整性校验，改 backend/test/build-stage1-review-package.mjs",
+        }) is None
+        assert daemon_p._non_executable_reason({
+            "title": "【发布底座·外部阻塞合并提醒】",
+            "detail": "Railway 套餐过期、生产域名 404/TLS",
+        }) == "external_blocked"
+        assert daemon_p._non_executable_reason({
             "title": "检索出口当前是红灯：Tavily 返回 432 usage limit",
             "detail": "外部计划配额耗尽",
         }) == "external_blocked"
