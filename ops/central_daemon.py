@@ -804,17 +804,32 @@ def _non_executable_reason(item: dict) -> str | None:
     detail = (item.get("detail") or "").strip().lower()
     text = title + "\n" + detail
     human_marks = (
-        "人工盲评", "真人盲评", "人工复核", "真人复核", "人工验收",
-        "需要人判断", "请用户打开", "等待带指纹",
+        "人工盲评", "真人盲评", "人工验收", "需要人判断", "请用户打开",
+        "等待带指纹", "人工盲评包", "完成复核", "导出 review-results",
+        "真人打开复核", "请真人",
+    )
+    # "人工复核包" alone is a test artifact, not a demand that a human run
+    # the worker. Only an explicit handoff phrase should park the item.
+    human_actions = (
+        "等待真人", "请真人", "需要真人", "由真人", "真人打开",
+        "导出 review-results", "完成复核",
     )
     external_marks = (
         "tavily 返回 432", "usage limit", "欠费", "余额不足",
         "生产 404", "stripe 未配置", "bing 反爬",
+        # A release-blocker notice that enumerates production-only conditions
+        # is not an implementation task. Keep it visible in the ledger, but do
+        # not let it occupy a code lane while external prerequisites are red.
+        "外部阻塞", "不在代码仓库里", "railway 套餐", "生产域名 404",
     )
     concrete = any(x in text for x in (
         "verify:", "npm run", "npx ", "node test/", "python3 ",
         ".ts", ".mjs", ".py",
     ))
+    # Explicit human/external handoffs are hard boundaries. A nearby test
+    # path does not turn a request for a person to review into code work.
+    if any(x in text for x in human_actions):
+        return "needs_human"
     if any(x in text for x in human_marks) and not concrete:
         return "needs_human"
     if any(x in text for x in external_marks):
