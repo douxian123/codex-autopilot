@@ -666,9 +666,31 @@ def cmd_next(args):
         print('没有未决项：可以跑 kgctl reap --go 回收已合并分支，或接收新输入。')
         return
     print('优先处理：')
-    for i, r in enumerate(led[:8], 1):
+    # Report the complete latest snapshot. A fixed ``[:8]`` made the CLI look
+    # as if there were more runnable items than the dispatcher could see after
+    # append-only ids were collapsed; users then reasonably asked why workers
+    # were not running in parallel. Callers get the actual current count here
+    # and can distinguish external/human blocks from executable work.
+    runnable = []
+    blocked = []
+    for r in led:
+        text = f"{r.get('title') or ''}\n{r.get('detail') or ''}".lower()
+        if any(token in text for token in (
+                'external_blocked', 'needs_human', '人工盲评', '人工复核',
+                'tavily', '432', '额度欠费', '外部通道', '生产域名')):
+            blocked.append(r)
+        else:
+            runnable.append(r)
+    for i, r in enumerate(runnable, 1):
         lane = f" -> {r.get('lane')}" if r.get('lane') else ' -> 未归属'
         print(f"  {i}. {r['id']} [{r.get('kind','')}] {r.get('title','')[:88]}{lane}")
+    if not runnable:
+        print('  （没有当前可派项；不要为了填满 worker 槽位重复派已阻塞任务）')
+    if blocked:
+        print('等待外部条件或人工验收：')
+        for r in blocked:
+            print(f"  - {r['id']} [{r.get('kind','')}] {r.get('title','')[:88]}")
+    print(f'当前实际未决 {len(led)} 条：可派 {len(runnable)} 条，外部/人工卡住 {len(blocked)} 条。')
     print(f'\n下一步：python3 {_kgctl_cmd()} tick（收拢新输入并刷新）/ land <分支>（落盘已验证分支）')
 
 
