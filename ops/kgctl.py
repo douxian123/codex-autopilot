@@ -34,10 +34,12 @@ kgctl —— 自动挡的唯一执行入口（stdlib only）
   * `matrix/queue/status/sync/clash/inbox 读` 全部只读。
 """
 
+import contextlib
 import hashlib
 import json
 import os
 import re
+import fcntl
 import shutil
 import sqlite3
 import subprocess
@@ -75,6 +77,38 @@ RUNTIME_OPS = Path(__file__).resolve().parent
 OPS = REPO / "ops" / "tasks"
 INBOX = OPS / "inbox.jsonl"
 LANES = OPS / "lanes.json"
+_SCAN_CACHE = None
+_SCAN_CACHE_KEY = None
+
+
+def invalidate_scan_cache():
+    """丢弃当前进程内的分支扫描缓存。
+
+    tick 会连续调用 scan() 六七次。以前每次都对 200+ 个分支重新起一串
+    git 子进程，一个心跳能被拖过十分钟。缓存只活在单次命令进程里，命令
+    结束就消失；写操作前显式失效，避免同一次 tick 读到旧分支状态。
+    """
+    global _SCAN_CACHE, _SCAN_CACHE_KEY
+    _SCAN_CACHE = None
+    _SCAN_CACHE_KEY = None
+
+
+def _scan_key():
+    """粗粒度但不会误吃写操作的缓存键。"""
+    return (git("rev-parse", MAIN), git("for-each-ref", "--format=%(objectname)",
+                                        f"refs/heads/{BRANCH_PREFIX}"))
+
+
+def _timeout_git(args, timeout=45):
+    """扫描用的 git 调用必须可超时；单个脏分支不能把心跳卡死。"""
+    try:
+        p = subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True,
+                           errors="replace", timeout=timeout)
+        return p.returncode, p.stdout
+    except subprocess.TimeoutExpired:
+        return 124, ""
+
+
 def _git_common_dir() -> Path:
     out = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--git-common-dir"],
                          capture_output=True, text=True)
@@ -196,7 +230,7 @@ def write_text(path: Path, text: str) -> None:
 
 
 def codex_branches():
-    out = git("for-each-ref", "--format=%(refname:short)", "refs/heads")
+    out = git("for-each-ref", "--format=%(refname:short)", f"refs/heads/{BRANCH_PREFIX}")
     return [b for b in out.split("\n") if b.startswith(BRANCH_PREFIX)]
 
 
@@ -210,8 +244,11 @@ def repo_of(branch):
 
 
 def changed_files(branch):
-    base = git("merge-base", MAIN, branch)
-    return [f for f in git("diff", "--name-only", base, branch).split("\n") if f]
+    rc, base = _timeout_git(["merge-base", MAIN, branch])
+    if rc != 0 or not base.strip():
+        return []
+    rc, out = _timeout_git(["diff", "--name-only", base.strip(), branch])
+    return [f for f in out.split("\n") if f] if rc == 0 else []
 
 
 def conflict_files(branch):
@@ -240,6 +277,47 @@ def conflict_files(branch):
         return sorted(names)
     # 退化：从 CONFLICT 行里找（不同 git 版本措辞不同）
     return sorted(set(re.findall(r"CONFLICT[^:]*:\s*(?:Merge conflict in )?(\S+)", p.stdout)))
+
+
+def conflict_files_bulk(branches):
+    """一次 merge-tree 判多条冲突，避免每条分支起一个 Git 进程。
+
+    `--stdin -z` 输出的是记录流而不是按分支分块：记录 0 是 tree OID，
+    记录 1 是冲突路径；后面重复 `记录0=1, 记录1=path, ...` 的消息属于同一条
+    输入。因此这里按“每个输入至少一条 tree 记录”推进，遇到下一条 64 位
+    十六进制记录就进入下一条分支。解析失败时返回 None，调用方必须逐条
+    兜底——不能把解析器的故障误报成“无冲突”。
+    """
+    branches = [b for b in branches if b]
+    if not branches:
+        return {}
+    stdin = "".join(f"{MAIN} {b}\n" for b in branches)
+    p = subprocess.run(["git", "-C", str(REPO), "merge-tree", "--write-tree",
+                        "--name-only", "--no-messages", "-z", "--stdin"],
+                       input=stdin, capture_output=True, text=True)
+    if p.returncode not in (0, 1):
+        return None
+    chunks = p.stdout.split("\x00")
+    out = {}
+    idx = 0
+
+    for branch in branches:
+        if idx >= len(chunks) or chunks[idx] not in ("0", "1", "2"):
+            return None
+        status = chunks[idx]
+        idx += 1
+        if idx >= len(chunks) or not re.fullmatch(r"[0-9a-f]{40,64}", chunks[idx].strip()):
+            return None
+        idx += 1
+        files = []
+        while idx < len(chunks) and chunks[idx]:
+            if chunks[idx] not in files:
+                files.append(chunks[idx])
+            idx += 1
+        out[branch] = sorted(files)
+        while idx < len(chunks) and chunks[idx] == "":
+            idx += 1
+    return out
 
 
 def unresolved_marker_files(branch):
@@ -445,6 +523,17 @@ def branch_net_zero(branch):
     return (not notes), notes
 
 
+def branch_diff_is_empty(branch):
+    """分支相对当前 main 是否真的没有任何净差异。
+
+    `git cherry` 只看单个提交的 patch-id，合并提交带来的实际文件差异不在其中。
+    因此它不能单独作为「可归档」的充分条件：2026-10-18 的
+    codex/879-grow-stacked-clean-final 就没有未落提交，但相对 main 仍有
+    3 个文件、3 行净差异。归档前必须再确认 tree 真的没有独有内容。
+    """
+    return not git("diff", "--name-only", MAIN, branch).strip()
+
+
 def unlanded_commits(branch):
     """分支上「main 里找不到等价改动」的提交（`git cherry` 的 `+` 行）。
 
@@ -537,16 +626,18 @@ def conflict_burden_map(rows=None):
 def branch_content_landed(branch):
     """分支想表达的内容，是不是已经全部在 main 里了。
 
-    两条独立判据，命中任意一条都算已落（都只读、都不动任何分支）：
-      * patch-id 等价：`git cherry` 里没有 `+` —— 每个提交都在 main 找到等价改动；
-      * 逐文件净零：分支相对自身 base 的增删行都能在 main 找到（见 branch_net_zero）。
+    两条判据都必须成立（都只读、都不动任何分支）：
+      * patch-id 等价：`git cherry` 里没有 `+`；
+      * 相对当前 main 的 tree 净差异为空，或逐文件净零（见 branch_net_zero）。
 
-    第一条对「分支带着旧基线、文件内容整体落后于 main」更稳，第二条对「分支提交
-    被重排或拆分」更稳。取并集意味着判据更宽，所以只用于归档（不产生任何代码改动、
-    不改任何分支），不参与 land 的放行判断。
+    只做 patch-id 会误归档「merge commit 带着独有差异」的分支；只做逐文件比对
+    又可能把重排/拆分的提交漏掉。取交集是归档的唯一安全边界，宁可漏判，不可误判。
     """
-    if not unlanded_commits(branch):
-        return True, ["patch-id 等价：分支的每个提交都能在 main 找到等价改动"]
+    plus = unlanded_commits(branch)
+    if plus:
+        return False, [f"仍有 {len(plus)} 条未落提交"]
+    if branch_diff_is_empty(branch):
+        return True, ["patch-id 等价且相对 main 无净差异"]
     return branch_net_zero(branch)
 
 
@@ -555,26 +646,44 @@ def cmd_supersede(args):
 
     默认只预演；`kgctl supersede --go` 才写进展台账并推送 main。
     只处理 ahead>0 的分支（ahead==0 的走 `kgctl reap`）。
-    `--fast` 只跑 patch-id 判据（秒级），适合守护进程每个周期跑一遍；不带它则额外
-    做逐文件比对（分钟级，能多捞出「提交被重排/拆分」的分支）。
+    `--fast` 走 patch-id + tree 净差异两道秒级判据；不带它则额外做逐文件比对，
+    能多捞出「提交被重排/拆分」的分支。
     """
     go = "--go" in args
     fast = "--fast" in args
     rows = [r for r in scan() if r["kind"] != "MERGED"]
-    mode = "patch-id" if fast else "patch-id + 逐文件比对"
+    mode = "patch-id + tree 净差异" if fast else "patch-id + tree 净差异 + 逐文件比对"
     print(f"扫描「分支独有内容是否已全部在 main」……（{mode}）\n")
     done = already_superseded()
     if done:
         print(f"（真相台账里已有 {len(done)} 条 superseded 记录，将跳过）\n")
-    cands = []
+    # 先用 git cherry 做一次便宜的预筛：只有「没有未落提交」的分支才可能是
+    # 重复分支。直接对 200+ 分支逐个跑 merge-tree / 逐文件净零，会把一次
+    # supersede 拖成十几分钟；这正是 2026-10-18 守护进程卡住的原因。
+    # 扫描结果已经给了冲突文件数；patch-id 不同且冲突面大的分支不可能靠这里
+    # 安全归档（真要移植交给 port），因此只对小冲突面做昂贵的 tree 校验。
+    possible = []
     for r in sorted(rows, key=lambda x: (x["nfiles"], x["ahead"])):
         if r["branch"] in done:
             continue
+        if len(r.get("conflicts") or []) > 2:
+            continue
+        if unlanded_commits(r["branch"]):
+            continue
+        possible.append(r)
+    if not possible:
+        print("没有可自动归档的分支：每个有改动的分支都还带着 main 里没有的提交。")
+        return
+    # 第二步只对预筛后的少量分支做 tree/逐文件判据。tree 为空的分支可直接归档；
+    # patch-id 不同但内容重排的，才走较慢的逐文件比对。
+    cands = []
+    for r in possible:
+        if branch_diff_is_empty(r["branch"]):
+            cands.append(r)
+            continue
         if fast:
-            ok = not unlanded_commits(r["branch"])
-            notes = ["patch-id 等价"] if ok else []
-        else:
-            ok, notes = branch_content_landed(r["branch"])
+            continue
+        ok, _notes = branch_net_zero(r["branch"])
         if ok:
             cands.append(r)
     if not cands:
@@ -624,7 +733,8 @@ def cmd_supersede(args):
         subprocess.run(["git", "-C", str(wt), "add", "ops/truth/progress.jsonl"], check=True)
         committed = subprocess.run(
             ["git", "-C", str(wt), "commit", "-m",
-             f'chore(truth): mark {len(cands)} branches superseded by main'],
+             f'chore(truth): mark {len(cands)} branches superseded by main',
+             "--", "ops/truth/progress.jsonl"],
             capture_output=True, text=True)
         if committed.returncode != 0:
             raise RuntimeError(f"提交进展台账失败: {committed.stderr.strip()[:400]}")
@@ -839,9 +949,6 @@ def cmd_inbox(args):
         if shown == 0:
             print("inbox 为空（没有待路由项）。新需求直接：kgctl inbox \"…\"")
         return
-    if args[0] in ('-h', '--help'):
-        print('用法: kgctl inbox "用户原话"')
-        return
     text = " ".join(args)
     rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "text": text,
            "source": os.environ.get("KG_INBOX_SOURCE", "user"),
@@ -863,9 +970,6 @@ def cmd_intake(args):
     """
     if not args:
         sys.exit('用法: kgctl intake "用户原话"')
-    if args[0] in ('-h', '--help'):
-        print('用法: kgctl intake "用户原话"')
-        return
     cmd_inbox(args)
     sys.stdout.flush()
     print("\n[1/5] route inbox", flush=True)
@@ -929,35 +1033,69 @@ def cmd_suggest(args):
 # ---------------------------------------------------------------- 分诊
 
 def scan():
+    global _SCAN_CACHE, _SCAN_CACHE_KEY
+    key = _scan_key()
+    if _SCAN_CACHE_KEY == key and _SCAN_CACHE is not None:
+        return [dict(r) for r in _SCAN_CACHE]
     rows = []
     # 已裁决的源分支不再算「待裁决冲突」。resolve.json 里 landed/abandoned 的、
     # progress.jsonl 里 superseded 的，git 层还可能显示 ahead+conflict（它们本来就是
     # 没合进 main 的历史分支），只按 ahead/conflict 判定就会把它们反复捞回 C 组：
     # 队列数字虚高，守护进程每轮还重拆同一条已收口的分支。单列一档 SETTLED。
     settled = _decided_resolve_branches() | already_superseded()
-    for b in codex_branches():
+    branches = codex_branches()
+    # 一次 for-each-ref 拿 ahead/behind、时间、标题；不再每条分支起 5 个 git。
+    meta_format = ("%(refname:short)%09%(ahead-behind:" + MAIN +
+                   ")%09%(committerdate:unix)%09%(subject)")
+    meta_out = git("for-each-ref", "--format=" + meta_format,
+                   f"refs/heads/{BRANCH_PREFIX}")
+    metas = {}
+    for line in meta_out.splitlines():
+        parts = line.split("\t", 3)
+        if len(parts) < 3:
+            continue
+        name, ab, ts = parts[0], parts[1], parts[2]
+        subject = parts[3] if len(parts) == 4 else ""
+        try:
+            ahead_s, behind_s = ab.split()
+            metas[name] = (int(ahead_s), int(behind_s), int(ts), subject[:70])
+        except (ValueError, TypeError):
+            continue
+    live = [b for b in branches if not _is_generated_branch(b)]
+    conflict_map = conflict_files_bulk([b for b in live if metas.get(b, (0,))[0] > 0])
+    for b in branches:
         # 收拢分支是自动挡生成的任务容器，不是待裁决的用户分支。把它排除在一屏 /
         # matrix / queue 之外，否则它自己带 conflict markers 时会被当成“残留冲突
         # 标记”反复报出来，用户会误以为还有一条工作没收拾。
         if _is_generated_branch(b):
             continue
-        ahead, behind = counts(b)
-        ts = int(git("log", "-1", "--format=%ct", b) or 0)
-        files = changed_files(b)
+        if b not in metas:
+            ahead, behind = counts(b)
+            ts = int(git("log", "-1", "--format=%ct", b) or 0)
+            subject = git("log", "-1", "--format=%s", b)[:70]
+        else:
+            ahead, behind, ts, subject = metas[b]
+        # 已经全在 main 的分支不需要再算 changed files；这正是旧 scan 最贵的一段。
+        files = changed_files(b) if ahead else []
         markers = []
         if ahead == 0:
             kind, conf = "MERGED", []
         else:
-            conf = conflict_files(b)
+            # 批量解析失败或单条异常时逐条兜底；绝不把“取不到”写成“无冲突”。
+            conf = None if conflict_map is None else conflict_map.get(b)
+            if conf is None:
+                conf = conflict_files(b)
             markers = unresolved_marker_files(b) if not conf else []
             kind = "CONFLICT" if conf else ("UNRESOLVED" if markers else "CLEAN")
             if kind == "CONFLICT" and b in settled:
                 kind = "SETTLED"
         rows.append(dict(branch=b, ahead=ahead, behind=behind,
                          age=round((time.time() - ts) / 86400, 1) if ts else -1,
-                         subject=git("log", "-1", "--format=%s", b)[:70],
+                         subject=subject,
                          nfiles=len(files), files=files, kind=kind, conflicts=conf,
                          markers=markers))
+    _SCAN_CACHE_KEY = key
+    _SCAN_CACHE = [dict(r) for r in rows]
     return rows
 
 
@@ -1086,6 +1224,29 @@ def _write_convergence_record(record: dict) -> None:
     write_json(CONVERGENCE, data)
 
 
+def _is_generated_conflict_view(rel: str) -> bool:
+    """控制面的派生视图冲突不进入人工语义合并。
+
+    `docs/CONTROL_*`、`PROJECT_STATUS`、`PRODUCT_MAINLINE` 和 `ops/context/` 都是
+    每次 tick 从真相重新生成的快照。让几十份旧快照把 convergence 任务撑到 50+ 文件，
+    会把真正需要判断的代码冲突淹掉；这里保留 converge 分支当前版本，随后由 tick
+    按最新 main 再生成。账本 `ops/tasks/` 与 `ops/truth/` 不在豁免范围。
+    """
+    return (rel.startswith("ops/context/") or
+            rel in {"docs/PROJECT_STATUS.md", "docs/CONTROL_BOARD.md",
+                    "docs/CONTROL_PLANE.html", "docs/PRODUCT_MAINLINE.md"})
+
+
+def _resolve_generated_conflict(wt: Path, rel: str) -> None:
+    target = wt / rel
+    if target.exists():
+        subprocess.run(["git", "-C", str(wt), "add", "--force", "--", rel],
+                       check=True, capture_output=True, text=True)
+    else:
+        subprocess.run(["git", "-C", str(wt), "rm", "--force", "--", rel],
+                       check=True, capture_output=True, text=True)
+
+
 def _merge_jsonl_conflict(wt: Path, rel: str) -> None:
     """冲突 JSONL 用行级并集保住两边记录，顺序保持 ours -> theirs。"""
     def stage(n):
@@ -1129,7 +1290,10 @@ def _commit_conflicted_merge(wt: Path, branch: str, group_id: str) -> dict:
         return {"branch": branch, "files": [], "auto_resolved_jsonl": []}
     auto = []
     for rel in unresolved:
-        if rel.endswith(".jsonl"):
+        if _is_generated_conflict_view(rel):
+            _resolve_generated_conflict(wt, rel)
+            auto.append(rel)
+        elif rel.endswith(".jsonl"):
             _merge_jsonl_conflict(wt, rel)
             auto.append(rel)
     _stage_unmerged(wt, unresolved)
@@ -1304,6 +1468,8 @@ def _replan_groups(pending, go):
         rec = dict(g)
         rec["status"] = "replanned"
         rec["replanned"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        rec["unresolved_files"] = []
+        rec["worker_error"] = None
         rec["replan_report"] = {
             "members": len(members), "already": len(already),
             "auto_port": len(port), "manual": len(manual),
@@ -2042,9 +2208,42 @@ def _align_main():
     ff = subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
                          local, remote], capture_output=True, text=True)
     if ff.returncode != 0:
+        # A daemon tick can commit generated truth files from a shared checkout
+        # that also contains product edits. The commit message then looks like
+        # a truth-only commit while its tree includes stale product files.
+        # Recover only for truth-shaped local commits: preserve the truth
+        # working tree, advance the ref without touching the checkout, and let
+        # land use its clean one-shot worktree. Real local product commits
+        # continue to fail closed.
+        local_only = [line for line in git(
+            "log", "--format=%s", f"origin/{MAIN}..{MAIN}").splitlines()
+            if line.strip()]
+        product_changes = [
+            line for line in git(
+                "diff", "--name-only", f"origin/{MAIN}...{MAIN}").splitlines()
+            if line.strip() and not is_truth_path(f" M {line}")
+        ]
+        # Only a local-only tip whose *entire* net diff is truth files is a
+        # disposable truth commit. Checking commit subjects alone is unsafe:
+        # a `chore(truth)` commit may also contain stale product files, and a
+        # linear branch may have a harmless truth commit followed by a real
+        # product commit. In both cases advancing main would discard work.
+        truth_only = bool(local_only) and not product_changes and all(
+            TRUTH_COMMIT_RE.match(line) for line in local_only)
+        if truth_only:
+            snap = _snapshot_truth_files(REPO)
+            subprocess.run(["git", "-C", str(REPO), "update-ref",
+                            f"refs/heads/{MAIN}", remote, local], check=True)
+            _restore_truth_files(REPO, snap)
+            print(
+                f"  {MAIN} 本地提交 {local[:8]} 是真相层临时提交，"
+                f"净树只含真相层文件；已保留真相文件并"
+                f"把 ref 对齐 origin/{MAIN} {remote[:8]}")
+            return
         raise RuntimeError(
             f"本地 {MAIN} 与 origin/{MAIN} 已分叉：local={local[:10]} remote={remote[:10]}；"
-            "先人工合并/推送本地提交，再执行 land")
+            f"本地领先提交不是纯真相层（{len(product_changes)} 个产品文件；"
+            f"提交={local_only[:3]}），拒绝自动对齐，请先人工合并/推送")
     subprocess.run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
                     remote, local], check=True)
     print(f"  {MAIN} 本地引用 {local[:8]} -> {remote[:8]}（同步 origin）")
@@ -2212,7 +2411,8 @@ def _record_land_progress(wt: Path, branch: str, commit: str, verify_results: li
     if staged.returncode != 0:
         raise RuntimeError(f"暂存真相信台账失败: {staged.stderr.strip()[:500]}")
     committed = subprocess.run(
-        ["git", "-C", str(wt), "commit", "-m", f"chore(truth): record landing {branch}"],
+        ["git", "-C", str(wt), "commit", "-m", f"chore(truth): record landing {branch}",
+         "--", "ops/truth/progress.jsonl", "ops/truth/acceptance.jsonl"],
         capture_output=True, text=True)
     if committed.returncode != 0:
         raise RuntimeError(f"提交真相台账失败: {committed.stderr.strip()[:500]}")
@@ -2521,11 +2721,14 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
         if (wt / rel).exists():
             subprocess.run(["git", "-C", str(wt), "add", "--", rel],
                            capture_output=True, text=True)
-    staged = subprocess.run(["git", "-C", str(wt), "diff", "--cached", "--name-only"],
+    stage_paths = [rel for rel in TRUTH_PATHS if (wt / rel).exists()]
+    staged = subprocess.run(["git", "-C", str(wt), "diff", "--cached", "--name-only",
+                             "--", *stage_paths],
                             capture_output=True, text=True).stdout.strip()
     if not staged:
         return False
-    committed = subprocess.run(["git", "-C", str(wt), "commit", "-m", f"chore(truth): {reason}"],
+    committed = subprocess.run(["git", "-C", str(wt), "commit", "-m",
+                                f"chore(truth): {reason}", "--", *stage_paths],
                                capture_output=True, text=True)
     if committed.returncode != 0:
         print("  " + (committed.stdout + committed.stderr).strip()[:200])
@@ -2593,8 +2796,12 @@ def _resolve_truth_merge(wt: Path) -> bool:
         else:
             write_text(wt / rel, theirs or ours)
         subprocess.run(["git", "-C", str(wt), "add", "--", rel], check=True)
+    # This path runs while MERGE_HEAD exists. Git rejects partial commits
+    # (`commit -- <pathspec>`) during a merge, so the unmerged truth files are
+    # already explicitly staged above and the merge commit must use the index.
     committed = subprocess.run(
-        ["git", "-C", str(wt), "commit", "-m", "chore(truth): merge origin/main into truth state"],
+        ["git", "-C", str(wt), "commit", "-m",
+         "chore(truth): merge origin/main into truth state"],
         capture_output=True, text=True)
     if committed.returncode != 0:
         print(f"  真相层合并提交失败：{(committed.stdout + committed.stderr).strip()[:300]}")
@@ -2661,6 +2868,38 @@ def load_resolve() -> dict:
     return data
 
 
+@contextlib.contextmanager
+def _resolve_state_lock():
+    """串行化 resolve.json 的读-改-写。
+
+    后台 resolve 与前台 reseolve --finish 可能同时更新同一份台账；两个进程各自
+    load 后再 write 会丢掉对方的认领/完成记录。锁放在所有 worktree 共享的 .git 下，
+    不污染项目工作区。
+    """
+    lock = _git_common_dir() / "kgctl-resolve-state.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with lock.open("a+") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+def _write_resolve_record(rec: dict) -> None:
+    with _resolve_state_lock():
+        data = load_resolve()
+        data["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        # 一条源分支只保留一条当前记录：按 slug 或源分支去重。否则早期留下的
+        # needs_agent 会和后面的 landed 并存，--list 把已收口的分支继续报成待解。
+        key = rec.get("slug")
+        branch = rec.get("branch")
+        tasks = [t for t in data.get("tasks", [])
+                 if t.get("slug") != key and (not branch or t.get("branch") != branch)]
+        tasks.append(rec)
+        tasks.sort(key=lambda t: t.get("updated") or "", reverse=True)
+        data["tasks"] = tasks
+        write_json(RESOLVE, data)
 def _write_resolve_record(rec: dict) -> None:
     data = load_resolve()
     data["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -2675,11 +2914,36 @@ def _write_resolve_record(rec: dict) -> None:
     data["tasks"] = tasks
     write_json(RESOLVE, data)
 
-
 def _landed_resolve_branches() -> set:
     """已经 resolve 落盘过的源分支集合。用来防止同一条冲突被重复拆。"""
     return {t.get("branch") for t in load_resolve().get("tasks", [])
             if t.get("status") == "landed" and t.get("branch")}
+
+
+def _clean_land_worktree() -> Path:
+    """为一次 land 建独立干净主干，完全绕开共享 trunk 的在途改动。"""
+    base = git("rev-parse", f"origin/{MAIN}") or git("rev-parse", MAIN)
+    if not base:
+        raise RuntimeError(f"取不到 origin/{MAIN}，无法建立干净落盘工作树")
+    wt = REPO.parent / f"{REPO.name}-land-clean-{os.getpid()}"
+    if wt.exists():
+        wt = REPO.parent / f"{REPO.name}-land-clean-{os.getpid()}-{int(time.time())}"
+    add = subprocess.run(["git", "-C", str(REPO), "worktree", "add", "--detach",
+                          str(wt), base], capture_output=True, text=True)
+    if add.returncode != 0:
+        raise RuntimeError(f"建立干净落盘工作树失败：{(add.stdout + add.stderr).strip()[:500]}")
+    _link_side_dirs(wt)
+    return wt
+
+
+def _remove_clean_land_worktree(wt: Path) -> None:
+    """只回收本次 land 自建的工作树；失败时保留现场。"""
+    if not wt or not wt.exists():
+        return
+    out = subprocess.run(["git", "-C", str(REPO), "worktree", "remove", str(wt)],
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        print(f"  ! 干净落盘工作树未自动回收（保留现场）：{wt}")
 
 
 def _open_resolve_sources() -> set:
@@ -2710,6 +2974,8 @@ def _open_resolve_tasks() -> list:
     settled |= {t.get("branch") for t in tasks if t.get("status") in ("landed", "abandoned")}
     return [t for t in tasks
             if t.get("status") in ("needs_agent", "gate_fail")
+            and not t.get("claimed_by")
+            and Path(t.get("worktree") or "").is_dir()
             and t.get("slug") not in settled and t.get("branch") not in settled]
 
 
@@ -3145,17 +3411,33 @@ def cmd_land(args):
 
     OPS.mkdir(parents=True, exist_ok=True)
     LOCK.write_text(f"{os.getpid()} {branch}\n")
+    clean_wt = None
     try:
         _align_main()
         pre = git("rev-parse", MAIN)
         wt = _trunk_worktree()
-        reset_trunk_head(wt)
-        _mirror_truth_into_trunk(wt)
         dirty = [line for line in trunk_status(wt) if not is_truth_path(line)]
         if dirty:
-            print(f"× 主干工作树有非真相层改动，拒绝 land：{wt}")
-            print("\n".join(dirty[:20])[:800])
-            sys.exit(1)
+            print(f"  ! 主干工作树有 {len(dirty)} 项非真相层改动，改用一次性干净落盘工作树")
+            print("  " + "\n  ".join(dirty[:8])[:600])
+            clean_wt = _clean_land_worktree()
+            wt = clean_wt
+        else:
+            reset_trunk_head(wt)
+            _mirror_truth_into_trunk(wt)
+            dirty = [line for line in trunk_status(wt) if not is_truth_path(line)]
+            if dirty:
+                print(f"  ! 主干工作树在同步后又出现 {len(dirty)} 项非真相层改动，改用干净落盘工作树")
+                clean_wt = _clean_land_worktree()
+                wt = clean_wt
+        self_clean = [line for line in trunk_status(wt) if not is_truth_path(line)]
+        if self_clean:
+            raise RuntimeError(f"落盘工作树仍有非真相改动：{'; '.join(self_clean[:5])}")
+        # A clean one-shot land worktree must receive only the state-root truth
+        # files. Calling sync_trunk_truth on REPO itself can checkout/merge the
+        # shared user checkout, which is exactly what this path is meant to avoid.
+        if clean_wt is not None:
+            _mirror_truth_into_trunk(wt)
         sync_trunk_truth(wt, "sync state before landing")
         m = subprocess.run(["git", "-C", str(wt), "merge", "--no-ff", branch,
                             "-m", f"train: merge {branch}"], capture_output=True, text=True)
@@ -3184,6 +3466,8 @@ def cmd_land(args):
         _align_main_ref_to_origin(new)
         print(f"  main 推进 {pre[:8]} → {new[:8]}（{branch} 已落盘并推送 origin）")
     finally:
+        if clean_wt:
+            _remove_clean_land_worktree(clean_wt)
         if LOCK.exists():
             LOCK.unlink()
 
@@ -3304,6 +3588,7 @@ def cmd_next(args):
 
 def cmd_tick(args):
     """自动挡主循环：输入归一 -> 真相刷新 -> 冲突收拢 -> 看板/上下文 -> 落盘状态。"""
+    _align_main()
     print("[1/8] route inbox", flush=True)
     _truth("route", "--go")
     print("\n[2/8] refresh project status", flush=True)
@@ -3341,6 +3626,7 @@ def cmd_tick(args):
     print("\n[7/8] commit + push truth state", flush=True)
     sync_trunk_truth(REPO, "sync from tick")
     push_truth_state()
+    _align_main()
     print("\n[8/8] what to do next", flush=True)
     _truth("next")
 

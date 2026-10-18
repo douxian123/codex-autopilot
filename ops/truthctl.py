@@ -211,6 +211,77 @@ def next_free_id(t: str, start: int) -> str:
     return f'{PREFIX[t]}-{n:04d}'
 
 
+def _ledger_collision_ids(rows: list) -> set:
+    """Return IDs whose rows describe different work, not just status revisions."""
+    grouped = {}
+    for idx, rec in enumerate(rows, 1):
+        rid = rec.get("id")
+        if rid:
+            grouped.setdefault(rid, []).append((idx, rec))
+    return {
+        rid for rid, items in grouped.items()
+        if len({(str(r.get("ts") or ""), str(r.get("title") or ""))
+                for _, r in items}) > 1
+    }
+
+
+def _ledger_at_ref(ref: str) -> list | None:
+    rel = (TRUTH.relative_to(REPO) / FILES["ledger"]).as_posix()
+    probe = subprocess.run(
+        ["git", "-C", str(REPO), "show", f"{ref}:{rel}"],
+        capture_output=True, text=True)
+    if probe.returncode != 0:
+        return None
+    rows = []
+    for line in probe.stdout.splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except ValueError:
+            return None
+    return rows
+
+
+def cmd_integrity(args):
+    """Report new truth-ledger damage without mutating append-only state.
+
+    Old ledgers legitimately contain same-ID/different-title rows from past
+    allocator races. Treat those as a baseline, not a permanent red light. A
+    failure means either a newly introduced collision or a physical row-count
+    collapse relative to HEAD^; both can hide work behind "latest wins".
+    """
+    rows = _read(TRUTH / FILES["ledger"])
+    grouped = {}
+    for rec in rows:
+        rid = rec.get("id")
+        if rid:
+            grouped.setdefault(rid, []).append(rec)
+    collisions = _ledger_collision_ids(rows)
+    revisions = 0
+    for rid, items in grouped.items():
+        if rid not in collisions and len(items) > 1:
+            revisions += 1
+    print(f"ledger rows={len(rows)} ids={len(grouped)} revisions={revisions}")
+    previous = _ledger_at_ref("HEAD^")
+    baseline = _ledger_collision_ids(previous) if previous is not None else set()
+    new_collisions = collisions - baseline
+    resolved_collisions = baseline - collisions
+    print(f"baseline_collision_ids={len(baseline)}")
+    print("collision_ids=" + (",".join(sorted(collisions)) or "none"))
+    if new_collisions:
+        print("new_collision_ids=" + ",".join(sorted(new_collisions)))
+    if resolved_collisions:
+        print("resolved_collision_ids=" + ",".join(sorted(resolved_collisions)))
+    physical_drop = False
+    if previous is not None and len(rows) < len(previous):
+        physical_drop = True
+        print(f"physical_drop=previous {len(previous)} -> current {len(rows)}")
+    if new_collisions or physical_drop:
+        raise SystemExit(1)
+    print("ledger-integrity OK")
+
+
 def cmd_add(args):
     if len(args) < 2 or args[0] not in PREFIX:
         sys.exit('用法: truthctl add <decision|ledger|progress|acceptance> "<标题>"')
@@ -1076,7 +1147,7 @@ def cmd_snapshot(args):
     print(f'\n已写出 {STATUS.relative_to(REPO)}', file=sys.stderr)
 
 
-CMDS = {'add': cmd_add, 'ls': cmd_ls, 'snapshot': cmd_snapshot, 'promote': cmd_promote,
+CMDS = {'add': cmd_add, 'integrity': cmd_integrity, 'ls': cmd_ls, 'snapshot': cmd_snapshot, 'promote': cmd_promote,
         'route': cmd_route, 'lanes': cmd_lanes, 'next': cmd_next,
         'product': cmd_product, 'distill': cmd_distill,
         'close': cmd_close, 'open': cmd_open, 'synthesize': cmd_synthesize,

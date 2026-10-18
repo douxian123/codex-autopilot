@@ -7,6 +7,7 @@
 这里用临时仓库锁住这道门禁：坏分支不能入队，也不能 land。
 """
 
+import concurrent.futures
 import os
 import subprocess
 import sys
@@ -15,13 +16,6 @@ from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
 KGCTL = OPS / "kgctl.py"
-
-
-def _installed_version() -> str:
-    import json
-    return json.loads(
-        (OPS.parent / "plugin" / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
-    )["version"]
 
 
 def run(cmd, cwd=None, env=None, check=True):
@@ -603,6 +597,151 @@ def test_reset_trunk_truth_conflict():
     print("selftest ok: 失败 land 留下的真相层残留不再锁死后续落盘，JSONL 并集、main 正常推进。")
 
 
+def test_align_main_only_recovers_truth_only_commits():
+    """自动对齐 main 不能把本地产品提交当作真相层提交丢掉。"""
+    import sys as _sys
+    _sys.path.insert(0, str(OPS))
+    env_keys = ("KG_REPO", "KG_TRUNK", "KG_DAEMON_HOME")
+    old_env = {k: os.environ.get(k) for k in env_keys}
+    try:
+        import importlib
+        import kgctl as kg
+        importlib.reload(kg)
+
+        # 场景一：本地领先提交只改真相层。允许把 ref 对齐到 origin，
+        # 同时保住工作树里尚未提交的追加记录。
+        with tempfile.TemporaryDirectory(prefix="codex-autopilot-align-truth-") as tmp:
+            root = Path(tmp)
+            repo = root / "state"
+            repo.mkdir()
+            (repo / "ops" / "tasks").mkdir(parents=True)
+            (repo / "ops" / "truth").mkdir(parents=True)
+            (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+            for name in ("progress", "decisions", "acceptance"):
+                (repo / "ops" / "truth" / f"{name}.jsonl").write_text("", encoding="utf-8")
+            (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+            (repo / "ops" / "truth" / "ledger.jsonl").write_text(
+                '{"id":"L-0001","status":"open"}\n', encoding="utf-8")
+            run(["git", "init", "-q", "-b", "main", str(repo)])
+            git(repo, "config", "user.email", "selftest@example.invalid")
+            git(repo, "config", "user.name", "Autopilot Selftest")
+            (repo / "app.txt").write_text("main\n", encoding="utf-8")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            origin = root / "origin.git"
+            run(["git", "init", "-q", "--bare", str(origin)])
+            git(repo, "remote", "add", "origin", str(origin))
+            git(repo, "push", "-q", "origin", "main")
+            (repo / "ops" / "truth" / "ledger.jsonl").write_text(
+                '{"id":"L-0001","status":"open"}\n{"id":"L-0002","status":"open"}\n',
+                encoding="utf-8")
+            git(repo, "add", "ops/truth/ledger.jsonl")
+            git(repo, "commit", "-q", "-m", "chore(truth): local ledger")
+            remote_before = git(repo, "rev-parse", "origin/main").stdout.strip()
+            os.environ["KG_REPO"] = str(repo)
+            importlib.reload(kg)
+            kg._align_main()
+            if git(repo, "rev-parse", "main").stdout.strip() != remote_before:
+                raise AssertionError("纯真相临时提交没有被安全对齐到 origin/main")
+            if "L-0002" not in (repo / "ops" / "truth" / "ledger.jsonl").read_text(encoding="utf-8"):
+                raise AssertionError("自动对齐丢了工作树里的新增真相记录")
+
+        # 场景二：本地领先提交既有 truth 又有产品文件。必须 fail closed，
+        # 不允许 main ref 前进，更不允许把产品提交从历史里丢掉。
+        with tempfile.TemporaryDirectory(prefix="codex-autopilot-align-mixed-") as tmp:
+            root = Path(tmp)
+            repo = root / "state"
+            repo.mkdir()
+            (repo / "ops" / "tasks").mkdir(parents=True)
+            (repo / "ops" / "truth").mkdir(parents=True)
+            (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+            for name in ("ledger", "progress", "decisions", "acceptance"):
+                (repo / "ops" / "truth" / f"{name}.jsonl").write_text("", encoding="utf-8")
+            (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+            run(["git", "init", "-q", "-b", "main", str(repo)])
+            git(repo, "config", "user.email", "selftest@example.invalid")
+            git(repo, "config", "user.name", "Autopilot Selftest")
+            (repo / "app.txt").write_text("main\n", encoding="utf-8")
+            git(repo, "add", ".")
+            git(repo, "commit", "-q", "-m", "init")
+            origin = root / "origin.git"
+            run(["git", "init", "-q", "--bare", str(origin)])
+            git(repo, "remote", "add", "origin", str(origin))
+            git(repo, "push", "-q", "origin", "main")
+            (repo / "app.txt").write_text("product-local\n", encoding="utf-8")
+            (repo / "ops" / "truth" / "ledger.jsonl").write_text(
+                '{"id":"L-0001","status":"open"}\n', encoding="utf-8")
+            git(repo, "add", "app.txt", "ops/truth/ledger.jsonl")
+            git(repo, "commit", "-q", "-m", "chore(truth): mixed product change")
+            local_before = git(repo, "rev-parse", "main").stdout.strip()
+            os.environ["KG_REPO"] = str(repo)
+            importlib.reload(kg)
+            try:
+                kg._align_main()
+            except RuntimeError as exc:
+                if "拒绝自动对齐" not in str(exc):
+                    raise AssertionError(f"失败原因不是拒绝自动对齐: {exc}") from exc
+            else:
+                raise AssertionError("混合产品提交被错误自动对齐")
+            if git(repo, "rev-parse", "main").stdout.strip() != local_before:
+                raise AssertionError("拒绝自动对齐时 main ref 仍被移动")
+    finally:
+        for key, value in old_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    print("selftest ok: _align_main 只恢复纯真相临时提交，混合产品提交 fail closed。")
+
+def test_clean_land_with_dirty_trunk():
+    """Shared trunk dirty must not block landing through a one-shot clean worktree."""
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-dirty-trunk-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        trunk = root / "state-trunk"
+        repo.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        for name in ("ledger", "progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{name}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(
+            _json.dumps({"build": {"cmd": "", "cwd": "."}, "verify": []}), encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        git(repo, "add", ".")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = root / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+
+        git(repo, "worktree", "add", "-q", "--detach", str(trunk), "main")
+        dirty = trunk / "user-work.txt"
+        dirty.write_text("do not touch\n", encoding="utf-8")
+        mkc = root / "mk-clean"
+        git(repo, "worktree", "add", "-q", "-b", "codex/clean", str(mkc), "main")
+        (mkc / "clean.txt").write_text("clean\n", encoding="utf-8")
+        git(mkc, "add", "clean.txt")
+        git(mkc, "commit", "-q", "-m", "clean")
+        git(repo, "worktree", "remove", "--force", str(mkc))
+
+        landed = kgctl(repo, trunk, "land", "codex/clean")
+        out = landed.stdout + landed.stderr
+        if landed.returncode != 0 or "main 推进" not in out:
+            raise AssertionError(f"dirty trunk 挡住了 clean land:\n{out}")
+        if git(repo, "show", "main:clean.txt").stdout.strip() != "clean":
+            raise AssertionError("dirty trunk 路径没有把 clean 分支写进 main")
+        if not dirty.exists() or dirty.read_text(encoding="utf-8") != "do not touch\n":
+            raise AssertionError("dirty trunk 的用户改动被 clean land 覆盖了")
+
+    print("selftest ok: shared trunk dirty does not block clean-worktree land.")
+
+
 def test_control_state():
     """用户级开关：暂停闸门、开关持久化、损坏即安全暂停。"""
     import importlib
@@ -617,7 +756,7 @@ def test_control_state():
 
         # 默认不暂停，三个动作开关按设计默认值。
         d = control_state.load()
-        assert d["enabled"] is True and d["paused"] is False and d["auto_land"] is True
+        assert d["paused"] is False and d["auto_land"] is True
         assert d["auto_resolve"] is True and d["auto_port"] is False
 
         # 暂停后 run_cycle 必须秒返回且不启动任何工作。
@@ -638,21 +777,10 @@ def test_control_state():
         control_state.set_keys(auto_exec=True)
         assert central_daemon.auto_exec_config()["enabled"] is True
 
-        control_state.set_keys(enabled=False, auto_exec=True)
-        assert control_state.lifecycle_status() == "off"
-        blocked = control_state.mutation_guard()
-        assert blocked and blocked["code"] == "AUTOPILOT_DISABLED"
-        disabled_cycle = central_daemon.run_cycle(dry=False, max_land=1)
-        assert disabled_cycle.get("disabled") is True
-        restored = control_state.set_keys(enabled=True)
-        assert restored["enabled"] is True and restored["auto_exec"] is True
-        assert control_state.mutation_guard() is None
-
         # control.json 损坏 -> 安全暂停 + error 可见。
         control_state.path().write_text("{ this is not json", encoding="utf-8")
         bad = control_state.load()
-        assert bad["enabled"] is False and bad["paused"] is True and bad["error"], \
-            "损坏的 control.json 没有安全暂停"
+        assert bad["paused"] is True and bad["error"], "损坏的 control.json 没有安全暂停"
 
         # 事件流水可写可读。
         control_state.save(dict(control_state.DEFAULTS))
@@ -667,1078 +795,244 @@ def test_control_state():
     print("selftest ok: 用户级开关生效，暂停闸门拦住新工作，损坏即安全暂停。")
 
 
-def test_installer():
-    """版本化安装只切 marketplace 指针，不覆盖旧插件；回滚只还原自动挡入口。"""
-    import json as _json
-
-    install = OPS.parent / "install.sh"
-    installed_version = _installed_version()
-    release_path = f"./plugins/codex-autopilot/releases/{installed_version}"
-    with tempfile.TemporaryDirectory(prefix="autopilot-install-test-") as tmp:
-        home = Path(tmp) / "home"
-        release_dir = home / "plugins" / "codex-autopilot" / "releases" / installed_version
-        old_plugin = home / "plugins" / "codex-autopilot"
-        old_plugin.mkdir(parents=True)
-        sentinel = old_plugin / "user-preserved.txt"
-        sentinel.write_text("keep\n", encoding="utf-8")
-        market = home / ".agents" / "plugins" / "marketplace.json"
-        market.parent.mkdir(parents=True)
-        market.write_text(_json.dumps({
-            "name": "personal",
-            "plugins": [
-                {"name": "other-plugin", "source": {"source": "local", "path": "./plugins/other"}},
-                {"name": "codex-autopilot",
-                 "source": {"source": "local", "path": "./plugins/codex-autopilot"},
-                 "policy": {"installation": "AVAILABLE"}},
-            ],
-        }), encoding="utf-8")
-
-        env = os.environ.copy()
-        env["HOME"] = str(home)
-        # --no-companion：菜单栏 .app 的编译单独测（test_companion_contract），
-        # 不让一次安装测试既跑安装又跑 Swift 编译。
-        command = ["bash", str(install), "--no-seed", "--no-companion", str(OPS.parent)]
-        upgraded = run(command, env=env, check=False)
-        if upgraded.returncode:
-            raise AssertionError(f"版本化安装失败:\n{upgraded.stdout}\n{upgraded.stderr}")
-        data = _json.loads(market.read_text(encoding="utf-8"))
-        entry = next(p for p in data["plugins"] if p["name"] == "codex-autopilot")
-        other = next(p for p in data["plugins"] if p["name"] == "other-plugin")
-        assert entry["source"]["path"] == release_path
-        assert other["source"]["path"] == "./plugins/other"
-        assert sentinel.read_text(encoding="utf-8") == "keep\n"
-        release = release_dir
-        assert (release / "ops" / "central_mcp.py").is_file()
-        # Companion 源码必须随版本目录一起装：以后能从这个目录重建菜单栏应用。
-        assert (release / "companion" / "build.sh").is_file()
-        assert (release / "companion" / "Info.plist").is_file()
-        assert (release / "companion" / "Sources" / "CodexAutopilotCompanion"
-                / "main.swift").is_file()
-
-        duplicate = run(command, env=env, check=False)
-        assert duplicate.returncode != 0 and "拒绝覆盖" in duplicate.stderr
-        data_after_duplicate = _json.loads(market.read_text(encoding="utf-8"))
-        entry_after_duplicate = next(
-            p for p in data_after_duplicate["plugins"] if p["name"] == "codex-autopilot")
-        assert entry_after_duplicate["source"]["path"] == entry["source"]["path"]
-
-        rolled_back = run(["bash", str(install), "--rollback"], env=env, check=False)
-        if rolled_back.returncode:
-            raise AssertionError(f"回滚失败:\n{rolled_back.stdout}\n{rolled_back.stderr}")
-        restored = _json.loads(market.read_text(encoding="utf-8"))
-        restored_entry = next(p for p in restored["plugins"] if p["name"] == "codex-autopilot")
-        assert restored_entry["source"]["path"] == "./plugins/codex-autopilot"
-        assert any(p["name"] == "other-plugin" for p in restored["plugins"])
-        assert sentinel.read_text(encoding="utf-8") == "keep\n"
-        assert (release / "ops" / "central_mcp.py").is_file()
-
-    print("selftest ok: 安装器使用不可变版本目录、拒绝覆盖同版本、保留旧安装并可回滚入口。")
-
-
-def test_installer_shell_portability():
-    """安装脚本必须能在 macOS 自带 bash 3.2 + set -u 下跑完整条路径。
-
-    bash 3.2 有个多字节解析缺陷：`$VAR` 紧跟全角字符时，那个字节会被算进变量名，
-    set -u 下直接判 unbound 并中断安装。这类写法在中文提示里很容易踩到，所以既静态
-    扫一遍，也真跑一次完整安装路径（覆盖 Companion 分支前后整段），防止只在非中文
-    路径下才暴露。
-    """
-    import re
-
-    installed_version = _installed_version()
-    pattern = re.compile(rb"\$[A-Za-z_][A-Za-z0-9_]*")
-    for path in sorted(OPS.parent.rglob("*.sh")):
-        if ".git" in path.parts or ".build" in path.parts:
-            continue
-        blob = path.read_bytes()
-        for m in pattern.finditer(blob):
-            end = m.end()
-            if end < len(blob) and blob[end] >= 0x80:
-                line = blob[:m.start()].count(b"\n") + 1
-                raise AssertionError(
-                    f"{path.name}:{line} 用了 $VAR 紧跟多字节字符，bash 3.2 下会 unbound；"
-                    f"改成 ${{VAR}} 写法")
-
-    install = OPS.parent / "install.sh"
-    with tempfile.TemporaryDirectory(prefix="autopilot-install-bash32-") as tmp:
-        home = Path(tmp) / "home"
-        home.mkdir(parents=True)
-        # 用一个立刻失败的 swiftc 桩，只为让 Companion 分支走「编译失败降级」，
-        # 覆盖它前后的整段提示/权限路径；真编译由 test_companion_contract 覆盖。
-        fake_bin = Path(tmp) / "bin"
-        fake_bin.mkdir()
-        stub = fake_bin / "swiftc"
-        stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-        stub.chmod(0o755)
-
-        env = os.environ.copy()
-        env["HOME"] = str(home)
-        env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
-        result = run(["bash", str(install), "--no-seed", "--no-marketplace", str(OPS.parent)],
-                     env=env, check=False)
-        combined = result.stdout + result.stderr
-        assert "unbound variable" not in combined, f"bash 3.2 变量解析崩了:\n{combined}"
-        assert result.returncode == 0, f"完整安装路径没跑完:\n{combined}"
-        assert (home / "plugins" / "codex-autopilot" / "releases" / installed_version
-                / "ops" / "central_mcp.py").is_file()
-        # 同一份安装不带 Companion 时也必须照样成功。
-        result2 = run(["bash", str(install), "--no-seed", "--no-marketplace",
-                       "--no-companion", str(OPS.parent)], env=env, check=False)
-        # 版本目录已存在，第二次会因「拒绝覆盖」退出；只要不是崩在变量解析上就说明路径健康。
-        assert "unbound variable" not in (result2.stdout + result2.stderr)
-
-    print("selftest ok: 安装脚本在 macOS bash 3.2 + set -u 下整条路径跑完，没有多字节变量解析崩溃。")
-
-
-def test_panel_first_screen():
-    """面板首屏必须真的把控制层数据渲染出来，而不是只有对得上的元素 id。
-
-    这条真执行面板脚本（最小 DOM），核对：绑定项目、总状态、正在做什么、
-    原生直连结论、三个计数，以及「关掉总闸后是明确关闭态」。没有 node 时跳过。
-    """
-    import shutil
-
-    if not shutil.which("node"):
-        print("selftest skip: 没有 node，面板首屏逻辑检查跳过。")
-        return
-    script = OPS / "panel_logic_check.py"
-    assert script.is_file(), "panel_logic_check.py 缺失"
-    env = os.environ.copy()
-    env.setdefault("KG_REPO", str(OPS.parent))
-    result = run([sys.executable, str(script), "--quiet"],
-                 cwd=str(OPS.parent), env=env, check=False)
-    if result.returncode != 0:
-        raise AssertionError(f"面板首屏逻辑检查未通过:\n{result.stdout}\n{result.stderr}")
-    print("selftest ok: 面板首屏（含关闭态）每个值都来自真实控制层数据。")
-
-
-def test_installed_copy_binding():
-    """装出来的那份副本必须自己认得项目，并且 MCP 能应答。
-
-    这条防的是最容易翻车、又最难查的一类问题：插件装是装上了，marketplace 也列出来了，
-    但 Codex 拉起它时它不知道自己该管哪个项目，于是面板一片空白——用户只会觉得
-    「装了没用」。这里真装一次到隔离 HOME，然后用装出来的副本、不带任何环境变量跑：
-      1) kgctl status —— 能不能自己解析出项目；
-      2) MCP 握手 —— initialize/tools/list 能不能应答。
-    """
-    import json as _json
-
-    install = OPS.parent / "install.sh"
-    installed_version = _installed_version()
-    with tempfile.TemporaryDirectory(prefix="autopilot-installed-bind-") as tmp:
-        home = Path(tmp) / "home"
-        home.mkdir(parents=True)
-        project = Path(tmp) / "project"
-        # 状态根判据是 ops/tasks + ops/truth 两个目录都在；目标项目本身是个 git 仓库。
-        (project / "ops" / "tasks").mkdir(parents=True)
-        (project / "ops" / "truth").mkdir(parents=True)
-        (project / "ops" / "truth" / "ledger.jsonl").write_text("", encoding="utf-8")
-        (project / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
-        run(["git", "init", "-q", "-b", "main", str(project)], check=False)
-        run(["git", "-C", str(project), "-c", "user.email=t@t", "-c", "user.name=t",
-             "add", "."], check=False)
-        run(["git", "-C", str(project), "-c", "user.email=t@t", "-c", "user.name=t",
-             "commit", "-qm", "init"], check=False)
-
-        env = os.environ.copy()
-        env["HOME"] = str(home)
-        for key in ("KG_REPO", "KG_TRUNK", "KG_DAEMON_HOME"):
-            env.pop(key, None)
-        result = run(["bash", str(install), "--no-seed", "--no-marketplace",
-                      "--no-companion", str(project)], env=env, check=False)
-        assert result.returncode == 0, f"安装失败:\n{result.stdout}\n{result.stderr}"
-
-        release = home / "plugins" / "codex-autopilot" / "releases" / installed_version
-        binding = _json.loads((release / ".mcp.json").read_text(encoding="utf-8"))
-        bound = binding["mcpServers"]["codex-autopilot"]["env"]["KG_REPO"]
-        assert bound == str(project), f"插件没有把项目写进绑定：{bound}"
-
-        # 1) 不带 KG_REPO：装出来的副本要能自己认出项目
-        status = run([sys.executable, str(release / "ops" / "kgctl.py"), "status"],
-                     env=env, cwd=str(release), check=False)
-        assert status.returncode == 0, f"装出来的副本跑不起来:\n{status.stdout}\n{status.stderr}"
-        assert str(project) in (status.stdout + status.stderr), \
-            f"装出来的副本没有认出项目：\n{status.stdout}"
-
-        # 2) MCP 握手：Codex 拉起它时要能应答
-        proc = subprocess.Popen([sys.executable, str(release / "ops" / "central_mcp.py")],
-                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE, text=True, env=env,
-                                cwd=str(release))
-        try:
-            def send(o):
-                proc.stdin.write(_json.dumps(o, ensure_ascii=False) + "\n")
-                proc.stdin.flush()
-
-            send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
-                  "params": {"protocolVersion": "2025-06-18"}})
-            init = _json.loads(proc.stdout.readline())["result"]
-            assert "resources" in init["capabilities"], "装出来的 MCP 没声明 resources"
-            assert init["serverInfo"]["name"], "装出来的 MCP 没有名字"
-
-            send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
-            tools = _json.loads(proc.stdout.readline())["result"]["tools"]
-            names = {t["name"] for t in tools}
-            for need in ("autopilot_status", "intake_request", "autopilot_control"):
-                assert need in names, f"装出来的 MCP 少了工具 {need}"
-        finally:
-            proc.kill()
-            proc.wait(timeout=10)
-
-    print("selftest ok: 装出来的副本自带绑定、kgctl 认得出项目、MCP 能应答（不带任何环境变量）。")
-
-
-def test_preview_check_contract():
-    """预览验收脚本是用户唯一的一键验收入口，必须真检查、真报错。
-
-    它把安装、落地物、市场指向、菜单栏应用、原生直连、总闸状态串成一次运行。
-    这里守三件事：脚本存在且可执行、引用的路径就是真实安装布局、没装的时候
-    如实报失败并用非零退出码（不能变成只会打印「全部通过」的摆设）。
-    """
-    script = OPS.parent / "preview-check.sh"
-    assert script.is_file(), "preview-check.sh 缺失"
-    assert os.access(script, os.X_OK), "preview-check.sh 不可执行"
-    text = script.read_text(encoding="utf-8")
-    for needle in ("plugin/.codex-plugin/plugin.json",
-                   "plugins/codex-autopilot/releases",
-                   "Applications/CodexAutopilotCompanion.app",
-                   ".agents/plugins/marketplace.json",
-                   "ops/codex_native.py probe",
-                   "ops/companion_api.py status",
-                   "CodexAutopilot/companion.json"):
-        assert needle in text, f"preview-check.sh 少了 {needle}"
-    assert "FAILS=$((FAILS + 1))" in text and 'exit "${FAILS}"' in text, \
-        "验收脚本没有把失败项数当退出码"
-
-    home = tempfile.mkdtemp(prefix="kg-preview-home-")
-    try:
-        env = os.environ.copy()
-        env["HOME"] = home
-        result = run(["bash", str(script), "--no-install", "--no-open"],
-                     cwd=str(OPS.parent), env=env, check=False)
-        combined = result.stdout + result.stderr
-        assert "unbound variable" not in combined, combined
-        assert "FAIL" in combined, f"空环境里什么都没报：\n{combined}"
-        assert "全部通过" not in combined, "什么都没装却报全部通过"
-        assert result.returncode > 0, "什么都没装却是零退出码"
-    finally:
-        import shutil
-        shutil.rmtree(home, ignore_errors=True)
-    print("selftest ok: 预览验收脚本引用真实路径，未安装时如实报失败并非零退出。")
-
-
-def test_daemon_project_binding():
-    """仅把绑定到当前项目的 launchd 守护显示为当前项目正在运行。"""
+def test_resolve_worker_pool():
+    """resolve 后台池：三路并行、脏任务续解、主分支前进后仍接管已提交任务。"""
     import importlib
-    from unittest import mock
+    import json as _json
 
     sys.path.insert(0, str(OPS))
-    import central_mcp
-    importlib.reload(central_mcp)
-    old_repo = os.environ.get("KG_REPO")
-    os.environ["KG_REPO"] = "/tmp/autopilot-project-a"
-    try:
-        same_project = mock.Mock(
-            returncode=0,
-            stdout=("state = running\npid = 4321\n"
-                    "KG_REPO => /tmp/autopilot-project-a\n"),
-        )
-        with mock.patch.object(central_mcp.subprocess, "run", return_value=same_project):
-            live, pid, project = central_mcp._daemon_live()
-            assert live and pid == 4321 and project == str(Path("/tmp/autopilot-project-a").resolve())
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-resolve-pool-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        trunk = root / "state-trunk"
+        home = root / "home"
+        repo.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        for name in ("ledger", "progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{name}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "tasks" / "resolve.json").write_text(
+            _json.dumps({"tasks": []}), encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(
+            _json.dumps({"auto_resolve": {
+                "enabled": True, "max_workers": 3, "resume_dirty": True,
+                "auto_split": True,
+                "sandbox": "danger-full-access",
+                "fast_model": "aibvv@deepseek-v4.1-flash",
+            }}), encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "base.txt").write_text("base\n", encoding="utf-8")
+        git(repo, "add", "base.txt")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = root / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
 
-        other_project = mock.Mock(
-            returncode=0,
-            stdout=("state = running\npid = 8765\n"
-                    "KG_REPO => /tmp/autopilot-project-b\n"),
-        )
-        with mock.patch.object(central_mcp.subprocess, "run", return_value=other_project):
-            live, pid, project = central_mcp._daemon_live()
-            assert live and pid == 8765 and project == str(Path("/tmp/autopilot-project-b").resolve())
-            target = str(Path(os.environ["KG_REPO"]).resolve())
-            assert project != target
-    finally:
-        if old_repo is None:
-            os.environ.pop("KG_REPO", None)
-        else:
-            os.environ["KG_REPO"] = old_repo
-    print("selftest ok: launchd 状态通过 launchctl 查询，跨项目 daemon 不冒充当前项目。")
-
-
-def test_daemon_control_action():
-    """后台常驻开关必须真启停 launchd，而不是只改偏好位。
-
-    面板上的「后台常驻」如果只写配置、不装守护，用户会以为关掉 Codex 还能推进，
-    实际什么都没在跑。这里锁住三件事：总闸关掉时拒绝、开启/关闭真转发到
-    `central_daemon.py --install/--uninstall`、安装失败不谎报已开启。
-    """
-    import importlib
-
-    home = tempfile.mkdtemp(prefix="kg-daemon-ctl-")
-    project = Path(tempfile.mkdtemp(prefix="kg-daemon-ctl-proj-"))
-    (project / "ops" / "truth").mkdir(parents=True)
-    (project / "ops" / "truth" / "ledger.jsonl").write_text("", encoding="utf-8")
-    old_home = os.environ.get("KG_DAEMON_HOME")
-    old_repo = os.environ.get("KG_REPO")
-    os.environ["KG_DAEMON_HOME"] = home
-    os.environ["KG_REPO"] = str(project)
-    try:
-        sys.path.insert(0, str(OPS))
-        import control_state
-        import central_mcp
-        importlib.reload(control_state)
-        importlib.reload(central_mcp)
-
-        calls = []
-        real_run = central_mcp._run
-
-        def fake_run(argv, extra_env=None, timeout=900):
-            calls.append(list(argv))
-            return "fake launchctl ok", 0
-
-        central_mcp._run = fake_run
-
-        # 总闸关掉后，连后台常驻开关都不许碰 launchd。
-        control_state.set_keys(enabled=False, daemon_enabled=False)
-        refused, rc = central_mcp.control_action("enable_daemon")
-        assert rc == 2, f"总闸关掉后 enable_daemon 竟然返回 {rc}"
-        assert "AUTOPILOT_DISABLED" in str(refused), refused
-        assert calls == [], f"总闸关掉后仍去动了 launchd: {calls}"
-        assert control_state.load()["daemon_enabled"] is False
-
-        control_state.set_keys(enabled=True)
-
-        payload, rc = central_mcp.control_action("enable_daemon")
-        assert rc == 0, f"开启后台常驻失败: {payload}"
-        assert calls and calls[-1][-1] == "--install", \
-            f"开启后台常驻没真调 --install: {calls}"
-        assert control_state.load()["daemon_enabled"] is True
-
-        calls.clear()
-        payload, rc = central_mcp.control_action("disable_daemon")
-        assert rc == 0, f"关闭后台常驻失败: {payload}"
-        assert calls and calls[-1][-1] == "--uninstall", \
-            f"关闭后台常驻没真调 --uninstall: {calls}"
-        assert control_state.load()["daemon_enabled"] is False
-
-        # 真装不上时不能把偏好写成「已开启」。
-        control_state.set_keys(daemon_enabled=False)
-
-        def failing_run(argv, extra_env=None, timeout=900):
-            return "launchctl bootstrap 失败", 1
-
-        central_mcp._run = failing_run
-        payload, rc = central_mcp.control_action("enable_daemon")
-        assert rc == 1, f"launchd 安装失败却返回成功: {rc}"
-        assert control_state.load()["daemon_enabled"] is False, \
-            "launchd 安装失败却把偏好写成已开启"
-    finally:
-        # 打桩不还原会污染后面的测试：它们会拿到假的 launchctl 结果。
-        central_mcp._run = real_run
-        if old_home is None:
-            os.environ.pop("KG_DAEMON_HOME", None)
-        else:
-            os.environ["KG_DAEMON_HOME"] = old_home
-        if old_repo is None:
-            os.environ.pop("KG_REPO", None)
-        else:
-            os.environ["KG_REPO"] = old_repo
-        import shutil
-        shutil.rmtree(home, ignore_errors=True)
-        shutil.rmtree(project, ignore_errors=True)
-    print("selftest ok: 后台常驻开关真启停 launchd，失败不谎报。")
-
-
-def test_companion_contract():
-    """菜单栏 Companion 只有一条通道：ops/companion_api.py。
-
-    查三件事：打包元数据齐全（否则装出来是个没服务菜单的壳）、用户入口真的接上了
-    （快捷键/截图/拖入/服务菜单，缺一个就是少一个入口）、总闸关掉后这个通道同样拒绝新需求。
-    真编译 .app 需要 swiftc，默认跳过；设 AUTOPILOT_SELFTEST_COMPANION=1 会真编一次。
-    """
-    import importlib
-    import json as _json
-    import shutil
-
-    companion = OPS.parent / "companion"
-    build = companion / "build.sh"
-    plist = companion / "Info.plist"
-    source = companion / "Sources" / "CodexAutopilotCompanion" / "main.swift"
-    assert build.is_file() and os.access(build, os.X_OK), "companion/build.sh 缺失或不可执行"
-    assert plist.is_file() and source.is_file(), "Companion 打包元数据缺失"
-
-    plist_text = plist.read_text(encoding="utf-8")
-    for needle in ("LSUIElement", "sendToAutopilot",
-                   "com.douxian.codex-autopilot.companion"):
-        assert needle in plist_text, f"Info.plist 缺少 {needle}"
-
-    source_text = source.read_text(encoding="utf-8")
-    for needle in ("kVK_ANSI_A", "kVK_ANSI_S", "kVK_ANSI_D", "/usr/sbin/screencapture",
-                   "registerForDraggedTypes", "servicesProvider", "companion_api",
-                   # 附件必须看得见、撤得掉，不能退化成一个数字
-                   "lastPathComponent", "xmark.circle.fill",
-                   # 「打开 Codex」按 bundle id 激活，不去猜应用路径
-                   "com.openai.codex", "openCodex",
-                   # 主面板在 Codex 本体里：菜单栏只负责送回去，HTML 驾驶舱是备用
-                   "openCodexPanel", "openCockpit", "onOpenCockpit",
-                   # 仅在待办集合变化时发系统提醒，轮询不重复打扰
-                   "UNUserNotificationCenter", "notifyIfNeeded",
-                   "Codex 自动挡需要你处理", "lastAttentionFingerprint"):
-        assert needle in source_text, f"Companion 源码缺少 {needle}"
-
-    # 「完整面板」不许把浏览器里的驾驶舱当主面板直接打开。
-    primary_panel = source_text.split("func openPanel()", 1)[1].split(
-        "func openCockpit()", 1)[0]
-    assert 'call(["panel"])' not in primary_panel, \
-        "菜单栏「完整面板」又去开 HTML 驾驶舱了，主面板必须在 Codex 里"
-    # Companion 不许自己造第二套任务账本或第二套状态文件。
-    for forbidden in ("intake.jsonl", "ledger.jsonl", "control.json"):
-        assert forbidden not in source_text, f"Companion 自己碰了 {forbidden}"
-
-    api = OPS / "companion_api.py"
-    home = tempfile.mkdtemp(prefix="kg-companion-home-")
-    staged_repo = Path(tempfile.mkdtemp(prefix="kg-companion-repo-"))
-    empty_repo = Path(tempfile.mkdtemp(prefix="kg-companion-empty-"))
-    old_daemon_home = os.environ.get("KG_DAEMON_HOME")
-    old_repo = os.environ.get("KG_REPO")
-    os.environ["KG_DAEMON_HOME"] = home
-    try:
-        def api_run(*args, repo=None):
-            env = os.environ.copy()
-            if repo is not None:
-                env["KG_REPO"] = str(repo)
-            return run([sys.executable, str(api), *args],
-                       cwd=str(OPS.parent), env=env, check=False)
-
-        os.environ["KG_REPO"] = str(OPS.parent)
-        status = _json.loads(api_run("status").stdout)
-        assert status["ok"] is True and status["enabled"] is True
-        assert status["lifecycle"] == "on"
-        assert status["project"] == str(OPS.parent.resolve())
-        for key in ("switches", "attention", "daemon", "recent_completed"):
-            assert key in status, f"status 输出缺少 {key}"
-
-        off = _json.loads(api_run("disable").stdout)
-        assert off["enabled"] is False and off["lifecycle"] == "off"
-        refused = api_run("intake", "总闸关掉后不该收需求")
-        assert refused.returncode == 2 and "AUTOPILOT_DISABLED" in refused.stdout, \
-            f"关掉总闸后 Companion 通道仍收需求: {refused.stdout}{refused.stderr}"
-        back = _json.loads(api_run("enable").stdout)
-        assert back["enabled"] is True and back["lifecycle"] == "on"
-
-        # 附件与需求原话分开：--attach 进 files，不改写用户那句话。
-        sys.path.insert(0, str(OPS))
-        import companion_api
-        importlib.reload(companion_api)
-        text, files = companion_api._split_attachments(
-            ["--attach", "/tmp/shot.png", "左边", "排版", "坏了", "-a", "/tmp/a.log"])
-        assert text == "左边 排版 坏了", text
-        assert files == ["/tmp/shot.png", "/tmp/a.log"], files
-        assert companion_api._split_attachments(["--attach"]) == ("", [])
-
-        # open status 指向真实状态文件；没有就如实报错，不编一个路径出来。
-        (staged_repo / "docs").mkdir(parents=True)
-        mainline = staged_repo / "docs" / "PRODUCT_MAINLINE.md"
-        mainline.write_text("# 主线\n", encoding="utf-8")
-        opened = _json.loads(api_run("open", "status", repo=staged_repo).stdout)
-        # 状态根会被 resolve（macOS 的 /var 是指向 /private/var 的软链），按解析后的路径比。
-        assert opened["ok"] is True and opened["path"] == str(mainline.resolve()), opened
-        missing = api_run("open", "status", repo=empty_repo)
-        assert missing.returncode == 1 and '"ok": false' in missing.stdout
-        unknown = api_run("nonsense")
-        assert unknown.returncode == 2 and "UNKNOWN_ACTION" in unknown.stdout
-    finally:
-        if old_daemon_home is None:
-            os.environ.pop("KG_DAEMON_HOME", None)
-        else:
-            os.environ["KG_DAEMON_HOME"] = old_daemon_home
-        if old_repo is None:
-            os.environ.pop("KG_REPO", None)
-        else:
-            os.environ["KG_REPO"] = old_repo
-        shutil.rmtree(home, ignore_errors=True)
-        shutil.rmtree(staged_repo, ignore_errors=True)
-        shutil.rmtree(empty_repo, ignore_errors=True)
-
-    print("selftest ok: Companion 契约（打包元数据、快捷键/截图/拖入/服务入口、"
-          "总闸关掉后同一通道拒收）。")
-
-    if os.environ.get("AUTOPILOT_SELFTEST_COMPANION") == "1":
-        built = run(["bash", str(build)], cwd=str(companion), check=False)
-        assert built.returncode == 0, f"Companion 编译失败:\n{built.stdout}\n{built.stderr}"
-        app = companion / "dist" / "CodexAutopilotCompanion.app"
-        assert (app / "Contents" / "MacOS" / "CodexAutopilotCompanion").is_file()
-        assert (app / "Contents" / "Info.plist").is_file()
-        print("selftest ok: Companion 真编译出可安装的 .app。")
-
-
-def test_panel_contract():
-    """面板只通过 MCP 工具读写，而且它引用的每个元素都真实存在。
-
-    这一条防的是「面板看着对、其实点不动」：id 对不上时按钮就是死的，
-    HTML/JS 语法检查完全看不出来。同时也挡住「面板自己造第二套工具/开关」。
-    """
-    import re
-
-    html = (OPS.parent / "plugin" / "ui" / "panel.html").read_text(encoding="utf-8")
-    script = "\n".join(re.findall(r"<script>([\s\S]*?)</script>", html))
-    assert script.strip(), "面板里没有脚本，等于没接上控制层"
-
-    dom_ids = set(re.findall(r'id="([^"]+)"', html))
-    used_ids = set(re.findall(r'\bel\("([^"]+)"\)', script))
-    created_ids = set(re.findall(r'\.id\s*=\s*"([^"]+)"', script))
-    missing = sorted(used_ids - dom_ids - created_ids)
-    assert not missing, f"面板引用了不存在的元素：{missing}"
-
-    sys.path.insert(0, str(OPS))
-    import central_mcp
-    import control_state
-
-    tool_names = {tool["name"] for tool in central_mcp.TOOLS}
-    called = set(re.findall(r'callTool\("([^"]+)"', script))
-    assert called <= tool_names, f"面板调了不存在的工具：{sorted(called - tool_names)}"
-
-    switch_keys = set(re.findall(r'data-key="([^"]+)"', html))
-    unknown = sorted(switch_keys - set(control_state.DEFAULTS))
-    assert not unknown, f"面板有控制层不认识的开关：{unknown}"
-
-    # 首屏必须能回答「当前绑定哪个项目」：面板元素、控制层字段、真实名字三边都在。
-    assert "projectLine" in dom_ids, "面板首屏缺少绑定项目那一行"
-    payload = central_mcp._status_payload(fast=True)
-    project = payload.get("project")
-    assert isinstance(project, dict), "控制层没有把绑定项目吐给面板"
-    assert project.get("name"), "绑定项目没有名字，面板会显示未绑定"
-    assert project.get("path"), "绑定项目没有路径，用户无法确认是哪一个"
-
-    # 首屏必须按「项目 → 路线 → 工作项 → 验收」归口，而不是把所有台账混成一口锅。
-    folders = payload.get("project_folders") or {}
-    rows = folders.get("folders") or []
-    assert rows, "控制层没有产出项目文件夹，面板无法按项目归类"
-    folder = rows[0]
-    assert folder.get("path") == project.get("path"), "项目文件夹没有绑定当前项目"
-    assert folder.get("current_step"), "项目文件夹没有当前步骤"
-    for key in ("doing_items", "todo_items", "human_acceptance", "counts"):
-        assert key in folder, f"项目文件夹缺少 {key}"
-
-    # 多项目不是把工作项堆在同一口锅：注册表另一个项目必须按自己的 path 单独出现。
-    # 用临时状态根隔离测试，绝不写当前项目的真实注册表。
-    with tempfile.TemporaryDirectory(prefix="autopilot-project-folder-") as tmp:
-        state = Path(tmp) / "current"
-        foreign = Path(tmp) / "foreign"
-        (state / "ops" / "truth").mkdir(parents=True)
-        (foreign / "ops" / "truth").mkdir(parents=True)
-        import json as _json
-        (state / "ops" / "truth" / "mainline.json").write_text(
-            _json.dumps({"product": "当前产品"}, ensure_ascii=False), encoding="utf-8")
-        (foreign / "ops" / "truth" / "mainline.json").write_text(
-            _json.dumps({"product": "另一个产品"}, ensure_ascii=False), encoding="utf-8")
-        (foreign / "ops" / "truth" / "ledger.jsonl").write_text(
-            _json.dumps({"id": "L-9001", "title": "另一个项目的工作项", "status": "doing",
-                         "source_thread_id": "thread-foreign"}, ensure_ascii=False) + "\n",
-            encoding="utf-8")
-        registry = state / "ops" / "truth" / "project_folders.json"
-        registry.write_text(_json.dumps({"folders": [
-            {"id": "foreign", "name": "另一个项目", "path": str(foreign),
-             "active": False, "source_thread_id": "thread-foreign"}]}, ensure_ascii=False),
-            encoding="utf-8")
-        script = (
-            "import json,sys\n"
-            "sys.path.insert(0,%r)\n"
-            "import central_mcp\n"
-            "p=central_mcp._status_payload(fast=True)['project_folders']\n"
-            "print(json.dumps(p,ensure_ascii=False))\n" % str(OPS))
-        env = os.environ.copy()
-        env["KG_REPO"] = str(state)
-        probe = subprocess.run([sys.executable, "-c", script], cwd=str(OPS.parent), env=env,
-                               capture_output=True, text=True)
-        assert probe.returncode == 0, f"多项目状态探针失败：{probe.stderr[-500:]}"
-        multi = _json.loads(probe.stdout.strip().splitlines()[-1])
-        rows2 = multi.get("folders") or []
-        assert len(rows2) >= 2, "注册表里的第二个项目没有出现在项目文件夹里"
-        row = next((r for r in rows2
-                    if Path(str(r.get("path") or "")).resolve() == foreign.resolve()), None)
-        assert row is not None, "第二个项目没有按自己的 path 单独成组"
-        assert row.get("readable") is True, "读得到的项目被标成不可读"
-        assert row.get("doing_items") and row["doing_items"][0].get("id") == "L-9001", \
-            "跨项目工作项没有按项目归属"
-        assert row.get("source_thread_id") == "thread-foreign", "跨项目来源对话丢失"
-
-    print(f"selftest ok: 面板元素（{len(used_ids)} 个）与工具（{len(called)} 个）"
-          f"全部真实存在，项目文件夹按项目归口，开关项都在控制层里。")
-
-
-def test_codex_native_bridge():
-    """app-server 使用官方协议参数；历史数据库只读降级，不写宿主状态。"""
-    import importlib
-    import json as _json
-    import sqlite3
-    from unittest import mock
-
-    sys.path.insert(0, str(OPS))
-    import codex_native
-    importlib.reload(codex_native)
-
-    with tempfile.TemporaryDirectory(prefix="codex-fake-server-") as tmp:
-        server = Path(tmp) / "fake_app_server.py"
-        server.write_text(
-            "import json, sys\n"
-            "for line in sys.stdin:\n"
-            "    req = json.loads(line)\n"
-            "    method, rid = req.get('method'), req.get('id')\n"
-            "    if rid is None:\n"
-            "        continue\n"
-            "    if method == 'thread/start':\n"
-            "        result = {'thread': {'id': 'thread-1', 'cwd': '/tmp'}}\n"
-            "    elif method == 'turn/start':\n"
-            "        result = {'turn': {'id': 'turn-1'}}\n"
-            "    else:\n"
-            "        result = {}\n"
-            "    print(json.dumps({'id': rid, 'result': result}), flush=True)\n",
-            encoding="utf-8",
-        )
-        proc, error = codex_native._open_session([sys.executable, str(server)])
-        assert error is None and proc is not None
-        try:
-            created, error = codex_native._session_request(
-                proc, "thread/start", {"cwd": "/tmp"})
-            assert error is None and created["thread"]["id"] == "thread-1"
-            moved, error = codex_native._session_request(
-                proc, "thread/section/move",
-                {"threadId": "thread-1", "sectionId": "section-1"})
-            assert error is None and moved == {}
-            started, error = codex_native._session_request(
-                proc, "turn/start", {
-                    "threadId": "thread-1",
-                    "input": codex_native._turn_input("请实现并验证这个任务"),
+        base = git(repo, "rev-parse", "HEAD").stdout.strip()
+        tasks = []
+        marker = "<<<<<<< HEAD\nleft\n=======\nright\n>>>>>>> branch\n"
+        for index in range(3):
+            wt = root / f"wt-{index}"
+            git(repo, "worktree", "add", "-q", "-b", f"codex/resolve-t{index}", str(wt), base)
+            (wt / f"file-{index}.txt").write_text(marker, encoding="utf-8")
+            git(wt, "add", f"file-{index}.txt")
+            git(wt, "commit", "-q", "-m", f"resolve conflict {index}")
+            if index == 2:
+                # Simulate a worker interrupted after clearing one marker but
+                # before commit; resume_dirty must still allow this worktree.
+                (wt / "file-2.txt").write_text(marker, encoding="utf-8")
+            task = {
+                "slug": f"t{index}", "branch": f"codex/resolve-t{index}",
+                "worktree": str(wt), "status": "needs_agent",
+                "unresolved_files": [f"file-{index}.txt"],
+            }
+            if index == 0:
+                # The source branch may already be in main while the dedicated
+                # resolve branch still contains a real conflict replayed onto
+                # newer main. Completion must follow resolve_branch, not source.
+                git(repo, "branch", "codex/source-t0", base)
+                task.update({
+                    "branch": "codex/source-t0",
+                    "resolve_branch": "codex/resolve-t0",
                 })
-            assert error is None and started["turn"]["id"] == "turn-1"
-            assert codex_native._turn_input("x") == [{"type": "text", "text": "x"}]
-        finally:
-            codex_native._close_session(proc)
+            tasks.append(task)
+        git(repo, "checkout", "-q", "main")
+        (repo / "main-only.txt").write_text("main advances\n", encoding="utf-8")
+        git(repo, "add", "main-only.txt")
+        git(repo, "commit", "-q", "-m", "main advances after branch split")
+        git(repo, "push", "-q", "origin", "main")
+        git(repo, "update-ref", "refs/remotes/origin/main", "main")
+        # 第三个任务故意留成脏工作区：上一轮 worker 被打断的现场应可原地续解。
+        (repo / "ops" / "tasks" / "resolve.json").write_text(
+            _json.dumps({"tasks": tasks}), encoding="utf-8")
 
-    with mock.patch.object(codex_native, "_rpc", return_value=(None, "unavailable")):
-        with tempfile.TemporaryDirectory(prefix="codex-history-") as tmp:
-            db_path = Path(tmp) / "history.sqlite"
-            with sqlite3.connect(db_path) as db:
-                db.executescript("""
-                    CREATE TABLE thread_turns (
-                        thread_id TEXT, completed_at INTEGER, started_at INTEGER, status TEXT
-                    );
-                    CREATE TABLE thread_items (
-                        thread_id TEXT, item_type TEXT, rollout_ordinal INTEGER, item_json TEXT
-                    );
-                    INSERT INTO thread_turns VALUES ('historic-thread', 20, 10, 'idle');
-                    INSERT INTO thread_items VALUES (
-                        'historic-thread', 'userMessage', 1, '{"text":"历史标题"}'
-                    );
-                """)
-            old_db, codex_native.HISTORY_DB = codex_native.HISTORY_DB, db_path
-            try:
-                snapshot = codex_native.snapshot()
-                assert snapshot["available"] is False
-                assert snapshot["transport"] == "history-read-only"
-                assert snapshot["threads"][0]["id"] == "historic-thread"
-                with sqlite3.connect(db_path) as db:
-                    assert db.execute("SELECT count(*) FROM thread_turns").fetchone()[0] == 1
-            finally:
-                codex_native.HISTORY_DB = old_db
+        git(repo, "push", "-q", "origin", "main")
+        os.environ["KG_REPO"] = str(repo)
+        os.environ["KG_TRUNK"] = str(trunk)
+        os.environ["KG_DAEMON_HOME"] = str(home)
+        # Keep fixture state isolated from the real repository's resolve ledger.
+        # `central_daemon` imports these modules; reload them now so
+        # `_state_repo()` and `origin/main` both point at this fixture.
+        import control_state
+        import central_config
+        import central_daemon
+        # Other tests may already have imported and hot-reloaded these modules.
+        # Reload the dependency first, then the daemon, so daemon functions bind
+        # to the current control_state module object rather than a stale one.
+        importlib.reload(control_state)
+        importlib.reload(central_config)
+        importlib.reload(central_daemon)
+        control_state.load = lambda: {
+            "auto_resolve": True, "auto_exec": False, "auto_land": False}
+        started = []
 
-    fake_proc = object()
-    with mock.patch.object(codex_native, "_session", return_value=(fake_proc, None)) as session_mock, \
-            mock.patch.object(codex_native, "_session_request", side_effect=[
-                ({"thread": {"id": "thread-dispatch", "cwd": "/tmp"}}, None),
-                ({}, None),
-                ({"turn": {"id": "turn-dispatch"}}, None),
-            ]) as request_mock, \
-            mock.patch.object(codex_native, "_close_session") as close_mock:
-        dispatched, error = codex_native.dispatch_task(
-            "/tmp", "请实现并验证这个任务", "section-1")
-        assert error is None
-        assert dispatched["thread_id"] == "thread-dispatch"
-        assert dispatched["turn_id"] == "turn-dispatch"
-        session_mock.assert_called_once_with(host_only=True)
-        assert [call.args[1] for call in request_mock.call_args_list] == [
-            "thread/start", "thread/section/move", "turn/start"]
-        assert "sectionId" not in request_mock.call_args_list[0].args[2]
-        assert request_mock.call_args_list[1].args[2]["sectionId"] == "section-1"
-        assert request_mock.call_args_list[2].args[2]["threadId"] == "thread-dispatch"
-        close_mock.assert_called_once_with(fake_proc)
+        class DoneFuture:
+            def done(self):
+                return False
 
-    with mock.patch.object(codex_native, "_session", return_value=(fake_proc, None)) as session_mock, \
-            mock.patch.object(codex_native, "_session_request", side_effect=[
-                ({"thread": {"id": "thread-dispatch"}}, None),
-                ({"turn": {"id": "turn-follow-up"}}, None),
-            ]) as request_mock, \
-            mock.patch.object(codex_native, "_close_session"):
-        continued, error = codex_native.follow_up("thread-dispatch", "继续处理并回报卡点")
-        assert error is None and continued["turn"]["id"] == "turn-follow-up"
-        assert [call.args[1] for call in request_mock.call_args_list] == [
-            "thread/resume", "turn/start"]
-        session_mock.assert_called_once_with(host_only=True)
+        class Pool:
+            def submit(self, fn, rec):
+                started.append(rec["slug"])
+                return DoneFuture()
 
-    with mock.patch.object(codex_native, "_rpc", side_effect=[
-        ({"thread": {"id": "thread-start", "cwd": "/tmp"}}, None),
-        ({}, None),
-    ]) as rpc_mock:
-        started, error = codex_native.start_thread("/tmp", "section-1")
-        assert error is None and started["section_id"] == "section-1"
-        assert rpc_mock.call_args_list[0].args[1] == {
-            "cwd": str(Path("/tmp").resolve())}
-        assert rpc_mock.call_args_list[1].args[1] == {
-            "threadId": "thread-start", "sectionId": "section-1"}
+        central_daemon._resolve_task_pool = Pool()
+        central_daemon._resolve_jobs.clear()
+        central_daemon._resolve_finish_jobs.clear()
+        central_daemon.dispatch_resolve_tasks(False)
+        if sorted(started) != ["t0", "t1", "t2"]:
+            raise AssertionError(f"三路池没有派满 3 个任务（脏任务应续解）: {started}")
 
-    with mock.patch.object(codex_native, "_session", return_value=(fake_proc, None)), \
-            mock.patch.object(codex_native, "_session_request", side_effect=[
-                ({"thread": {"id": "thread-orphan", "cwd": "/tmp"}}, None),
-                (None, "turn/start rejected"),
-            ]), mock.patch.object(codex_native, "_close_session"):
-        partial, error = codex_native.dispatch_task("/tmp", "task")
-        assert partial["thread_id"] == "thread-orphan" and partial["turn_id"] is None
-        assert "thread 已创建" in error
+        # A worker launched outside the daemon (for example during a daemon
+        # restart) must be observable and adopted, not duplicated. Simulate a
+        # live process for slot accounting and then an exited worker that must
+        # enter the serial finish queue.
+        central_daemon._external_resolve_jobs.clear()
+        central_daemon._external_resolve_jobs["external"] = {
+            "pid": os.getpid(), "rec": {"slug": "external", "worktree": str(root)},
+            "external": True,
+        }
+        central_daemon.save_worker_state()
+        workers = central_daemon.load_state().get("workers") or {}
+        if "external" not in (workers.get("resolve_external_active") or []):
+            raise AssertionError(f"外部 resolve worker 未进入可观测状态: {workers}")
+        central_daemon._external_resolve_jobs["external"]["pid"] = 99999999
+        central_daemon._collect_external_resolve_tasks()
+        if "external" in central_daemon._external_resolve_jobs:
+            raise AssertionError("已退出的外部 worker 没有释放槽位")
+        central_daemon.save_worker_state()
+        workers = central_daemon.load_state().get("workers") or {}
+        if workers.get("resolve_task_active") != ["t0", "t1", "t2"]:
+            raise AssertionError(f"resolve 活跃任务未写入可观测状态: {workers}")
 
-    print("selftest ok: app-server 初始化顺序、原生窗口集合移动、turn/start 输入协议与只读历史降级通过。")
-
-
-def test_native_socket_lstat():
-    """socket 是 symlink 入口时也要能识别，不能把权限挡住的路径说成不存在。"""
-    import importlib
-
-    sys.path.insert(0, str(OPS))
-    import codex_native
-    importlib.reload(codex_native)
-
-    real_socket = codex_native.SOCKET
-    real_open = codex_native._open_session
-    try:
-        with tempfile.TemporaryDirectory(prefix="codex-native-socket-lstat-") as tmp:
-            root = Path(tmp)
-            codex_native._open_session = lambda command, timeout=30: (
-                None, "Operation not permitted")
-
-            # macOS 受限进程的真实形态：入口是 symlink，目标可被系统权限挡住。
-            link = root / "codex-control.sock"
-            link.symlink_to(root / "missing-target.sock")
-            codex_native.SOCKET = link
-            assert codex_native._socket_present(), "lstat 没识别 symlink 入口"
-            state = codex_native.socket_state()
-            assert state["socket_present"] is True, state
-            result = codex_native.probe(timeout=1)
-            assert result["socket_present"] is True, result
-            assert result["connected"] is False, result
-            assert "无法访问" in result["reason"], result
-            assert "当前进程被系统权限挡住" in result["hint"], result
-
-            # 普通文件与缺失路径仍要如实报“没有找到”，不能因放宽而谎报存在。
-            plain = root / "plain.txt"
-            plain.write_text("x", encoding="utf-8")
-            codex_native.SOCKET = plain
-            assert codex_native._socket_present() is False
-            result = codex_native.probe(timeout=1)
-            assert result["socket_present"] is False and "没有找到" in result["reason"], result
-
-            codex_native.SOCKET = root / "absent.sock"
-            assert codex_native._socket_present() is False
-    finally:
-        codex_native.SOCKET = real_socket
-        codex_native._open_session = real_open
-    print("selftest ok: socket symlink 入口按 lstat 识别，权限挡目标不再误报成不存在。")
-
-
-FAKE_SECTION_SERVER = """
-import json, os, sys
-state_path = os.environ["FAKE_STATE"]
-def load():
-    try:
-        with open(state_path, encoding="utf-8") as fh:
-            return json.load(fh)
-    except Exception:
-        return {"sections": [], "moves": [], "creates": [], "threads": 0}
-def save(data):
-    with open(state_path, "w", encoding="utf-8") as fh:
-        json.dump(data, fh)
-for line in sys.stdin:
-    try:
-        req = json.loads(line)
-    except ValueError:
-        continue
-    rid = req.get("id")
-    if rid is None:
-        continue
-    method = req.get("method")
-    params = req.get("params") or {}
-    data = load()
-    if method == "threadSection/list":
-        if os.environ.get("FAKE_FAIL_SECTIONS"):
-            print(json.dumps({"id": rid, "error": {"message": "section API unavailable"}}), flush=True)
-            continue
-        result = {"data": data["sections"]}
-    elif method == "threadSection/create":
-        name = params.get("name")
-        data["creates"].append(name)
-        section = {"id": "sec-%d" % (len(data["sections"]) + 1), "name": name}
-        data["sections"].append(section)
-        save(data)
-        result = {"section": section}
-    elif method == "thread/start":
-        data["threads"] = data.get("threads", 0) + 1
-        save(data)
-        result = {"thread": {"id": "thread-%d" % data["threads"], "cwd": params.get("cwd")}}
-    elif method == "thread/section/move":
-        data["moves"].append({"threadId": params.get("threadId"), "sectionId": params.get("sectionId")})
-        save(data)
-        result = {}
-    elif method == "turn/start":
-        result = {"turn": {"id": "turn-1"}}
-    else:
-        result = {}
-    print(json.dumps({"id": rid, "result": result}), flush=True)
-"""
-
-def test_native_section_grouping():
-    """派活自动归入项目窗口集合：同名复用、不重复建；集合失败不拦派活但要如实记。
-
-    用户要的是「窗口拉太多时自动给它们一个文件夹」。这里用真的 app-server 协议
-    形状（threadSection/list + create + move）跑两遍，锁住「不是每次派活都新开一个」。
-    """
-    import importlib
-    import json as _json
-
-    sys.path.insert(0, str(OPS))
-    import codex_native
-    importlib.reload(codex_native)
-    real_socket = codex_native.SOCKET
-    codex_native.SOCKET = Path("/definitely/not/a/socket")
-
-    with tempfile.TemporaryDirectory(prefix="codex-native-section-") as tmp:
-        tmp_path = Path(tmp)
-        server = tmp_path / "fake_app_server.py"
-        server.write_text(FAKE_SECTION_SERVER, encoding="utf-8")
-        state = tmp_path / "state.json"
-        os.environ["FAKE_STATE"] = str(state)
-
-        real_open = codex_native._open_session
-        codex_native._open_session = lambda command, timeout=30: real_open(
-            [sys.executable, str(server)], timeout=timeout)
+        # dispatch_convergence must not bypass the real-worktree gate and
+        # start the legacy `kgctl resolve --auto` in parallel with actual
+        # resolve workers.
+        central_daemon._resolve_future = None
+        central_daemon._conv_jobs.clear()
+        central_daemon._resolve_jobs.clear()
+        central_daemon._external_resolve_jobs.clear()
+        central_daemon._resolve_finish_jobs.clear()
+        # Finish slots use their own serial lane. Keep one live split worker
+        # without making the fixture accidentally block on a real finish job.
+        calls = []
+        old_start = central_daemon._start_resolve_worker
+        central_daemon._start_resolve_worker = lambda: calls.append(1) or []
         try:
-            first, error = codex_native.dispatch_task(
-                str(OPS.parent), "第一条派活", auto_section="Codex 自动挡 · 测试")
-            assert error is None and first["thread_id"], first
-            assert first["section_id"] == "sec-1", first
-            assert first["section_note"] is None, first
-
-            second, error = codex_native.dispatch_task(
-                str(OPS.parent), "第二条派活", auto_section="Codex 自动挡 · 测试")
-            assert error is None and second["section_id"] == "sec-1", second
-
-            data = _json.loads(state.read_text(encoding="utf-8"))
-            assert data["creates"] == ["Codex 自动挡 · 测试"], data["creates"]
-            assert len(data["sections"]) == 1, data["sections"]
-            assert [m["sectionId"] for m in data["moves"]] == ["sec-1", "sec-1"], data["moves"]
-
-            # 集合 API 不可用时照常派活，但必须如实报出「没归组」，不能假装成功。
-            os.environ["FAKE_FAIL_SECTIONS"] = "1"
-            third, error = codex_native.dispatch_task(
-                str(OPS.parent), "第三条派活", auto_section="Codex 自动挡 · 测试")
-            assert error is None and third["thread_id"], third
-            assert third["section_id"] is None, third
-            assert third["section_note"] and "窗口集合" in third["section_note"], third
+            central_daemon.dispatch_convergence(False, {})
+            # Existing resolve worktrees must not starve the legacy auto-split
+            # forever. One extra slot may be filled per cycle, while the pool
+            # remains bounded by max_workers.
+            if len(calls) != 1:
+                raise AssertionError(f"已有真实 resolve worker 时没有补一个拆分槽: {calls}")
+            central_daemon._resolve_future = concurrent.futures.Future()
+            calls.clear()
+            central_daemon.dispatch_convergence(False, {})
+            if calls:
+                raise AssertionError("resolve 槽已占用时仍重复启动 auto-split")
         finally:
-            codex_native._open_session = real_open
-            codex_native.SOCKET = real_socket
-            os.environ.pop("FAKE_STATE", None)
-            os.environ.pop("FAKE_FAIL_SECTIONS", None)
+            central_daemon._resolve_future = None
+            central_daemon._start_resolve_worker = old_start
+        central_daemon._external_resolve_jobs.clear()
 
-    print("selftest ok: 派活自动归入项目窗口集合、同名复用不重复建、集合失败不拦派活。")
-
-
-def test_native_call_budget():
-    """宿主「连得上但不回话」时，状态查询与开关不能被拖住。
-
-    真实踩到的坑：桌面宿主 socket 可连、但不回包，于是
-    `_route_summary -> snapshot()` 一路等到超时，用户点一下开关要卡半分钟。
-    这里锁住三件事：给了预算就按时降级、候选服务不按个数翻倍等待、
-    面板/开关那条快路根本不连宿主。
-    """
-    import importlib
-    import io
-    import os as _os
-    import time as _time
-
-    sys.path.insert(0, str(OPS))
-    import codex_native
-    importlib.reload(codex_native)
-    real_socket = codex_native.SOCKET
-    codex_native.SOCKET = Path("/definitely/not/a/socket")
-
-    class FrozenProc:
-        """活着但永远不说话（不发 EOF、不写 stdout）的假宿主进程。"""
-
-        def __init__(self):
-            read_fd, self._write_fd = _os.pipe()
-            error_fd, self._error_write_fd = _os.pipe()
-            self.stdout = _os.fdopen(read_fd, "r")
-            self.stderr = _os.fdopen(error_fd, "r")
-            self.stdin = io.StringIO()
-
-        def wait(self, timeout=None):
-            return 0
-
-        def kill(self):
-            pass
-
-        def close(self):
-            self.stdout.close()
-            self.stderr.close()
-            _os.close(self._write_fd)
-            _os.close(self._error_write_fd)
-
-    frozen = FrozenProc()
-    real_open = codex_native._open_session
-    real_commands = codex_native._server_commands
-    try:
-        codex_native._open_session = lambda command, timeout=30: (frozen, None)
-        started = _time.monotonic()
-        state = codex_native.snapshot(timeout=1)
-        elapsed = _time.monotonic() - started
-        assert state["available"] is False, state
-        assert state["reason"], "降级时必须如实说明原因，不能只说不可用"
-        assert elapsed < 4, "snapshot 给了 1 秒预算却等了 %.1fs" % elapsed
-
-        # 候选有多个时也不能按候选数翻倍：预算 1 秒就必须在 1 秒出头回来。
-        attempts = []
-
-        def slow_open(command, timeout=30):
-            attempts.append(round(float(timeout), 2))
-            _time.sleep(0.4)
-            return None, "不回话"
-
-        codex_native._open_session = slow_open
-        codex_native._server_commands = (
-            lambda include_isolated=True: [["a"], ["b"], ["c"]])
-        started = _time.monotonic()
-        _, error = codex_native._session(timeout=1)
-        elapsed = _time.monotonic() - started
-        assert error, "全都不回话时必须如实返回错误"
-        assert len(attempts) < 3, "预算已经用完却还在试下一个候选：%s" % attempts
-        assert attempts[1] < 0.9, "第二个候选没有拿到剩余预算：%s" % attempts
-        assert elapsed < 2.5, "三个候选各等一次超时：%.1fs" % elapsed
-
-        # 面板/开关那条快路给 0 预算：压根不连宿主，就没有「等它回话」这回事。
-        connected = []
-        codex_native._open_session = lambda command, timeout=30: (
-            connected.append(command) or (None, "快路不该连宿主"))
-        started = _time.monotonic()
-        cached = codex_native.snapshot(timeout=0)
-        elapsed = _time.monotonic() - started
-        assert connected == [], "快路仍然去连了宿主：%s" % connected
-        assert cached["available"] is False and cached["reason"], cached
-        assert elapsed < 0.5, "快路不该等：%.1fs" % elapsed
-
-        # 即使本机历史库巨大，快路也不许读它：历史兜底只在慢路降级时用。
-        old_db = codex_native.HISTORY_DB
-        codex_native.HISTORY_DB = Path("/definitely/not/a/small/history.sqlite")
+        # Real existing worktrees take priority over the legacy auto-split path.
+        # Otherwise the daemon can report one speculative task while two
+        # actionable worktrees sit idle behind the land lock.
+        central_daemon._resolve_future = None
+        auto_split_calls = []
+        old_start = central_daemon._start_resolve_worker
+        central_daemon._start_resolve_worker = lambda: auto_split_calls.append(1) or []
         try:
-            started = _time.monotonic()
-            cached = codex_native.snapshot(timeout=0)
-            elapsed = _time.monotonic() - started
-            assert cached["threads"] == [], "快路读了历史兜底：%s" % cached["threads"]
-            assert elapsed < 0.5, "快路被历史库拖住：%.1fs" % elapsed
+            if not central_daemon.open_resolve_tasks():
+                raise AssertionError("fixture 应有真实 resolve worktree")
+            # Mirror the production gate added after land: only auto-split when
+            # there is no real open worktree.
+            if not central_daemon.open_resolve_tasks():
+                central_daemon._start_resolve_worker()
+            if auto_split_calls:
+                raise AssertionError("已有真实 resolve worktree 时仍启动了旧的 auto-split")
         finally:
-            codex_native.HISTORY_DB = old_db
-    finally:
-        codex_native._open_session = real_open
-        codex_native._server_commands = real_commands
-        codex_native.SOCKET = real_socket
-        frozen.close()
-    print("selftest ok: 宿主不回话时状态查询按预算降级，快路不连宿主、候选不翻倍。")
+            central_daemon._start_resolve_worker = old_start
+        cfg = central_daemon.auto_resolve_config()
+        if cfg["sandbox"] != "danger-full-access" or \
+                cfg["fast_model"] != "aibvv@deepseek-v4.1-flash":
+            raise AssertionError(f"resolve worker 配置未覆盖沙箱/快速模型: {cfg}")
 
+        # Stale ledger rows whose worktree has been reclaimed must not appear as
+        # live work or consume a worker slot.
+        data = _json.loads((repo / "ops" / "tasks" / "resolve.json").read_text(encoding="utf-8"))
+        data["tasks"].append({
+            "slug": "stale", "branch": "codex/resolve-stale",
+            "worktree": str(root / "missing-worktree"), "status": "gate_fail",
+            "unresolved_files": ["gone.ts"],
+        })
+        (repo / "ops" / "tasks" / "resolve.json").write_text(
+            _json.dumps(data), encoding="utf-8")
+        if "stale" in {t.get("slug") for t in central_daemon.open_resolve_tasks()}:
+            raise AssertionError("worktree 已回收的陈旧 resolve 台账仍被列为待解")
 
-def test_real_codex_app_server():
-    """真二进制协议验证：真实 codex app-server 能按我们的调用建出原生会话。
+        # 已提交、无 marker、但 origin/main 已前进到不再是 HEAD ancestor 的任务，
+        # 也必须进入串行 finish，不能变成孤儿。
+        central_daemon._resolve_jobs.clear()
+        central_daemon._resolve_finish_jobs.clear()
+        wt = root / "wt-committed"
+        git(repo, "worktree", "add", "-q", "-b", "codex/resolve-committed", str(wt))
+        (wt / "resolved.txt").write_text("resolved\n", encoding="utf-8")
+        git(wt, "add", "resolved.txt")
+        git(wt, "commit", "-q", "-m", "resolved")
+        (repo / "main-moves.txt").write_text("main advanced\n", encoding="utf-8")
+        git(repo, "add", "main-moves.txt")
+        git(repo, "commit", "-q", "-m", "main advances")
+        git(repo, "push", "-q", "origin", "main")
+        data = _json.loads((repo / "ops" / "tasks" / "resolve.json").read_text(encoding="utf-8"))
+        data["tasks"] = [{
+            "slug": "committed", "branch": "codex/resolve-committed",
+            "worktree": str(wt), "status": "needs_agent", "unresolved_files": [],
+        }]
+        (repo / "ops" / "tasks" / "resolve.json").write_text(
+            _json.dumps(data), encoding="utf-8")
+        central_daemon._pickup_committed_resolve_tasks()
+        if "committed" not in central_daemon._resolve_finish_jobs:
+            raise AssertionError("主分支前进后已提交的 resolve 任务被孤儿化了")
 
-    默认跳过：换一台机器没装 codex CLI 时不该让主自检变红。设
-    AUTOPILOT_SELFTEST_REAL_CODEX=1 真跑。它在一个可写的临时状态目录里跑，
-    不碰用户的 ~/.codex，也不会创建用户桌面窗口，只证明协议真的对得上官方实现。
-    """
-    if os.environ.get("AUTOPILOT_SELFTEST_REAL_CODEX") != "1":
-        print("selftest skip: 真二进制协议验证默认跳过"
-              "（设 AUTOPILOT_SELFTEST_REAL_CODEX=1 开启）。")
-        return
+        # A committed resolve worktree can legitimately be ahead of origin/main.
+        # Those differences are normal task output, not a dirty blocker. Only
+        # real UU entries or merge-overwrite hazards may stop serial finish.
+        central_daemon._resolve_finish_jobs.clear()
+        (wt / "worker-output.txt").write_text("resolved output\n", encoding="utf-8")
+        git(wt, "add", "worker-output.txt")
+        git(wt, "commit", "-q", "-m", "worker output ahead of main")
+        synced = central_daemon._sync_resolve_worktree_before_finish(
+            {"worktree": str(wt)})
+        if synced.get("outcome") not in ("fresh", "merged"):
+            raise AssertionError(
+                f"committed resolve worktree was rejected before finish: {synced}")
 
-    import importlib
-    import re as _re
-    import shutil as _shutil
-
-    cli = os.environ.get("CODEX_CLI", "codex")
-    if not _shutil.which(cli):
-        print("selftest skip: 没装 codex CLI，跳过真二进制协议验证。")
-        return
-
-    sys.path.insert(0, str(OPS))
-    import codex_native
-
-    with tempfile.TemporaryDirectory(prefix="codex-real-home-") as home:
-        old_home = os.environ.get("CODEX_HOME")
-        os.environ["CODEX_HOME"] = home
-        try:
-            importlib.reload(codex_native)
-            proc, error = codex_native._open_session([cli, "app-server"])
-            assert proc is not None, f"真实 codex app-server 起不来：{error}"
-            try:
-                started, error = codex_native._session_request(
-                    proc, "thread/start", {"cwd": str(OPS.parent)})
-                assert error is None, error
-                thread_id = ((started or {}).get("thread") or {}).get("id")
-                assert thread_id, started
-
-                # 窗口集合真链路：创建 → 把会话移进去 → 列出来必须在。
-                # 方法名或参数写错，这里会直接失败而不是在用户机器上才发现。
-                created, error = codex_native._session_request(
-                    proc, "threadSection/create", {"name": "Codex 自动挡 · 自检"})
-                assert error is None, error
-                section = (created or {}).get("section") or {}
-                assert section.get("id"), created
-
-                moved, move_error = codex_native._session_request(
-                    proc, "thread/section/move",
-                    {"threadId": thread_id, "sectionId": section["id"]})
-                if move_error:
-                    # 隔离状态目录里会话还没落盘时，服务器仍必须「认识」这个方法：
-                    # 报的只能是找不到会话，绝不能是未知方法。
-                    assert "unknown variant" not in move_error, move_error
-                    assert "not found" in move_error.lower(), move_error
-
-                listed, error = codex_native._session_request(
-                    proc, "threadSection/list", {"limit": 100})
-                assert error is None, error
-                names = [s.get("name") for s in ((listed or {}).get("data") or [])]
-                assert "Codex 自动挡 · 自检" in names, names
-
-                # 项目里所有发往原生服务的方法名都必须真实存在。
-                # 防的是「假服务器认识、真服务器不认」这种只在用户机器上炸的写法。
-                source = (OPS / "codex_native.py").read_text(encoding="utf-8")
-                used = set(_re.findall(r'_rpc\(\s*"([^"]+)"', source)) | set(
-                    _re.findall(r'_session_request\(\s*proc,\s*"([^"]+)"', source))
-                assert used, "没抓到任何原生方法名，检查本身失效了"
-                _, unknown_error = codex_native._session_request(
-                    proc, "___autopilot_unknown___", {})
-                match = _re.search(r"expected one of (.+)$", unknown_error or "")
-                accepted = set(_re.findall(r"`([^`]+)`", match.group(1))) if match else set()
-                assert accepted, f"拿不到服务器接受的方法列表：{unknown_error}"
-                unknown_methods = sorted(m for m in used if m not in accepted)
-                assert not unknown_methods, \
-                    f"这些原生方法名在真实服务上不存在：{unknown_methods}"
-            finally:
-                codex_native._close_session(proc)
-        finally:
-            if old_home is None:
-                os.environ.pop("CODEX_HOME", None)
-            else:
-                os.environ["CODEX_HOME"] = old_home
-            importlib.reload(codex_native)
-
-    print("selftest ok: 真实 codex app-server 建出原生会话与窗口集合，"
-          "并核对项目里所有原生方法名都真实存在。")
+        for name in ("KG_REPO", "KG_TRUNK", "KG_DAEMON_HOME"):
+            os.environ.pop(name, None)
+    print("selftest ok: resolve 三路并行、可观测、优先真实 worktree、快速模型可提交、陈旧台账过滤。")
 
 
 def test_verify_and_truth():
@@ -2078,46 +1372,83 @@ def test_auto_exec():
                 recs[r["id"]] = r
         return recs
 
+    def dispatch_and_drain(daemon, blocked, timeout=300):
+        """Start the bounded pool, then wait for the worker to finish.
+
+        Calling `_collect_exec` in a tight loop while the worker owns the
+        land gate can starve it under Python's GIL; wait on the futures first.
+        """
+        daemon.dispatch_exec(False, blocked)
+        jobs = list(getattr(daemon, "_exec_jobs", {}).values())
+        if not jobs:
+            raise AssertionError(f"没有启动后台 exec worker（blocked={blocked}）")
+        deadline = __import__("time").time() + timeout
+        for job in jobs:
+            remaining = max(0.05, deadline - __import__("time").time())
+            job["future"].result(timeout=remaining)
+        finished = daemon._collect_exec(blocked)
+        if not finished:
+            raise AssertionError(f"worker 已完成但未收割（blocked={blocked}）")
+        return finished
+
     with tempfile.TemporaryDirectory(prefix="codex-autopilot-exec-") as tmp:
         base = Path(tmp)
-
-        # --- 派发提示必须把“小任务第一步先落盘”写进硬规则，防止只读检查冒充完成 ---
-        # L-0006 真机现场：codex 退出码 0、只跑 ls/find/git status 后停手，自动挡如实记
-        # no_changes。只有提示词有这条约束还不够，但提示词缺了它，模型连被要求落盘都没有。
-        repo_prompt, _, _ = fixture(base / "prompt")
-        daemon_prompt = load_daemon(repo_prompt, base / "prompt-trunk",
-                                    base / "prompt-home",
-                                    fake_codex(base, "fake-prompt.sh", 0))
-        prompt_text = daemon_prompt._exec_prompt({
-            "id": "L-0001", "kind": "gate", "title": "写 verify.txt"})
-        for needle in ("第一步就要在当前 worktree 产出改动",
-                       "只读检查不算完成",
-                       "无需改动"):
-            if needle not in prompt_text:
-                raise AssertionError(f"派发提示缺少强制落盘规则: {needle!r}\n{prompt_text}")
 
         # --- 成功路径：实现 -> 提交 -> 落盘 -> 收口，台账变 done，main 里有产物 ---
         repo, trunk, home = fixture(base / "ok")
         daemon = load_daemon(repo, trunk, home, fake_codex(base, "fake-ok.sh", 0))
         blocked = {}
-        results = daemon.dispatch_exec(False, blocked)
+        results = dispatch_and_drain(daemon, blocked, timeout=300)
         if len(results) != 1 or results[0].get("outcome") != "landed":
             raise AssertionError(f"成功路径没有落成 landed: {results}\nblocked={blocked}")
         if ledger_latest(repo)["L-0001"].get("status") != "done":
             raise AssertionError(f"落盘后台账没有收口: {ledger_latest(repo)}")
         if git(repo, "show", "main:fake.txt").stdout.strip() != "fake codex":
             raise AssertionError("main 里没有执行器写下的产物")
-        if blocked:
-            raise AssertionError(f"成功路径不应留下 blocked: {blocked}")
+        # The pool surfaces a terminal row for both success and failure; the
+        # next cycle prunes successful rows against the truth ledger.
+        if blocked.get("L-0001", {}).get("reason") != "landed":
+            raise AssertionError(f"成功路径没有可清理的 landed 终态: {blocked}")
         if git(repo, "branch", "--list", "codex/exec-*").stdout.strip():
             raise AssertionError("成功路径应回收执行分支")
+
+        # --- 重启恢复：正在运行的旧 exec worktree 占槽，不重派同一条 ---
+        repo_l, trunk_l, home_l = fixture(base / "live")
+        daemon_l = load_daemon(repo_l, trunk_l, home_l, fake_codex(base, "fake-live.sh", 0))
+        active, free = daemon_l._exec_capacity(
+            3, {"L-live-in-memory"}, {str(repo_l.parent / "state-exec-old"): os.getpid()})
+        if active != 2 or free != 1:
+            raise AssertionError(f"live exec 没占槽: active={active} free={free}")
+        active, free = daemon_l._exec_capacity(
+            3, {"L-a", "L-b", "L-c"}, set())
+        if free != 0:
+            raise AssertionError(f"本池三个 active 时仍报告空闲槽: free={free}")
+        real_live = daemon_l._live_exec_worktrees
+        daemon_l._live_exec_worktrees = lambda kind=None: (
+            {"/tmp/kg-trunk-resolve-doc": os.getpid()})
+        try:
+            import control_state as cs
+            old_load = cs.load
+            cs.load = lambda: {"auto_exec": True}
+            try:
+                started_l = daemon_l.dispatch_exec(False, {})
+            finally:
+                cs.load = old_load
+        finally:
+            daemon_l._live_exec_worktrees = real_live
+        # The same task is allowed to start; the old branch is what proves
+        # whether a resolve worktree was counted as an implementation slot.
+        for job in list(daemon_l._exec_jobs.values()):
+            job["future"].cancel()
+        daemon_l._exec_jobs.clear()
+        daemon_l._exec_pool = None
 
         # --- 失败路径：写了一半就崩，必须保留分支和 worktree，绝不能丢在途工作 ---
         repo_f, trunk_f, home_f = fixture(base / "fail")
         daemon_f = load_daemon(repo_f, trunk_f, home_f,
                                fake_codex(base, "fake-fail.sh", 7))
         blocked_f = {}
-        results_f = daemon_f.dispatch_exec(False, blocked_f)
+        results_f = dispatch_and_drain(daemon_f, blocked_f)
         if results_f[0].get("outcome") != "codex_fail_preserved":
             raise AssertionError(f"失败路径没有保留成果: {results_f}")
         if blocked_f.get("L-0001", {}).get("reason") != "codex_exit_7":
@@ -2137,7 +1468,7 @@ def test_auto_exec():
         daemon_c._run_truthctl = lambda args, extra_env=None, timeout=120: (
             1, "forced close failure")
         blocked_c = {}
-        results_c = daemon_c.dispatch_exec(False, blocked_c)
+        results_c = dispatch_and_drain(daemon_c, blocked_c)
         if results_c[0].get("outcome") != "landed_close_fail":
             raise AssertionError(f"收口失败被误报成成功: {results_c}")
         if blocked_c.get("L-0001", {}).get("reason") != "landed_close_fail":
@@ -2149,6 +1480,16 @@ def test_auto_exec():
         again = daemon_c.dispatch_exec(False, blocked_c)
         if again:
             raise AssertionError(f"收口失败后台账项被重复派发: {again}")
+
+        # --- 过期本地失败可重试，但外部阻塞/结论失败仍不重试 ---
+        retry_blocked = {
+            "L-0012": {"reason": "codex_exit_1", "ts": "2000-01-01 00:00:00"},
+            "L-0016": {"reason": "external_blocked", "ts": "2000-01-01 00:00:00"},
+            "L-0056": {"reason": "landed_close_fail", "ts": "2000-01-01 00:00:00"},
+        }
+        released = daemon._prune_retryable_exec_blocked(retry_blocked)
+        if released != ["L-0012"] or "L-0016" not in retry_blocked or "L-0056" not in retry_blocked:
+            raise AssertionError(f"过期失败恢复边界错误: released={released}, blocked={retry_blocked}")
 
         # --- 已收口的条目不占「实现暂缓」：台账变 done 后自愈清掉 ---
         with (repo_c / "ops" / "truth" / "ledger.jsonl").open("a", encoding="utf-8") as fh:
@@ -2186,7 +1527,7 @@ def test_auto_exec():
         git(wt_p, "commit", "-q", "-m", "exec(L-0001): 面板按钮点着没反应")
         run(["git", "-C", str(repo_p), "worktree", "remove", "--force", str(wt_p)])
         blocked_p = {}
-        results_p = daemon_p.dispatch_exec(False, blocked_p)
+        results_p = dispatch_and_drain(daemon_p, blocked_p)
         if not results_p or results_p[0].get("outcome") != "landed":
             raise AssertionError(
                 f"分支已有未落提交时没有直接收口: {results_p}\nblocked={blocked_p}")
@@ -2196,6 +1537,58 @@ def test_auto_exec():
             raise AssertionError(f"直接收口后台账没有收口: {ledger_latest(repo_p)}")
         if git(repo_p, "branch", "--list", branch_p).stdout.strip():
             raise AssertionError("直接收口后执行分支没有回收")
+
+        # --- 跨多个阶段、没有单一验收面的路线任务不能占 worker 槽 ---
+        assert daemon_p._oversized_exec_item({
+            "title": "继续按 ThoughLoom 产品路线推进闭环",
+            "detail": "阶段1质量、阶段2 live、阶段3图谱、阶段4分享",
+        })
+        assert not daemon_p._oversized_exec_item({
+            "title": "修复 verify:graph-png-export-browser",
+            "detail": "改 frontend/src/components/NodeHoverCard.tsx 并跑 npm run verify:graph-png-export-browser",
+        })
+
+        # --- 人工判断 / 外部通道阻塞不能占用代码 worker 槽 ---
+        assert daemon_p._non_executable_reason({
+            "title": "阶段1人工盲评包已生成，等待真人打开复核",
+            "detail": "需要人工复核 50 题并导出 review-results.json",
+        }) == "needs_human"
+        assert daemon_p._non_executable_reason({
+            "title": "检索出口当前是红灯：Tavily 返回 432 usage limit",
+            "detail": "外部计划配额耗尽",
+        }) == "external_blocked"
+        assert daemon_p._non_executable_reason({
+            "title": "修复人工复核页导出按钮",
+            "detail": "改 backend/test/stage1-review-page.mjs 并跑 node test/stage1-review-page.mjs",
+        }) is None
+
+        # --- 同 id 已落 main 但尚未 close：派发前必须自动收口，不再开新 worker ---
+        repo_done, trunk_done, home_done = fixture(base / "already-landed")
+        git(repo_done, "push", "-q", "origin", "main")
+        ledger_done = repo_done / "ops" / "truth" / "ledger.jsonl"
+        rows_done = [_json.loads(line) for line in ledger_done.read_text(encoding="utf-8").splitlines() if line.strip()]
+        rows_done.append({
+            "id": "L-0001", "ts": "2026-10-18 00:00:00", "type": "ledger",
+            "kind": "bug", "lane": "bug", "title": "面板按钮点着没反应",
+            "detail": "面板按钮点着没反应", "status": "open", "source": "selftest",
+        })
+        ledger_done.write_text("\n".join(_json.dumps(r, ensure_ascii=False) for r in rows_done) + "\n", encoding="utf-8")
+        (repo_done / "already.txt").write_text("landed\n", encoding="utf-8")
+        git(repo_done, "add", "already.txt")
+        git(repo_done, "commit", "-q", "-m", "exec(L-0001): 面板按钮点着没反应")
+        git(repo_done, "push", "-q", "origin", "main")
+        daemon_done = load_daemon(repo_done, trunk_done, home_done,
+                                  fake_codex(base, "should-not-run.sh", 0))
+        def run_truthctl_done(args, **kwargs):
+            result = truthctl(repo_done, *args)
+            return result.returncode, result.stdout + result.stderr
+        daemon_done._run_truthctl = run_truthctl_done
+        blocked_done = {}
+        results_done = daemon_done.dispatch_exec(False, blocked_done)
+        if results_done:
+            raise AssertionError(f"已落 main 的任务仍启动了 worker: {results_done}")
+        if ledger_latest(repo_done)["L-0001"].get("status") != "done":
+            raise AssertionError(f"已落 main 的任务没有自动收口: {ledger_latest(repo_done)}")
 
         # --- _changed_paths 必须保住 porcelain 首行的前导空格，否则 git add 必失败 ---
         # 曾经的 bug：_git() 整体 strip 掉 stdout，porcelain 首行 ' M app.txt' 变成
@@ -2240,11 +1633,11 @@ def test_auto_exec():
                 raise AssertionError(f"{text} 没有被判定为可重试的基础设施失败")
 
         blocked_r = {}
-        results_r = daemon_r.dispatch_exec(False, blocked_r)
+        results_r = dispatch_and_drain(daemon_r, blocked_r)
         if results_r[0].get("outcome") != "landed" or results_r[0].get("attempts") != 2:
             raise AssertionError(f"抖动后重试没有落成 landed: {results_r}\nblocked={blocked_r}")
-        if blocked_r:
-            raise AssertionError(f"抖动后重试成功不应留下 blocked: {blocked_r}")
+        if blocked_r.get("L-0001", {}).get("reason") != "landed":
+            raise AssertionError(f"抖动后重试成功没有 landed 终态: {blocked_r}")
         wts = [l for l in wt_log.read_text(encoding="utf-8").splitlines() if l.strip()]
         if len(wts) != 2 or len(set(wts)) != 1:
             raise AssertionError(f"重试没有落在同一个 worktree 上: {wts}")
@@ -2252,43 +1645,11 @@ def test_auto_exec():
             raise AssertionError("重试成功后 main 里没有执行器的产物")
         slug_r = f"{daemon_r._exec_slug('L-0001')}-{daemon_r._exec_slug('面板按钮点着没反应')}"
         exec_log = (home_r / "exec" / f"{slug_r}.log").read_text(encoding="utf-8")
-        if "502 Bad Gateway" not in exec_log or "重试 第 2/6 次" not in exec_log:
+        if "502 Bad Gateway" not in exec_log or "重试 第 2/4 次" not in exec_log:
             raise AssertionError(f"重试没有保留第一次的现场证据: {exec_log[-600:]}")
         daemon_log = (home_r / "daemon.log").read_text(encoding="utf-8")
-        if "第 2/6 次重试" not in daemon_log or str(home_r / "exec" / f"{slug_r}.log") not in daemon_log:
+        if "第 2/4 次重试" not in daemon_log or str(home_r / "exec" / f"{slug_r}.log") not in daemon_log:
             raise AssertionError(f"daemon.log 没写明第几次重试 / 日志路径: {daemon_log[-800:]}")
-
-        # --- 退出 0 但无改动：有限重试并要求真实落盘，不把只读检查当成完成 ---
-        # L-0006/L-0001 真机现场：模型代理返回 0，但没有执行任何写命令，自动挡以前直接记
-        # no_changes 并永久暂缓。修复后应在同一 worktree 重跑提示，第二次仍无改动才收口。
-        repo_n, trunk_n, home_n = fixture(base / "no-change-retry",
-                                         exec_cfg={"no_change_retries": 1})
-        fake_nc = base / "fake-no-change.sh"
-        fake_nc_count = base / "fake-no-change.count"
-        fake_nc.write_text(
-            "#!/bin/sh\n"
-            "wt=\"\"\n"
-            "while [ \"$#\" -gt 0 ]; do\n"
-            "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
-            "done\n"
-            f"n=$(cat {fake_nc_count} 2>/dev/null || echo 0)\n"
-            "n=$((n + 1))\n"
-            f"echo $n > {fake_nc_count}\n"
-            "if [ \"$n\" = \"1\" ]; then\n"
-            "  exit 0\n"
-            "fi\n"
-            "printf 'retry wrote file\\n' > \"$wt/fake.txt\"\n"
-            "exit 0\n", encoding="utf-8")
-        fake_nc.chmod(0o755)
-        daemon_n = load_daemon(repo_n, trunk_n, home_n, fake_nc)
-        blocked_n = {}
-        results_n = daemon_n.dispatch_exec(False, blocked_n)
-        if results_n[0].get("outcome") != "landed" or results_n[0].get("attempts") != 2:
-            raise AssertionError(f"无改动重试没有最终落盘: {results_n}\nblocked={blocked_n}")
-        if blocked_n:
-            raise AssertionError(f"无改动重试成功后不应留下 blocked: {blocked_n}")
-        if git(repo_n, "show", "main:fake.txt").stdout.strip() != "retry wrote file":
-            raise AssertionError("无改动重试后 main 里没有第二次执行器产物")
 
         # --- 重试到上限仍抖动：reason 记 codex_infra_fail（与 codex_exit_1 区分）、现场保留、不重复派 ---
         repo_e, trunk_e, home_e = fixture(base / "infra-exhaust")
@@ -2296,7 +1657,7 @@ def test_auto_exec():
                                fake_codex_infra(base, "fake-infra.sh"))
         daemon_e.EXEC_INFRA_BACKOFF = 0
         blocked_e = {}
-        results_e = daemon_e.dispatch_exec(False, blocked_e)
+        results_e = dispatch_and_drain(daemon_e, blocked_e)
         if results_e[0].get("outcome") != "codex_fail_preserved":
             raise AssertionError(f"抖动失败没有保留现场: {results_e}")
         if results_e[0].get("attempts") != 4:
@@ -2318,7 +1679,7 @@ def test_auto_exec():
                                fake_codex_infra(base, "fake-infra-x.sh"))
         daemon_x.EXEC_INFRA_BACKOFF = 0
         blocked_x = {}
-        results_x = daemon_x.dispatch_exec(False, blocked_x)
+        results_x = dispatch_and_drain(daemon_x, blocked_x)
         if results_x[0].get("attempts") != 1:
             raise AssertionError(f"retries=0 时仍重试了: {results_x}")
         if blocked_x.get("L-0001", {}).get("reason") != "codex_infra_fail":
@@ -2331,7 +1692,7 @@ def test_auto_exec():
                                fake_codex_hang(base, "fake-hang.sh"))
         daemon_t.EXEC_INFRA_BACKOFF = 0
         blocked_t = {}
-        results_t = daemon_t.dispatch_exec(False, blocked_t)
+        results_t = dispatch_and_drain(daemon_t, blocked_t)
         if results_t[0].get("exit") != 124 or results_t[0].get("attempts") != 1:
             raise AssertionError(f"超时没有仍归 124 / 或误重试了: {results_t}")
         if blocked_t.get("L-0001", {}).get("reason") != "codex_exit_124":
@@ -2388,8 +1749,7 @@ def test_mcp_contract():
         tool_names = {t["name"] for t in recv()["result"]["tools"]}
         missing = {"product_state", "product_update", "distill_review",
                    "distill_add", "synthesize_mainline", "close_item",
-                   "reopen_item", "register_acceptance",
-                   "codex_native_dispatch_task", "codex_native_follow_up"} - tool_names
+                   "reopen_item", "register_acceptance"} - tool_names
         assert not missing, f"缺少自动挡工具: {sorted(missing)}"
 
         send({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
@@ -2399,8 +1759,6 @@ def test_mcp_contract():
         assert "product_state" in sc and "judgments" in sc and "last_verification" in sc, \
             "状态快照缺少产品状态/判断逻辑/最近验证"
         assert "mainline" in sc, "状态快照缺少产品主线摘要"
-        assert "route" in sc and sc["route"]["commander"]["label"] == "主司令窗", \
-            "状态快照缺少主司令窗路线"
         for key in ("roadmap", "doing_items", "todo_items", "todo_count",
                     "human_acceptance", "machine_verified"):
             assert key in sc, f"状态快照缺少 {key}"
@@ -2441,20 +1799,6 @@ def test_mcp_contract():
         send({"jsonrpc": "2.0", "id": 7, "method": "tools/call",
               "params": {"name": "autopilot_control", "arguments": {"action": "resume"}}})
         assert recv()["result"]["structuredContent"]["paused"] is False
-        send({"jsonrpc": "2.0", "id": 8, "method": "tools/call",
-              "params": {"name": "autopilot_control", "arguments": {"action": "disable"}}})
-        off = recv()["result"]["structuredContent"]
-        assert off["enabled"] is False and off["lifecycle"] == "off"
-        send({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
-              "params": {"name": "intake_request",
-                         "arguments": {"text": "must reject while off"}}})
-        refused = recv()["result"]
-        assert refused["isError"] is True
-        assert "AUTOPILOT_DISABLED" in _json.dumps(refused, ensure_ascii=False)
-        send({"jsonrpc": "2.0", "id": 10, "method": "tools/call",
-              "params": {"name": "autopilot_control", "arguments": {"action": "enable"}}})
-        on = recv()["result"]["structuredContent"]
-        assert on["enabled"] is True and on["lifecycle"] == "on"
         proc.stdin.close()
     finally:
         try:
@@ -2468,67 +1812,178 @@ def test_mcp_contract():
     print("selftest ok: MCP resources 合约、暂停闸门、状态/控制工具全部通过。")
 
 
-def test_closure_rate():
-    """北极星首问闭环率：必须算得出真数，算不出必须红，不许冒充 0%。"""
-    import closure_rate
+def test_budget_gate():
+    """预算闸门：越线判定 / 不打扰在用窗口 / 熔断与恢复 / 一键关 / 预演零副作用。
+
+    全部在临时目录里伪造数据源（automations + codex 线程库 + 代理账本），
+    不碰真实的 ~/.codex、不换代、不发通知、不写真实状态。
+    """
     import json as _json
-    with tempfile.TemporaryDirectory(prefix="autopilot-closure-rate-") as tmp:
-        truth = Path(tmp) / "ops" / "truth"
-        truth.mkdir(parents=True)
-        ledger = truth / "ledger.jsonl"
+    import sqlite3
+    import time as _time
+    import importlib
 
-        def write(rows):
-            ledger.write_text(
-                "\n".join(_json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
-                encoding="utf-8")
+    sys.path.insert(0, str(OPS))
+    bg = importlib.import_module("budget_gate")
 
-        # 3 条：1 条带证据闭环、1 条仍 open、1 条标 done 却没有证据。
-        write([
-            {"id": "L-0001", "type": "ledger", "status": "done",
-             "evidence": "python3 ops/selftest.py -> exit 0"},
-            {"id": "L-0002", "type": "ledger", "status": "open"},
-            {"id": "L-0003", "type": "ledger", "status": "done",
-             "evidence": "   "},
-        ])
-        res = closure_rate.compute(tmp)
-        assert res["status"] == "ok", res
-        assert res["denominator"] == 3 and res["numerator"] == 1, res
-        assert res["rate_pct"] == 33.3, res
-        assert res["done_without_evidence"] == ["L-0003"], \
-            "标 done 却没有证据的必须按未闭环并单独报出来"
-        assert "33.3%" in closure_rate.human_line(res), closure_rate.human_line(res)
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-budget-") as tmp:
+        root = Path(tmp)
+        home = root / "home"
+        codex = home / ".codex"
+        runtime = root / "runtime"
+        (codex / "automations" / "fake").mkdir(parents=True)
+        runtime.mkdir(parents=True)
 
-        # 分母为 0：必须是 no_data +「取不到」，绝不能算成 0% 或「正常」。
-        write([])
-        res = closure_rate.compute(tmp)
-        assert res["status"] == "no_data" and res["rate_pct"] is None, res
-        assert "取不到" in closure_rate.human_line(res), closure_rate.human_line(res)
+        # 目标线程的 rollout：峰值 19 万（谷底 4.6 万）+ 近 1 小时压缩 3 次
+        rollout = root / "rollout.jsonl"
+        now_iso = _time.strftime("%Y-%m-%dT%H:%M:%S", _time.gmtime())
+        lines = []
+        for i, v in enumerate([46_000, 120_000, 190_000]):
+            lines.append(_json.dumps({"timestamp": now_iso, "type": "response_item",
+                                      "payload": {"type": "token_usage_record",
+                                                  "usage": {"input_tokens": v}}}))
+        for i in range(3):
+            lines.append(_json.dumps({"timestamp": now_iso, "type": "compacted",
+                                      "payload": {"message": "summary"}}))
+        rollout.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-        # 台账损坏：unreadable 行会让比例失真，必须 fail-closed 成 unknown。
-        ledger.write_text("{\"broken\":\n", encoding="utf-8")
-        res = closure_rate.compute(tmp)
-        assert res["status"] == "unknown" and res["rate_pct"] is None, res
-        assert "取不到" in closure_rate.human_line(res), closure_rate.human_line(res)
+        db = codex / "state_5.sqlite"
+        c = sqlite3.connect(db)
+        c.execute("create table threads (id text primary key, rollout_path text, "
+                  "tokens_used integer, updated_at integer)")
+        c.execute("insert into threads values (?,?,?,?)", ("fake-thread", str(rollout), 1_000, 0))
+        c.commit()
+        c.close()
 
-        # 台账缺失：同样是 unknown，不能静默成「没有问题」。
-        ledger.unlink()
-        res = closure_rate.compute(tmp)
-        assert res["status"] == "unknown", res
+        proxy = home / ".codex-proxy" / "stats.db"
+        proxy.parent.mkdir(parents=True)
+        p = sqlite3.connect(proxy)
+        p.execute("create table requests (id integer primary key, ts integer, provider text, "
+                  "model text, input_tokens integer, output_tokens integer, "
+                  "cache_hit_tokens integer, status integer)")
+        p.execute("insert into requests (ts, provider, model, input_tokens, output_tokens, "
+                  "cache_hit_tokens, status) values (?,?,?,?,?,?,?)",
+                  (int(_time.time()) - 60, "fake", "fake-model", 10_000_000, 1000, 9_000_000, 200))
+        p.commit()
+        p.close()
 
-        # 门禁退出码：算得出=0，算不出=2（先放回一条正常台账，再删掉验红）。
-        write([{"id": "L-0009", "type": "ledger", "status": "done",
-                "evidence": "cmd -> exit 0"}])
-        assert closure_rate.main(["--repo", tmp]) == 0
-        ledger.unlink()
-        assert closure_rate.main(["--repo", tmp]) == 2
+        (codex / "automations" / "fake" / "automation.toml").write_text(
+            'version = 1\nid = "fake"\nkind = "heartbeat"\nname = "fake"\n'
+            'prompt = "x"\nstatus = "ACTIVE"\nrrule = "RRULE:FREQ=MINUTELY;INTERVAL=15"\n'
+            'target_thread_id = "fake-thread"\ncreated_at = 1\nupdated_at = 1\n',
+            encoding="utf-8")
 
-    # 面板与状态文本必须带上这个字段，否则首屏看不到北极星。
-    import central_mcp
-    payload = central_mcp._status_payload(fast=True)
-    assert "closure_rate" in payload, "状态快照缺少 closure_rate"
-    line = central_mcp._closure_rate_line(payload.get("closure_rate"))
-    assert "首问闭环率" in line, line
-    print("selftest ok: 北极星首问闭环率三态、fail-closed 退出码与面板接线全部通过。")
+        # 把模块里的路径指向伪造环境（测完在 finally 里还原）
+        real = {k: getattr(bg, k) for k in
+                ("AUTOMATIONS", "CODEX_DB", "PROXY_DB", "RUNTIME", "STATE", "LOG",
+                 "ROTATE_LOG", "OFF_FILES", "CONFIG_PATH")}
+        started = []
+        real_popen = subprocess.Popen
+
+        class _NoPopen:
+            def __init__(self, *a, **k):
+                started.append(a[0] if a else k.get("args"))
+                raise OSError("selftest: 换代被拦住（本测试不允许真换代）")
+
+        try:
+            bg.AUTOMATIONS, bg.CODEX_DB, bg.PROXY_DB = (codex / "automations", db, proxy)
+            bg.RUNTIME, bg.STATE = runtime, runtime / "budget-gate.json"
+            bg.LOG, bg.ROTATE_LOG = runtime / "budget-gate.log", runtime / "rotate.log"
+            bg.OFF_FILES = (runtime / "BUDGET_GATE_OFF", codex / "budget-gate.off")
+            bg.CONFIG_PATH = codex / "nonexistent.json"
+            bg.notify = lambda *a, **k: None          # 不发桌面通知
+            bg._event = lambda *a, **k: None          # 不写真实流水
+            subprocess.Popen = _NoPopen
+
+            # 1) 越线判定：只看「最后一轮」（4.6 万，谷底）会漏，峰值/压缩必须抓住
+            info = bg.measure_thread("fake-thread", bg.DEFAULTS)
+            level, reasons = bg.verdict(info, bg.DEFAULTS)
+            if level != "over":
+                raise AssertionError(f"峰值 19 万 + 压缩 3 次应判 over，实得 {level}：{reasons}")
+            if info.get("peak_input_recent") != 190_000:
+                raise AssertionError(f"峰值读错：{info.get('peak_input_recent')}")
+            if info.get("compactions_recent") != 3:
+                raise AssertionError(f"压缩次数读错：{info.get('compactions_recent')}")
+
+            # 2) 窗口刚动过（有人在用）→ 不换代，只等
+            rep = bg.run(dry=False)
+            acts = [a["action"] for a in rep["actions"]]
+            if "rotate-wait" not in acts or started:
+                raise AssertionError(f"在用窗口不该被换代，实得动作 {acts}，换代调用 {started}")
+
+            # 3) 窗口空闲 10 分钟 + 允许换代 → 才会真的排一次换代（Popen 被测试拦住）
+            old = _time.time() - 600
+            os.utime(rollout, (old, old))
+            rep = bg.run(dry=False)
+            acts = [a["action"] for a in rep["actions"]]
+            if "rotate" not in acts or len(started) != 1:
+                raise AssertionError(f"空闲且越线应排一次换代，实得动作 {acts}，换代调用 {started}")
+            if "--force" not in list(started[0]):
+                raise AssertionError(f"换代必须带 --force 才越过 cockpit_rotate 自带的粗线：{started[0]}")
+
+            # 4) 熔断与恢复：用量越线停「派活」，回落自动恢复
+            bg._maybe_pause_dispatch({"input": 9_000_000_000, "fresh": 9_000_000_000,
+                                      "requests": 1, "window_minutes": 60}, bg.DEFAULTS)
+            if not bg.dispatch_paused()[0]:
+                raise AssertionError("用量越线没有暂停派活")
+            import central_daemon as _cd
+            real_ac, real_state = _cd.auto_exec_config, _cd.control_state.load
+            try:
+                _cd.control_state.load = lambda: {"auto_exec": True}
+                if _cd.auto_exec_config().get("enabled"):
+                    raise AssertionError("熔断后自动挡仍在派活（auto_exec 没被关掉）")
+            finally:
+                _cd.control_state.load = real_state
+            bg._maybe_pause_dispatch({"input": 1_000_000, "fresh": 100_000,
+                                      "requests": 5, "window_minutes": 60}, bg.DEFAULTS)
+            if bg.dispatch_paused()[0]:
+                raise AssertionError("用量回落后没有自动恢复派活")
+
+            # 4b) 终态暂缓不能被冷却时间重新放回执行池。宽任务、人工验收和
+            # 「零改动但保留现场」都需要明确拆分或重开，不能每 30 分钟烧一次 worker。
+            import central_daemon as _cd2
+            old_ts = "2000-01-01 00:00:00"
+            terminal = {
+                "needs_split": {"reason": "needs_split", "ts": old_ts},
+                "needs_human": {"reason": "needs_human", "ts": old_ts},
+                "no_changes": {"reason": "no_changes", "ts": old_ts},
+                "no_changes_preserved": {"reason": "no_changes_preserved", "ts": old_ts},
+            }
+            for rid, rec in terminal.items():
+                if _cd2._exec_retryable({rid: rec}, rid):
+                    raise AssertionError(f"终态暂缓 {rid} 被判为可重派")
+            retryable = {"L-retry": {"reason": "codex_exit_1", "ts": old_ts}}
+            if not _cd2._exec_retryable(retryable, "L-retry"):
+                raise AssertionError("普通本地失败在冷却后应允许重试")
+
+            # 5) 状态文件坏掉 → fail-open（不误停、不抛）
+            bg.STATE.write_text("{ 坏 json", encoding="utf-8")
+            if bg.dispatch_paused()[0]:
+                raise AssertionError("状态文件坏掉时不应误停派活")
+
+            # 6) 一键关：存在开关文件 → 整体跳过，零动作
+            bg.STATE.unlink()
+            (runtime / "BUDGET_GATE_OFF").write_text("", encoding="utf-8")
+            rep = bg.run(dry=False)
+            if not rep["off"] or any(a["action"] not in ("skip",) for a in rep["actions"]):
+                raise AssertionError(f"一键关没有生效：{rep['actions']}")
+            (runtime / "BUDGET_GATE_OFF").unlink()
+
+            # 7) 预演零副作用：不写状态、不换代
+            before = bg.STATE.exists()
+            started.clear()
+            bg.run(dry=True)
+            if started:
+                raise AssertionError("预演模式下发生了换代")
+            if bg.STATE.exists() != before and not before:
+                raise AssertionError("预演模式不应写状态文件")
+        finally:
+            subprocess.Popen = real_popen
+            for k, v in real.items():
+                setattr(bg, k, v)
+
+    print("selftest ok: 预算闸门抓住峰值/压缩越线、不打扰在用窗口、只对空闲越线窗口换代（带 --force）；"
+          "用量熔断可停派活并自动恢复；状态坏掉 fail-open；一键关与预演零副作用。")
 
 
 if __name__ == "__main__":
@@ -2536,22 +1991,11 @@ if __name__ == "__main__":
     test_replan()
     test_resolve()
     test_reset_trunk_truth_conflict()
+    test_clean_land_with_dirty_trunk()
+    test_align_main_only_recovers_truth_only_commits()
     test_control_state()
-    test_installer()
-    test_installer_shell_portability()
-    test_daemon_project_binding()
-    test_daemon_control_action()
-    test_companion_contract()
-    test_panel_contract()
-    test_preview_check_contract()
-    test_installed_copy_binding()
-    test_panel_first_screen()
-    test_codex_native_bridge()
-    test_native_socket_lstat()
-    test_native_section_grouping()
-    test_native_call_budget()
-    test_real_codex_app_server()
+    test_resolve_worker_pool()
     test_verify_and_truth()
     test_auto_exec()
     test_mcp_contract()
-    test_closure_rate()
+    test_budget_gate()

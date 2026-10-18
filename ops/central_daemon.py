@@ -44,16 +44,19 @@
 """
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
 import plistlib
 import re
+import selectors
 import shlex
 import signal
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -81,7 +84,7 @@ MAX_LOG_BYTES = 5 * 1024 * 1024
 PLIST_LABEL = os.environ.get("KG_DAEMON_LABEL", "com.codex-autopilot.daemon")
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_LABEL}.plist"
 
-DEFAULT_INTERVAL_MIN = 15
+DEFAULT_INTERVAL_MIN = 10
 DEFAULT_MAX_LAND = 3
 LAND_TIMEOUT = 1800
 TICK_TIMEOUT = 1800
@@ -97,8 +100,11 @@ RESOLVE_MAX_ATTEMPTS = 1
 # 自动实现（auto_exec）：把台账里还没做的待办派给一个真实 codex 会话，在独立 worktree
 # 里实现 -> 门禁 -> 落盘 -> 收口。默认关闭；打开后每周期最多派一条，避免一次开一堆会话。
 EXEC_DEFAULT_TIMEOUT = 3600
-EXEC_MAX_PER_CYCLE = 1
-EXEC_NO_CHANGE_RETRIES = 2
+EXEC_MAX_PER_CYCLE = 3
+EXEC_MAX_WORKERS = 3
+EXEC_CYCLE_BUDGET = 5400
+CONVERGE_MAX_FILES = 2
+CONVERGE_MAX_MARKERS = 24
 # 基础设施抖动 vs 需求真做不出来：底层模型代理（127.0.0.1:15721）偶发 502 /
 # Transport channel closed，会让 codex 进程以非 0 退出，但需求本身没问题。同一
 # worktree 上指数退避重跑即可，默认 3 次；重试仍失败记 codex_infra_fail，与
@@ -112,6 +118,17 @@ EXEC_INFRA_PATTERN = re.compile(
 EXEC_INFRA_TAIL_BYTES = 8192
 
 _stop = False
+_conv_pool = None
+_conv_jobs: dict = {}
+_conv_blocked: dict = {}
+_resolve_future = None
+_resolve_task_pool = None
+_resolve_jobs: dict = {}
+_external_resolve_jobs: dict = {}
+_resolve_finish_jobs: dict = {}
+_exec_jobs: dict = {}
+_exec_pool = None
+_land_gate = threading.Lock()
 
 
 # ------------------------------------------------------------------ 基础设施
@@ -150,17 +167,90 @@ def log_block(title: str, rc: int, out: str) -> None:
 
 
 def run_kgctl(args, timeout=TICK_TIMEOUT, env_extra=None):
-    """调用 kgctl，返回 (rc, 合并后的 stdout+stderr)。"""
+    """调用 kgctl，返回 (rc, 合并后的 stdout+stderr)。
+
+    超时不能只说一句「超时」：旧实现在 TimeoutExpired 分支里**把子进程已经产出的输出
+    整段丢掉**（subprocess.run 抛异常时不给 output），于是 2026-10-15 22:49 那次 tick
+    挂满 1800s 之后，日志里只剩一行 `[tick] rc=124`，卡在哪一步无从判断。
+    现在自己起进程：到点先收下已产出的行，再用 killpg 收掉整个进程组（只 kill 直接
+    子进程会留下 git 孙进程，就是历史上那类「僵尸服务存活几小时」的形态）。
+    """
     cmd = [sys.executable, str(KGCTL), *args]
     env = {**os.environ, **env_extra} if env_extra else None
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
-                           cwd=str(CODE_ROOT), timeout=timeout, env=env)
-        return p.returncode, (p.stdout or "") + (p.stderr or "")
-    except subprocess.TimeoutExpired:
-        return 124, f"kgctl {' '.join(args)} 超时（>{timeout}s）"
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=False, cwd=str(CODE_ROOT), env=env,
+                                start_new_session=True)
     except OSError as exc:
         return 125, f"调用 kgctl 失败: {exc}"
+
+    # 实时落日志：tick/land 可能跑几分钟，全部缓冲到退出才写会让
+    # `daemon.log` 在关键阶段只剩一行 cycle start，现场无法判断卡在哪。
+    # 读 stdout 必须可中断：阻塞 readline() 在子进程长时间无输出时会越过
+    # deadline，导致 timeout 形同虚设。
+    lines: list[str] = []
+    deadline = time.time() + timeout
+    timed_out = False
+    sel = selectors.DefaultSelector()
+    assert proc.stdout is not None
+    sel.register(proc.stdout, selectors.EVENT_READ)
+    pending = b""
+    try:
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                timed_out = True
+                break
+            events = sel.select(min(remaining, 0.25))
+            if events:
+                chunk = os.read(proc.stdout.fileno(), 65536)
+                if not chunk:
+                    if proc.poll() is not None:
+                        break
+                    continue
+                pending += chunk
+                while b"\n" in pending:
+                    raw, pending = pending.split(b"\n", 1)
+                    line = raw.decode("utf-8", errors="replace")
+                    lines.append(line + "\n")
+                    try:
+                        with LOG.open("a", encoding="utf-8") as fh:
+                            fh.write(f"{_now()}       {line}\n")
+                    except OSError:
+                        pass
+            elif proc.poll() is not None:
+                break
+        if pending:
+            line = pending.decode("utf-8", errors="replace")
+            lines.append(line)
+            try:
+                with LOG.open("a", encoding="utf-8") as fh:
+                    fh.write(f"{_now()}       {line}\n")
+            except OSError:
+                pass
+        if not timed_out:
+            proc.wait(timeout=max(1.0, deadline - time.time()))
+            return proc.returncode, "".join(lines)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+    finally:
+        sel.close()
+
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except OSError:
+        proc.kill()
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        pass
+    tail = "".join(lines).strip()
+    msg = f"kgctl {' '.join(args)} 超时（>{timeout}s，进程组已收掉）"
+    if tail:
+        msg += "\n超时前已产出的输出如下（最后一行即卡住的位置）：\n" + tail
+    else:
+        msg += "\n（超时前一行输出都没有——卡在第一个阶段之前，见 kgctl tick 的阶段编号）"
+    return 124, msg
 
 
 def load_state() -> dict:
@@ -175,6 +265,121 @@ def save_state(state: dict) -> None:
     tmp = STATE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(STATE)
+
+
+def save_heartbeat(**fields) -> None:
+    """在长周期里刷新可观测状态，不覆盖整轮结果。
+
+    一个 `land` 可能跑几分钟。旧实现只在 cycle 末尾写 state，所以进程明明在干活，
+    面板却一直显示上一轮时间。心跳只更新当前阶段和时间，不增加完成计数。
+    """
+    state = load_state()
+    state["heartbeat_ts"] = time.time()
+    state["heartbeat_iso"] = _now()
+    state.update({k: v for k, v in fields.items() if v is not None})
+    save_state(state)
+
+
+def save_worker_state(convergence_done: list | None = None,
+                      resolve_done: list | None = None,
+                      exec_done: list | None = None) -> None:
+    """记录后台 worker 的实时槽位，不改变周期的完成语义。
+
+    这些任务运行在 daemon 的子线程里；只看 `current_stage=cycle_start` 无法区分
+    “卡在 tick”与“三个 worker 正在各自 worktree 里干活”。状态只追加最近一次
+    收割结果，active 列表从内存中的 future 推导，下一拍会自然收敛为空。
+    """
+    state = load_state()
+    conv_cfg = convergence_exec_config()
+    exec_cfg = auto_exec_config()
+    conv_limit = max(1, int(conv_cfg.get("max_workers", EXEC_MAX_WORKERS)))
+    exec_limit = max(1, int(exec_cfg.get("max_workers", EXEC_MAX_WORKERS)))
+    exec_active = sorted(k for k, v in _exec_jobs.items()
+                         if not v["future"].done())
+    resolve_active = bool(_resolve_future is not None and
+                          not _resolve_future.done())
+    # State must survive a daemon restart. Re-scan real external `codex exec`
+    # processes for open resolve worktrees before publishing active slots.
+    try:
+        _refresh_external_resolve_jobs()
+    except NameError:
+        pass
+    resolve_task_active = sorted(set(_resolve_jobs) | set(_external_resolve_jobs))
+    resolve_finish_active = sorted(_resolve_finish_jobs)
+    state["finish_resolve_queue"] = resolve_finish_active
+    state["workers"] = {
+        "convergence_limit": conv_limit,
+        "exec_limit": exec_limit,
+        "convergence_active": sorted(_conv_jobs),
+        "resolve_active": resolve_active,
+        "resolve_started": (state.get("workers", {}).get("resolve_started")
+                            if resolve_active else None),
+        "resolve_task_active": resolve_task_active,
+        "resolve_external_active": sorted(_external_resolve_jobs),
+        "resolve_finish_active": resolve_finish_active,
+        "exec_active": exec_active,
+        "convergence_free": max(0, conv_limit - len(_conv_jobs) -
+                                 (1 if _resolve_future is not None else 0)),
+        "exec_free": max(0, exec_limit - len(exec_active)),
+        "updated_ts": time.time(),
+        "updated_iso": _now(),
+    }
+    if convergence_done is not None:
+        state["workers"]["last_convergence"] = [
+            {"id": r.get("id"), "outcome": r.get("outcome"),
+             "commit": r.get("commit")} for r in convergence_done
+        ]
+    if resolve_done is not None:
+        state["workers"]["last_resolve"] = resolve_done
+    if exec_done is not None:
+        state["workers"]["last_exec"] = [
+            {"id": r.get("id"), "outcome": r.get("outcome"),
+             "commit": r.get("commit")} for r in exec_done
+        ]
+    save_state(state)
+
+
+def _live_exec_worktrees(kind: str | None = None) -> dict:
+    """Return worktree path -> pid for live codex exec processes.
+
+    ``kind='exec'`` only counts implementation workers. Resolve/convergence
+    workers live in their own bounded lanes and must not consume those slots.
+    """
+    try:
+        p = subprocess.run(
+            ["ps", "-axo", "pid=,command="],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    out = {}
+    repo = os.environ.get("KG_REPO")
+    token_repo = Path(repo).expanduser().resolve() if repo else None
+    for line in (p.stdout or "").splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2 or "codex" not in parts[1] or "exec" not in parts[1]:
+            continue
+        # Test fixtures run the fake executor with the same `exec -C <wt>` CLI.
+        # Do not let a live production exec process occupy fixture slots.
+        if token_repo and str(token_repo) not in parts[1]:
+            continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
+        try:
+            tokens = shlex.split(parts[1])
+        except ValueError:
+            tokens = parts[1].split()
+        for i, token in enumerate(tokens[:-1]):
+            if token in ("-C", "--cd"):
+                candidate = Path(tokens[i + 1]).expanduser().resolve()
+                if kind == "exec" and "-exec-" not in candidate.name:
+                    break
+                out[str(candidate)] = pid
+                break
+    return out
 
 
 def _state_repo():
@@ -233,7 +438,10 @@ def auto_resolve_config() -> dict:
     不改 main、不改源分支，落盘仍走完整门禁。项目可用
     `{"auto_resolve": {"enabled": false}}` 关掉，或调 max_files / max_lines 收紧闸门。
     """
-    out = {"enabled": True, "max_files": 8, "max_lines": 1200}
+    out = {"enabled": True, "max_files": 8, "max_lines": 1200,
+           "max_workers": 3, "resume_dirty": True, "auto_split": True,
+           "sandbox": "danger-full-access", "fast_model": None,
+           "timeout": EXEC_DEFAULT_TIMEOUT}
     repo = _state_repo()
     if not repo:
         out["enabled"] = bool(control_state.load().get("auto_resolve", True))
@@ -244,15 +452,35 @@ def auto_resolve_config() -> dict:
         out["enabled"] = bool(control_state.load().get("auto_resolve", True))
         return out
     cfg = data.get("auto_resolve")
+    exec_cfg = data.get("auto_exec")
+    if isinstance(exec_cfg, dict):
+        # Keep one source of truth for the fast provider and execution budget
+        # unless this worker class explicitly overrides them.
+        if out.get("fast_model") is None:
+            out["fast_model"] = exec_cfg.get("fast_model")
+        try:
+            out["timeout"] = max(1, int(exec_cfg.get("timeout", out["timeout"])))
+        except (TypeError, ValueError):
+            pass
     if isinstance(cfg, bool):
         out["enabled"] = cfg
     elif isinstance(cfg, dict):
         out["enabled"] = bool(cfg.get("enabled", True))
-        for key in ("max_files", "max_lines"):
+        for key in ("max_files", "max_lines", "max_workers"):
             try:
                 out[key] = max(1, int(cfg.get(key, out[key])))
             except (TypeError, ValueError):
                 pass
+        out["resume_dirty"] = bool(cfg.get("resume_dirty", out["resume_dirty"]))
+        out["auto_split"] = bool(cfg.get("auto_split", out["auto_split"]))
+        if cfg.get("sandbox"):
+            out["sandbox"] = str(cfg["sandbox"])
+        if cfg.get("fast_model"):
+            out["fast_model"] = str(cfg["fast_model"])
+        try:
+            out["timeout"] = max(1, int(cfg.get("timeout", out["timeout"])))
+        except (TypeError, ValueError):
+            pass
     # 用户级开关拥有最终否决权：面板上关掉 auto_resolve，项目配置打开也不生效。
     if not control_state.load().get("auto_resolve", True):
         out["enabled"] = False
@@ -376,7 +604,7 @@ def auto_exec_config() -> dict:
     与「需求真做不出来」区分开；只在日志尾部命中抖动特征时才生效。
     """
     out = {"enabled": True, "max_per_cycle": EXEC_MAX_PER_CYCLE,
-           "no_change_retries": EXEC_NO_CHANGE_RETRIES,
+           "max_workers": EXEC_MAX_WORKERS, "cycle_budget": EXEC_CYCLE_BUDGET,
            "timeout": EXEC_DEFAULT_TIMEOUT, "sandbox": "workspace-write", "model": None,
            "retries": EXEC_INFRA_RETRIES}
     repo = _state_repo()
@@ -390,18 +618,15 @@ def auto_exec_config() -> dict:
             out["enabled"] = cfg
         elif isinstance(cfg, dict):
             out["enabled"] = bool(cfg.get("enabled", True))
-            for key in ("max_per_cycle", "timeout"):
+            for key in ("max_per_cycle", "max_workers", "cycle_budget", "timeout"):
                 try:
                     out[key] = max(1, int(cfg.get(key, out[key])))
                 except (TypeError, ValueError):
                     pass
+            # 并发数不能超过每轮派发数；否则配置写错也不会偷偷开更多会话。
+            out["max_workers"] = max(1, min(out["max_workers"], out["max_per_cycle"]))
             try:
                 out["retries"] = max(0, int(cfg.get("retries", out["retries"])))
-            except (TypeError, ValueError):
-                pass
-            try:
-                out["no_change_retries"] = max(0, int(
-                    cfg.get("no_change_retries", out["no_change_retries"])))
             except (TypeError, ValueError):
                 pass
             if cfg.get("sandbox"):
@@ -411,6 +636,45 @@ def auto_exec_config() -> dict:
     # 用户级开关拥有最终否决权（默认关）。
     if not control_state.load().get("auto_exec", False):
         out["enabled"] = False
+    # 预算熔断（fail-open）：用量越过硬上限时只停「派活」（auto_exec），
+    # 不停 tick / land / resolve —— 不丢在途工作，降回来自动恢复。
+    # 任何异常都当作「没有这道闸门」，不影响原行为。
+    try:
+        import budget_gate
+        paused, why = budget_gate.dispatch_paused()
+        if paused:
+            out["enabled"] = False
+            out["_paused_by_budget"] = why
+    except Exception:
+        pass
+    return out
+
+
+def convergence_exec_config() -> dict:
+    """convergence 任务的独立派发开关。
+
+    这一层只负责已有 convergence worktree 里的 marker 收口；建族仍由 kgctl converge
+    完成。默认只派「单文件/少量 marker」的族，大族继续留给 replan 或人工判断。
+    """
+    out = {"enabled": True, "max_files": CONVERGE_MAX_FILES,
+           "max_markers": CONVERGE_MAX_MARKERS, "max_workers": EXEC_MAX_WORKERS}
+    repo = _state_repo()
+    if not repo:
+        return out
+    try:
+        data = json.loads((repo / "ops" / "central.config.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return out
+    cfg = data.get("convergence_exec")
+    if isinstance(cfg, bool):
+        out["enabled"] = cfg
+    elif isinstance(cfg, dict):
+        out["enabled"] = bool(cfg.get("enabled", True))
+        for key in ("max_files", "max_markers", "max_workers"):
+            try:
+                out[key] = max(1, int(cfg.get(key, out[key])))
+            except (TypeError, ValueError):
+                pass
     return out
 
 
@@ -481,7 +745,79 @@ def _ledger_open_items(limit=20):
     latest = _ledger_latest() or {}
     opens = [r for r in latest.values() if r.get("status") in ("open", "doing")]
     opens.sort(key=lambda r: (0 if r.get("kind") in ("bug", "gate") else 1, r.get("ts", "")))
-    return opens[:limit]
+    # 同一个标题只派一次；并行池里重复条目会抢同一片文件，吞吐反而下降。
+    seen_titles = set()
+    unique = []
+    for r in opens:
+        title = (r.get("title") or "").strip()
+        if title and title in seen_titles:
+            continue
+        if title:
+            seen_titles.add(title)
+        unique.append(r)
+    return unique[:limit]
+
+
+def _oversized_exec_item(item: dict) -> bool:
+    """Reject roadmap-sized items that cannot produce one verifiable change."""
+    text = f"{item.get('title') or ''}\n{item.get('detail') or ''}".lower()
+    phase_marks = sum(text.count(x) for x in ("阶段1", "阶段2", "阶段3", "阶段4"))
+    broad = any(x in text for x in (
+        "继续按", "全路线", "推进闭环", "继续推进", "继续把阶段",
+    ))
+    concrete = any(x in text for x in (
+        "verify:", "npm run", "npx ", "node test/", "python3 ",
+        ".ts", ".mjs", ".py", "/",
+    ))
+    return phase_marks >= 2 or (broad and not concrete)
+
+
+def _non_executable_reason(item: dict) -> str | None:
+    """Return why an item cannot be completed by a code worker."""
+    title = (item.get("title") or "").strip().lower()
+    detail = (item.get("detail") or "").strip().lower()
+    text = title + "\n" + detail
+    human_marks = (
+        "人工盲评", "真人盲评", "人工复核", "真人复核", "人工验收",
+        "需要人判断", "请用户打开", "等待带指纹",
+    )
+    external_marks = (
+        "tavily 返回 432", "usage limit", "欠费", "余额不足",
+        "生产 404", "stripe 未配置", "bing 反爬",
+    )
+    concrete = any(x in text for x in (
+        "verify:", "npm run", "npx ", "node test/", "python3 ",
+        ".ts", ".mjs", ".py",
+    ))
+    if any(x in text for x in human_marks) and not concrete:
+        return "needs_human"
+    if any(x in text for x in external_marks):
+        return "external_blocked"
+    return None
+
+
+def _landed_exec_commit(repo, rid: str) -> str | None:
+    """Return a committed ``exec(<id>)`` that is already an ancestor of main."""
+    if not repo or not rid:
+        return None
+    main_ref = "origin/main"
+    if _git(repo, "rev-parse", "--verify", main_ref)[0] != 0:
+        main_ref = "main"
+    prefix = "exec(" + rid + ")"
+    rc, out, _ = _git(repo, "log", "--all", "--format=%H %s",
+                      "--grep", f"^{prefix}", "-n", "50")
+    if rc != 0:
+        return None
+    for line in out.splitlines():
+        parts = line.split(" ", 1)
+        if len(parts) != 2:
+            continue
+        sha, subject = parts
+        if not (subject or "").startswith(prefix):
+            continue
+        if _git(repo, "merge-base", "--is-ancestor", sha, main_ref)[0] == 0:
+            return sha
+    return None
 
 
 def _prune_exec_blocked(blocked: dict) -> list:
@@ -564,11 +900,6 @@ def _exec_prompt(item: dict) -> str:
         "- 目标只有两个：(1) 击穿产品预期——前后端真正闭环生效；(2) 保证现有体验——功能、",
         "  性能不能因为这次改动变差或更难用。不达标的实现不如不做。",
         "- 动手前先读仓库里的 AGENTS.md 和相关上下文（如 AI_SESSION_CONTEXT.md、产品决策文件）。",
-        "- 对直接、可验证的小任务（写文件、修文本、补配置等），第一步就要在当前 worktree 产出改动：",
-        "  先执行实际命令（如 `printf '...' > 文件`、修改文本、补配置），再用命令自证；",
-        "  只读检查不算完成，不能以“先看看 / 我先确认 / 发现已有”结束。",
-        "- 如果该需求确实无需改动（例如功能已存在），必须用一条命令或读取结果证明现状满足需求，",
-        "  并在总结里写清“无需改动 + 证明命令 + 现状”，否则一律按未完成处理。",
         "- 改完跑与改动相关的验证（如 `npx tsc --noEmit`、`npm run build`、相关 `verify:*` 脚本）；",
         "  失败就继续修，直到通过或有明确的外部阻塞。",
         "- 不要 `git commit`、不要 `git push`、不要合并分支：把改动留在工作区即可，落盘由自动挡统一走门禁。",
@@ -645,6 +976,534 @@ def _exec_log_tail(log_path, limit: int = EXEC_INFRA_TAIL_BYTES) -> str:
             return fh.read().decode("utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def _resolve_prompt(rec: dict) -> str:
+    files = "\n".join(f"- {p}" for p in (rec.get("unresolved_files") or []))
+    return (
+        "【任务】在当前 resolve worktree 中解决下列冲突 marker。\n"
+        f"{files}\n"
+        "【期望输出】读取完整冲突上下文，结合两侧意图保留正确最终实现；"
+        "显式 git add 目标文件并 git commit，报告 commit sha、修改文件和验证命令/退出码。\n"
+        "【证据】rg 冲突 marker、tsc/build 或相关门禁的真实退出码。\n"
+        "【禁止】不要修改其他 worktree；不要 git add -A/stash/reset/checkout .；"
+        "不要 push/merge；不要放宽或删除门禁断言。只读必要的冲突段和相邻代码。"
+    )
+
+
+def _has_conflict_markers(text: str) -> bool:
+    """Require an actual conflict block, not a normal Markdown `=======` divider."""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if not line.startswith("<<<<<<<"):
+            continue
+        for j in range(i + 1, len(lines)):
+            if lines[j].startswith("======="):
+                for k in range(j + 1, len(lines)):
+                    if lines[k].startswith(">>>>>>>"):
+                        return True
+                break
+    return False
+
+
+def _resolve_task_candidates(limit: int) -> list:
+    """选已有 resolve worktree 中有真实 marker 的轻任务。
+
+    默认优先干净 worktree。任务专属 worktree 被上一轮 worker 打断时可能留下
+    未提交改动；配置 `resume_dirty` 打开后，只要 unresolved_files 里仍有真实
+    conflict block，就允许同一个 worker 在该 worktree 原地续解。这里只检查
+    自己的任务文件，不碰其他 worktree，也不清理任何改动。
+    """
+    out = []
+    cfg = auto_resolve_config()
+    resume_dirty = bool(cfg.get("resume_dirty", True))
+    # Candidate selection is based on the on-disk worktree, not the mutable
+    # status label. A previous finish attempt can leave `gate_fail` behind even
+    # though worktree still contains a real conflict block; that task must be
+    # resumable. Source branches that already landed are filtered below.
+    tasks = []
+    repo = _state_repo()
+    if repo:
+        try:
+            data = json.loads((repo / "ops" / "tasks" / "resolve.json").read_text(encoding="utf-8"))
+            tasks = [
+                t for t in (data.get("tasks") or [])
+                if t.get("status") not in ("landed", "abandoned")
+            ]
+        except (OSError, ValueError):
+            tasks = []
+    for rec in tasks:
+        wt = Path(rec.get("worktree") or "")
+        if not wt.is_dir():
+            continue
+        rc, dirty, _ = _git(wt, "status", "--porcelain")
+        if rc != 0 or (dirty and not resume_dirty):
+            continue
+        # The source branch records where the conflict came from. Once that
+        # source lands, the resolve branch can still hold unique conflict work
+        # (especially after replaying a newer main). Candidate completion must
+        # therefore be based on the resolve branch when one exists.
+        done_ref = str(rec.get("resolve_branch") or rec.get("branch") or "")
+        if repo and done_ref:
+            # Only skip when we can positively prove the resolve branch is
+            # already contained in origin/main. `--is-ancestor` uses exit 1 for
+            # "not an ancestor", which is a normal answer, not an error.
+            resolved_rc, _, _ = _git(repo, "rev-parse", "--verify", "--quiet",
+                                     "origin/main")
+            if resolved_rc == 0:
+                probe_rc, _, _ = _git(repo, "merge-base", "--is-ancestor",
+                                      done_ref, "origin/main")
+                if probe_rc == 0:
+                    continue
+        _, unmerged, _ = _git(
+            wt, "diff", "--name-only", "--diff-filter=U")
+        if unmerged:
+            # Unmerged index entries are authoritative. `unresolved_files` can
+            # be stale after a refresh/main-resync; never let that stale list
+            # hide the real UU path from the next worker.
+            marker_files = [line for line in unmerged.splitlines() if line.strip()]
+        else:
+            marker_files = []
+        for rel in rec.get("unresolved_files") or []:
+            try:
+                text = (wt / rel).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                marker_files.append(rel)
+                continue
+            if _has_conflict_markers(text):
+                marker_files.append(rel)
+        marker_files = list(dict.fromkeys(marker_files))
+        if not marker_files:
+            continue
+        out.append({**rec, "marker_files": marker_files, "dirty_resume": bool(dirty)})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _external_resolve_worker_rec(rec: dict) -> dict | None:
+    """Find a live external `codex exec` already working this resolve task.
+
+    macOS `ps` may hide full argv from a non-root child even with `-ww`, while
+    `lsof -d cwd` remains readable for our own processes. Scan codex processes
+    and match their working directory instead of relying on full command text.
+    """
+    wt = Path(rec.get("worktree") or "").resolve()
+    if not wt.is_dir():
+        return None
+    try:
+        proc = subprocess.run(
+            ["ps", "-axww", "-o", "pid=,command="],
+            capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    for line in (proc.stdout or "").splitlines():
+        fields = line.strip().split(None, 1)
+        if len(fields) != 2:
+            continue
+        pid_text, command = fields
+        if "codex" not in command or "exec" not in command:
+            continue
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if pid == os.getpid():
+            continue
+        try:
+            cwd_proc = subprocess.run(
+                ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                capture_output=True, text=True, timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        cwd = ""
+        for candidate in (cwd_proc.stdout or "").splitlines():
+            if candidate.startswith("n"):
+                cwd = candidate[1:]
+                break
+        if cwd and Path(cwd).resolve() == wt:
+            return {"pid": pid, "rec": rec, "started": time.time(), "external": True}
+    return None
+
+def _refresh_external_resolve_jobs() -> None:
+    """Refresh adoptable external workers and release exited slots."""
+    for slug, job in list(_external_resolve_jobs.items()):
+        try:
+            os.kill(int(job.get("pid")), 0)
+        except (OSError, TypeError, ValueError):
+            _external_resolve_jobs.pop(slug, None)
+    for rec in open_resolve_tasks():
+        slug = rec.get("slug")
+        if not slug or slug in _resolve_jobs or slug in _external_resolve_jobs:
+            continue
+        job = _external_resolve_worker_rec(rec)
+        if job:
+            _external_resolve_jobs[slug] = job
+            log(f"[resolve-task] 接管外部 worker {slug}（pid={job['pid']}）")
+
+
+def _collect_external_resolve_tasks() -> list:
+    """Adopt finished external workers through the normal serial finish path."""
+    done = []
+    for slug, job in list(_external_resolve_jobs.items()):
+        rec = job.get("rec") or {}
+        wt = Path(rec.get("worktree") or "")
+        try:
+            os.kill(int(job.get("pid")), 0)
+            continue
+        except (OSError, TypeError, ValueError):
+            pass
+        _external_resolve_jobs.pop(slug, None)
+        if not wt.is_dir():
+            continue
+        remaining = []
+        for rel in rec.get("unresolved_files") or []:
+            try:
+                text = (wt / rel).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                remaining.append(rel)
+                continue
+            if _has_conflict_markers(text):
+                remaining.append(rel)
+        changed = _changed_paths(wt)
+        commit = None
+        if not remaining and changed:
+            add_rc, _ = _git_add_retry(wt, changed)
+            if add_rc == 0 and _git(wt, "commit", "-m", f"resolve: {slug}")[0] == 0:
+                _, commit, _ = _git(wt, "rev-parse", "HEAD")
+        dirty = _changed_paths(wt)
+        outcome = "done" if not remaining and not dirty else (
+            "markers_remain" if remaining else "dirty_worktree")
+        result = {"kind": "resolve_task", "slug": slug, "worktree": str(wt),
+                  "commit": commit, "outcome": outcome}
+        done.append(result)
+        if outcome == "done":
+            _resolve_finish_jobs[slug] = {"rec": rec, "finish_blocked": False}
+            log(f"[resolve-task] 外部 worker {slug} 已提交，等待串行 finish")
+        else:
+            _resolve_task_update(slug, status="needs_agent",
+                                 unresolved_files=remaining or rec.get("unresolved_files") or [],
+                                 worker_error={"reason": outcome, "ts": _now()})
+    if done:
+        save_worker_state()
+    return done
+
+
+def _resolve_task_update(slug: str, **fields) -> None:
+    repo = _state_repo()
+    if not repo:
+        return
+    path = repo / "ops" / "tasks" / "resolve.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        rec = next((t for t in data.get("tasks", []) if t.get("slug") == slug), None)
+        if not rec:
+            return
+        rec.update(fields)
+        rec["updated"] = _now()
+        data["updated"] = _now()
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    except (OSError, ValueError, TypeError) as exc:
+        log(f"[resolve-task] 写回台账失败 {slug}: {exc!r}")
+
+
+def _dispatch_resolve_task_one(rec: dict) -> dict:
+    slug = rec.get("slug") or rec.get("branch") or "?"
+    wt = Path(rec["worktree"])
+    codex = _codex_bin()
+    if not codex:
+        return {"kind": "resolve_task", "slug": slug, "outcome": "no_codex"}
+    cfg = auto_resolve_config()
+    cmd = [*codex, "exec", "-C", str(wt), "-s", cfg.get("sandbox", "danger-full-access"),
+           "--skip-git-repo-check"]
+    fast = os.environ.get("KG_EXEC_FAST_MODEL") or cfg.get("fast_model")
+    if fast:
+        cmd += ["-m", str(fast)]
+    cmd += [_resolve_prompt(rec)]
+    log_path = _exec_dir() / f"resolve-task-{hashlib.sha1(slug.encode('utf-8')).hexdigest()[:10]}.log"
+    log(f"[resolve-task] 派发 {slug}（{len(rec.get('marker_files') or [])} 文件，worktree={wt}）")
+    try:
+        with log_path.open("w", encoding="utf-8") as fh:
+            r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=fh,
+                               stderr=subprocess.STDOUT, cwd=str(wt),
+                               timeout=cfg["timeout"])
+        code = r.returncode
+    except subprocess.TimeoutExpired:
+        code = 124
+    except OSError as exc:
+        log(f"[resolve-task] 无法启动 codex: {exc}")
+        code = 125
+    remaining = []
+    for rel in rec.get("marker_files") or []:
+        try:
+            text = (wt / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            remaining.append(rel)
+            continue
+        if _has_conflict_markers(text):
+            remaining.append(rel)
+    changed = _changed_paths(wt)
+    commit = None
+    if not remaining and changed:
+        add_rc, add_err = _git_add_retry(wt, changed)
+        if add_rc == 0:
+            git_rc, _, git_err = _git(wt, "commit", "-m", f"resolve: {slug}")
+            if git_rc == 0:
+                _, commit, _ = _git(wt, "rev-parse", "HEAD")
+            else:
+                add_err = git_err
+        if not commit:
+            _resolve_task_update(slug, status="gate_fail",
+                                 worker_error={"reason": "commit_fail", "detail": (add_err or "")[:300]})
+            return {"kind": "resolve_task", "slug": slug,
+                    "outcome": "commit_fail", "worktree": str(wt)}
+    if remaining:
+        outcome = f"codex_exit_{code}" if code != 0 else "markers_remain"
+    else:
+        dirty = _changed_paths(wt)
+        if dirty:
+            outcome = "dirty_worktree"
+        else:
+            outcome = "done"
+    result = {"kind": "resolve_task", "slug": slug, "worktree": str(wt),
+              "commit": commit, "outcome": outcome}
+    if outcome != "done":
+        _resolve_task_update(slug, status="gate_fail",
+                             unresolved_files=remaining or rec.get("unresolved_files") or [],
+                             worker_error={"reason": outcome, "commit": commit, "ts": _now()})
+    log(f"[resolve-task] {slug} 退出码={code}，commit={(commit or '')[:12]}，结论={outcome}")
+    return result
+
+
+def _collect_resolve_tasks() -> list:
+    done = []
+    for slug, job in list(_resolve_jobs.items()):
+        fut = job["future"]
+        if not fut.done():
+            continue
+        try:
+            result = fut.result()
+        except Exception as exc:
+            result = {"kind": "resolve_task", "slug": slug,
+                      "outcome": "worker_exception", "detail": repr(exc)[:400]}
+        _resolve_jobs.pop(slug, None)
+        done.append(result)
+        if result.get("outcome") == "done":
+            job["finish_blocked"] = False
+            _resolve_finish_jobs[slug] = job
+            log(f"[resolve-task] {slug} 已提交，等待串行 resolve --finish")
+        else:
+            log(f"[resolve-task] {slug} 未完成：{result.get('outcome')}")
+    return done
+
+
+def _pickup_committed_resolve_tasks() -> None:
+    """Adopt resolve worktrees that already contain a clean commit but no marker.
+
+    This covers a daemon restart between the worker commit and serial finish. The
+    task is only adopted when the worktree is clean, its HEAD differs from
+    origin/main, and no real conflict block remains. Do not require current main
+    to already be an ancestor of HEAD: main moves while workers run, and an old
+    resolve commit may need to be replayed. `resolve --finish` / land owns the
+    mergeability check.
+    """
+    repo = _state_repo()
+    if not repo:
+        return
+    if not _external_resolve_jobs:
+        _refresh_external_resolve_jobs()
+    for rec in open_resolve_tasks():
+        slug = rec.get("slug")
+        if not slug or slug in _resolve_finish_jobs:
+            continue
+        # Never move a still-running worker into the serial finish queue. A
+        # clean target-file commit can exist while the worker is still
+        # validating or resolving adjacent paths.
+        if slug in _external_resolve_jobs or slug in _resolve_jobs:
+            continue
+        wt = Path(rec.get("worktree") or "")
+        if not wt.is_dir():
+            continue
+        # A resolve worktree based on older main naturally shows many modified
+        # paths after conflicts are resolved; only real unmerged index entries
+        # block adoption. The refreshed merge below replays latest origin/main.
+        rc, unmerged, _ = _git(wt, "diff", "--name-only", "--diff-filter=U")
+        if rc != 0 or unmerged:
+            continue
+        _, head, _ = _git(wt, "rev-parse", "HEAD")
+        if not head:
+            continue
+        main_rc, main, _ = _git(repo, "rev-parse", "origin/main")
+        if main_rc != 0 or not main or head == main:
+            continue
+        marker = False
+        for rel in rec.get("unresolved_files") or []:
+            try:
+                text = (wt / rel).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                marker = True
+                break
+            if _has_conflict_markers(text):
+                marker = True
+                break
+        if marker:
+            continue
+        _resolve_finish_jobs[slug] = {"rec": rec, "finish_blocked": False}
+        log(f"[resolve-task] 接管已提交待落盘 {slug}（{head[:12]}）")
+
+
+def dispatch_resolve_tasks(dry: bool = False) -> list:
+    """用独立有界池推进已有 resolve worktree；落盘仍由主周期串行执行。"""
+    global _resolve_task_pool
+    _refresh_external_resolve_jobs()
+    done = _collect_resolve_tasks() + _collect_external_resolve_tasks()
+    # A clean committed worktree may be waiting to enter the serial finish
+    # queue. Adopt it before looking for marker work so it cannot sit idle
+    # behind a legacy auto-split worker.
+    _pickup_committed_resolve_tasks()
+    if dry:
+        return done
+    cfg = auto_resolve_config()
+    if not cfg.get("enabled"):
+        return done
+    limit = max(1, int(cfg.get("max_workers", 3)))
+    free = (limit - len(_resolve_jobs) - len(_external_resolve_jobs)
+            - len(_resolve_finish_jobs))
+    if free <= 0:
+        return done
+    busy = set(_resolve_jobs) | set(_external_resolve_jobs) | set(_resolve_finish_jobs)
+    candidates = [r for r in _resolve_task_candidates(free + len(busy))
+                  if r.get("slug") not in busy][:free]
+    if not candidates:
+        return done
+    if _resolve_task_pool is None:
+        _resolve_task_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=limit, thread_name_prefix="kg-resolve-task")
+    for rec in candidates:
+        slug = rec["slug"]
+        _resolve_jobs[slug] = {"future": _resolve_task_pool.submit(
+            _dispatch_resolve_task_one, rec), "rec": rec, "started": time.time()}
+        log(f"[resolve-task] 启动后台 worker {slug}（活跃 {len(_resolve_jobs)}/{limit}）")
+    save_worker_state()
+    return done
+
+
+def _sync_resolve_worktree_before_finish(rec: dict) -> dict:
+    """Replay the newest origin/main into a committed resolve worktree.
+
+    A worker can finish while another task lands and moves main. Finishing on
+    the old base then fails the same conflict gate that the worker just cleared.
+    Refresh the dedicated worktree first: a clean merge can continue to serial
+    land, while a real conflict is preserved as markers for the same worker.
+    """
+    repo = _state_repo()
+    wt = Path(rec.get("worktree") or "")
+    if not repo or not wt.is_dir():
+        return {"outcome": "blocked", "detail": "state repo or worktree missing"}
+
+    last = ""
+    for attempt in range(3):
+        rc, _, err = _git(repo, "fetch", "origin", "main", timeout=120)
+        if rc == 0:
+            break
+        last = err
+        if attempt < 2:
+            time.sleep(2 * (attempt + 1))
+    else:
+        return {"outcome": "fetch_fail", "detail": last[:400]}
+
+    rc, origin_main, err = _git(repo, "rev-parse", "origin/main")
+    if rc != 0 or not origin_main:
+        return {"outcome": "fetch_fail", "detail": (err or "origin/main missing")[:400]}
+
+    # A resolve worktree is based on an older main and legitimately has many
+    # staged differences. Those are not blockers by themselves; checking all
+    # of `status` here rejected every committed resolve worker as "dirty".
+    rc, unmerged, err = _git(wt, "diff", "--name-only", "--diff-filter=U")
+    if rc != 0:
+        return {"outcome": "blocked", "detail": (err or "git status failed")[:400]}
+    if unmerged:
+        files = [line for line in unmerged.splitlines() if line.strip()]
+        return {"outcome": "conflict", "files": files,
+                "detail": "unmerged entries remain"}
+
+    rc, _, _ = _git(wt, "merge-base", "--is-ancestor", "origin/main", "HEAD")
+    if rc == 0:
+        return {"outcome": "fresh", "origin_main": origin_main}
+
+    rc, out, err = _git(wt, "merge", "--no-edit", "origin/main", timeout=300)
+    if rc == 0:
+        _, head, _ = _git(wt, "rev-parse", "HEAD")
+        return {"outcome": "merged", "origin_main": origin_main, "head": head,
+                "detail": out[:400]}
+
+    _, unmerged, _ = _git(wt, "diff", "--name-only", "--diff-filter=U")
+    files = [line for line in unmerged.splitlines() if line.strip()]
+    if files:
+        return {"outcome": "conflict", "origin_main": origin_main, "files": files,
+                "detail": err[:400]}
+
+    # A non-conflict merge failure must not leave the worktree half-merged.
+    _git(wt, "merge", "--abort")
+    if "would be overwritten by merge" in (err or out):
+        return {"outcome": "dirty", "origin_main": origin_main,
+                "detail": (err or out)[:400]}
+    return {"outcome": "merge_fail", "origin_main": origin_main,
+            "detail": (err or out)[:400]}
+
+
+def finish_resolve_tasks() -> list:
+    """Refresh latest main, then serially finish resolved branches.
+
+    Serial landing remains the only writer. The refresh is scoped to each
+    resolve worktree and never changes main or a source branch.
+    """
+    done = []
+    for slug, job in list(_resolve_finish_jobs.items()):
+        with _land_gate:
+            rec = job.get("rec") or {}
+            refreshed = _sync_resolve_worktree_before_finish(rec)
+            sync_outcome = refreshed.get("outcome")
+            if sync_outcome == "conflict":
+                rc, out = 0, (f"× {slug} 刷新 origin/main 时出现真实冲突，"
+                              f"已保留 marker 交回 worker：\n  "
+                              + "\n  ".join(refreshed.get("files") or []))
+                kind = "needs_agent"
+            elif sync_outcome not in ("fresh", "merged"):
+                rc, out = 1, (f"× {slug} 落盘前刷新 origin/main 失败："
+                              f"{sync_outcome} {refreshed.get('detail', '')}")
+                kind = "gate_fail"
+            else:
+                rc, out = run_kgctl(["resolve", "--finish", slug, "--go"],
+                                    timeout=LAND_TIMEOUT)
+                kind = "landed" if "outcome=landed" in (out or "") else "gate_fail"
+                if sync_outcome == "merged":
+                    out = (f"→ {slug} 已先合入最新 origin/main "
+                           f"{(refreshed.get('origin_main') or '')[:10]}，再串行落盘。\n"
+                           + (out or ""))
+        log_block(f"resolve-task finish {slug} -> {kind}", rc, out)
+        result = {"kind": "resolve_task", "slug": slug, "outcome": kind, "rc": rc,
+                  "sync": sync_outcome}
+        _resolve_finish_jobs.pop(slug, None)
+        if kind == "needs_agent":
+            _resolve_task_update(slug, status="needs_agent",
+                                 unresolved_files=refreshed.get("files") or [],
+                                 worker_error={"reason": "main_sync_conflict",
+                                               "ts": _now()})
+        elif kind != "landed":
+            _resolve_task_update(slug, status="gate_fail",
+                                 worker_error={"reason": kind, "rc": rc,
+                                               "sync": sync_outcome,
+                                               "detail": refreshed.get("detail", ""),
+                                               "ts": _now()})
+        done.append(result)
+    if done:
+        save_worker_state()
+    return done
 
 
 def classify_exec_infra_failure(log_path) -> bool:
@@ -731,39 +1590,28 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
         _git(repo, "branch", "-D", branch)
         return {"id": rid, "outcome": "no_codex"}
 
+    cmd = [*codex, "exec", "-C", str(wt), "-s", cfg["sandbox"],
+           "--skip-git-repo-check"]
+    if cfg.get("model"):
+        cmd += ["-m", cfg["model"]]
+    cmd += [ _exec_prompt(item) ]
     log_path = _exec_dir() / f"{slug}.log"
     retries = max(0, int(cfg.get("retries", EXEC_INFRA_RETRIES)))
-    no_change_retries = max(0, int(cfg.get("no_change_retries",
-                                           EXEC_NO_CHANGE_RETRIES)))
-    total = retries + no_change_retries + 1
+    total = retries + 1
     code, attempt, infra = 0, 0, False
-    no_change_tries = 0
-    base_prompt = _exec_prompt(item)
     while True:
         attempt += 1
         first = attempt == 1
-        prompt = base_prompt
-        if no_change_tries:
-            prompt += ("\n\n重要：上一次自动执行没有产生任何工作区改动，不能作为完成。"
-                       "现在必须重新执行能留下改动的命令（写文件、修文本、补配置等），"
-                       "并在命令后立刻自证。不要再做一轮只读检查。")
         if first:
             log(f"[exec] 派发 {rid} -> {branch}（worktree={wt}, codex={codex[0]}）")
         else:
             log(f"[exec] {rid} 第 {attempt}/{total} 次重试"
                 f"（同一 worktree={wt}，日志 {log_path}）")
-        cmd = [*codex, "exec", "-C", str(wt), "-s", cfg["sandbox"],
-               "--skip-git-repo-check"]
-        if cfg.get("model"):
-            cmd += ["-m", cfg["model"]]
-        cmd += [prompt]
         try:
             with log_path.open("w" if first else "a", encoding="utf-8") as fh:
                 if not first:
-                    retry_reason = ("无改动需重试" if no_change_tries
-                                    else "基础设施抖动")
                     fh.write(f"\n===== auto_exec 重试 第 {attempt}/{total} 次（{_now()}，"
-                             f"上一次退出码={code}，判定为{retry_reason}）=====\n")
+                             f"上一次退出码={code}，判定为基础设施抖动）=====\n")
                     fh.flush()
                 r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=fh,
                                    stderr=subprocess.STDOUT, cwd=str(wt),
@@ -776,14 +1624,7 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
             code = 125
         result["exit"] = code
         log(f"[exec] {rid} codex 退出码={code}（第 {attempt}/{total} 次，日志 {log_path}）")
-        if code == 0 and _changed_paths(wt):
-            break
         if code == 0:
-            no_change_tries += 1
-            if no_change_tries <= no_change_retries:
-                log(f"[exec] {rid} 退出 0 但无改动，第 {no_change_tries}/{no_change_retries} 次"
-                    f"重试（工作区仍保留）")
-                continue
             break
         # 超时(124) 与启动失败(125) 不重试：超时已经吃掉一整个 cfg["timeout"]，再乘 N 会把
         # 一个周期拖垮；启动失败重跑也没有新证据。只有日志尾部命中抖动特征才重跑。
@@ -813,12 +1654,6 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
             _cleanup_exec(repo, wt, branch)
             result["outcome"] = "codex_fail"
         return result
-    if code == 0 and not _changed_paths(wt):
-        log(f"[exec] {rid} 重试后仍没有产生改动，记为无变化")
-        blocked[rid] = {"reason": "no_changes", "ts": _now()}
-        _cleanup_exec(repo, wt, branch)
-        result["outcome"] = "no_changes"
-        return result
     return _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked)
 
 
@@ -846,13 +1681,17 @@ def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
         result["commit"] = commit or result.get("commit")
         log(f"[exec] {rid} worktree 干净但分支已有未落提交 -> 直接收口 {(commit or '')[:12]}")
     else:
-        log(f"[exec] {rid} 没有产生改动，记为无变化")
-        blocked[rid] = {"reason": "no_changes", "ts": _now()}
-        _cleanup_exec(repo, wt, branch)
-        result["outcome"] = "no_changes"
+        # Zero exit with no diff is not delivery. Keep the branch/worktree as
+        # a diagnostic scene instead of silently retrying the same request.
+        log(f"[exec] {rid} codex 成功退出但没有产生改动，保留现场等待拆分/复核")
+        blocked[rid] = {"reason": "no_changes_preserved", "branch": branch,
+                        "worktree": str(wt), "commit": result.get("commit"),
+                        "ts": _now()}
+        result["outcome"] = "no_changes_preserved"
         return result
 
-    lrc, lout = run_kgctl(["land", branch], timeout=LAND_TIMEOUT)
+    with _land_gate:
+        lrc, lout = run_kgctl(["land", branch], timeout=LAND_TIMEOUT)
     kind = classify_land(lout, lrc)
     log_block(f"exec land {branch} -> {kind}", lrc, lout)
     result["land"] = kind
@@ -906,19 +1745,116 @@ def _looks_like_command(text: str) -> bool:
     return False
 
 
+def _exec_retryable(blocked: dict, rid: str) -> bool:
+    """Return true when an old blocked row is stale enough to retry.
+
+    Terminal/user decisions and externally blocked work stay blocked. A local
+    worker failure, timeout, land conflict, or no-change result is a snapshot,
+    not a permanent verdict: the repository and configured providers move. A
+    long cooldown prevents tight retry loops while allowing the scheduler to
+    make progress across the 29th deadline.
+    """
+    rec = blocked.get(rid) or {}
+    reason = str(rec.get("reason") or "")
+    if not reason:
+        return False
+    # These need a human decision, a narrower task, or a deliberate re-open.
+    # Automatically releasing them after a cooldown only burns another worker
+    # slot on the same unexecutable input.
+    if reason in (
+        "external_blocked",
+        "looks_like_command",
+        "no_codex",
+        "needs_split",
+        "needs_human",
+        # Legacy rows written before the state was renamed still mean the same
+        # thing: the worker exited 0 without producing a diff.
+        "no_changes",
+        "no_changes_preserved",
+    ):
+        return False
+    if reason.startswith("landed_close_fail"):
+        return False
+    try:
+        ts = time.mktime(time.strptime(str(rec.get("ts") or ""), "%Y-%m-%d %H:%M:%S"))
+    except (TypeError, ValueError, OverflowError):
+        return True
+    cooldown = max(0, int(os.environ.get("KG_EXEC_RETRY_COOLDOWN_SEC", "1800")))
+    return time.time() - ts >= cooldown
+
+
+def _prune_retryable_exec_blocked(blocked: dict, log_fn=log) -> list:
+    """Release stale local-failure rows before candidate selection.
+
+    `_collect_exec` records a terminal row for successful workers too; those
+    are pruned against the truth ledger by `_prune_exec_blocked`. This helper
+    only handles the other side: failures that deserve another bounded run.
+    """
+    released = []
+    for rid in list(blocked):
+        if _exec_retryable(blocked, rid):
+            rec = blocked.pop(rid)
+            released.append(rid)
+            log_fn(f"[exec] 释放过期暂缓 {rid}（{rec.get('reason')}，{rec.get('ts')}）")
+    return released
+
+
+def _exec_capacity(limit: int, active_ids, live_worktrees) -> tuple[int, int]:
+    """Return (active, free) with externally live exec work counted."""
+    active = len(set(active_ids)) + len(set(live_worktrees))
+    return active, max(0, int(limit) - active)
+
+
 def dispatch_exec(dry: bool, blocked: dict) -> list:
-    """每周期派最多 max_per_cycle 条待办。返回本轮结果列表。"""
+    """每周期用有界并发池派最多 max_per_cycle 条待办。返回本轮新完成结果。
+
+    并行只发生在隔离 worktree 里的实现阶段；每个 worker 最后都会调用同一个
+    `kgctl land`，由共享 land 锁串行化。于是吞吐量来自「同时写/测」，落盘仍然
+    一次一个，避免主分支和门禁互相踩。
+
+    实现 worker 必须跨周期存活：若在本周期同步等待 1 小时的会话，tick/land 与
+    下一轮派发都会被同一个主线程冻结。这里只负责启动和收割；真正收口由
+    `_collect_exec()` 在后续周期完成。
+    """
+    global _exec_pool
     cfg = auto_exec_config()
     if not cfg["enabled"]:
         return []
+    finished = _collect_exec(blocked)
     codex = _codex_bin()
     if not codex:
         log("[exec] auto_exec 已开，但找不到 codex 可执行文件，跳过")
-        return []
-    results = []
+        return finished
+    limit = max(1, int(cfg.get("max_workers", 1)))
+    active_ids = {rid for rid, v in _exec_jobs.items() if not v["future"].done()}
+    # A daemon reload loses futures but not the child process. Count live
+    # codex exec worktrees outside our own pool so a restart cannot double-book
+    # the same implementation slot. Resolve/convergence workers have their own
+    # capacity and must not consume an exec slot.
+    live_worktrees = _live_exec_worktrees(kind="exec")
+    # Only implementation work consumes implementation slots. Resolve and
+    # convergence workers have their own bounded pools; counting their
+    # worktrees here would make exec look idle while all workers are busy.
+    external = set(live_worktrees)
+    active, free = _exec_capacity(limit, active_ids, external)
+    if external:
+        log(f"[exec] 检测到 {len(external)} 个重载前仍在运行的 exec worktree，按占用槽位处理")
+    if free <= 0:
+        return finished
+    released = [] if dry else _prune_retryable_exec_blocked(blocked)
+    candidates = []
     for item in _ledger_open_items():
         rid = item.get("id")
         if rid in blocked:
+            continue
+        landed = _landed_exec_commit(_state_repo(), rid)
+        if landed:
+            log(f"[exec] {rid} 已有落盘提交 {landed[:12]}，自动收口，不再重复派发")
+            if not dry:
+                close_rc, close_out = _run_truthctl([
+                    "close", rid, f"exec({rid}) {landed[:12]} 已在 main，自动收口"])
+                log(f"[exec] {rid} 自动 close rc={close_rc} {close_out.strip()[:300]}")
+                blocked.pop(rid, None)
             continue
         if _looks_like_command(item.get("title")) or _looks_like_command(item.get("detail")):
             log(f"[exec] {rid} 输入像命令残片（{(item.get('title') or '')[:24]!r}），"
@@ -926,19 +1862,356 @@ def dispatch_exec(dry: bool, blocked: dict) -> list:
             blocked[rid] = {"reason": "looks_like_command",
                             "title": (item.get("title") or "")[:60], "ts": _now()}
             continue
+        if _oversized_exec_item(item):
+            log(f"[exec] {rid} 任务范围过大（跨多个阶段且无单一验收面），"
+                "先拆成单个可验证交付，不占用 worker 槽")
+            blocked[rid] = {"reason": "needs_split",
+                            "title": (item.get("title") or "")[:60], "ts": _now()}
+            continue
+        non_executable = _non_executable_reason(item)
+        if non_executable:
+            log(f"[exec] {rid} 不能由代码 worker 完成（{non_executable}），"
+                "保留台账等待人工或外部条件恢复")
+            blocked[rid] = {"reason": non_executable,
+                            "title": (item.get("title") or "")[:60], "ts": _now()}
+            continue
         if dry:
             log(f"[dry] 会派发 {rid}（{item.get('kind')}）{item.get('title')}")
+            candidates.append(item)
             break
-        results.append(_dispatch_one(item, cfg, blocked))
-        if len(results) >= cfg["max_per_cycle"]:
+        candidates.append(item)
+        if len(candidates) >= min(cfg["max_per_cycle"], free):
             break
-    return results
+    if dry or not candidates:
+        return finished
+
+    if _exec_pool is None:
+        _exec_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=limit, thread_name_prefix="kg-exec")
+    log(f"[exec] 启动后台实现 worker（候选 {len(candidates)}，活跃 {active}/{limit}）")
+    for item in candidates:
+        rid = item.get("id") or "?"
+        if rid in _exec_jobs and not _exec_jobs[rid]["future"].done():
+            continue
+        local_blocked: dict = {}
+        fut = _exec_pool.submit(_dispatch_one, item, cfg, local_blocked)
+        _exec_jobs[rid] = {"future": fut, "item": item,
+                           "blocked": local_blocked, "started": time.time()}
+        active += 1
+        log(f"[exec] 派发 {rid}（后台槽位 {active}/{limit}）")
+    save_worker_state(exec_done=finished)
+    return finished
+
+
+def _collect_exec(blocked: dict | None = None) -> list:
+    """收割已经完成的实现 worker；不阻塞主 daemon 周期。"""
+    finished = []
+    for rid, job in list(_exec_jobs.items()):
+        fut = job["future"]
+        if not fut.done():
+            continue
+        try:
+            result = fut.result()
+        except Exception as exc:
+            result = {"id": rid, "outcome": "worker_exception",
+                      "detail": repr(exc)[:400]}
+            log(f"[exec] worker {rid} 异常（已隔离）：{exc!r}")
+        local = job.get("blocked") or {}
+        if result.get("outcome") and result.get("id"):
+            local.setdefault(result["id"], {
+                "reason": result.get("outcome"),
+                "branch": result.get("branch"),
+                "worktree": result.get("worktree"),
+                "commit": result.get("commit"),
+                "ts": _now(),
+            })
+        if blocked is not None:
+            blocked.update(local)
+        _exec_jobs.pop(rid, None)
+        finished.append(result)
+        log(f"[exec] {rid} 后台完成：{result.get('outcome')}")
+    if finished:
+        save_worker_state(exec_done=finished)
+    return finished
 
 
 def _exec_dir() -> Path:
     d = RUNTIME / "exec"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+
+def convergence_candidates(blocked: dict, limit: int = EXEC_MAX_WORKERS) -> list:
+    """只挑可直接交给独立 worker 的 convergence 任务。
+
+    条件：仍有 needs_resolution、worktree 干净且已存在、冲突文件数和 marker 数
+    都在闸门内。worker 只负责解 marker 和提交；land 仍由 daemon 串行执行。
+    """
+    repo = _state_repo()
+    if not repo:
+        return []
+    cfg = convergence_exec_config()
+    if not cfg["enabled"]:
+        return []
+    try:
+        data = json.loads((repo / "ops" / "tasks" / "convergence.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        log("[convergence] 读不到 convergence.json，本轮跳过")
+        return []
+    out = []
+    for rec in data.get("groups") or []:
+        rid = rec.get("id") or rec.get("branch")
+        if not rid or rec.get("status") != "needs_resolution":
+            continue
+        files = rec.get("unresolved_files") or []
+        if not files or len(files) > cfg["max_files"]:
+            continue
+        wt = Path(rec.get("worktree") or "")
+        if not wt.is_dir():
+            continue
+        rc, dirty, _err = _git(wt, "status", "--porcelain")
+        if rc != 0 or dirty:
+            continue
+        marker_total = 0
+        for rel in files:
+            try:
+                text = (wt / rel).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                marker_total = cfg["max_markers"] + 1
+                break
+            marker_total += sum(text.count(tok) for tok in ("<<<<<<<", "=======", ">>>>>>>"))
+        if marker_total <= 0 or marker_total > cfg["max_markers"]:
+            continue
+        out.append({**rec, "marker_total": marker_total})
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _convergence_prompt(rec: dict) -> str:
+    files = "\n".join(f"- {p}" for p in rec.get("unresolved_files") or [])
+    return (
+        "【任务】在当前 worktree 中解决下列冲突 marker。先读取完整冲突上下文，"
+        "结合 HEAD 与两侧分支意图做最终实现；不要机械删断言，不要掩盖回归。\n"
+        f"{files}\n"
+        "【期望输出】只修改上述文件，显式 git add 这些文件并提交；最后报告 commit sha、"
+        "修改文件和验证命令/退出码。\n"
+        "【证据】报告 rg marker、tsc/build 或相关门禁的真实退出码。\n"
+        "【禁止】不要修改其他 worktree；不要 git add -A/stash/reset/checkout .；"
+        "不要 push/merge/land。不要遍历全仓历史；只读当前文件冲突段和必要的相邻上下文。"
+        "若 apply_patch 因格式被拒，改用 perl -0pi 或先把标准 patch 写到 /tmp/*.patch 再 git apply；"
+        "不要反复重发同一种失败格式。"
+    )
+
+
+def _dispatch_convergence_one(rec: dict, blocked: dict) -> dict:
+    rid = rec.get("id") or rec.get("branch") or "?"
+    wt = Path(rec["worktree"])
+    codex = _codex_bin()
+    if not codex:
+        return {"id": rid, "outcome": "no_codex"}
+    log_path = _exec_dir() / f"converge-{rid}.log"
+    cmd = [*codex, "exec", "-C", str(wt), "-s", "workspace-write",
+           "--skip-git-repo-check"]
+    cfg = auto_exec_config()
+    fast = os.environ.get("KG_EXEC_FAST_MODEL") or cfg.get("model")
+    if fast:
+        cmd += ["-m", str(fast)]
+    cmd += [_convergence_prompt(rec)]
+    log(f"[convergence] 派发 {rid}（{len(rec.get('unresolved_files') or [])} 文件 / "
+        f"{rec.get('marker_total')} markers，worktree={wt}）")
+    try:
+        with log_path.open("w", encoding="utf-8") as fh:
+            r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=fh,
+                               stderr=subprocess.STDOUT, cwd=str(wt),
+                               timeout=EXEC_DEFAULT_TIMEOUT)
+        code = r.returncode
+    except subprocess.TimeoutExpired:
+        code = 124
+    except OSError as exc:
+        code = 125
+        log(f"[convergence] 无法启动 codex: {exc}")
+    _, commit, _ = _git(wt, "rev-parse", "HEAD")
+    dirty = _changed_paths(wt)
+    marker_files = []
+    for rel in rec.get("unresolved_files") or []:
+        try:
+            text = (wt / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            marker_files.append(rel)
+            continue
+        if _has_conflict_markers(text):
+            marker_files.append(rel)
+    if code != 0:
+        outcome = f"codex_exit_{code}"
+    elif dirty:
+        outcome = "dirty_worktree"
+    elif marker_files:
+        outcome = "markers_remain"
+    else:
+        outcome = "done"
+    result = {"id": rid, "branch": rec.get("branch"), "worktree": str(wt),
+              "commit": commit, "dirty": dirty, "marker_files": marker_files,
+              "outcome": outcome}
+    if outcome != "done":
+        blocked[rid] = {"reason": outcome, "branch": rec.get("branch"),
+                        "worktree": str(wt), "commit": commit,
+                        "marker_files": marker_files[:8], "ts": _now()}
+    log(f"[convergence] {rid} 退出码={code}，commit={commit[:12]}，残留改动={len(dirty)}，"
+        f"残留marker文件={len(marker_files)}，结论={outcome}")
+    return result
+
+
+def _convergence_update(rid: str, **fields) -> None:
+    """把 worker 的真实结局写回 convergence 台账，供 tick/queue/land 接手。"""
+    repo = _state_repo()
+    if not repo:
+        return
+    path = repo / "ops" / "tasks" / "convergence.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        groups = data.get("groups") or []
+        record = next((g for g in groups if g.get("id") == rid), None)
+        if not record:
+            return
+        record.update(fields)
+        record["updated"] = _now()
+        data["updated"] = _now()
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        tmp.replace(path)
+    except (OSError, ValueError, TypeError) as exc:
+        log(f"[convergence] 写回台账失败 {rid}: {exc!r}")
+
+
+def _convergence_collect() -> list:
+    """收割已完成 worker，刷新台账；worker 不阻塞下一轮 tick/land。"""
+    done = []
+    for rid, item in list(_conv_jobs.items()):
+        fut, rec = item["future"], item["rec"]
+        if not fut.done():
+            continue
+        try:
+            result = fut.result()
+        except Exception as exc:
+            result = {"id": rid, "outcome": "worker_exception", "detail": repr(exc)[:400]}
+        outcome = result.get("outcome") or "unknown"
+        if outcome == "done":
+            _convergence_update(rid, status="ready", unresolved_files=[],
+                                head=result.get("commit", rec.get("head", "")))
+            log(f"[convergence] {rid} 已完成并标 ready，等待串行 land")
+        else:
+            markers = result.get("marker_files") or []
+            _convergence_update(rid, status="needs_resolution",
+                                unresolved_files=markers or rec.get("unresolved_files") or [],
+                                worker_error={"reason": outcome,
+                                              "commit": result.get("commit", ""),
+                                              "ts": _now()})
+            # 只抑制本拍内重复派发；下一拍读台账与 worktree 真状态重新判断。
+            _conv_blocked.pop(rid, None)
+            log(f"[convergence] {rid} 未完成：{outcome}，保持 needs_resolution")
+        _conv_jobs.pop(rid, None)
+        done.append(result)
+    if done:
+        state = load_state()
+        state["convergence_active"] = sorted(_conv_jobs)
+        save_state(state)
+    return done
+
+
+def _collect_resolve_worker() -> list:
+    """收割后台 `resolve --auto --go`，把日志和结构化结果交给本轮台账。"""
+    global _resolve_future
+    if _resolve_future is None or not _resolve_future.done():
+        return []
+    try:
+        rc, out = _resolve_future.result()
+    except Exception as exc:
+        rc, out = 1, f"resolve worker 异常: {exc!r}"
+    log_block("resolve(auto/background)", rc, out)
+    _resolve_future = None
+    save_heartbeat(current_stage="resolve_done")
+    parsed = [{"branch": b, "outcome": o}
+              for b, o in RESOLVE_RESULT_RE.findall(out or "")]
+    result = {"kind": "resolve", "rc": rc, "results": parsed}
+    save_worker_state(resolve_done=[result])
+    return [result]
+
+
+def _start_resolve_worker() -> list:
+    """没有空闲 convergence 槽位时，用同一线程池跑一条 resolve --auto。"""
+    global _resolve_future, _conv_pool
+    if _resolve_future is not None:
+        return []
+    cfg = auto_resolve_config()
+    if not cfg.get("enabled"):
+        return []
+    if _conv_pool is None:
+        _conv_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max(1, convergence_exec_config().get("max_workers", EXEC_MAX_WORKERS)),
+            thread_name_prefix="kg-resolve")
+    args = ["resolve", "--auto", "--go", "--max-files", str(cfg["max_files"]),
+            "--max-lines", str(cfg["max_lines"])]
+    log("[resolve] 启动后台 worker（复用现有 kgctl resolve --auto）")
+    save_heartbeat(current_stage="resolve_worker")
+    _resolve_future = _conv_pool.submit(run_kgctl, args, RESOLVE_TIMEOUT)
+    return [{"kind": "resolve", "started": True}]
+
+
+def dispatch_convergence(dry: bool, blocked: dict = None) -> list:
+    """启动有界并行 worker；每拍先收割，返回**本拍新完成**的结果。"""
+    global _conv_pool
+    finished = _convergence_collect() + _collect_resolve_worker()
+    cfg = convergence_exec_config()
+    if not cfg["enabled"]:
+        return finished
+    limit = max(1, int(cfg.get("max_workers", EXEC_MAX_WORKERS)))
+    free = limit - len(_conv_jobs) - (1 if _resolve_future is not None else 0)
+    try:
+        _refresh_external_resolve_jobs()
+    except NameError:
+        pass
+    has_real_resolve = bool(open_resolve_tasks() or _resolve_jobs
+                            or _external_resolve_jobs or _resolve_finish_jobs)
+    merge_blocked = {**_conv_blocked, **(blocked or {})}
+    candidates = convergence_candidates(merge_blocked, limit=max(1, free)) if free > 0 else []
+    if dry:
+        for rec in candidates:
+            log(f"[dry] 会派 convergence {rec.get('id')}（{rec.get('marker_total')} markers）")
+        return finished
+    if _conv_pool is None:
+        _conv_pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=limit, thread_name_prefix="kg-converge")
+    for rec in candidates:
+        rid = rec.get("id") or rec.get("branch")
+        if rid in _conv_jobs:
+            continue
+        fut = _conv_pool.submit(_dispatch_convergence_one, rec, _conv_blocked)
+        _conv_jobs[rid] = {"future": fut, "rec": rec, "started": time.time()}
+        log(f"[convergence] 启动后台 worker {rid}（活跃 {len(_conv_jobs)}/{limit}）")
+    if candidates or _conv_jobs:
+        state = load_state()
+        state["convergence_active"] = sorted(_conv_jobs)
+        save_state(state)
+    # convergence 与 resolve 共用有界池。每轮最多派一条 resolve，但只要基础槽位够，
+    # 就给 convergence 留一个位置：否则大族持续有新 worker 时，轻冲突会长期饿死。
+    conv_used = len(_conv_jobs)
+    resolve_used = 1 if _resolve_future is not None else 0
+    # A live worker on an existing worktree and a splitter for a new source are
+    # separate slots. A splitter may only run when no other splitter is live;
+    # this keeps the pool bounded while allowing idle resolve capacity to help
+    # with new conflicts instead of waiting behind one long resolve task.
+    existing_resolve_slots = len(_resolve_jobs) + len(_external_resolve_jobs)
+    finish_slots = len(_resolve_finish_jobs)
+    split_slots = 1 if _resolve_future is not None else 0
+    available = limit - conv_used - existing_resolve_slots - finish_slots - split_slots
+    can_split = (split_slots == 0 and available >= 1
+                 and auto_resolve_config().get("auto_split")
+                 and not auto_resolve_config().get("disable_auto_split"))
+    if can_split:
+        finished += _start_resolve_worker()
+    return finished
 
 
 def run_cycle(dry: bool, max_land: int) -> dict:
@@ -950,10 +2223,6 @@ def run_cycle(dry: bool, max_land: int) -> dict:
       * 因此这里是最外层也最可靠的闸门；`_run_cycle` 里的逐子系统闸门是第二道保险，
         防止别的调用方绕过本函数直接进内部实现。
     """
-    if not control_state.is_enabled():
-        log("[disabled] 自动挡已关闭或控制文件异常：本轮不启动任何新工作")
-        return {"ts": time.time(), "iso": _now(), "dry": dry,
-                "disabled": True, "summary": {}, "landed": [], "failures": []}
     if control_state.is_paused():
         log("[pause] 已暂停：本轮不启动任何新工作（面板可恢复）")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
@@ -975,21 +2244,19 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
                 "summary": summary, "landed": [], "failures": []}
 
     log("--- cycle start (live) ---")
-    if not control_state.is_enabled():
-        log("[disabled] 周期开始前自动挡已关闭：不做路由/落盘")
-        return {"ts": time.time(), "iso": _now(), "dry": dry,
-                "disabled": True, "summary": {}, "landed": [], "failures": []}
+    save_heartbeat(current_stage="cycle_start")
     if control_state.is_paused():
         log("[pause] 周期开始前被暂停：只刷新状态，不做路由/落盘")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
                 "paused": True, "summary": {}, "landed": [], "failures": []}
     rc, out = run_kgctl(["tick"])
+    save_heartbeat(current_stage="tick_done")
     log_block("tick", rc, out)
     convergence = parse_convergence(out)
     log(f"[converge] 可收拢族 {convergence['families']}，本轮新建 {convergence['made']}")
 
     # 归档「内容已全部在 main」的重复分支。这一步只写台账（加法），不动任何代码，
-    # 也不动任何源分支，所以放进守护的安全子集。用 --fast（patch-id）保证秒级返回。
+    # 也不动任何源分支，所以放进守护的安全子集。用 --fast（patch-id + tree）保证秒级返回。
     superseded = 0
     src, sout = run_kgctl(["supersede", "--go", "--fast"], timeout=SUPERSEDE_TIMEOUT)
     log_block("supersede", src, sout)
@@ -998,7 +2265,14 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
         superseded = int(m.group(1))
 
     landed, failures = [], []
-    if rc != 0 and not out.strip():
+    convergence_results = []
+    resolve_task_results = []
+    resolve_finish_results = []
+    if rc == 124:
+        # 超时必须算失败：旧实现里 tick 超时的 out 是一条说明文案（非空），于是既不进
+        # failures 也不报警——30 分钟的黑洞在面板上显示成 last_failures=0。
+        failures.append(("(tick)", "tick_timeout"))
+    elif rc != 0 and not out.strip():
         failures.append(("(tick)", "tick_error"))
 
     auto_land = control_state.load().get("auto_land", True)
@@ -1017,10 +2291,13 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
             break
         target = clean[0]
         attempts += 1
+        save_heartbeat(current_stage=f"landing:{target}")
         if dry:
             log(f"[dry] 本轮会 land: {target}（队列 {len(clean)} 个）")
             break
-        lrc, lout = run_kgctl(["land", target], timeout=LAND_TIMEOUT)
+        with _land_gate:
+            lrc, lout = run_kgctl(["land", target], timeout=LAND_TIMEOUT)
+        save_heartbeat(current_stage=f"land_done:{target}", current_land=target)
         kind = classify_land(lout, lrc)
         log_block(f"land {target} -> {kind}", lrc, lout)
         if kind == "landed":
@@ -1032,6 +2309,24 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
             break
         failures.append((target, kind))
         break
+
+    # Land is the single-writer contract, not a reason to serialize every
+    # worker behind an old conflict-splitting tick. Drain committed resolve
+    # worktrees first, then fill the bounded worker pool. Code work stays
+    # parallel while every write to main still passes through _land_gate.
+    # First adopt committed no-marker worktrees into the finish queue. Then
+    # drain that queue serially. Only after that fill the worker pool, so an
+    # empty finish queue cannot be mistaken for no work.
+    _pickup_committed_resolve_tasks()
+    resolve_finish_results = finish_resolve_tasks()
+    convergence_results = dispatch_convergence(dry, {})
+    resolve_task_results = dispatch_resolve_tasks(dry)
+    save_worker_state()
+    if convergence_results:
+        log(f"[convergence] 本轮完成 {len(convergence_results)} 路，等待串行 land")
+    else:
+        log("[convergence] 本轮没有可派任务的干净 convergence worktree")
+    save_heartbeat(current_stage="convergence_done")
 
     # 自动移植「只差几个提交」的冲突分支：cherry-pick 到当前 main，过门禁才落盘，
     # 冲突即整体放弃。默认关闭，由状态根 ops/central.config.json 的 auto_port 打开。
@@ -1074,19 +2369,13 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     resolve_blocked = dict(load_state().get("resolve_blocked") or {})
     resolve_cfg = auto_resolve_config()
     resolve_landed_any = False
-    if not dry and resolve_cfg["enabled"] and not (rc != 0 and not out.strip()):
-        for _ in range(RESOLVE_MAX_ATTEMPTS):
-            skip = ":".join(b for b in resolve_blocked if b)
-            rrc, rout = run_kgctl(["resolve", "--auto", "--go",
-                                   "--max-files", str(resolve_cfg["max_files"]),
-                                   "--max-lines", str(resolve_cfg["max_lines"])],
-                                  timeout=RESOLVE_TIMEOUT,
-                                  env_extra={"KG_RESOLVE_SKIP": skip})
-            log_block("resolve(auto)", rrc, rout)
-            rm = RESOLVE_RESULT_RE.search(rout)
-            if not rm:
-                break  # 没有候选了
-            rb, ro = rm.group(1), rm.group(2)
+    for rr in convergence_results:
+        if rr.get("kind") != "resolve":
+            continue
+        for item in rr.get("results") or []:
+            rb, ro = item.get("branch"), item.get("outcome")
+            if not rb:
+                continue
             if ro == "landed":
                 resolve_landed_any = True
             elif ro == "needs_agent":
@@ -1096,9 +2385,16 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
             elif ro == "gate_fail":
                 resolve_gate_fail.append(rb)
                 resolve_blocked[rb] = {"reason": ro, "ts": _now()}
-            # 每条结果都让候选集变小（落盘 / 占用 / 跳过），继续拆下一条。
-            if resolve_landed_any:
-                break  # 落盘推进了 main，下一周期基于新 main 重挑
+    if not dry and resolve_cfg["enabled"] and not (rc != 0 and not out.strip()):
+        # Existing resolve worktrees are the priority. Only ask kgctl to split
+        # a new source branch when the worker pool has no real worktree left.
+        if (not open_resolve_tasks()
+                and not _resolve_jobs and not _resolve_finish_jobs
+                and resolve_cfg.get("auto_split")
+                and not resolve_cfg.get("disable_auto_split")):
+            started = _start_resolve_worker()
+            if started:
+                log("[resolve] 后台拆分已启动，下一周期收割")
     elif not resolve_cfg["enabled"]:
         log("[resolve] auto_resolve 未开启（ops/central.config.json），跳过冲突拆分")
 
@@ -1113,7 +2409,8 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     if dry:
         dispatch_exec(True, exec_blocked)
     elif exec_cfg["enabled"] and not (rc != 0 and not out.strip()):
-        exec_results = dispatch_exec(False, exec_blocked)
+        exec_results = _collect_exec(exec_blocked) + dispatch_exec(False, exec_blocked)
+        save_worker_state()
         exec_landed = [r for r in exec_results if r.get("outcome") == "landed"]
     elif not exec_cfg["enabled"]:
         log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
@@ -1130,7 +2427,10 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
               "resolved_tasks": resolved_tasks,
               "resolve_gate_fail": resolve_gate_fail,
               "exec_results": exec_results,
-              "convergence": convergence}
+              "convergence": convergence,
+              "convergence_results": convergence_results,
+              "resolve_task_results": resolve_task_results,
+              "resolve_finish_results": resolve_finish_results}
 
     # ---- 通知：只在「完成 / 失败 / 新收拢出族」时出声，且去重 ----
     state = load_state()
@@ -1195,6 +2495,15 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     state["total_resolved"] = int(state.get("total_resolved", 0)) + (
         1 if resolve_landed_any else 0) + len(resolved_tasks)
     state["last_resolved_tasks"] = resolved_tasks or state.get("last_resolved_tasks", [])
+    state["last_convergence"] = ([{"id": r.get("id"), "outcome": r.get("outcome")}
+                                  for r in convergence_results]
+                                 or state.get("last_convergence", []))
+    state["last_resolve_tasks"] = ([{"slug": r.get("slug"), "outcome": r.get("outcome")}
+                                    for r in resolve_task_results]
+                                   or state.get("last_resolve_tasks", []))
+    state["last_resolve_finish"] = ([{"slug": r.get("slug"), "outcome": r.get("outcome")}
+                                     for r in resolve_finish_results]
+                                    or state.get("last_resolve_finish", []))
     state["resolve_blocked"] = resolve_blocked
     state["port_blocked"] = port_blocked
     state["exec_blocked"] = exec_blocked
@@ -1318,8 +2627,21 @@ def build_plist(interval_min: int) -> dict:
         "NO_PROXY": "127.0.0.1,localhost,::1",
     }
     # KG_REPO 是账本所在；自包含安装下它和 KG_TRUNK 不一定同一个目录。
+    # 运行时的模型分工由项目配置提供：慢卡长任务用 auto_exec.model，
+    # 快速收敛用 auto_exec.fast_model。未配置时不写环境变量，保持旧行为。
     repo_env = os.environ.get("KG_REPO")
     trunk_env = os.environ.get("KG_TRUNK")
+    try:
+        repo_path = Path(repo_env).expanduser() if repo_env else _state_repo()
+        cfg_data = json.loads((repo_path / "ops" / "central.config.json").read_text(encoding="utf-8"))
+        acfg = cfg_data.get("auto_exec") or {}
+        if isinstance(acfg, dict):
+            if acfg.get("fast_model"):
+                env["KG_EXEC_FAST_MODEL"] = str(acfg["fast_model"])
+            if acfg.get("model"):
+                env["KG_EXEC_MODEL"] = str(acfg["model"])
+    except (OSError, ValueError, TypeError):
+        pass
     if repo_env:
         repo_path = Path(repo_env).expanduser()
         env["KG_REPO"] = str(repo_path)
@@ -1336,7 +2658,7 @@ def build_plist(interval_min: int) -> dict:
                              "--max-land", str(DEFAULT_MAX_LAND)],
         "RunAtLoad": True,
         "KeepAlive": True,
-        "ThrottleInterval": 60,
+        "ThrottleInterval": 10,
         "ProcessType": "Background",
         "Nice": int(os.environ.get("KG_DAEMON_NICE", "10")),
         "StandardOutPath": str(LOG),
@@ -1453,6 +2775,7 @@ def open_resolve_tasks():
     settled |= {t.get("branch") for t in tasks if t.get("status") in ("landed", "abandoned")}
     return [t for t in tasks
             if t.get("status") in ("needs_agent", "gate_fail")
+            and Path(t.get("worktree") or "").is_dir()
             and t.get("slug") not in settled and t.get("branch") not in settled]
 
 
@@ -1471,6 +2794,7 @@ def show_status() -> int:
     if state:
         print(f"上一轮         {state.get('last_cycle_iso', '?')}"
               f"{'（dry-run）' if state.get('dry') else ''}")
+        print(f"当前心跳       {state.get('heartbeat_iso', '未记录')} / {state.get('current_stage', '?')}")
         print(f"累计自动落盘   {state.get('total_landed', 0)} 个分支")
         print(f"累计归档重复   {state.get('total_superseded', 0)} 个分支")
         print(f"累计自动移植   {state.get('total_ported', 0)} 个分支")
@@ -1485,6 +2809,64 @@ def show_status() -> int:
         eblocked = state.get("exec_blocked") or {}
         if eblocked:
             print(f"实现暂缓       {len(eblocked)} 条（无改动/门禁不过，已跳过，不再重复派）")
+        workers = state.get("workers") or {}
+        if workers:
+            conv_active = workers.get("convergence_active") or []
+            exec_active = workers.get("exec_active") or []
+            resolve_active = bool(workers.get("resolve_active"))
+            resolve_tasks = workers.get("resolve_task_active") or []
+            resolve_finish = workers.get("resolve_finish_active") or []
+            resolve_external = workers.get("resolve_external_active") or []
+            resolve_label = "空闲"
+            if resolve_active or resolve_tasks or resolve_finish:
+                resolve_label = (f"运行中 {len(resolve_tasks) + len(resolve_finish)}"
+                                 if resolve_tasks or resolve_finish else "拆冲突中")
+            print(f"后台并行       convergence {len(conv_active)}/"
+                  f"{workers.get('convergence_limit', '?')} · "
+                  f"exec {len(exec_active)}/{workers.get('exec_limit', '?')} · "
+                  f"resolve {resolve_label}")
+            if resolve_tasks:
+                print(f"  resolve任务  {', '.join(resolve_tasks)}")
+            if resolve_external:
+                print(f"  resolve外部  {', '.join(resolve_external)}")
+            if resolve_finish:
+                print(f"  resolve落盘  {', '.join(resolve_finish)}")
+            finish_queue = state.get("finish_resolve_queue") or []
+            if finish_queue:
+                print(f"  resolve待收  {', '.join(finish_queue)}")
+            if conv_active:
+                print(f"  convergence  {', '.join(conv_active)}")
+            if exec_active:
+                print(f"  exec         {', '.join(exec_active)}")
+            last_conv = workers.get("last_convergence") or []
+            last_resolve = workers.get("last_resolve") or []
+            last_exec = workers.get("last_exec") or []
+            last_rt = state.get("last_resolve_tasks") or []
+            last_rf = state.get("last_resolve_finish") or []
+            if last_conv:
+                print("  最近收敛     " + ", ".join(
+                    f"{r.get('id') or '?'}:{r.get('outcome') or '?'}"
+                    for r in last_conv[-3:]))
+            if last_resolve:
+                rr = last_resolve[-1]
+                results = rr.get("results") or []
+                detail = (", ".join(f"{x.get('branch')}:{x.get('outcome')}"
+                                    for x in results[:3])
+                          if results else "无结构化结果")
+                print(f"  最近 resolve rc={rr.get('rc')}  {detail}")
+            if last_exec:
+                print("  最近实现     " + ", ".join(
+                    f"{r.get('id') or '?'}:{r.get('outcome') or '?'}"
+                    for r in last_exec[-3:]))
+            if last_rt:
+                print("  最近解冲突   " + ", ".join(
+                    f"{r.get('slug') or '?'}:{r.get('outcome') or '?'}"
+                    for r in last_rt[-3:]))
+            if last_rf:
+                print("  最近冲突落盘 " + ", ".join(
+                    f"{r.get('slug') or '?'}:{r.get('outcome') or '?'}"
+                    for r in last_rf[-3:]))
+            print(f"  更新于       {workers.get('updated_iso', '?')}")
         rtasks = open_resolve_tasks()
         if rtasks:
             shown = ", ".join(f"{t.get('slug')} [{t.get('status')}]" for t in rtasks[:5])
@@ -1516,6 +2898,30 @@ def loop(interval_min: int, max_land: int, dry: bool) -> int:
     if not acquire_lock():
         log(f"已有实例在跑（{DAEMON_LOCK}），本次退出")
         return 1
+    # 上一进程可能崩溃或被 launchd 重启。不要假装子进程已经结束：明确的 codex
+    # 子进程仍可能在 worktree 里写文件；此时重新派同一条会让两个 worker 抢同一分支。
+    # 新实例先观察真实进程，把现场登记成外部活跃，再让各派发器跳过它。
+    try:
+        state = load_state()
+        live = _live_exec_worktrees()
+        state["workers"] = {
+            "convergence_limit": max(1, int(convergence_exec_config().get(
+                "max_workers", EXEC_MAX_WORKERS))),
+            "exec_limit": max(1, int(auto_exec_config().get(
+                "max_workers", EXEC_MAX_WORKERS))),
+            "convergence_active": [],
+            "resolve_active": False,
+            "exec_active": [],
+            "exec_external_active": [],
+            "recovery_external": [
+                {"worktree": wt, "pid": pid} for wt, pid in sorted(live.items())
+            ],
+            "updated_ts": time.time(),
+            "updated_iso": _now(),
+        }
+        save_state(state)
+    except Exception as exc:
+        log(f"[worker-state] 初始化清理跳过：{exc!r}")
     signal.signal(signal.SIGTERM, _sigint)
     signal.signal(signal.SIGINT, _sigint)
     try:
@@ -1532,6 +2938,21 @@ def loop(interval_min: int, max_land: int, dry: bool) -> int:
                 run_cycle(dry, max_land)
             except Exception as exc:  # 单轮失败不能让守护退出
                 log(f"× 本轮异常（已吞掉，下轮继续）：{exc!r}")
+            # 预算闸门（fail-open）：测量长驻窗口预算、按需自动换代、按需暂停派活。
+            # 放在本轮 land/resolve 之后 —— 既有工作先收尾，闸门不插队。
+            # 任何异常都当作「没有这个钩子」，绝不影响自动挡本体。
+            try:
+                import budget_gate
+                budget_gate.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[budget] 闸门跳过（fail-open）：{exc!r}")
+            # 空转记分（fail-open）：给每一拍分类，连续空转就点名并把记分写进下一拍的 prompt。
+            # 与预算闸门同族：只读判定、动作显式、一键关、异常一律吞掉。
+            try:
+                import beat_audit
+                beat_audit.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[beat] 记分跳过（fail-open）：{exc!r}")
             if _stop:
                 break
             was_paused = control_state.is_paused()
@@ -1547,6 +2968,12 @@ def loop(interval_min: int, max_land: int, dry: bool) -> int:
                     log("[pause] 已恢复运行，提前进入下一轮")
                     break
     finally:
+        if _conv_pool is not None:
+            _conv_pool.shutdown(wait=False)
+        if _exec_pool is not None:
+            _exec_pool.shutdown(wait=False)
+        if _resolve_task_pool is not None:
+            _resolve_task_pool.shutdown(wait=False)
         release_lock()
         log("常驻退出")
     return 0
