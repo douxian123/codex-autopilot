@@ -1924,7 +1924,15 @@ def dispatch_exec(dry: bool, blocked: dict) -> list:
     candidates = []
     for item in _ledger_open_items():
         rid = item.get("id")
-        if rid in blocked:
+        # Re-evaluate the boundary from the live record even if an older
+        # daemon left the item out of its persisted blocked table. This keeps
+        # a single cycle from spending slots on human/external work.
+        stale_reason = _non_executable_reason(item)
+        if rid in blocked and not stale_reason:
+            continue
+        if stale_reason:
+            log(f"[exec] {rid} 不能由代码 worker 完成（{stale_reason}），保留台账等待人工或外部条件恢复")
+            blocked[rid] = {"reason": stale_reason, "title": (item.get("title") or "")[:60], "ts": _now()}
             continue
         landed = _landed_exec_commit(_state_repo(), rid)
         if landed:
