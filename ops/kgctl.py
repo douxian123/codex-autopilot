@@ -3598,7 +3598,36 @@ def cmd_next(args):
 
 
 def cmd_tick(args):
-    """自动挡主循环：输入归一 -> 真相刷新 -> 冲突收拢 -> 看板/上下文 -> 落盘状态。"""
+    """自动挡主循环：输入归一 -> 真相刷新 -> 冲突收拢 -> 看板/上下文 -> 落盘状态。
+
+    Only one tick may mutate a state root at a time. The daemon already
+    serializes land, but overlapping ticks still rewrite truth/context files
+    and make one slow scan look like several healthy workers. Keep the lock
+    outside the checkout so it never appears as a project change; flock is
+    released automatically if the process dies.
+    """
+    tick_lock = _git_common_dir() / "kgctl-tick.lock"
+    tick_lock.parent.mkdir(parents=True, exist_ok=True)
+    with tick_lock.open("a+") as tick_fh:
+        try:
+            fcntl.flock(tick_fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            try:
+                tick_fh.seek(0)
+                owner = tick_fh.read().strip() or "unknown"
+            except OSError:
+                owner = "unknown"
+            print(f"已有 tick 在进行（{owner}），本次跳过：{tick_lock}")
+            return
+        tick_fh.seek(0)
+        tick_fh.truncate()
+        tick_fh.write(f"{os.getpid()} {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        tick_fh.flush()
+        _tick_body(args)
+
+
+def _tick_body(args):
+    """tick 的串行主体；调用方必须持有 kgctl-tick.lock。"""
     _align_main()
     print("[1/8] route inbox", flush=True)
     _truth("route", "--go")
