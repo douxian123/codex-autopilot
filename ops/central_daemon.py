@@ -1119,9 +1119,15 @@ def _worktree_task_open(path: str, open_ids: set[str]) -> bool:
 
 
 def _worktree_task_id(path: str) -> str | None:
-    """Return the ledger id encoded in an exec worktree name."""
+    """Return the ledger id encoded in an exec worktree name.
+
+    Slug suffixes may themselves start with a number (``l-0157-1-anchor``);
+    treating that suffix as part of the ledger id made the live worker
+    invisible in slot accounting. Ledger ids are canonical ``L-<digits>``
+    with four-digit allocation, while legacy import ids may have three.
+    """
     name = Path(path).name
-    match = re.search(r"-exec-(l-\d+(?:-\d+)?)", name, re.IGNORECASE)
+    match = re.search(r"-exec-(l-\d{3,4})(?:-|$)", name, re.IGNORECASE)
     return match.group(1).upper() if match else None
 
 
