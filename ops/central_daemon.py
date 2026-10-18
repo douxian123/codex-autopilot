@@ -1784,6 +1784,20 @@ def _exec_retryable(blocked: dict, rid: str) -> bool:
     reason = str(rec.get("reason") or "")
     if not reason:
         return False
+    # Splitting decisions are derived, not user verdicts. Re-run the current
+    # classifier against the live ledger item so fixing a false positive also
+    # releases rows persisted by the previous daemon version. If the item is
+    # still broad or externally blocked, keep it parked.
+    if reason in ("needs_split", "needs_human", "external_blocked"):
+        latest = _ledger_latest() if _truth_dir() else None
+        item = latest.get(rid) if isinstance(latest, dict) else None
+        if not item or item.get("status") not in ("open", "doing"):
+            return False
+        if reason == "needs_split" and not _oversized_exec_item(item):
+            return True
+        if reason == "external_blocked" and not _non_executable_reason(item):
+            return True
+        return False
     # These need a human decision, a narrower task, or a deliberate re-open.
     # Automatically releasing them after a cooldown only burns another worker
     # slot on the same unexecutable input.
@@ -1791,7 +1805,6 @@ def _exec_retryable(blocked: dict, rid: str) -> bool:
         "external_blocked",
         "looks_like_command",
         "no_codex",
-        "needs_split",
         "needs_human",
         # Legacy rows written before the state was renamed still mean the same
         # thing: the worker exited 0 without producing a diff.
@@ -1809,19 +1822,22 @@ def _exec_retryable(blocked: dict, rid: str) -> bool:
     return time.time() - ts >= cooldown
 
 
-def _prune_retryable_exec_blocked(blocked: dict, log_fn=log) -> list:
-    """Release stale local-failure rows before candidate selection.
+def _prune_retryable_exec_blocked(blocked: dict, log_fn=log,
+                                  apply: bool = False) -> list:
+    """Return stale local-failure rows eligible for another bounded run.
 
-    `_collect_exec` records a terminal row for successful workers too; those
-    are pruned against the truth ledger by `_prune_exec_blocked`. This helper
-    only handles the other side: failures that deserve another bounded run.
+    By default this is a pure predicate: callers can combine it with
+    `_prune_exec_blocked` so a closed row is still reported as pruned rather
+    than disappearing through a side effect. Candidate dispatch passes
+    ``apply=True`` only after those stale-row checks have completed.
     """
     released = []
     for rid in list(blocked):
         if _exec_retryable(blocked, rid):
-            rec = blocked.pop(rid)
             released.append(rid)
-            log_fn(f"[exec] 释放过期暂缓 {rid}（{rec.get('reason')}，{rec.get('ts')}）")
+            if apply:
+                rec = blocked.pop(rid)
+                log_fn(f"[exec] 释放过期暂缓 {rid}（{rec.get('reason')}，{rec.get('ts')}）")
     return released
 
 
@@ -1867,7 +1883,7 @@ def dispatch_exec(dry: bool, blocked: dict) -> list:
         log(f"[exec] 检测到 {len(external)} 个重载前仍在运行的 exec worktree，按占用槽位处理")
     if free <= 0:
         return finished
-    released = [] if dry else _prune_retryable_exec_blocked(blocked)
+    released = [] if dry else _prune_retryable_exec_blocked(blocked, apply=True)
     candidates = []
     for item in _ledger_open_items():
         rid = item.get("id")

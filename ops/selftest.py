@@ -1577,17 +1577,67 @@ def test_auto_exec():
         if released != ["L-0012"] or "L-0016" not in retry_blocked or "L-0056" not in retry_blocked:
             raise AssertionError(f"过期失败恢复边界错误: released={released}, blocked={retry_blocked}")
 
+        # --- 旧的 needs_split 是派生判断：修好误判后可重试，但不提前吞掉 blocked ---
+        repo_split, trunk_split, home_split = fixture(base / "split-release")
+        daemon_split = load_daemon(repo_split, trunk_split, home_split,
+                                   fake_codex(base, "fake-split.sh", 0))
+        ledger_split = repo_split / "ops" / "truth" / "ledger.jsonl"
+        rows_split = [
+            {"id": "L-0001", "type": "ledger", "kind": "bug", "lane": "bug",
+             "title": "阶段1人工复核包：离线完整性 fail-closed 可复核",
+             "detail": "阶段1只补 review package 的离线完整性校验；不碰阶段2。",
+             "status": "open", "ts": "2026-01-01T00:00:00+08:00"},
+            {"id": "L-0002", "type": "ledger", "kind": "bug", "lane": "bug",
+             "title": "继续按产品路线推进闭环",
+             "detail": "阶段1质量、阶段2 live、阶段3图谱。",
+             "status": "open", "ts": "2026-01-01T00:00:00+08:00"},
+        ]
+        ledger_split.write_text(
+            "\n".join(_json.dumps(r, ensure_ascii=False) for r in rows_split) + "\n",
+            encoding="utf-8")
+        split_blocked = {
+            "L-0001": {"reason": "needs_split", "ts": "2000-01-01 00:00:00"},
+            "L-0002": {"reason": "needs_split", "ts": "2000-01-01 00:00:00"},
+        }
+        released_split = daemon_split._prune_retryable_exec_blocked(split_blocked)
+        if released_split != ["L-0001"] or set(split_blocked) != {"L-0001", "L-0002"}:
+            raise AssertionError(
+                f"派生 needs_split 恢复边界错误: released={released_split}, blocked={split_blocked}")
+        # A stale row for an item that no longer exists must stay parked.
+        missing_split = {"L-9999": {"reason": "needs_split", "ts": "2000-01-01 00:00:00"}}
+        missing_released = daemon_split._prune_retryable_exec_blocked(missing_split)
+        if missing_released or "L-9999" not in missing_split:
+            raise AssertionError(f"缺失台账项被误释放: {missing_released} {missing_split}")
+        applied = daemon_split._prune_retryable_exec_blocked(split_blocked, apply=True)
+        if applied != ["L-0001"] or set(split_blocked) != {"L-0002"}:
+            raise AssertionError(
+                f"派生 needs_split 实际释放边界错误: released={applied}, blocked={split_blocked}")
+
         # --- 已收口的条目不占「实现暂缓」：台账变 done 后自愈清掉 ---
-        with (repo_c / "ops" / "truth" / "ledger.jsonl").open("a", encoding="utf-8") as fh:
-            fh.write(_json.dumps({"id": "L-0001", "type": "ledger", "kind": "bug",
-                                  "title": "面板按钮点着没反应", "status": "done",
-                                  "ts": "2026-01-02T00:00:00+08:00"},
-                                 ensure_ascii=False) + "\n")
-        stale = daemon_c._prune_exec_blocked(blocked_c)
+        repo_stale, trunk_stale, home_stale = fixture(base / "stale-close")
+        daemon_stale = load_daemon(repo_stale, trunk_stale, home_stale,
+                                  fake_codex(base, "fake-stale.sh", 0))
+        daemon_stale._run_truthctl = lambda args, extra_env=None, timeout=120: (
+            1, "forced close failure")
+        blocked_stale = {}
+        results_stale = dispatch_and_drain(daemon_stale, blocked_stale)
+        if results_stale[0].get("outcome") != "landed_close_fail":
+            raise AssertionError(f"收口失败夹具未进入目标路径: {results_stale}")
+        ledger_stale = repo_stale / "ops" / "truth" / "ledger.jsonl"
+        rows_stale = [_json.loads(line) for line in ledger_stale.read_text(encoding="utf-8").splitlines() if line.strip()]
+        rows_stale.append({
+            "id": "L-0001", "type": "ledger", "kind": "bug", "lane": "bug",
+            "title": "面板按钮点着没反应", "status": "done",
+            "ts": "2026-01-02T00:00:00+08:00",
+        })
+        ledger_stale.write_text(
+            "\n".join(_json.dumps(r, ensure_ascii=False) for r in rows_stale) + "\n",
+            encoding="utf-8")
+        stale = daemon_stale._prune_exec_blocked(blocked_stale)
         if "L-0001" not in stale:
             raise AssertionError(f"台账已收口却没清掉实现暂缓: stale={stale}")
-        if blocked_c:
-            raise AssertionError(f"台账已收口后 blocked 应为空: {blocked_c}")
+        if blocked_stale:
+            raise AssertionError(f"台账已收口后 blocked 应为空: {blocked_stale}")
 
         # --- 台账读不到时绝不误清真实的暂缓 ---
         blocked_keep = {"L-9999": {"reason": "gate_fail"}}
