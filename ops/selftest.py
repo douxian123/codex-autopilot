@@ -1633,6 +1633,22 @@ def test_auto_exec():
             "title": "修复 verify:graph-png-export-browser",
             "detail": "改 frontend/src/components/NodeHoverCard.tsx 并跑 npm run verify:graph-png-export-browser",
         })
+        assert not daemon_p._oversized_exec_item({
+            "title": "阶段1人工复核包：离线完整性 fail-closed 可复核",
+            "detail": "阶段1只补 review package 的离线完整性校验；不碰阶段2。",
+        })
+        assert not daemon_p._oversized_exec_item({
+            "title": "阶段2来源绑定：page fallback 离线 mutation 可复核",
+            "detail": "阶段2只补 claim source binding 的离线测试；不碰阶段1。",
+        })
+        assert not daemon_p._oversized_exec_item({
+            "title": "修复 verify:claim-source-binding 离线 mutation",
+            "detail": "改 backend/test/claim-source-binding-gate.mjs 并跑 node test/claim-source-binding-gate.mjs",
+        })
+        assert daemon_p._oversized_exec_item({
+            "title": "阶段1到阶段3统一推进路线",
+            "detail": "阶段1补质量、阶段2接 live、阶段3完成图谱闭环。",
+        })
 
         # --- 人工判断 / 外部通道阻塞不能占用代码 worker 槽 ---
         assert daemon_p._non_executable_reason({

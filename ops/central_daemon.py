@@ -774,7 +774,20 @@ def _ledger_open_items(limit=20):
 def _oversized_exec_item(item: dict) -> bool:
     """Reject roadmap-sized items that cannot produce one verifiable change."""
     text = f"{item.get('title') or ''}\n{item.get('detail') or ''}".lower()
-    phase_marks = sum(text.count(x) for x in ("阶段1", "阶段2", "阶段3", "阶段4"))
+    # Count distinct stages, not occurrences: a narrow task may legitimately say
+    # "阶段1" in its title and "阶段1" again in its detail. Only a task that
+    # actually spans two or more different roadmap stages is oversized.
+    # A phase counts only when the text gives it work (a nearby action), not
+    # when it is merely mentioned as out of scope (e.g. "不碰阶段2").
+    # Remove clauses that explicitly place a phase out of scope before
+    # counting. A negative marker normally precedes the phase ("不碰阶段2"),
+    # so looking only after the phase marker still leaves false positives.
+    cleaned = re.sub(
+        r"(?:不碰|不改|不做|不处理|不涉及)[^。；\n]*阶段[1-4][^。；\n]*",
+        "",
+        text,
+    )
+    phases = set(re.findall(r"阶段([1-4])", cleaned))
     broad = any(x in text for x in (
         "继续按", "全路线", "推进闭环", "继续推进", "继续把阶段",
     ))
@@ -782,7 +795,7 @@ def _oversized_exec_item(item: dict) -> bool:
         "verify:", "npm run", "npx ", "node test/", "python3 ",
         ".ts", ".mjs", ".py", "/",
     ))
-    return phase_marks >= 2 or (broad and not concrete)
+    return len(phases) >= 2 or (broad and not concrete)
 
 
 def _non_executable_reason(item: dict) -> str | None:
