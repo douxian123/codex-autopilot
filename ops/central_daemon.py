@@ -303,12 +303,17 @@ def save_worker_state(convergence_done: list | None = None,
     # the tiny window where a process predates this daemon but `ps` has not
     # caught it yet; never let a stale snapshot revive a dead PID forever.
     recovery_rows = []
+    seen_recovery = set()
     for row in prior_recovery:
         path = row.get("worktree")
         if not path:
             continue
-        if str(Path(path).expanduser().resolve()) in external_exec:
-            recovery_rows.append(row)
+        canonical = str(Path(path).expanduser().resolve())
+        if canonical in seen_recovery:
+            continue
+        if canonical in external_exec:
+            recovery_rows.append({**row, "worktree": canonical})
+            seen_recovery.add(canonical)
             continue
         pid = row.get("pid")
         try:
@@ -321,18 +326,22 @@ def save_worker_state(convergence_done: list | None = None,
             except ProcessLookupError:
                 pass
             except PermissionError:
-                recovery_rows.append(row)
+                recovery_rows.append({**row, "worktree": canonical})
+                seen_recovery.add(canonical)
                 continue
             except OSError:
                 # Unknown process-state errors are safer to keep than to
                 # double-dispatch the same worktree.
-                recovery_rows.append(row)
+                recovery_rows.append({**row, "worktree": canonical})
+                seen_recovery.add(canonical)
                 continue
             else:
-                recovery_rows.append(row)
+                recovery_rows.append({**row, "worktree": canonical})
+                seen_recovery.add(canonical)
                 continue
         if _recovery_has_work(_state_repo(), path):
-            recovery_rows.append(row)
+            recovery_rows.append({**row, "worktree": canonical})
+            seen_recovery.add(canonical)
     recovery_exec = _recovery_active_rows(_state_repo(), recovery_rows)
     # A Future can stay in the pool briefly after its task is already done
     # and closed in the ledger. It must not keep a worker slot occupied.
