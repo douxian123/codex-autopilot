@@ -360,18 +360,31 @@ def _live_exec_worktrees(kind: str | None = None) -> dict:
         parts = line.strip().split(None, 1)
         if len(parts) != 2 or "codex" not in parts[1] or "exec" not in parts[1]:
             continue
-        # Test fixtures run the fake executor with the same `exec -C <wt>` CLI.
-        # Do not let a live production exec process occupy fixture slots.
-        if token_repo and str(token_repo) not in parts[1]:
-            continue
-        try:
-            pid = int(parts[0])
-        except ValueError:
-            continue
         try:
             tokens = shlex.split(parts[1])
         except ValueError:
             tokens = parts[1].split()
+        # Test fixtures run the fake executor with the same `exec -C <wt>` CLI.
+        # Do not let a live production exec process occupy fixture slots.
+        if token_repo:
+            # Match this repo's worktrees by the final path component. A raw
+            # substring check also matches unrelated siblings such as
+            # knowledge-graph-exec-* merely because the repo name is a prefix.
+            repo_name = token_repo.name
+            worktree_path = None
+            for i, token in enumerate(tokens[:-1]):
+                if token in ("-C", "--cd"):
+                    worktree_path = Path(tokens[i + 1]).expanduser().resolve()
+                    break
+            if worktree_path is None:
+                continue
+            if not (worktree_path.name == repo_name or
+                    worktree_path.name.startswith(repo_name + "-exec-")):
+                continue
+        try:
+            pid = int(parts[0])
+        except ValueError:
+            continue
         for i, token in enumerate(tokens[:-1]):
             if token in ("-C", "--cd"):
                 candidate = Path(tokens[i + 1]).expanduser().resolve()
@@ -2058,7 +2071,7 @@ def _dispatch_convergence_one(rec: dict, blocked: dict) -> dict:
         blocked[rid] = {"reason": outcome, "branch": rec.get("branch"),
                         "worktree": str(wt), "commit": commit,
                         "marker_files": marker_files[:8], "ts": _now()}
-    log(f"[convergence] {rid} 退出码={code}，commit={commit[:12]}，残留改动={len(dirty)}，"
+    log(f"[convergence] {rid} 退出码={code}，commit={commit[:12]}，残留改动={len(dirty)}，" 
         f"残留marker文件={len(marker_files)}，结论={outcome}")
     return result
 

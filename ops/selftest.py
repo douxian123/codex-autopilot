@@ -1223,6 +1223,67 @@ def test_verify_and_truth():
     print("selftest ok: 验证门禁真跑真写真拦；产品状态与判断逻辑可回写；问题可闭环；主线可综合。")
 
 
+def test_truth_integrity_baseline():
+    """Old allocator collisions stay visible but do not permanently block the gate."""
+    import json as _json
+
+    with tempfile.TemporaryDirectory(prefix="truth-integrity-") as tmp:
+        repo = Path(tmp)
+        truth = repo / "ops" / "truth"
+        truth.mkdir(parents=True)
+        ledger = truth / "ledger.jsonl"
+        git(repo.parent, "init", "-q", "-b", "main", str(repo))
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+
+        def write(rows):
+            ledger.write_text(
+                "\n".join(_json.dumps(r, ensure_ascii=False) for r in rows) + "\n",
+                encoding="utf-8")
+
+        old = {"id": "L-0001", "ts": "2026-01-01 00:00:00",
+               "title": "old work", "status": "open"}
+        revision = {"id": "L-0002", "ts": "2026-01-01 00:00:01",
+                    "title": "normal", "status": "open"}
+        legacy_collision = {"id": "L-0001", "ts": "2026-01-01 00:00:02",
+                            "title": "different old work", "status": "done"}
+        write([old, revision, legacy_collision])
+        git(repo, "add", "ops/truth/ledger.jsonl")
+        git(repo, "commit", "-q", "-m", "baseline")
+
+        # An old collision already in HEAD is reported but not treated as new
+        # after a status revision; only a collision newly absent from HEAD^ fails.
+        collided = {"id": "L-0001", "ts": "2026-01-01 00:00:02",
+                    "title": "different old work", "status": "open"}
+        write([old, revision, collided])
+        git(repo, "add", "ops/truth/ledger.jsonl")
+        git(repo, "commit", "-q", "-m", "old collision")
+        p = truthctl(repo, "integrity")
+        assert p.returncode == 0, (p.stdout, p.stderr)
+        assert "baseline_collision_ids=1" in p.stdout, p.stdout
+
+        # A new collision beyond the HEAD^ baseline must fail closed.
+        newer = {"id": "L-0003", "ts": "2026-01-01 00:00:03",
+                 "title": "new work", "status": "open"}
+        collision = {"id": "L-0003", "ts": "2026-01-01 00:00:04",
+                     "title": "overwritten intent", "status": "open"}
+        write([old, revision, collided, newer, collision])
+        git(repo, "add", "ops/truth/ledger.jsonl")
+        git(repo, "commit", "-q", "-m", "new collision")
+        p = truthctl(repo, "integrity")
+        assert p.returncode != 0, (p.stdout, p.stderr)
+        assert "new_collision_ids=L-0003" in p.stdout, p.stdout
+
+        # Physical deletion is a separate destructive path and must also fail.
+        write([newer])
+        git(repo, "add", "ops/truth/ledger.jsonl")
+        git(repo, "commit", "-q", "-m", "collapse")
+        p = truthctl(repo, "integrity")
+        assert p.returncode != 0, (p.stdout, p.stderr)
+        assert "physical_drop=" in p.stdout, p.stdout
+    print("selftest ok: truth integrity ignores legacy collisions, catches new collisions and row collapse.")
+
+
 def test_auto_exec():
     """自动实现闭环：台账待办 -> 独立 worktree 真跑 -> 显式提交 -> 落盘 -> 收口。
 
@@ -1423,6 +1484,31 @@ def test_auto_exec():
             3, {"L-a", "L-b", "L-c"}, set())
         if free != 0:
             raise AssertionError(f"本池三个 active 时仍报告空闲槽: free={free}")
+        # A sibling path must not be mistaken for the repo root merely because
+        # the repo path is its prefix: knowledge-graph vs knowledge-graph-exec-*.
+        real_run = daemon_l.subprocess.run
+        real_repo_env = os.environ.get("KG_REPO")
+        try:
+            os.environ["KG_REPO"] = "/tmp/kg"
+            def fake_ps(cmd, *args, **kwargs):
+                if cmd[:2] == ["ps", "-axo"]:
+                    class P:
+                        stdout = (
+                            "101 codex exec -C /tmp/kg/kg-exec-old -s workspace-write\n"
+                            "102 codex exec -C /tmp/kg/resolve -s workspace-write\n"
+                        )
+                    return P()
+                return real_run(cmd, *args, **kwargs)
+            daemon_l.subprocess.run = fake_ps
+            live = daemon_l._live_exec_worktrees(kind="exec")
+        finally:
+            daemon_l.subprocess.run = real_run
+            if real_repo_env is None:
+                os.environ.pop("KG_REPO", None)
+            else:
+                os.environ["KG_REPO"] = real_repo_env
+        if set(live) != {"/private/tmp/kg/kg-exec-old"}:
+            raise AssertionError(f"repo-prefix exclusion was too broad: {live}")
         real_live = daemon_l._live_exec_worktrees
         daemon_l._live_exec_worktrees = lambda kind=None: (
             {"/tmp/kg-trunk-resolve-doc": os.getpid()})
@@ -1996,6 +2082,7 @@ if __name__ == "__main__":
     test_control_state()
     test_resolve_worker_pool()
     test_verify_and_truth()
+    test_truth_integrity_baseline()
     test_auto_exec()
     test_mcp_contract()
     test_budget_gate()
