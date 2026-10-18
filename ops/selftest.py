@@ -795,6 +795,57 @@ def test_control_state():
     print("selftest ok: 用户级开关生效，暂停闸门拦住新工作，损坏即安全暂停。")
 
 
+def test_auto_port_config():
+    """项目配置存在时是唯一事实源；缺省时才回退用户级 control.json。"""
+    import importlib
+    import json as _json
+    import shutil
+    sys.path.insert(0, str(OPS))
+    repo = Path(tempfile.mkdtemp(prefix="kg-auto-port-"))
+    old_repo = os.environ.get("KG_REPO")
+    try:
+        (repo / "ops").mkdir(parents=True)
+        import control_state
+        import central_daemon
+        importlib.reload(control_state)
+        importlib.reload(central_daemon)
+        real_load = control_state.load
+        control_state.load = lambda: {"auto_port": False}
+        try:
+            os.environ["KG_REPO"] = str(repo)
+
+            (repo / "ops" / "central.config.json").write_text(
+                _json.dumps({"auto_port": {"enabled": True, "max_unlanded": 4}}),
+                encoding="utf-8")
+            cfg = central_daemon.auto_port_config()
+            assert cfg["enabled"] is True and cfg["source"] == "project"
+            assert cfg["max_unlanded"] == 4
+
+            (repo / "ops" / "central.config.json").write_text(
+                _json.dumps({}), encoding="utf-8")
+            cfg = central_daemon.auto_port_config()
+            assert cfg["enabled"] is False and cfg["source"] == "control"
+
+            control_state.load = lambda: {"auto_port": True}
+            cfg = central_daemon.auto_port_config()
+            assert cfg["enabled"] is True and cfg["source"] == "control"
+
+            # 项目显式关闭时，用户级旧值不能把它重新打开。
+            (repo / "ops" / "central.config.json").write_text(
+                _json.dumps({"auto_port": {"enabled": False}}), encoding="utf-8")
+            cfg = central_daemon.auto_port_config()
+            assert cfg["enabled"] is False and cfg["source"] == "project"
+        finally:
+            control_state.load = real_load
+    finally:
+        if old_repo is None:
+            os.environ.pop("KG_REPO", None)
+        else:
+            os.environ["KG_REPO"] = old_repo
+        shutil.rmtree(repo, ignore_errors=True)
+    print("selftest ok: auto_port 以项目配置为事实源，缺省才回退用户开关。")
+
+
 def test_resolve_worker_pool():
     """resolve 后台池：三路并行、脏任务续解、主分支前进后仍接管已提交任务。"""
     import importlib
@@ -1029,6 +1080,20 @@ def test_resolve_worker_pool():
         if synced.get("outcome") not in ("fresh", "merged"):
             raise AssertionError(
                 f"committed resolve worktree was rejected before finish: {synced}")
+
+        # A worker can leave an uncommitted resolved file behind. It must be
+        # committed explicitly before refresh, otherwise every cycle fails at
+        # "would be overwritten by merge" and the task never reaches land.
+        (wt / "uncommitted-resolve.txt").write_text("resolved by worker\n", encoding="utf-8")
+        synced = central_daemon._sync_resolve_worktree_before_finish({
+            "slug": "committed", "worktree": str(wt),
+            "unresolved_files": ["uncommitted-resolve.txt"],
+            "conflict_files": ["uncommitted-resolve.txt"],
+        })
+        if synced.get("outcome") not in ("fresh", "merged"):
+            raise AssertionError(f"uncommitted resolve output blocked sync: {synced}")
+        if git(wt, "status", "--porcelain").stdout.strip():
+            raise AssertionError("uncommitted resolve output was not committed")
 
         for name in ("KG_REPO", "KG_TRUNK", "KG_DAEMON_HOME"):
             os.environ.pop(name, None)
@@ -1473,6 +1538,100 @@ def test_auto_exec():
         if git(repo, "branch", "--list", "codex/exec-*").stdout.strip():
             raise AssertionError("成功路径应回收执行分支")
 
+        # --- 大任务会自动拆成可验收子项，父项不再占用 worker 槽 ---
+        repo_sp, trunk_sp, home_sp = fixture(base / "split-auto")
+        daemon_sp = load_daemon(repo_sp, trunk_sp, home_sp,
+                                fake_codex(base, "fake-split.sh", 0))
+        ledger_sp = repo_sp / "ops" / "truth" / "ledger.jsonl"
+        rows_sp = [_json.loads(x) for x in ledger_sp.read_text(encoding="utf-8").splitlines()]
+        rows_sp[0].update({
+            "title": "继续按产品路线推进闭环",
+            "detail": "阶段1质量、阶段2 live、阶段3图谱。",
+            "files": [],
+        })
+        ledger_sp.write_text("\n".join(_json.dumps(r, ensure_ascii=False) for r in rows_sp) + "\n",
+                             encoding="utf-8")
+        git(repo_sp, "add", "ops/truth/ledger.jsonl")
+        git(repo_sp, "commit", "-q", "-m", "broad split fixture")
+        git(repo_sp, "push", "-q", "origin", "main")
+        blocked_sp = {}
+        children = daemon_sp._split_exec_item(rows_sp[0], daemon_sp.auto_exec_config(),
+                                              blocked_sp, dry=True)
+        if [c["phase"] for c in children] != ["1", "2", "3"]:
+            raise AssertionError(f"大任务拆分阶段不完整: {children}")
+        actual = daemon_sp._split_exec_item(rows_sp[0], daemon_sp.auto_exec_config(),
+                                            blocked_sp, dry=False)
+        if len(actual) != 3:
+            raise AssertionError(f"大任务没有拆成三条: {actual}")
+        latest_sp = ledger_latest(repo_sp)
+        if latest_sp["L-0001"].get("status") != "split":
+            raise AssertionError(f"父项没有标记 split: {latest_sp['L-0001']}")
+        child_ids = latest_sp["L-0001"].get("split_children") or []
+        if len(child_ids) != 3 or any(latest_sp[x].get("split_parent") != "L-0001"
+                                      for x in child_ids):
+            raise AssertionError(f"子项 lineage 不完整: {latest_sp}")
+        if any(latest_sp[x].get("status") != "open" for x in child_ids):
+            raise AssertionError(f"子项不是可执行状态: {latest_sp}")
+        again_sp = daemon_sp._split_exec_item(rows_sp[0], daemon_sp.auto_exec_config(),
+                                              blocked_sp, dry=False)
+        if again_sp:
+            raise AssertionError(f"同一父项被重复拆分: {again_sp}")
+        if any(daemon_sp._oversized_exec_item(latest_sp[x])
+               for x in child_ids):
+            raise AssertionError(f"子项仍被判为大任务: {[latest_sp[x] for x in child_ids]}")
+
+        # Legacy needs_split rows must reach the new splitter, not be skipped
+        # by the generic blocked-table shortcut. Keep this test at the control
+        # flow boundary: the split implementation itself is covered above.
+        repo_old, trunk_old, home_old = fixture(base / "legacy-split")
+        daemon_old = load_daemon(repo_old, trunk_old, home_old,
+                                 fake_codex(base, "fake-legacy-split.sh", 0))
+        ledger_old = repo_old / "ops" / "truth" / "ledger.jsonl"
+        rows_old = [_json.loads(x) for x in ledger_old.read_text(encoding="utf-8").splitlines()]
+        rows_old[0].update({"title": "继续按产品路线推进闭环",
+                            "detail": "阶段1质量、阶段2 live、阶段3图谱。",
+                            "files": []})
+        ledger_old.write_text("\n".join(_json.dumps(r, ensure_ascii=False) for r in rows_old) + "\n",
+                              encoding="utf-8")
+        git(repo_old, "add", "ops/truth/ledger.jsonl")
+        git(repo_old, "commit", "-q", "-m", "legacy split fixture")
+        git(repo_old, "push", "-q", "origin", "main")
+        blocked_old = {"L-0001": {"reason": "needs_split", "ts": "2000-01-01 00:00:00"}}
+        old_item = ledger_latest(repo_old)["L-0001"]
+        old_capacity = daemon_old._exec_capacity
+        old_live = daemon_old._live_exec_worktrees
+        old_open = daemon_old._ledger_open_items
+        old_split = daemon_old._split_exec_item
+        old_dispatch = daemon_old._dispatch_one
+        split_calls = []
+        dispatch_calls = []
+
+        def fake_split(item, cfg, blocked, dry):
+            split_calls.append(item.get("id"))
+            return [{"id": "L-0002", "phase": "1"}]
+
+        def fake_dispatch(item, cfg, blocked):
+            dispatch_calls.append(item.get("id"))
+            return {"id": item.get("id"), "outcome": "landed"}
+
+        daemon_old._exec_capacity = lambda limit, ids, wts: (2, 1)
+        daemon_old._live_exec_worktrees = lambda kind=None: {}
+        daemon_old._ledger_open_items = lambda: [old_item]
+        daemon_old._split_exec_item = fake_split
+        daemon_old._dispatch_one = fake_dispatch
+        try:
+            daemon_old.dispatch_exec(False, blocked_old)
+        finally:
+            daemon_old._exec_capacity = old_capacity
+            daemon_old._live_exec_worktrees = old_live
+            daemon_old._ledger_open_items = old_open
+            daemon_old._split_exec_item = old_split
+            daemon_old._dispatch_one = old_dispatch
+        if split_calls != ["L-0001"]:
+            raise AssertionError(f"旧 needs_split 没进入新拆分器: {split_calls}")
+        if "L-0001" in dispatch_calls:
+            raise AssertionError(f"宽父项仍被当作实现任务派发: {dispatch_calls}")
+
         # --- 重启恢复：正在运行的旧 exec worktree 占槽，不重派同一条 ---
         repo_l, trunk_l, home_l = fixture(base / "live")
         daemon_l = load_daemon(repo_l, trunk_l, home_l, fake_codex(base, "fake-live.sh", 0))
@@ -1480,6 +1639,13 @@ def test_auto_exec():
             3, {"L-live-in-memory"}, {str(repo_l.parent / "state-exec-old"): os.getpid()})
         if active != 2 or free != 1:
             raise AssertionError(f"live exec 没占槽: active={active} free={free}")
+        active, free = daemon_l._exec_capacity(
+            3, {"L-0118"}, {str(repo_l.parent / "state-exec-l-0118-recovery"): os.getpid()})
+        if active != 1 or free != 2:
+            raise AssertionError(f"同一 worker 被重复计槽: active={active} free={free}")
+        # A worktree and its ledger id are one worker, not two. After a
+        # daemon restart both views can exist at once; counting them twice
+        # silently strands a free slot and lowers throughput.
         active, free = daemon_l._exec_capacity(
             3, {"L-a", "L-b", "L-c"}, set())
         if free != 0:
@@ -1509,7 +1675,132 @@ def test_auto_exec():
                 os.environ["KG_REPO"] = real_repo_env
         if set(live) != {"/private/tmp/kg/kg-exec-old"}:
             raise AssertionError(f"repo-prefix exclusion was too broad: {live}")
+
+        # recovery 快照不能因为「曾经登记过」就永久占槽。只保留活 PID，
+        # 或仍有未提交改动 / 未落提交的真实现场。
+        clean_wt = repo_l.parent / "state-exec-l-0002-clean"
+        live_wt = repo_l.parent / "state-exec-l-0003-live"
+        dirty_wt = repo_l.parent / "state-exec-l-0004-dirty"
+        for wt in (clean_wt, live_wt, dirty_wt):
+            git(repo_l, "worktree", "add", "-q", "-b",
+                f"codex/{wt.name}", str(wt), "main")
+        (dirty_wt / "app.txt").write_text("dirty recovery\n", encoding="utf-8")
+        rows = [
+            {"worktree": str(clean_wt), "pid": 0},
+            {"worktree": str(live_wt), "pid": os.getpid()},
+            {"worktree": str(dirty_wt), "pid": 0},
+        ]
+        active_rows = daemon_l._recovery_active_rows(repo_l, rows)
+        if set(active_rows) != {str(live_wt.resolve()), str(dirty_wt.resolve())}:
+            raise AssertionError(f"恢复快照状态过滤错误: {active_rows}")
+
+        # A completed Future for an already-closed ledger row is a terminal
+        # event, not a live worker. It must release the visible slot.
+        class DoneFuture:
+            def done(self):
+                return True
+            def result(self):
+                return {"id": "L-0001", "outcome": "landed"}
+        daemon_l._exec_jobs = {"L-0001": {"future": DoneFuture()}}
+        daemon_l._live_exec_worktrees = lambda kind=None: {}
+        daemon_l.save_worker_state()
+        visible = daemon_l.load_state().get("workers", {})
+        if "L-0001" in (visible.get("exec_active") or []):
+            raise AssertionError(f"已关闭任务的完成 Future 仍占槽: {visible}")
+        daemon_l._exec_jobs.clear()
+
+        # A dead PID in a prior recovery snapshot must not revive a clean
+        # worktree forever. Keep only a live PID or real unlanded work.
+        clean_recovery = str(clean_wt.resolve())
+        state = daemon_l.load_state()
+        state["workers"] = {
+            "recovery_external": [
+                {"worktree": clean_recovery, "pid": 999999999},
+            ],
+        }
+        daemon_l.save_state(state)
+        daemon_l._live_exec_worktrees = lambda kind=None: {}
+        daemon_l.save_worker_state()
+        refreshed = daemon_l.load_state().get("workers", {})
+        if any(r.get("worktree") == clean_recovery
+               for r in (refreshed.get("recovery_external") or [])):
+            raise AssertionError(f"死 PID 的干净恢复快照未清理: {refreshed}")
+        daemon_l._exec_jobs.clear()
+
         real_live = daemon_l._live_exec_worktrees
+        # A recovery snapshot for the exact same worktree must suppress a
+        # second dispatch, even if the live ps scan momentarily misses it.
+        exact = str(repo_l.parent / "state-exec-l-0001-item")
+        state = daemon_l.load_state()
+        state["workers"] = {"recovery_external": [{"worktree": exact, "pid": os.getpid()}]}
+        daemon_l.save_state(state)
+        daemon_l._live_exec_worktrees = lambda kind=None: {}
+        try:
+            import control_state as cs2
+            old_load2 = cs2.load
+            cs2.load = lambda: {"auto_exec": True}
+            try:
+                daemon_l.dispatch_exec(False, {})
+            finally:
+                cs2.load = old_load2
+        finally:
+            daemon_l._live_exec_worktrees = real_live
+        if daemon_l._exec_jobs:
+            raise AssertionError(f"recovery worktree was double-dispatched: {daemon_l._exec_jobs}")
+        # A recovery snapshot for an already-landed task must stop consuming
+        # a slot, while the worker is preserved and not re-dispatched.
+        # Recovery paths can differ after a restart or stale-name fallback.
+        # The ledger id embedded in the worktree name is the stable slot key,
+        # so one live recovery lane must suppress duplicate dispatch.
+        daemon_l._exec_jobs.clear()
+        daemon_l._live_exec_worktrees = lambda kind=None: {}
+        stale_recovery = str(repo_l.parent /
+                             "state-exec-l-0001-recovery-20261019")
+        state = daemon_l.load_state()
+        state["workers"] = {
+            "recovery_external": [{"worktree": stale_recovery, "pid": os.getpid()}],
+        }
+        daemon_l.save_state(state)
+        old_finish = daemon_l._finish_exec
+        old_dispatch_one = daemon_l._dispatch_one
+        dispatched = []
+        def fake_finish(*args, **kwargs):
+            dispatched.append("finish")
+            return {"id": "L-0001", "outcome": "landed"}
+        def fake_dispatch_exact(*args, **kwargs):
+            dispatched.append("dispatch")
+            return {"id": "L-0001", "outcome": "landed"}
+        daemon_l._finish_exec = fake_finish
+        daemon_l._dispatch_one = fake_dispatch_exact
+        try:
+            import control_state as cs3
+            old_load3 = cs3.load
+            cs3.load = lambda: {"auto_exec": True}
+            try:
+                daemon_l.dispatch_exec(False, {})
+            finally:
+                cs3.load = old_load3
+        finally:
+            daemon_l._finish_exec = old_finish
+            daemon_l._dispatch_one = old_dispatch_one
+        if dispatched:
+            raise AssertionError(f"不同 recovery 路径重复派发同一任务: {dispatched}")
+        live, free = daemon_l._exec_capacity(
+            3, set(), {
+                str(repo_l.parent / "state-exec-l-0118-recovery-a"): os.getpid(),
+                str(repo_l.parent / "state-exec-l-0118-recovery-b"): os.getpid(),
+            })
+        if live != 1 or free != 2:
+            raise AssertionError(f"重复 recovery 路径应合成一个槽: active={live} free={free}")
+
+        landed_id = "L-0001"
+        (repo_l / "app.txt").write_text("landed recovery\n", encoding="utf-8")
+        git(repo_l, "add", "app.txt")
+        git(repo_l, "commit", "-q", "-m", f"exec({landed_id}): recovery landed")
+        git(repo_l, "push", "-q", "origin", "main")
+        released = daemon_l._landed_worktrees(repo_l, [exact])
+        if released != {str(Path(exact).resolve())}:
+            raise AssertionError(f"landed recovery did not release its slot: {released}")
         daemon_l._live_exec_worktrees = lambda kind=None: (
             {"/tmp/kg-trunk-resolve-doc": os.getpid()})
         try:
@@ -1639,6 +1930,35 @@ def test_auto_exec():
         if blocked_stale:
             raise AssertionError(f"台账已收口后 blocked 应为空: {blocked_stale}")
 
+        # 未登记残留目录之后，可能已经有上一轮成功登记的 -recovery。
+        # 新的恢复路径必须同时避开两者，否则会立刻撞上“branch already used”
+        # 并空出第三个 worker 槽。
+        repo_r, trunk_r, home_r = fixture(base / "recovery-lane")
+        daemon_r = load_daemon(repo_r, trunk_r, home_r,
+                               fake_codex(base, "fake-recovery-lane.sh", 0))
+        item_r = {**ledger_latest(repo_r)["L-0001"], "id": "L-0001"}
+        slug_r = (f"{daemon_r._exec_slug('L-0001')}-"
+                  f"{daemon_r._exec_slug(item_r['title'])}")
+        stale_path = repo_r.parent / f"{repo_r.name}-exec-{slug_r}"
+        stale_path.mkdir()
+        (stale_path / "preserved.txt").write_text("keep me\n", encoding="utf-8")
+        recovery_path = stale_path.with_name(stale_path.name + "-recovery")
+        branch_r = f"codex/exec-{slug_r}"
+        recovery_branch = branch_r + "-recovery"
+        git(repo_r, "worktree", "add", "-q", "-b", recovery_branch,
+            str(recovery_path), "main")
+        result_r = daemon_r._dispatch_one(
+            item_r, daemon_r.auto_exec_config(), {})
+        if result_r.get("outcome") != "landed":
+            raise AssertionError(f"恢复槽没有真实派发: {result_r}")
+        if (stale_path / "preserved.txt").read_text(encoding="utf-8") != "keep me\n":
+            raise AssertionError("未登记残留目录被改动")
+        if not recovery_path.exists():
+            raise AssertionError("已登记的 recovery 目录被删除")
+        if git(repo_r, "show-ref", "--verify",
+               f"refs/heads/{recovery_branch}").returncode != 0:
+            raise AssertionError("已登记的 recovery 分支被删除")
+
         # --- 台账读不到时绝不误清真实的暂缓 ---
         blocked_keep = {"L-9999": {"reason": "gate_fail"}}
         orig_truth_dir = daemon_c._truth_dir
@@ -1675,6 +1995,24 @@ def test_auto_exec():
             raise AssertionError("直接收口后执行分支没有回收")
 
         # --- 跨多个阶段、没有单一验收面的路线任务不能占 worker 槽 ---
+        ordered = sorted([
+            {
+                "id": "L-broad", "kind": "bug",
+                "title": "司令台巡检：继续按产品路线推进",
+                "detail": "阶段1和阶段2都需要继续推进",
+                "ts": "2026-01-01 00:00:00",
+            },
+            {
+                "id": "L-narrow", "kind": "bug",
+                "title": "修复阶段2来源绑定离线 mutation",
+                "detail": "改 backend/test/claim-source-binding-gate.mjs 并跑 npm run verify:claim-source-binding",
+                "files": ["backend/test/claim-source-binding-gate.mjs"],
+                "ts": "2026-01-02 00:00:00",
+            },
+        ], key=daemon_p._exec_priority)
+        if [r["id"] for r in ordered] != ["L-narrow", "L-broad"]:
+            raise AssertionError(f"窄任务没有排在泛化巡检前: {ordered}")
+
         assert daemon_p._oversized_exec_item({
             "title": "继续按 ThoughLoom 产品路线推进闭环",
             "detail": "阶段1质量、阶段2 live、阶段3图谱、阶段4分享",
@@ -1849,6 +2187,77 @@ def test_auto_exec():
         if blocked_x.get("L-0001", {}).get("reason") != "codex_infra_fail":
             raise AssertionError(f"retries=0 的抖动失败原因不对: {blocked_x}")
 
+        # 快慢模型都必须从项目配置进入执行器，不能只剩慢模型。
+        repo_m, trunk_m, home_m = fixture(
+            base / "model-routing",
+            exec_cfg={
+                "model": "ok8888@deepseek-v4.1-flash",
+                "fast_model": "aibvv@deepseek-v4.1-flash",
+            },
+        )
+        daemon_m = load_daemon(repo_m, trunk_m, home_m,
+                               fake_codex(base, "fake-model.sh", 0))
+        model_cfg = daemon_m.auto_exec_config()
+        if (model_cfg.get("model") != "ok8888@deepseek-v4.1-flash"
+                or model_cfg.get("fast_model") != "aibvv@deepseek-v4.1-flash"):
+            raise AssertionError(f"快慢模型配置没有完整加载: {model_cfg}")
+
+        # The project route must win over a stale launchd env.
+        repo_p, trunk_p, home_p = fixture(
+            base / "model-precedence",
+            exec_cfg={"model": "aibvv@deepseek-v4.1-flash",
+                      "fast_model": "aibvv@deepseek-v4.1-flash"},
+        )
+        daemon_p = load_daemon(repo_p, trunk_p, home_p,
+                               fake_codex(base, "fake-model-precedence.sh", 0))
+        plist_env = daemon_p.build_plist(3).get("EnvironmentVariables") or {}
+        if plist_env.get("KG_EXEC_MODEL") != "aibvv@deepseek-v4.1-flash":
+            raise AssertionError(f"launchd 没有跟随项目快模型配置: {plist_env}")
+        # Exercise the actual command construction, not only auto_exec_config().
+        # A stale environment may still say ok8888; the new worker must carry
+        # the project route because cfg is consulted first.
+        observed = []
+        real_popen = daemon_p.subprocess.Popen
+        class FakeProc:
+            pid = 1
+            returncode = 0
+            args = ()
+            def communicate(self, input=None, timeout=None):
+                return ("", "")
+            def poll(self):
+                return 0
+            def wait(self, timeout=None):
+                return 0
+        def capture_popen(cmd, *args, **kwargs):
+            if cmd and Path(str(cmd[0])).name.startswith("fake-model-precedence"):
+                observed.append(list(cmd))
+            return FakeProc()
+        class RoutedPopen:
+            @staticmethod
+            def __call__(cmd, *args, **kwargs):
+                if cmd and cmd[0] == "git":
+                    return real_popen(cmd, *args, **kwargs)
+                return capture_popen(cmd, *args, **kwargs)
+        try:
+            daemon_p.subprocess.Popen = RoutedPopen()
+            item_p = {**ledger_latest(repo_p)["L-0001"], "id": "L-0001"}
+            old_model = os.environ.get("KG_EXEC_MODEL")
+            os.environ["KG_EXEC_MODEL"] = "ok8888@deepseek-v4.1-flash"
+            try:
+                cfg_p = daemon_p.auto_exec_config()
+                daemon_p._dispatch_one(item_p, cfg_p, {})
+            finally:
+                if old_model is None:
+                    os.environ.pop("KG_EXEC_MODEL", None)
+                else:
+                    os.environ["KG_EXEC_MODEL"] = old_model
+        finally:
+            daemon_p.subprocess.Popen = real_popen
+        if not observed:
+            raise AssertionError("模型优先级测试没有启动任何 worker")
+        cmd = observed[0]
+        if "-m" not in cmd or cmd[cmd.index("-m") + 1] != "aibvv@deepseek-v4.1-flash":
+            raise AssertionError(f"旧环境变量压过了项目快模型: {cmd}")
         # --- 超时护栏不变：即使日志里有 502 文本，超时仍归 codex_exit_124 且不重试 ---
         repo_t, trunk_t, home_t = fixture(base / "infra-timeout",
                                          exec_cfg={"timeout": 1})
@@ -2103,19 +2512,19 @@ def test_budget_gate():
             if bg.dispatch_paused()[0]:
                 raise AssertionError("用量回落后没有自动恢复派活")
 
-            # 4b) 终态暂缓不能被冷却时间重新放回执行池。宽任务、人工验收和
-            # 「零改动但保留现场」都需要明确拆分或重开，不能每 30 分钟烧一次 worker。
+            # 4b) terminal rows stay parked unless their empty scene is proven.
             import central_daemon as _cd2
             old_ts = "2000-01-01 00:00:00"
             terminal = {
                 "needs_split": {"reason": "needs_split", "ts": old_ts},
                 "needs_human": {"reason": "needs_human", "ts": old_ts},
-                "no_changes": {"reason": "no_changes", "ts": old_ts},
-                "no_changes_preserved": {"reason": "no_changes_preserved", "ts": old_ts},
             }
             for rid, rec in terminal.items():
                 if _cd2._exec_retryable({rid: rec}, rid):
                     raise AssertionError(f"终态暂缓 {rid} 被判为可重派")
+            for reason in ("no_changes", "no_changes_preserved"):
+                if _cd2._exec_retryable({"L-empty": {"reason": reason, "ts": old_ts}}, "L-empty"):
+                    raise AssertionError(f"缺少 worktree 证据的 {reason} 被误释放")
             retryable = {"L-retry": {"reason": "codex_exit_1", "ts": old_ts}}
             if not _cd2._exec_retryable(retryable, "L-retry"):
                 raise AssertionError("普通本地失败在冷却后应允许重试")
@@ -2158,6 +2567,7 @@ if __name__ == "__main__":
     test_clean_land_with_dirty_trunk()
     test_align_main_only_recovers_truth_only_commits()
     test_control_state()
+    test_auto_port_config()
     test_resolve_worker_pool()
     test_verify_and_truth()
     test_truth_integrity_baseline()

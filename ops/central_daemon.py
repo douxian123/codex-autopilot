@@ -294,8 +294,74 @@ def save_worker_state(convergence_done: list | None = None,
     exec_cfg = auto_exec_config()
     conv_limit = max(1, int(conv_cfg.get("max_workers", EXEC_MAX_WORKERS)))
     exec_limit = max(1, int(exec_cfg.get("max_workers", EXEC_MAX_WORKERS)))
-    exec_active = sorted(k for k, v in _exec_jobs.items()
-                         if not v["future"].done())
+    external_exec = _live_exec_worktrees(kind="exec")
+    # A daemon restart loses in-memory futures but not the workers. Count
+    # both the live process scan and the recovery snapshot from loop();
+    # otherwise state says "idle" while codex is still editing a worktree.
+    prior_recovery = state.get("workers", {}).get("recovery_external") or []
+    # The live process scan is authoritative. A prior snapshot only covers
+    # the tiny window where a process predates this daemon but `ps` has not
+    # caught it yet; never let a stale snapshot revive a dead PID forever.
+    recovery_rows = []
+    for row in prior_recovery:
+        path = row.get("worktree")
+        if not path:
+            continue
+        if str(Path(path).expanduser().resolve()) in external_exec:
+            recovery_rows.append(row)
+            continue
+        pid = row.get("pid")
+        try:
+            pid = int(pid or 0)
+        except (TypeError, ValueError):
+            pid = 0
+        if pid > 0:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                recovery_rows.append(row)
+                continue
+            except OSError:
+                # Unknown process-state errors are safer to keep than to
+                # double-dispatch the same worktree.
+                recovery_rows.append(row)
+                continue
+            else:
+                recovery_rows.append(row)
+                continue
+        if _recovery_has_work(_state_repo(), path):
+            recovery_rows.append(row)
+    recovery_exec = _recovery_active_rows(_state_repo(), recovery_rows)
+    # A Future can stay in the pool briefly after its task is already done
+    # and closed in the ledger. It must not keep a worker slot occupied.
+    latest = _ledger_latest()
+    open_ids = ({
+        rid for rid, rec in latest.items()
+        if rec.get("status") in ("open", "doing")
+    } if latest is not None else None)
+    pool_active = {
+        k for k, v in _exec_jobs.items()
+        if not v["future"].done()
+        and (open_ids is None or k in open_ids)
+    }
+    external_active = {
+        path for path in set(external_exec) | set(recovery_exec)
+        if open_ids is None or _worktree_task_open(path, open_ids)
+    }
+    # A live worktree and its ledger id are two views of the same worker.
+    # Counting both would make a 3-slot pool look full after only two tasks
+    # started, so show/count one durable slot key per task.
+    external_slots = {
+        _worktree_task_id(path) or str(Path(path).expanduser().resolve())
+        for path in external_active
+    }
+    exec_active = sorted(pool_active | external_slots)
+    # Keep the external view consistent with the active view. A recovery
+    # snapshot is durable evidence that the worker predates this daemon; the
+    # process scan can transiently miss it while that worker is busy.
+    external_exec_all = set(external_active)
     resolve_active = bool(_resolve_future is not None and
                           not _resolve_future.done())
     # State must survive a daemon restart. Re-scan real external `codex exec`
@@ -310,6 +376,7 @@ def save_worker_state(convergence_done: list | None = None,
     state["workers"] = {
         "convergence_limit": conv_limit,
         "exec_limit": exec_limit,
+        "recovery_external": recovery_rows,
         "convergence_active": sorted(_conv_jobs),
         "resolve_active": resolve_active,
         "resolve_started": (state.get("workers", {}).get("resolve_started")
@@ -318,6 +385,7 @@ def save_worker_state(convergence_done: list | None = None,
         "resolve_external_active": sorted(_external_resolve_jobs),
         "resolve_finish_active": resolve_finish_active,
         "exec_active": exec_active,
+        "exec_external_active": sorted(external_exec_all),
         "convergence_free": max(0, conv_limit - len(_conv_jobs) -
                                  (1 if _resolve_future is not None else 0)),
         "exec_free": max(0, exec_limit - len(exec_active)),
@@ -416,19 +484,29 @@ def auto_port_config() -> dict:
     默认**关闭**：把「只差几个提交」的冲突分支自动 cherry-pick 到 main 属于契约扩展，
     必须由项目在配置里显式打开。打开后一个周期把候选逐条试一遍（上限见
     PORT_MAX_ATTEMPTS），任何文本冲突即整体放弃并记进 port_blocked。
+
+    配置优先级：项目 `ops/central.config.json` 显式给出 auto_port 时，它是唯一
+    事实源；没有项目配置才回退到用户级 control.json。否则一个历史遗留的用户级
+    `false` 会让项目级 `true` 永久变成死配置，面板显示已开但守护实际不工作。
     """
-    out = {"enabled": False, "max_unlanded": 2}
+    out = {"enabled": False, "max_unlanded": 2, "source": "default"}
     repo = _state_repo()
     if not repo:
         out["enabled"] = bool(control_state.load().get("auto_port", False))
+        out["source"] = "control"
         return out
-    ctrl_port = control_state.load().get("auto_port", False)
     try:
         data = json.loads((repo / "ops" / "central.config.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        out["enabled"] = bool(ctrl_port)
+        out["enabled"] = bool(control_state.load().get("auto_port", False))
+        out["source"] = "control"
         return out
     cfg = data.get("auto_port")
+    if cfg is None:
+        out["enabled"] = bool(control_state.load().get("auto_port", False))
+        out["source"] = "control"
+        return out
+    out["source"] = "project"
     if isinstance(cfg, bool):
         out["enabled"] = cfg
     elif isinstance(cfg, dict):
@@ -437,9 +515,6 @@ def auto_port_config() -> dict:
             out["max_unlanded"] = max(1, int(cfg.get("max_unlanded", 2)))
         except (TypeError, ValueError):
             pass
-    # 用户级开关拥有最终否决权：面板上关掉 auto_port，项目配置打开也不生效。
-    if not control_state.load().get("auto_port", False):
-        out["enabled"] = False
     return out
 
 
@@ -646,6 +721,8 @@ def auto_exec_config() -> dict:
                 out["sandbox"] = str(cfg["sandbox"])
             if cfg.get("model"):
                 out["model"] = str(cfg["model"])
+            if cfg.get("fast_model"):
+                out["fast_model"] = str(cfg["fast_model"])
     # 用户级开关拥有最终否决权（默认关）。
     if not control_state.load().get("auto_exec", False):
         out["enabled"] = False
@@ -706,6 +783,20 @@ def _exec_slug(text: str, limit: int = 40) -> str:
     return (slug or "item")[:limit].strip("-") or "item"
 
 
+def _unique_recovery_lane(repo, path: Path, branch: str) -> tuple[Path, str]:
+    """Pick recovery names that do not consume an existing lane."""
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    candidate_path = path.with_name(f"{path.name}-{stamp}")
+    candidate_branch = f"{branch}-{stamp}"
+    counter = 1
+    while candidate_path.exists() or _git(
+            repo, "rev-parse", "--verify", candidate_branch)[0] == 0:
+        candidate_path = path.with_name(f"{path.name}-{stamp}-{counter}")
+        candidate_branch = f"{branch}-{stamp}-{counter}"
+        counter += 1
+    return candidate_path, candidate_branch
+
+
 def _codex_bin():
     """找到 codex 可执行文件。KG_EXEC_CMD 可整体覆盖（如带 wrapper 的场景）。"""
     custom = os.environ.get("KG_EXEC_CMD")
@@ -757,7 +848,7 @@ def _ledger_open_items(limit=20):
     """台账里还没关闭、也还没派过的待办。排序：bug / gate 优先，其次按时间。"""
     latest = _ledger_latest() or {}
     opens = [r for r in latest.values() if r.get("status") in ("open", "doing")]
-    opens.sort(key=lambda r: (0 if r.get("kind") in ("bug", "gate") else 1, r.get("ts", "")))
+    opens.sort(key=_exec_priority)
     # 同一个标题只派一次；并行池里重复条目会抢同一片文件，吞吐反而下降。
     seen_titles = set()
     unique = []
@@ -771,8 +862,35 @@ def _ledger_open_items(limit=20):
     return unique[:limit]
 
 
+def _exec_priority(item: dict) -> tuple:
+    """Prefer a verifiable, file-scoped task over a broad inspection item.
+
+    The ledger has accumulated many historical watchdog notes. A note such as
+    "check the current status" can mention several files yet have no single
+    acceptance surface, while a narrow task names its files and a concrete
+    verification command. Ordering those narrow items first lets the bounded
+    worker slots produce landed changes instead of consuming time on status
+    restatements. This only changes selection order; existing safety gates
+    still decide whether an item may run.
+    """
+    text = f"{item.get('title') or ''}\n{item.get('detail') or ''}"
+    files = item.get("files") or []
+    concrete = bool(
+        files
+        or re.search(r"verify:[A-Za-z0-9_-]+|npm run [A-Za-z0-9:_-]+|node test/[^ \n]+|npx [^ \n]+", text)
+    )
+    narrow = concrete and "巡检" not in text and "继续按" not in text
+    kind_rank = 0 if item.get("kind") in ("bug", "gate") else 1
+    return (0 if narrow else 1, kind_rank, item.get("ts", ""))
+
+
 def _oversized_exec_item(item: dict) -> bool:
     """Reject roadmap-sized items that cannot produce one verifiable change."""
+    # Automatic split children carry explicit lineage and one phase. Their
+    # prose may mention "other phases" to forbid scope creep; treating that as
+    # multi-phase work would make splitting recursively useless.
+    if item.get("split_parent") and str(item.get("phase") or "") in ("1", "2", "3", "4"):
+        return False
     text = f"{item.get('title') or ''}\n{item.get('detail') or ''}".lower()
     # Count distinct stages, not occurrences: a narrow task may legitimately say
     # "阶段1" in its title and "阶段1" again in its detail. Only a task that
@@ -796,6 +914,120 @@ def _oversized_exec_item(item: dict) -> bool:
         ".ts", ".mjs", ".py", "/",
     ))
     return len(phases) >= 2 or (broad and not concrete)
+
+
+def _append_truth_record(rec: dict) -> bool:
+    """Append one row through the same locked append-only path as truthctl."""
+    try:
+        sys.path.insert(0, str(HERE))
+        import truthctl as truth_mod
+        truth_mod._append(rec)
+        return True
+    except Exception:
+        return False
+
+
+def _split_exec_item(item: dict, cfg: dict, blocked: dict, dry: bool) -> list[dict]:
+    """Turn a roadmap-sized ledger item into deterministic, narrow children."""
+    rid = item.get("id") or "?"
+    if not _state_repo():
+        return []
+    latest = _ledger_latest() or {}
+    existing = [r for r in latest.values() if r.get("split_parent") == rid
+                and r.get("status") in ("open", "doing")]
+    if existing:
+        blocked[rid] = {"reason": "needs_split",
+                        "title": (item.get("title") or "")[:60],
+                        "children": [r.get("id") for r in existing],
+                        "ts": _now()}
+        return []
+
+    text = f"{item.get('title') or ''}\n{item.get('detail') or ''}"
+    files = [str(x) for x in (item.get("files") or []) if str(x).strip()]
+    phase_work = {
+        "1": ("阶段1质量修复拆解", "材料提取与意图命中",
+              "verify:stage1-real-scenario"),
+        "2": ("阶段2来源绑定拆解", "检索、来源绑定与 fail-closed 审计",
+              "verify:claim-source-binding"),
+        "3": ("阶段3图谱质量拆解", "图谱编译、排布与人话解释",
+              "verify:graph-quality"),
+        "4": ("阶段4对话与分享拆解", "对话重构、Agent 改图与分享卡片",
+              "verify:graph-conversation"),
+    }
+    found = sorted(set(re.findall(r"阶段([1-4])", text))) or ["1", "2", "3", "4"]
+    phase_files = {p: [] for p in found}
+    for path in files:
+        low = path.lower()
+        if "stage1" in low or "material" in low or "intent" in low:
+            target = "1"
+        elif "claim" in low or "source" in low or "search" in low:
+            target = "2"
+        elif "graph" in low or "node" in low:
+            target = "3"
+        elif "conversation" in low or "share" in low or "chat" in low:
+            target = "4"
+        else:
+            target = found[0]
+        if target in phase_files:
+            phase_files[target].append(path)
+
+    children = []
+    for phase in found:
+        prefix, focus, gate = phase_work[phase]
+        detail = (
+            f"由 {rid} 自动拆出的单一交付项，只做阶段{phase}的 {focus}。"
+            "先核对当前实现和失败证据，只保留可复现的问题；补最窄的修复或回归测试，"
+            "不放宽阈值，不扩展到本阶段之外。至少实跑相关门禁"
+            f"（优先 {gate}）并记录命令、cwd、退出码；外部通道不可用时明确标 blocked，不伪造通过。"
+        )
+        if not files:
+            detail += " 原始需求没有文件线索，第一步先从仓库检索定位实际入口，再提交窄改动。"
+        children.append({"title": f"{prefix}：{focus}", "detail": detail,
+                         "files": phase_files.get(phase) or [], "phase": phase})
+
+    if dry:
+        log(f"[dry] 会拆分 {rid} -> {len(children)} 条窄任务")
+        return children
+
+    created = []
+    source = item.get("source") or "auto-split"
+    for child in children:
+        env = {"KG_TRUTH_KIND": item.get("kind") or "bug",
+               "KG_TRUTH_DETAIL": child["detail"],
+               "KG_TRUTH_LANE": item.get("lane") or "",
+               "KG_TRUTH_FILES": ":".join(child["files"]),
+               "KG_TRUTH_SOURCE": f"split:{rid}:{source}",
+               "KG_TRUTH_STATUS": "open"}
+        rc, out = _run_truthctl(["add", "ledger", child["title"]], extra_env=env)
+        m = re.search(r"\[(L-\d+)\]", out or "")
+        if rc != 0 or not m:
+            log(f"[exec] 拆分 {rid} 失败，保留父项：rc={rc} {out[:300]}")
+            return []
+        child_id = m.group(1)
+        child_rec = {"id": child_id, "title": child["title"],
+                     "detail": child["detail"], "files": child["files"],
+                     "split_parent": rid, "phase": child["phase"]}
+        # Re-append the child with its lineage marker. truthctl add allocates
+        # the collision-safe id; this revision carries the idempotency field.
+        rec = {**child_rec, "type": "ledger", "kind": item.get("kind") or "bug",
+               "lane": item.get("lane") or None, "source": f"split:{rid}:{source}",
+               "status": "open", "ts": _now()}
+        if not _append_truth_record(rec):
+            log(f"[exec] 拆分 {rid} 子项 {child_id} 标记写入失败")
+            return []
+        created.append(child_rec)
+
+    parent = dict(item)
+    parent.update({"status": "split",
+                   "split_children": [c["id"] for c in created],
+                   "ts": _now(),
+                   "evidence": list(item.get("evidence") or []) +
+                   ["auto-split: " + ", ".join(c["id"] for c in created)]})
+    if not _append_truth_record(parent):
+        log(f"[exec] 拆分 {rid} 已建子项但父项状态写入失败")
+        return []
+    log(f"[exec] {rid} 已自动拆为 {', '.join(c['id'] for c in created)}；父项标记 split")
+    return created
 
 
 def _non_executable_reason(item: dict) -> str | None:
@@ -859,6 +1091,104 @@ def _landed_exec_commit(repo, rid: str) -> str | None:
         if _git(repo, "merge-base", "--is-ancestor", sha, main_ref)[0] == 0:
             return sha
     return None
+
+
+def _worktree_task_open(path: str, open_ids: set[str]) -> bool:
+    """Infer a ledger id from an exec worktree name and check it is still open."""
+    task_id = _worktree_task_id(path)
+    return bool(task_id and task_id in open_ids)
+
+
+def _worktree_task_id(path: str) -> str | None:
+    """Return the ledger id encoded in an exec worktree name."""
+    name = Path(path).name
+    match = re.search(r"-exec-(l-\d+(?:-\d+)?)", name, re.IGNORECASE)
+    return match.group(1).upper() if match else None
+
+
+def _recovery_has_work(repo, path: str) -> bool:
+    """Return whether a recovery snapshot still owns unlanded work.
+
+    A daemon restart records every live worker. If that worker exits and its
+    worktree is later committed/landed or cleaned, the stale snapshot must not
+    permanently consume a dispatch slot. Preserve the path, but release the
+    slot unless the checkout is registered, has uncommitted files, or its
+    branch contains commits not yet on main.
+    """
+    if not repo:
+        return False
+    wt = Path(path).expanduser()
+    if not wt.exists():
+        return False
+    rc, out, _ = _git(repo, "worktree", "list", "--porcelain")
+    if rc != 0:
+        return True
+    registered = any(
+        line.strip() == f"worktree {wt.resolve()}"
+        for line in (out or "").splitlines()
+    )
+    if not registered:
+        return False
+    if _changed_paths(wt):
+        return True
+    _, branch, _ = _git(wt, "symbolic-ref", "--quiet", "--short", "HEAD")
+    if not branch:
+        return True
+    conf = central_config.load(repo)
+    main_branch = conf.get("main_branch", "main")
+    return _branch_pending_commits(repo, branch, main_branch) > 0
+
+
+def _recovery_active_rows(repo, recovery: list[dict]) -> dict[str, int]:
+    """Filter recovery rows to live processes or real unlanded work."""
+    active: dict[str, int] = {}
+    for row in recovery:
+        worktree = row.get("worktree")
+        if not worktree:
+            continue
+        try:
+            pid = int(row.get("pid") or 0)
+        except (TypeError, ValueError):
+            pid = 0
+        alive = False
+        if pid > 0:
+            try:
+                os.kill(pid, 0)
+                alive = True
+            except PermissionError:
+                alive = True
+            except OSError:
+                alive = False
+        if alive or _recovery_has_work(repo, worktree):
+            active[str(Path(worktree).expanduser().resolve())] = pid
+    return active
+
+
+def _landed_worktrees(repo, worktrees) -> set[str]:
+    """Return recovery worktrees whose own exec task is already on main.
+
+    A daemon restart can retain a recovery snapshot for a worker that already
+    landed. Keeping that path as an active slot forever throttles every new
+    task even though its output is safe in main. Release only the path whose
+    ledger id has a verifiable ``exec(<id>)`` ancestor; unknown worktrees stay
+    active and their processes are never touched.
+    """
+    if not repo:
+        return set()
+
+    def worktree_id(path: str) -> str | None:
+        name = Path(path).name
+        prefix = f"{Path(repo).name}-exec-"
+        if not name.startswith(prefix):
+            return None
+        m = re.match(r"l-\d+(?:-\d+)?", name[len(prefix):], re.IGNORECASE)
+        return m.group(0).upper() if m else None
+
+    return {
+        str(Path(path).expanduser().resolve())
+        for path in worktrees
+        if (rid := worktree_id(path)) and _landed_exec_commit(repo, rid)
+    }
 
 
 def _prune_exec_blocked(blocked: dict) -> list:
@@ -937,6 +1267,9 @@ def _exec_prompt(item: dict) -> str:
     lines += [
         "",
         "硬规则（必须遵守）：",
+        "- 这是独立 worktree；不要改或提交 docs/PROJECT_STATUS.md、docs/CONTROL_BOARD.md、",
+        "  docs/CONTROL_PLANE.html、docs/PRODUCT_MAINLINE.md、ops/truth、ops/tasks、ops/context。",
+        "  这些生成真相视图由中央串行落盘；你的任务只修改代码、测试与必要文档。",
         "- 只做非破坏性、正向的改动：不要 `git checkout .` / `git reset --hard` / `git stash` / `git add -A`。",
         "- 目标只有两个：(1) 击穿产品预期——前后端真正闭环生效；(2) 保证现有体验——功能、",
         "  性能不能因为这次改动变差或更难用。不达标的实现不如不做。",
@@ -1261,7 +1594,7 @@ def _dispatch_resolve_task_one(rec: dict) -> dict:
     cfg = auto_resolve_config()
     cmd = [*codex, "exec", "-C", str(wt), "-s", cfg.get("sandbox", "danger-full-access"),
            "--skip-git-repo-check"]
-    fast = os.environ.get("KG_EXEC_FAST_MODEL") or cfg.get("fast_model")
+    fast = cfg.get("fast_model") or os.environ.get("KG_EXEC_FAST_MODEL")
     if fast:
         cmd += ["-m", str(fast)]
     cmd += [_resolve_prompt(rec)]
@@ -1472,6 +1805,25 @@ def _sync_resolve_worktree_before_finish(rec: dict) -> dict:
         return {"outcome": "conflict", "files": files,
                 "detail": "unmerged entries remain"}
 
+    # A worker may have edited the files and exited before committing them.
+    # Those ordinary changes are the actual resolved result, not a reason to
+    # call the worktree dirty forever. Commit only this resolve task's own
+    # paths; never use `git add -A` and never touch an unrelated worktree.
+    changed = _changed_paths(wt)
+    if changed:
+        allowed = set((rec.get("unresolved_files") or []) + (rec.get("conflict_files") or []))
+        unexpected = [p for p in changed if allowed and p not in allowed]
+        if unexpected:
+            return {"outcome": "dirty", "files": unexpected,
+                    "detail": "unexpected uncommitted files in resolve worktree"}
+        add_rc, add_err = _git_add_retry(wt, changed)
+        if add_rc != 0:
+            return {"outcome": "add_fail", "detail": (add_err or "")[:400]}
+        git_rc, _, git_err = _git(wt, "commit", "-m",
+                                  f"resolve: commit worker changes for {rec.get('slug') or 'task'}")
+        if git_rc != 0:
+            return {"outcome": "commit_fail", "detail": (git_err or "")[:400]}
+
     rc, _, _ = _git(wt, "merge-base", "--is-ancestor", "origin/main", "HEAD")
     if rc == 0:
         return {"outcome": "fresh", "origin_main": origin_main}
@@ -1596,8 +1948,38 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
     # 改为非破坏性自愈：有在途改动、或分支上已有未落提交，都接着走同一道门禁收口；
     # 只有真正没有任何成果（无未提交改动且分支不领先 main）的残留才清掉重建。
     # 绝不丢未提交改动，也绝不删掉已经提交、只是没走完落盘的那笔提交。
-    existing = _git(repo, "rev-parse", "--verify", branch)[0] == 0 or wt.exists()
-    changed_in_flight = _changed_paths(wt) if wt.exists() else []
+    # A path can survive after its gitdir registration is gone (for example a
+    # stale worktree directory left by an interrupted setup). Treat it as a
+    # preserved artifact, not as an active worktree: never delete it, but do
+    # not let it occupy the task lane forever either. The main worktree remains
+    # the only source of truth for whether a checkout is usable.
+    registered_wt = False
+    if wt.exists():
+        rc_list, list_out, _ = _git(repo, "worktree", "list", "--porcelain")
+        if rc_list == 0:
+            registered_wt = any(
+                line.strip() == f"worktree {wt.resolve()}"
+                for line in (list_out or "").splitlines()
+            )
+    usable_wt = wt.exists() and registered_wt
+    existing = _git(repo, "rev-parse", "--verify", branch)[0] == 0 or usable_wt
+    changed_in_flight = _changed_paths(wt) if usable_wt else []
+    # A stale directory must be diverted before the normal cleanup branch.
+    # `git worktree remove` cannot remove an unregistered directory, so otherwise
+    # this would deterministically return leftover_worktree forever.
+    if wt.exists() and not usable_wt:
+        log(f"[exec] {rid} 发现未登记的残留路径，保留现场并继续新建 worktree：{wt}")
+        blocked[rid] = {"reason": "leftover_worktree_preserved", "branch": branch,
+                        "worktree": str(wt), "ts": _now()}
+        # Preserve any older -recovery checkout and its branch. A fixed
+        # recovery name can already be occupied by a clean worker from a
+        # previous daemon attempt; reusing it triggered a branch-in-use error
+        # and idled the slot before codex started.
+        wt, branch = _unique_recovery_lane(
+            repo, wt.with_name(wt.name + "-recovery"),
+            f"{branch}-recovery")
+        existing = False
+        changed_in_flight = []
     if existing and changed_in_flight:
         log(f"[exec] {rid} 已有在途 worktree -> 跳过新会话，接着收口")
         return _finish_exec(item, cfg, repo, wt, branch, rid,
@@ -1628,9 +2010,13 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
                     "worktree": str(wt)}
         log(f"[exec] {rid} 残留 worktree/分支已清掉（无未提交改动、分支无未落提交），重建")
     _git(repo, "fetch", "origin", main_branch)
-    _, base, _ = _git(repo, "rev-parse", f"origin/{main_branch}")
-    if not base:
+    rc_origin, base, _ = _git(repo, "rev-parse", f"origin/{main_branch}")
+    if rc_origin != 0 or not base:
         _, base, _ = _git(repo, "rev-parse", main_branch)
+    if not base:
+        log(f"[exec] 建 worktree 失败 {rid}: 找不到可用基线分支 {main_branch}")
+        blocked[rid] = {"reason": "worktree_fail", "ts": _now()}
+        return {"id": rid, "outcome": "worktree_fail"}
     rc, out, err = _git(repo, "worktree", "add", "-b", branch, str(wt), base)
     if rc != 0:
         log(f"[exec] 建 worktree 失败 {rid}: {err[:300]}")
@@ -1649,8 +2035,12 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
 
     cmd = [*codex, "exec", "-C", str(wt), "-s", cfg["sandbox"],
            "--skip-git-repo-check"]
-    if cfg.get("model"):
-        cmd += ["-m", cfg["model"]]
+    # Project configuration is the source of truth for worker routing.
+    # Environment variables remain a fallback for older deployments whose
+    # project config predates model routing.
+    exec_model = cfg.get("model") or os.environ.get("KG_EXEC_MODEL")
+    if exec_model:
+        cmd += ["-m", str(exec_model)]
     cmd += [ _exec_prompt(item) ]
     log_path = _exec_dir() / f"{slug}.log"
     retries = max(0, int(cfg.get("retries", EXEC_INFRA_RETRIES)))
@@ -1670,12 +2060,21 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
                     fh.write(f"\n===== auto_exec 重试 第 {attempt}/{total} 次（{_now()}，"
                              f"上一次退出码={code}，判定为基础设施抖动）=====\n")
                     fh.flush()
-                r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=fh,
-                                   stderr=subprocess.STDOUT, cwd=str(wt),
-                                   timeout=cfg["timeout"])
-            code = r.returncode
-        except subprocess.TimeoutExpired:
-            code = 124
+                # Give the worker its own process group. A daemon reload must
+                # not kill an in-flight implementation lane; the worker keeps
+                # its isolated worktree and the next daemon can reap/adopt it.
+                proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=fh,
+                                        stderr=subprocess.STDOUT, cwd=str(wt),
+                                        start_new_session=True)
+                try:
+                    code = proc.wait(timeout=cfg["timeout"])
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    except OSError:
+                        proc.kill()
+                    proc.wait(timeout=30)
+                    code = 124
         except OSError as exc:
             log(f"[exec] 无法启动 codex: {exc}")
             code = 125
@@ -1815,6 +2214,23 @@ def _exec_retryable(blocked: dict, rid: str) -> bool:
     reason = str(rec.get("reason") or "")
     if not reason:
         return False
+    # A clean worktree with no branch-only commits is an empty leftover scene,
+    # not preserved work. Release only that provable case; any dirty file or
+    # pending commit stays parked for review.
+    if reason in ("no_changes", "no_changes_preserved"):
+        repo = _state_repo()
+        worktree = rec.get("worktree")
+        branch = rec.get("branch")
+        if not (repo and worktree and branch):
+            return False
+        wt = Path(str(worktree))
+        if not wt.is_dir() or _changed_paths(wt):
+            return False
+        conf = central_config.load(repo)
+        main_branch = conf.get("main_branch", "main")
+        if _git(repo, "rev-parse", "--verify", str(branch))[0] != 0:
+            return True
+        return _branch_pending_commits(repo, str(branch), main_branch) == 0
     # Splitting decisions are derived, not user verdicts. Re-run the current
     # classifier against the live ledger item so fixing a false positive also
     # releases rows persisted by the previous daemon version. If the item is
@@ -1839,8 +2255,6 @@ def _exec_retryable(blocked: dict, rid: str) -> bool:
         "needs_human",
         # Legacy rows written before the state was renamed still mean the same
         # thing: the worker exited 0 without producing a diff.
-        "no_changes",
-        "no_changes_preserved",
     ):
         return False
     if reason.startswith("landed_close_fail"):
@@ -1880,7 +2294,12 @@ def _prune_retryable_exec_blocked(blocked: dict, log_fn=log,
 
 def _exec_capacity(limit: int, active_ids, live_worktrees) -> tuple[int, int]:
     """Return (active, free) with externally live exec work counted."""
-    active = len(set(active_ids)) + len(set(live_worktrees))
+    slots = set(active_ids)
+    slots.update(
+        _worktree_task_id(path) or str(Path(path).expanduser().resolve())
+        for path in live_worktrees
+    )
+    active = len(slots)
     return active, max(0, int(limit) - active)
 
 
@@ -1911,30 +2330,104 @@ def dispatch_exec(dry: bool, blocked: dict) -> list:
     # the same implementation slot. Resolve/convergence workers have their own
     # capacity and must not consume an exec slot.
     live_worktrees = _live_exec_worktrees(kind="exec")
+    # Recovery rows are the daemon's durable view of workers adopted after a
+    # restart. They may be absent from `ps` briefly during exec, so count both.
+    state_workers = load_state().get("workers") or {}
+    recovery = set(_recovery_active_rows(
+        _state_repo(), state_workers.get("recovery_external") or []))
     # Only implementation work consumes implementation slots. Resolve and
     # convergence workers have their own bounded pools; counting their
     # worktrees here would make exec look idle while all workers are busy.
-    external = set(live_worktrees)
-    active, free = _exec_capacity(limit, active_ids, external)
+    landed_recovery = _landed_worktrees(_state_repo(), recovery)
+    if landed_recovery:
+        log(f"[exec] {len(landed_recovery)} 个恢复快照对应的任务已落盘，释放槽位但保留进程")
+    external = (set(live_worktrees) | recovery) - landed_recovery
+    # Recovery retries can leave several paths for the same ledger item after
+    # repeated daemon restarts. Keep all paths visible, but let only the first
+    # stable lane count as the slot and suppress every other duplicate in the
+    # candidate loop below. Do not touch the other processes: the user chose
+    # the non-destructive policy for unknown worktrees.
+    external_by_id: dict[str, list[str]] = {}
+    for path in sorted(external):
+        task_id = _worktree_task_id(path)
+        if task_id:
+            external_by_id.setdefault(task_id, []).append(path)
+    duplicate_ids = {rid: paths for rid, paths in external_by_id.items()
+                     if len(paths) > 1}
+    for rid, paths in sorted(duplicate_ids.items()):
+        log(f"[exec] {rid} 有 {len(paths)} 个 recovery worker；按一个槽计数，保留现场：{paths[0]}")
+    canonical_external = set()
+    for path in external:
+        rid = _worktree_task_id(path)
+        if not rid or rid not in duplicate_ids:
+            canonical_external.add(path)
+            continue
+        if path == duplicate_ids[rid][0]:
+            canonical_external.add(path)
+    # Never start a second worker in the exact same worktree. This is stricter
+    # than slot accounting and prevents two codex sessions editing one tree
+    # after a daemon restart or a late recovery snapshot.
+    active, free = _exec_capacity(limit, active_ids, canonical_external)
     if external:
         log(f"[exec] 检测到 {len(external)} 个重载前仍在运行的 exec worktree，按占用槽位处理")
     if free <= 0:
         return finished
+    # needs_split is derived from the live ledger item, not a permanent block.
+    # Release it before candidate scanning so a newly-added splitter can heal
+    # rows written by an older daemon. Dispatch re-checks every other blocked
+    # row and every terminal boundary below.
+    for rid in [k for k, v in blocked.items()
+                if (v or {}).get("reason") == "needs_split"]:
+        blocked.pop(rid, None)
     released = [] if dry else _prune_retryable_exec_blocked(blocked, apply=True)
     candidates = []
     for item in _ledger_open_items():
         rid = item.get("id")
+        slug_probe = f"{_exec_slug(rid)}-{_exec_slug(item.get('title') or '')}"
+        wt_probe = Path(_state_repo()).parent / f"{Path(_state_repo()).name}-exec-{slug_probe}"
+        # Recovery snapshots may be relative or use a differently-spelled path
+        # after a restart. Canonicalize both sides before deciding that two
+        # names still point at the same worktree.
+        external_paths = {str(Path(p).expanduser().resolve()) for p in external}
+        if str(wt_probe.expanduser().resolve()) in external_paths:
+            log(f"[exec] {rid} 已有同 worktree 的存活 worker，跳过重复派发")
+            continue
+        external_ids = {_worktree_task_id(path) for path in external_paths}
+        if rid in external_ids:
+            log(f"[exec] {rid} 已有同任务的 recovery worker，跳过重复派发")
+            continue
         # Re-evaluate the boundary from the live record even if an older
         # daemon left the item out of its persisted blocked table. This keeps
         # a single cycle from spending slots on human/external work.
         stale_reason = _non_executable_reason(item)
         if rid in blocked and not stale_reason:
-            continue
+            # needs_split is a derived state, not a terminal blocked row. Older
+            # daemons parked broad items forever; the current code must still
+            # reach the splitter so those rows can become executable children.
+            if blocked[rid].get("reason") != "needs_split" or not _oversized_exec_item(item):
+                continue
         if stale_reason:
             log(f"[exec] {rid} 不能由代码 worker 完成（{stale_reason}），保留台账等待人工或外部条件恢复")
             blocked[rid] = {"reason": stale_reason, "title": (item.get("title") or "")[:60], "ts": _now()}
             continue
         landed = _landed_exec_commit(_state_repo(), rid)
+        if not landed:
+            # Some workers (including manually adopted recovery branches)
+            # commit without the exec(<id>) subject. If their recorded branch is
+            # already an ancestor of main, the work is landed too. Closing it is
+            # safer than spending another worker on completed code.
+            blocked_rec = blocked.get(rid) or {}
+            branch_hint = blocked_rec.get("branch")
+            conf = central_config.load(_state_repo())
+            main_branch = conf.get("main_branch", "main")
+            if branch_hint:
+                main_ref = f"origin/{main_branch}"
+                if _git(_state_repo(), "rev-parse", "--verify", main_ref)[0] != 0:
+                    main_ref = main_branch
+                if _git(_state_repo(), "rev-parse", "--verify", branch_hint)[0] == 0:
+                    if _git(_state_repo(), "merge-base", "--is-ancestor",
+                            branch_hint, main_ref)[0] == 0:
+                        _, landed, _ = _git(_state_repo(), "rev-parse", branch_hint)
         if landed:
             log(f"[exec] {rid} 已有落盘提交 {landed[:12]}，自动收口，不再重复派发")
             if not dry:
@@ -1950,10 +2443,11 @@ def dispatch_exec(dry: bool, blocked: dict) -> list:
                             "title": (item.get("title") or "")[:60], "ts": _now()}
             continue
         if _oversized_exec_item(item):
-            log(f"[exec] {rid} 任务范围过大（跨多个阶段且无单一验收面），"
-                "先拆成单个可验证交付，不占用 worker 槽")
-            blocked[rid] = {"reason": "needs_split",
-                            "title": (item.get("title") or "")[:60], "ts": _now()}
+            children = _split_exec_item(item, cfg, blocked, dry)
+            if children and not dry:
+                log(f"[exec] {rid} 任务范围过大，已自动拆成 {len(children)} 条窄任务")
+            elif not children and not dry:
+                log(f"[exec] {rid} 任务范围过大，自动拆分未完成，保留父项，不占用 worker 槽")
             continue
         non_executable = _non_executable_reason(item)
         if non_executable:
@@ -2102,7 +2596,7 @@ def _dispatch_convergence_one(rec: dict, blocked: dict) -> dict:
     cmd = [*codex, "exec", "-C", str(wt), "-s", "workspace-write",
            "--skip-git-repo-check"]
     cfg = auto_exec_config()
-    fast = os.environ.get("KG_EXEC_FAST_MODEL") or cfg.get("model")
+    fast = cfg.get("fast_model") or cfg.get("model") or os.environ.get("KG_EXEC_FAST_MODEL")
     if fast:
         cmd += ["-m", str(fast)]
     cmd += [_convergence_prompt(rec)]
@@ -2718,8 +3212,12 @@ def build_plist(interval_min: int) -> dict:
     # 快速收敛用 auto_exec.fast_model。未配置时不写环境变量，保持旧行为。
     repo_env = os.environ.get("KG_REPO")
     trunk_env = os.environ.get("KG_TRUNK")
+    # Never let an old plugin binding silently retarget the daemon. The
+    # state root is the project ledger; a trunk checkout is not a substitute.
+    repo_path = Path(repo_env).expanduser() if repo_env else _state_repo()
+    if not repo_path:
+        repo_path = Path.cwd()
     try:
-        repo_path = Path(repo_env).expanduser() if repo_env else _state_repo()
         cfg_data = json.loads((repo_path / "ops" / "central.config.json").read_text(encoding="utf-8"))
         acfg = cfg_data.get("auto_exec") or {}
         if isinstance(acfg, dict):
@@ -2729,15 +3227,13 @@ def build_plist(interval_min: int) -> dict:
                 env["KG_EXEC_MODEL"] = str(acfg["model"])
     except (OSError, ValueError, TypeError):
         pass
-    if repo_env:
-        repo_path = Path(repo_env).expanduser()
-        env["KG_REPO"] = str(repo_path)
-        trunk = Path(trunk_env).expanduser() if trunk_env else None
-        if trunk is None or trunk.resolve() == repo_path.resolve():
-            trunk = repo_path.parent / (repo_path.name + "-trunk")
-        env["KG_TRUNK"] = str(trunk)
-    elif trunk_env:
-        env["KG_TRUNK"] = str(Path(trunk_env).expanduser())
+    # Always pin both roots. A stale .mcp.json in an installed copy must not
+    # become the daemon's project merely because KG_REPO was absent at install.
+    env["KG_REPO"] = str(repo_path)
+    trunk = Path(trunk_env).expanduser() if trunk_env else None
+    if trunk is None or trunk.resolve() == repo_path.resolve():
+        trunk = repo_path.parent / (repo_path.name + "-trunk")
+    env["KG_TRUNK"] = str(trunk)
     return {
         "Label": PLIST_LABEL,
         "ProgramArguments": [_python_for_plist(), str(script),
