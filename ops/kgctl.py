@@ -1693,9 +1693,20 @@ def cmd_context(args):
         if not git("rev-parse", "--verify", branch):
             print(f"  × 找不到分支 {branch}")
             continue
-        payload = _context_payload(branch)
         name = slugify(branch.replace("/", "-"), 80)
-        write_json(CONTEXT_DIR / f"{name}.json", payload)
+        json_path = CONTEXT_DIR / f"{name}.json"
+        # Context packs are derived snapshots, not an append-only log. A
+        # periodic tick must not rewrite an unchanged pack or recompute its
+        # merge tree; the previous pack carries the same content hash.
+        try:
+            cached = json.loads(json_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            cached = None
+        payload = _context_payload(branch)
+        if cached and cached.get("hash") == payload.get("hash"):
+            print(f"  = Context Pack 未变：ops/context/{name}.json")
+            continue
+        write_json(json_path, payload)
         lines = [
             f"# Context Pack: {branch}", "",
             f"- hash: `{payload['hash']}`",
