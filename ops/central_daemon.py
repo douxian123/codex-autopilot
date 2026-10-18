@@ -702,7 +702,8 @@ def auto_exec_config() -> dict:
     """
     out = {"enabled": True, "max_per_cycle": EXEC_MAX_PER_CYCLE,
            "max_workers": EXEC_MAX_WORKERS, "cycle_budget": EXEC_CYCLE_BUDGET,
-           "timeout": EXEC_DEFAULT_TIMEOUT, "sandbox": "workspace-write", "model": None,
+           "timeout": EXEC_DEFAULT_TIMEOUT, "sandbox": "workspace-write",
+           "model": None, "fast_model": None, "slow_model": None,
            "retries": EXEC_INFRA_RETRIES}
     repo = _state_repo()
     if repo:
@@ -732,6 +733,8 @@ def auto_exec_config() -> dict:
                 out["model"] = str(cfg["model"])
             if cfg.get("fast_model"):
                 out["fast_model"] = str(cfg["fast_model"])
+            if cfg.get("slow_model"):
+                out["slow_model"] = str(cfg["slow_model"])
     # 用户级开关拥有最终否决权（默认关）。
     if not control_state.load().get("auto_exec", False):
         out["enabled"] = False
@@ -747,6 +750,26 @@ def auto_exec_config() -> dict:
     except Exception:
         pass
     return out
+
+
+def _exec_model_for(item: dict, cfg: dict) -> str | None:
+    """Choose the configured worker route without creating a second scheduler.
+
+    Fast interactive work stays on the fast provider. Gate/architecture work and
+    explicitly long-running jobs use the slow provider, while `model` remains an
+    explicit global override for installations that intentionally pin one route.
+    """
+    explicit = cfg.get("model")
+    if explicit:
+        return str(explicit)
+    fast = cfg.get("fast_model")
+    slow = cfg.get("slow_model")
+    kind = str(item.get("kind") or "").lower()
+    text = " ".join(str(item.get(k) or "") for k in ("title", "detail", "lane")).lower()
+    long_markers = ("长跑", "全量", "重跑", "批量", "机械", "迁移", "benchmark", "release gate")
+    if slow and (kind in {"gate", "arch"} or any(m in text for m in long_markers)):
+        return str(slow)
+    return str(fast) if fast else None
 
 
 def convergence_exec_config() -> dict:
@@ -2063,7 +2086,7 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
     # Project configuration is the source of truth for worker routing.
     # Environment variables remain a fallback for older deployments whose
     # project config predates model routing.
-    exec_model = cfg.get("model") or os.environ.get("KG_EXEC_MODEL")
+    exec_model = _exec_model_for(item, cfg) or os.environ.get("KG_EXEC_MODEL")
     if exec_model:
         cmd += ["-m", str(exec_model)]
     cmd += [ _exec_prompt(item) ]

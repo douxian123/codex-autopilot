@@ -2191,16 +2191,23 @@ def test_auto_exec():
         repo_m, trunk_m, home_m = fixture(
             base / "model-routing",
             exec_cfg={
-                "model": "ok8888@deepseek-v4.1-flash",
                 "fast_model": "aibvv@deepseek-v4.1-flash",
+                "slow_model": "ok8888@deepseek-v4.1-flash",
             },
         )
         daemon_m = load_daemon(repo_m, trunk_m, home_m,
                                fake_codex(base, "fake-model.sh", 0))
         model_cfg = daemon_m.auto_exec_config()
-        if (model_cfg.get("model") != "ok8888@deepseek-v4.1-flash"
-                or model_cfg.get("fast_model") != "aibvv@deepseek-v4.1-flash"):
+        if (model_cfg.get("fast_model") != "aibvv@deepseek-v4.1-flash"
+                or model_cfg.get("slow_model") != "ok8888@deepseek-v4.1-flash"):
             raise AssertionError(f"快慢模型配置没有完整加载: {model_cfg}")
+        if daemon_m._exec_model_for({"kind": "bug"}, model_cfg) != "aibvv@deepseek-v4.1-flash":
+            raise AssertionError("普通 bug 没有走快模型")
+        if daemon_m._exec_model_for({"kind": "gate"}, model_cfg) != "ok8888@deepseek-v4.1-flash":
+            raise AssertionError("门禁任务没有走慢模型")
+        long_item = {"kind": "bug", "title": "全量 benchmark 重跑"}
+        if daemon_m._exec_model_for(long_item, model_cfg) != "ok8888@deepseek-v4.1-flash":
+            raise AssertionError("显式长任务没有走慢模型")
 
         # The project route must win over a stale launchd env.
         repo_p, trunk_p, home_p = fixture(
