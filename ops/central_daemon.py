@@ -1830,6 +1830,12 @@ def _exec_retryable(blocked: dict, rid: str) -> bool:
         return False
     if reason.startswith("landed_close_fail"):
         return False
+    # A same-name branch/worktree collision is a local lane-layout failure,
+    # not evidence that the requirement cannot be implemented. Retry it on
+    # the next dispatch after the cleanup code has had a chance to heal the
+    # lane; otherwise a short-lived collision parks the task for 30 minutes.
+    if reason in ("worktree_fail", "leftover_worktree", "leftover_branch"):
+        return True
     try:
         ts = time.mktime(time.strptime(str(rec.get("ts") or ""), "%Y-%m-%d %H:%M:%S"))
     except (TypeError, ValueError, OverflowError):
