@@ -184,7 +184,16 @@ def _next_id(t: str) -> str:
     进程还会算出同一个号（L-0056）。改成「现有最大编号 +1」。
     """
     taken = _taken_ids(t)
-    n = _max_num(t) + 1
+    # ``_max_num`` only understands canonical ``L-0001`` ids. Historical
+    # imports also contain short ids such as ``L-118``; ignoring those made
+    # the allocator reuse an already occupied number. Scan every numeric
+    # suffix so a new task can never silently overwrite an older one.
+    nums = []
+    for rid in taken:
+        m = re.match(r'^%s-(\d+)$' % PREFIX[t], str(rid or ''))
+        if m:
+            nums.append(int(m.group(1)))
+    n = (max(nums) if nums else 0) + 1
     while f'{PREFIX[t]}-{n:04d}' in taken:
         n += 1
     return f'{PREFIX[t]}-{n:04d}'

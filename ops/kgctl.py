@@ -3541,7 +3541,12 @@ def cmd_status(args):
     if open_tasks:
         print(f"冲突执行任务   {len(open_tasks)} 个待解（kgctl resolve --list）")
     wts = worktree_map()
-    behind50 = [b for b in codex_branches() if counts(b)[1] > 50]
+    # ``counts()`` starts one ``git rev-list`` per branch. With hundreds of
+    # historical branches that made a read-only status command run for
+    # minutes, competing with the daemon for the same repository. Reuse the
+    # branch rows already collected by ``scan()``; they are computed from one
+    # ``for-each-ref --format=%(ahead-behind)`` pass.
+    behind50 = [r["branch"] for r in rows if r["behind"] > 50]
     print(f"worktree       {len(wts)} 个（其中落后 main >50 的分支 {len(behind50)} 条）")
     shared_dirty = [l for l in subprocess.run(
         ["git", "-C", str(SHARED), "status", "--porcelain", "--untracked-files=no"],
