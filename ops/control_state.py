@@ -82,6 +82,9 @@ def load() -> dict:
     for k in _BOOL_KEYS:
         if k in data and isinstance(data[k], bool):
             out[k] = data[k]
+        elif k == "enabled":
+            # 旧版本 control.json 没有总开关字段：补齐默认值，保持「未显式关闭即开启」。
+            out["enabled"] = True
     out["updated_at"] = data.get("updated_at")
     return out
 
