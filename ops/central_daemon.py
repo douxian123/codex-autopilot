@@ -94,11 +94,11 @@ PORT_MAX_ATTEMPTS = 6
 # 一个周期最多拆几条冲突分支。每条先做确定性并集（只 jsonl）或留下一个可执行
 # 任务书；拆不动 / 门禁没过记进 resolve_blocked，后续周期跳过，不再反复骚扰。
 RESOLVE_MAX_ATTEMPTS = 1
-# 自动实现（auto_exec）：把台账里还没做的待办派给一个真实 codex 会话，在独立 worktree
-# 里实现 -> 门禁 -> 落盘 -> 收口。默认关闭；打开后每周期最多派一条，避免一次开一堆会话。
+# 自动实现（auto_exec）：把台账里还没做的待办派给真实 codex 会话，在独立 worktree
+# 里并发实现 -> 串行门禁落盘 -> 收口。默认关闭；打开后按 max_workers 填满空闲槽位。
 EXEC_DEFAULT_TIMEOUT = 3600
 EXEC_MAX_PER_CYCLE = 1
-EXEC_NO_CHANGE_RETRIES = 2
+EXEC_DEFAULT_MAX_WORKERS = 3
 # 基础设施抖动 vs 需求真做不出来：底层模型代理（127.0.0.1:15721）偶发 502 /
 # Transport channel closed，会让 codex 进程以非 0 退出，但需求本身没问题。同一
 # worktree 上指数退避重跑即可，默认 3 次；重试仍失败记 codex_infra_fail，与
@@ -150,17 +150,41 @@ def log_block(title: str, rc: int, out: str) -> None:
 
 
 def run_kgctl(args, timeout=TICK_TIMEOUT, env_extra=None):
-    """调用 kgctl，返回 (rc, 合并后的 stdout+stderr)。"""
+    """调用 kgctl，返回 (rc, 合并后的 stdout+stderr)。
+
+    超时不能只说一句「超时」：旧实现在 TimeoutExpired 分支里**把子进程已经产出的输出
+    整段丢掉**（subprocess.run 抛异常时不给 output），于是 2026-10-15 22:49 那次 tick
+    挂满 1800s 之后，日志里只剩一行 `[tick] rc=124`，卡在哪一步无从判断。
+    现在自己起进程：到点先收下已产出的行，再用 killpg 收掉整个进程组（只 kill 直接
+    子进程会留下 git 孙进程，就是历史上那类「僵尸服务存活几小时」的形态）。
+    """
     cmd = [sys.executable, str(KGCTL), *args]
     env = {**os.environ, **env_extra} if env_extra else None
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
-                           cwd=str(CODE_ROOT), timeout=timeout, env=env)
-        return p.returncode, (p.stdout or "") + (p.stderr or "")
-    except subprocess.TimeoutExpired:
-        return 124, f"kgctl {' '.join(args)} 超时（>{timeout}s）"
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, errors="replace", cwd=str(CODE_ROOT),
+                                env=env, start_new_session=True)
     except OSError as exc:
         return 125, f"调用 kgctl 失败: {exc}"
+    try:
+        out, _ = proc.communicate(timeout=timeout)
+        return proc.returncode, out or ""
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        except OSError:
+            proc.kill()
+        try:
+            out, _ = proc.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            out = ""
+        tail = (out or "").strip()
+        msg = f"kgctl {' '.join(args)} 超时（>{timeout}s，进程组已收掉）"
+        if tail:
+            msg += "\n超时前已产出的输出如下（最后一行即卡住的位置）：\n" + tail
+        else:
+            msg += "\n（超时前一行输出都没有——卡在第一个阶段之前，见 kgctl tick 的阶段编号）"
+        return 124, msg
 
 
 def load_state() -> dict:
@@ -376,8 +400,9 @@ def auto_exec_config() -> dict:
     与「需求真做不出来」区分开；只在日志尾部命中抖动特征时才生效。
     """
     out = {"enabled": True, "max_per_cycle": EXEC_MAX_PER_CYCLE,
-           "no_change_retries": EXEC_NO_CHANGE_RETRIES,
-           "timeout": EXEC_DEFAULT_TIMEOUT, "sandbox": "workspace-write", "model": None,
+           "max_workers": EXEC_DEFAULT_MAX_WORKERS,
+           "timeout": EXEC_DEFAULT_TIMEOUT, "sandbox": "workspace-write",
+           "model": None, "fast_model": None, "slow_model": None,
            "retries": EXEC_INFRA_RETRIES}
     repo = _state_repo()
     if repo:
@@ -390,7 +415,7 @@ def auto_exec_config() -> dict:
             out["enabled"] = cfg
         elif isinstance(cfg, dict):
             out["enabled"] = bool(cfg.get("enabled", True))
-            for key in ("max_per_cycle", "timeout"):
+            for key in ("max_per_cycle", "max_workers", "timeout"):
                 try:
                     out[key] = max(1, int(cfg.get(key, out[key])))
                 except (TypeError, ValueError):
@@ -399,18 +424,35 @@ def auto_exec_config() -> dict:
                 out["retries"] = max(0, int(cfg.get("retries", out["retries"])))
             except (TypeError, ValueError):
                 pass
-            try:
-                out["no_change_retries"] = max(0, int(
-                    cfg.get("no_change_retries", out["no_change_retries"])))
-            except (TypeError, ValueError):
-                pass
             if cfg.get("sandbox"):
                 out["sandbox"] = str(cfg["sandbox"])
             if cfg.get("model"):
                 out["model"] = str(cfg["model"])
+            if cfg.get("fast_model"):
+                out["fast_model"] = str(cfg["fast_model"])
+            if cfg.get("slow_model"):
+                out["slow_model"] = str(cfg["slow_model"])
+    # The launchd environment is the last-resort model override. Keeping it
+    # here as well as in central.config.json makes an old installed config
+    # unable to silently fall back to the general Codex model.
+    if os.environ.get("KG_EXEC_FAST_MODEL"):
+        out["fast_model"] = os.environ["KG_EXEC_FAST_MODEL"]
+    if os.environ.get("KG_EXEC_MODEL"):
+        out["slow_model"] = os.environ["KG_EXEC_MODEL"]
     # 用户级开关拥有最终否决权（默认关）。
     if not control_state.load().get("auto_exec", False):
         out["enabled"] = False
+    # 预算熔断（fail-open）：用量越过硬上限时只停「派活」（auto_exec），
+    # 不停 tick / land / resolve —— 不丢在途工作，降回来自动恢复。
+    # 任何异常都当作「没有这道闸门」，不影响原行为。
+    try:
+        import budget_gate
+        paused, why = budget_gate.dispatch_paused()
+        if paused:
+            out["enabled"] = False
+            out["_paused_by_budget"] = why
+    except Exception:
+        pass
     return out
 
 
@@ -484,6 +526,19 @@ def _ledger_open_items(limit=20):
     return opens[:limit]
 
 
+def _main_contains(commit: str) -> bool:
+    """Read-only ancestry check used to detect false 'land failed' records."""
+    repo = _state_repo()
+    if not repo:
+        return False
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", commit, "main"],
+            capture_output=True, text=True, timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def _prune_exec_blocked(blocked: dict) -> list:
     """丢掉已经不在台账 open/doing 里的「实现暂缓」。
 
@@ -500,6 +555,26 @@ def _prune_exec_blocked(blocked: dict) -> list:
     stale = [k for k in list(blocked) if k not in open_ids]
     for k in stale:
         blocked.pop(k, None)
+    # A previous land may have reached main while close/network failed. Once the
+    # commit is an ancestor of main, the work is landed and the stale block would
+    # otherwise suppress that item forever.
+    repo = _state_repo()
+    if repo:
+        for rid, rec in list(blocked.items()):
+            if rid not in open_ids or not isinstance(rec, dict):
+                continue
+            commit = str(rec.get("commit") or "").strip()
+            if not commit:
+                continue
+            rc, _, _ = _git(repo, "merge-base", "--is-ancestor", commit, "main")
+            if rc != 0:
+                continue
+            close_rc, _ = _run_truthctl(
+                ["close", rid, "auto-close: commit already in main"],
+                extra_env={"KG_TRUTH_COMMIT": commit})
+            if close_rc == 0:
+                blocked.pop(rid, None)
+                stale.append(rid)
     return stale
 
 
@@ -564,11 +639,6 @@ def _exec_prompt(item: dict) -> str:
         "- 目标只有两个：(1) 击穿产品预期——前后端真正闭环生效；(2) 保证现有体验——功能、",
         "  性能不能因为这次改动变差或更难用。不达标的实现不如不做。",
         "- 动手前先读仓库里的 AGENTS.md 和相关上下文（如 AI_SESSION_CONTEXT.md、产品决策文件）。",
-        "- 对直接、可验证的小任务（写文件、修文本、补配置等），第一步就要在当前 worktree 产出改动：",
-        "  先执行实际命令（如 `printf '...' > 文件`、修改文本、补配置），再用命令自证；",
-        "  只读检查不算完成，不能以“先看看 / 我先确认 / 发现已有”结束。",
-        "- 如果该需求确实无需改动（例如功能已存在），必须用一条命令或读取结果证明现状满足需求，",
-        "  并在总结里写清“无需改动 + 证明命令 + 现状”，否则一律按未完成处理。",
         "- 改完跑与改动相关的验证（如 `npx tsc --noEmit`、`npm run build`、相关 `verify:*` 脚本）；",
         "  失败就继续修，直到通过或有明确的外部阻塞。",
         "- 不要 `git commit`、不要 `git push`、不要合并分支：把改动留在工作区即可，落盘由自动挡统一走门禁。",
@@ -679,8 +749,27 @@ def _preserve_exec(repo, wt: Path, branch: str, rid: str, reason: str, blocked: 
             "worktree": str(wt), "commit": commit, "preserve": bool(changed)}
 
 
-def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
-    """把一条台账待办派给一个真实 codex 会话：独立 worktree 实现 -> 门禁落盘 -> 收口。"""
+def _exec_model(item: dict, cfg: dict) -> str | None:
+    """Pick a predictable model per task: quick bug/gate work uses the fast lane.
+
+    The old configuration only had one model and left it empty; the launchd
+    process therefore fell back to the general Codex model. That made worker
+    behaviour impossible to reason about and caused the wrong latency budget.
+    """
+    if cfg.get("model"):
+        return str(cfg["model"])
+    if (item.get("kind") or "") in ("bug", "gate") and cfg.get("fast_model"):
+        return str(cfg["fast_model"])
+    return str(cfg.get("slow_model") or cfg.get("fast_model") or "") or None
+
+
+def _prepare_exec(item: dict, cfg: dict, blocked: dict) -> dict:
+    """Create the isolated worktree for one worker without waiting for it.
+
+    Returning a job description separates worker startup from worker
+    completion. The daemon can fill several slots in one cycle while keeping
+    a single, separate ``land`` critical section.
+    """
     rid = item.get("id") or "?"
     repo = _state_repo()
     if not repo:
@@ -698,14 +787,11 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
     # 绝不丢未提交改动，也绝不删掉已经提交、只是没走完落盘的那笔提交。
     existing = _git(repo, "rev-parse", "--verify", branch)[0] == 0 or wt.exists()
     changed_in_flight = _changed_paths(wt) if wt.exists() else []
-    if existing and changed_in_flight:
-        log(f"[exec] {rid} 已有在途 worktree -> 跳过新会话，接着收口")
-        return _finish_exec(item, cfg, repo, wt, branch, rid,
-                            {"id": rid, "branch": branch, "worktree": str(wt)}, blocked)
-    if existing and _branch_pending_commits(repo, branch, main_branch):
-        log(f"[exec] {rid} worktree 干净但分支已有未落提交 -> 跳过新会话，直接收口")
-        return _finish_exec(item, cfg, repo, wt, branch, rid,
-                            {"id": rid, "branch": branch, "worktree": str(wt)}, blocked)
+    if existing and (changed_in_flight or _branch_pending_commits(repo, branch, main_branch)):
+        return {"id": rid, "outcome": "ready", "item": item, "cfg": cfg,
+                "repo": str(repo), "branch": branch, "worktree": str(wt),
+                "log": str(_exec_dir() / f"{slug}.log"), "recover": True,
+                "result": {"id": rid, "branch": branch, "worktree": str(wt)}}
     if existing:
         _git(repo, "worktree", "remove", "--force", str(wt))
         if _git(repo, "rev-parse", "--verify", branch)[0] == 0:
@@ -732,61 +818,114 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
         return {"id": rid, "outcome": "no_codex"}
 
     log_path = _exec_dir() / f"{slug}.log"
+    model = _exec_model(item, cfg)
+    return {"id": rid, "outcome": "ready", "item": item, "cfg": cfg,
+            "repo": str(repo), "branch": branch, "worktree": str(wt),
+            "codex": codex, "log": str(log_path), "model": model,
+            "started_at": _now(), "recover": bool(existing),
+            "result": {"id": rid, "branch": branch, "worktree": str(wt)}}
+
+
+def _exec_command(job: dict) -> list:
+    """Build the Codex CLI command for one prepared job."""
+    cfg = job["cfg"]
+    wt = Path(job["worktree"])
+    cmd = [*job["codex"], "exec", "-C", str(wt), "-s", cfg["sandbox"],
+           "--skip-git-repo-check"]
+    if job.get("model"):
+        cmd += ["-m", job["model"]]
+    cmd += [_exec_prompt(job["item"])]
+    return cmd
+
+
+def _start_exec(job: dict) -> dict | None:
+    """Start one prepared Codex worker without waiting for it."""
+    if job.get("recover"):
+        # No new session is needed; make the existing branch immediately
+        # reapable so the same supervisor performs add/commit/land.
+        job["proc"] = type("_Finished", (), {"poll": lambda self: 0})()
+        return job
+    wt = Path(job["worktree"])
+    log_path = Path(job["log"])
+    cmd = _exec_command(job)
+    log(f"[exec] 派发 {job['id']} -> {job['branch']}（worktree={wt}, "
+        f"codex={job['codex'][0]}, model={job.get('model') or 'default'}）")
+    try:
+        fh = log_path.open("w", encoding="utf-8")
+        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=fh,
+                                stderr=subprocess.STDOUT, cwd=str(wt),
+                                start_new_session=True)
+    except OSError as exc:
+        log(f"[exec] 无法启动 codex: {exc}")
+        job["start_error"] = str(exc)
+        return None
+    job.pop("start_error", None)
+    job["proc"] = proc
+    job["fh"] = fh
+    job["pid"] = proc.pid
+    return job
+
+
+def _reap_exec(job: dict, blocked: dict) -> dict:
+    """Wait for one worker; implementation is concurrent, landing is not."""
+    rid = job["id"]
+    item, cfg = job["item"], job["cfg"]
+    repo, wt, branch = Path(job["repo"]), Path(job["worktree"]), job["branch"]
+    log_path = Path(job["log"])
+    if job.get("recover"):
+        log(f"[exec] {rid} 已有在途 worktree -> 跳过新会话，接着收口")
+        return _finish_exec(item, cfg, repo, wt, branch, rid,
+                            {"id": rid, "branch": branch, "worktree": str(wt)}, blocked)
     retries = max(0, int(cfg.get("retries", EXEC_INFRA_RETRIES)))
-    no_change_retries = max(0, int(cfg.get("no_change_retries",
-                                           EXEC_NO_CHANGE_RETRIES)))
-    total = retries + no_change_retries + 1
-    code, attempt, infra = 0, 0, False
-    no_change_tries = 0
-    base_prompt = _exec_prompt(item)
+    total, attempt, code, infra = retries + 1, 0, 0, False
+    result = job["result"]
     while True:
         attempt += 1
-        first = attempt == 1
-        prompt = base_prompt
-        if no_change_tries:
-            prompt += ("\n\n重要：上一次自动执行没有产生任何工作区改动，不能作为完成。"
-                       "现在必须重新执行能留下改动的命令（写文件、修文本、补配置等），"
-                       "并在命令后立刻自证。不要再做一轮只读检查。")
-        if first:
-            log(f"[exec] 派发 {rid} -> {branch}（worktree={wt}, codex={codex[0]}）")
-        else:
+        if attempt > 1:
             log(f"[exec] {rid} 第 {attempt}/{total} 次重试"
                 f"（同一 worktree={wt}，日志 {log_path}）")
-        cmd = [*codex, "exec", "-C", str(wt), "-s", cfg["sandbox"],
-               "--skip-git-repo-check"]
-        if cfg.get("model"):
-            cmd += ["-m", cfg["model"]]
-        cmd += [prompt]
+            try:
+                fh = log_path.open("a", encoding="utf-8")
+                fh.write(f"\n===== auto_exec 重试 第 {attempt}/{total} 次（{_now()}，"
+                         f"上一次退出码={code}，判定为基础设施抖动）=====\n")
+                fh.flush()
+                proc = subprocess.Popen(
+                    _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
+                    stderr=subprocess.STDOUT, cwd=str(wt), start_new_session=True)
+            except OSError as exc:
+                log(f"[exec] 无法启动 codex: {exc}")
+                code = 125
+                break
+            job["proc"], job["fh"] = proc, fh
         try:
-            with log_path.open("w" if first else "a", encoding="utf-8") as fh:
-                if not first:
-                    retry_reason = ("无改动需重试" if no_change_tries
-                                    else "基础设施抖动")
-                    fh.write(f"\n===== auto_exec 重试 第 {attempt}/{total} 次（{_now()}，"
-                             f"上一次退出码={code}，判定为{retry_reason}）=====\n")
-                    fh.flush()
-                r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=fh,
-                                   stderr=subprocess.STDOUT, cwd=str(wt),
-                                   timeout=cfg["timeout"])
-            code = r.returncode
+            code = job["proc"].wait(timeout=cfg["timeout"])
         except subprocess.TimeoutExpired:
+            # Reap the whole worker process group. Leaving the child alive
+            # would occupy a slot forever and duplicate work on the next poll.
+            try:
+                os.killpg(os.getpgid(job["proc"].pid), signal.SIGKILL)
+            except OSError:
+                job["proc"].kill()
+            try:
+                job["proc"].wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                pass
             code = 124
-        except OSError as exc:
-            log(f"[exec] 无法启动 codex: {exc}")
-            code = 125
+            # Popen.poll() gates _reap_exec. A killed process may not have a
+            # returncode yet on every platform, so synchronize it explicitly.
+            job["proc"].returncode = 124
+        finally:
+            try:
+                job["fh"].close()
+            except (AttributeError, OSError):
+                pass
+            job.pop("fh", None)
         result["exit"] = code
         log(f"[exec] {rid} codex 退出码={code}（第 {attempt}/{total} 次，日志 {log_path}）")
-        if code == 0 and _changed_paths(wt):
-            break
         if code == 0:
-            no_change_tries += 1
-            if no_change_tries <= no_change_retries:
-                log(f"[exec] {rid} 退出 0 但无改动，第 {no_change_tries}/{no_change_retries} 次"
-                    f"重试（工作区仍保留）")
-                continue
             break
-        # 超时(124) 与启动失败(125) 不重试：超时已经吃掉一整个 cfg["timeout"]，再乘 N 会把
-        # 一个周期拖垮；启动失败重跑也没有新证据。只有日志尾部命中抖动特征才重跑。
+        # Timeouts and startup failures are not retried. Only a transport
+        # failure with a matching log tail gets another attempt.
         infra = code not in (124, 125) and classify_exec_infra_failure(log_path)
         if not infra or attempt > retries:
             break
@@ -794,15 +933,15 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
         log(f"[exec] {rid} 判定为基础设施抖动（退出码={code}），{delay:.0f}s 后重试")
         time.sleep(delay)
     result["attempts"] = attempt
+    if job.get("start_error"):
+        # Fail at spawn time, not by waiting a full worker timeout later.
+        code = 125
     if code != 0:
+        reason = "codex_infra_fail" if infra else f"codex_exit_{code}"
+        detail = ""
         if infra:
-            # 与 codex_exit_N 区分：一眼看出是环境抖动，不是需求做不出来。
-            reason = "codex_infra_fail"
             detail = (f"基础设施抖动，同一 worktree 重试 {attempt - 1} 次仍失败；"
                       f"日志尾部: {_exec_log_tail(log_path)[-200:].strip()}")
-        else:
-            reason = f"codex_exit_{code}"
-            detail = ""
         preserved = _preserve_exec(repo, wt, branch, rid, reason, blocked, detail=detail)
         if preserved.get("preserve"):
             result.update({"outcome": "codex_fail_preserved",
@@ -813,13 +952,9 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
             _cleanup_exec(repo, wt, branch)
             result["outcome"] = "codex_fail"
         return result
-    if code == 0 and not _changed_paths(wt):
-        log(f"[exec] {rid} 重试后仍没有产生改动，记为无变化")
-        blocked[rid] = {"reason": "no_changes", "ts": _now()}
-        _cleanup_exec(repo, wt, branch)
-        result["outcome"] = "no_changes"
-        return result
-    return _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked)
+    result["ready_to_finish"] = True
+    result["outcome"] = "worker_done"
+    return result
 
 
 def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
@@ -906,8 +1041,62 @@ def _looks_like_command(text: str) -> bool:
     return False
 
 
-def dispatch_exec(dry: bool, blocked: dict) -> list:
-    """每周期派最多 max_per_cycle 条待办。返回本轮结果列表。"""
+def _worker_alive(pid) -> bool:
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _hydrate_exec_jobs(workers: dict) -> dict:
+    """Restore live worker jobs after daemon restart without starting new sessions."""
+    jobs = workers.setdefault("exec_jobs", {})
+    for rid, job in list(jobs.items()):
+        if job.get("proc") is not None or job.get("recover"):
+            continue
+        if job.get("pid") and _worker_alive(job["pid"]):
+            # A restarted daemon cannot wait() an unrelated process. Preserve
+            # the slot and finish it once the PID disappears.
+            job["proc"] = None
+            job["detached"] = True
+        elif job.get("pid"):
+            job["detached"] = True
+    return workers
+
+
+def _collect_exec(workers: dict, blocked: dict) -> list:
+    """Reap live workers one at a time; landing remains globally serial."""
+    jobs = workers.setdefault("exec_jobs", {})
+    results = []
+    for rid, job in list(jobs.items()):
+        proc = job.get("proc")
+        if job.get("recover"):
+            pass
+        elif proc is None and job.get("detached") and _worker_alive(job.get("pid")):
+            continue
+        elif proc is None and job.get("detached"):
+            job["proc"] = type("_Finished", (), {"poll": lambda self: 0})()
+        elif proc is None:
+            blocked[rid] = {"reason": "start_fail", "ts": _now()}
+            jobs.pop(rid, None)
+            results.append({"id": rid, "outcome": "start_fail"})
+            continue
+        elif proc.poll() is None:
+            continue
+        result = _reap_exec(job, blocked)
+        jobs.pop(rid, None)
+        results.append(result)
+        # One land per cycle; another completed worker is collected next
+        # cycle. This keeps the critical section serial and auditable.
+        if result.get("outcome") in ("landed", "land_locked", "land_error",
+                                     "land_conflict", "land_gate_fail"):
+            break
+    return results
+
+
+def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None) -> list:
+    """Fill up to max_workers slots; completed workers still land serially."""
     cfg = auto_exec_config()
     if not cfg["enabled"]:
         return []
@@ -915,10 +1104,16 @@ def dispatch_exec(dry: bool, blocked: dict) -> list:
     if not codex:
         log("[exec] auto_exec 已开，但找不到 codex 可执行文件，跳过")
         return []
-    results = []
+    workers = _hydrate_exec_jobs(workers if workers is not None else {})
+    jobs = workers.setdefault("exec_jobs", {})
+    results = _collect_exec(workers, blocked)
+    limit = max(1, int(cfg.get("max_workers", EXEC_DEFAULT_MAX_WORKERS)))
+    # A completed worker frees one slot immediately. Keep filling in the same
+    # cycle instead of idling until the next 10-minute heartbeat.
+    active_ids = {rid for rid, job in jobs.items() if not job.get("recover")}
     for item in _ledger_open_items():
         rid = item.get("id")
-        if rid in blocked:
+        if rid in blocked or rid in jobs or rid in active_ids:
             continue
         if _looks_like_command(item.get("title")) or _looks_like_command(item.get("detail")):
             log(f"[exec] {rid} 输入像命令残片（{(item.get('title') or '')[:24]!r}），"
@@ -929,8 +1124,14 @@ def dispatch_exec(dry: bool, blocked: dict) -> list:
         if dry:
             log(f"[dry] 会派发 {rid}（{item.get('kind')}）{item.get('title')}")
             break
-        results.append(_dispatch_one(item, cfg, blocked))
-        if len(results) >= cfg["max_per_cycle"]:
+        job = _prepare_exec(item, cfg, blocked)
+        if job.get("outcome") != "ready":
+            results.append(job)
+            continue
+        if not job.get("recover"):
+            _start_exec(job)
+        jobs[rid] = job
+        if len(jobs) >= limit:
             break
     return results
 
@@ -950,10 +1151,6 @@ def run_cycle(dry: bool, max_land: int) -> dict:
       * 因此这里是最外层也最可靠的闸门；`_run_cycle` 里的逐子系统闸门是第二道保险，
         防止别的调用方绕过本函数直接进内部实现。
     """
-    if not control_state.is_enabled():
-        log("[disabled] 自动挡已关闭或控制文件异常：本轮不启动任何新工作")
-        return {"ts": time.time(), "iso": _now(), "dry": dry,
-                "disabled": True, "summary": {}, "landed": [], "failures": []}
     if control_state.is_paused():
         log("[pause] 已暂停：本轮不启动任何新工作（面板可恢复）")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
@@ -975,14 +1172,47 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
                 "summary": summary, "landed": [], "failures": []}
 
     log("--- cycle start (live) ---")
-    if not control_state.is_enabled():
-        log("[disabled] 周期开始前自动挡已关闭：不做路由/落盘")
-        return {"ts": time.time(), "iso": _now(), "dry": dry,
-                "disabled": True, "summary": {}, "landed": [], "failures": []}
     if control_state.is_paused():
         log("[pause] 周期开始前被暂停：只刷新状态，不做路由/落盘")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
                 "paused": True, "summary": {}, "landed": [], "failures": []}
+    # Route new intake before filling worker slots. dispatch_exec only sees
+    # rows that already exist in the ledger; routing after dispatch makes a
+    # freshly captured task wait a full cycle while all slots sit idle.
+    route_rc, route_out = run_kgctl(["route", "--go"], timeout=TICK_TIMEOUT)
+    log_block("route(pre-exec)", route_rc, route_out)
+    exec_results, exec_landed = [], []
+    exec_blocked = dict(load_state().get("exec_blocked") or {})
+    for _stale in _prune_exec_blocked(exec_blocked):
+        log(f"[exec] 台账已收口，清掉实现暂缓：{_stale}")
+    exec_cfg = auto_exec_config()
+    exec_workers = dict(load_state().get("exec_workers") or {})
+    if dry:
+        dispatch_exec(True, exec_blocked, exec_workers)
+    elif exec_cfg["enabled"]:
+        exec_results = dispatch_exec(False, exec_blocked, exec_workers)
+        exec_landed = [r for r in exec_results if r.get("outcome") == "landed"]
+    else:
+        log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
+
+    # Save worker metadata before the first network refresh. Restarting the
+    # daemon must not forget a live slot merely because tick timed out.
+    try:
+        _early = load_state()
+        _early["exec_workers"] = {
+            "exec_jobs": {
+                rid: {k: v for k, v in job.items()
+                      if k not in ("proc", "fh", "item", "cfg", "codex")}
+                for rid, job in (exec_workers.get("exec_jobs") or {}).items()
+                if not job.get("partial")
+            }
+        }
+        save_state(_early)
+    except Exception as exc:
+        log(f"[exec] 工作槽状态提前落盘失败（继续）：{exc!r}")
+
+    # Refresh truth after local work has already started. A slow/unreachable
+    # remote must not hold worker dispatch behind the network timeout.
     rc, out = run_kgctl(["tick"])
     log_block("tick", rc, out)
     convergence = parse_convergence(out)
@@ -998,7 +1228,11 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
         superseded = int(m.group(1))
 
     landed, failures = [], []
-    if rc != 0 and not out.strip():
+    if rc == 124:
+        # 超时必须算失败：旧实现里 tick 超时的 out 是一条说明文案（非空），于是既不进
+        # failures 也不报警——30 分钟的黑洞在面板上显示成 last_failures=0。
+        failures.append(("(tick)", "tick_timeout"))
+    elif rc != 0 and not out.strip():
         failures.append(("(tick)", "tick_error"))
 
     auto_land = control_state.load().get("auto_land", True)
@@ -1102,22 +1336,6 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     elif not resolve_cfg["enabled"]:
         log("[resolve] auto_resolve 未开启（ops/central.config.json），跳过冲突拆分")
 
-    # 自动实现：把台账里还没做的待办派给一个真实 codex 会话，在独立 worktree 里
-    # 实现 -> 门禁 -> 落盘 -> 收口。默认关闭（面板「自动实现需求」开关 / control.json）。
-    exec_results, exec_landed = [], []
-    exec_blocked = dict(load_state().get("exec_blocked") or {})
-    # 已收口的需求不该继续挂在「实现暂缓」名单里（代码/台账都已落定）。
-    for _stale in _prune_exec_blocked(exec_blocked):
-        log(f"[exec] 台账已收口，清掉实现暂缓：{_stale}")
-    exec_cfg = auto_exec_config()
-    if dry:
-        dispatch_exec(True, exec_blocked)
-    elif exec_cfg["enabled"] and not (rc != 0 and not out.strip()):
-        exec_results = dispatch_exec(False, exec_blocked)
-        exec_landed = [r for r in exec_results if r.get("outcome") == "landed"]
-    elif not exec_cfg["enabled"]:
-        log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
-
     # 落过盘就再刷一次控制面，让看板/快照反映新 main。
     if (landed or ported or resolve_landed_any or exec_landed) and not dry:
         rc2, out2 = run_kgctl(["tick"])
@@ -1198,6 +1416,16 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     state["resolve_blocked"] = resolve_blocked
     state["port_blocked"] = port_blocked
     state["exec_blocked"] = exec_blocked
+    # Persist only JSON-safe worker metadata. Popen handles and file handles
+    # are process-local and must never leak into state.json.
+    state["exec_workers"] = {
+        "exec_jobs": {
+            rid: {k: v for k, v in job.items()
+                  if k not in ("proc", "fh", "item", "cfg", "codex")}
+            for rid, job in (exec_workers.get("exec_jobs") or {}).items()
+            if not job.get("partial")
+        }
+    }
     state["last_exec"] = ([{"id": r.get("id"), "outcome": r.get("outcome")}
                            for r in exec_results] or state.get("last_exec", []))
     state["total_exec"] = int(state.get("total_exec", 0)) + len(exec_landed)
@@ -1532,6 +1760,21 @@ def loop(interval_min: int, max_land: int, dry: bool) -> int:
                 run_cycle(dry, max_land)
             except Exception as exc:  # 单轮失败不能让守护退出
                 log(f"× 本轮异常（已吞掉，下轮继续）：{exc!r}")
+            # 预算闸门（fail-open）：测量长驻窗口预算、按需自动换代、按需暂停派活。
+            # 放在本轮 land/resolve 之后 —— 既有工作先收尾，闸门不插队。
+            # 任何异常都当作「没有这个钩子」，绝不影响自动挡本体。
+            try:
+                import budget_gate
+                budget_gate.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[budget] 闸门跳过（fail-open）：{exc!r}")
+            # 空转记分（fail-open）：给每一拍分类，连续空转就点名并把记分写进下一拍的 prompt。
+            # 与预算闸门同族：只读判定、动作显式、一键关、异常一律吞掉。
+            try:
+                import beat_audit
+                beat_audit.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[beat] 记分跳过（fail-open）：{exc!r}")
             if _stop:
                 break
             was_paused = control_state.is_paused()
