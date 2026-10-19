@@ -512,6 +512,19 @@ def _ledger_open_items(limit=20):
     return opens[:limit]
 
 
+def _main_contains(commit: str) -> bool:
+    """Read-only ancestry check used to detect false 'land failed' records."""
+    repo = _state_repo()
+    if not repo:
+        return False
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), "merge-base", "--is-ancestor", commit, "main"],
+            capture_output=True, text=True, timeout=10).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def _prune_exec_blocked(blocked: dict) -> list:
     """丢掉已经不在台账 open/doing 里的「实现暂缓」。
 
@@ -1003,8 +1016,17 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     exec_blocked = dict(load_state().get("exec_blocked") or {})
     for _stale in _prune_exec_blocked(exec_blocked):
         log(f"[exec] 台账已收口，清掉实现暂缓：{_stale}")
-    # Keep the existing synchronous dispatch until a real worker supervisor is
-    # introduced. It runs one item at a time and each item lands serially.
+    exec_cfg = auto_exec_config()
+    if dry:
+        dispatch_exec(True, exec_blocked)
+    elif exec_cfg["enabled"]:
+        exec_results = dispatch_exec(False, exec_blocked)
+        exec_landed = [r for r in exec_results if r.get("outcome") == "landed"]
+    else:
+        log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
+
+    # Refresh truth after local work has already started. A slow/unreachable
+    # remote must not hold worker dispatch behind the network timeout.
     rc, out = run_kgctl(["tick"])
     log_block("tick", rc, out)
     convergence = parse_convergence(out)
@@ -1127,15 +1149,6 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
                 break  # 落盘推进了 main，下一周期基于新 main 重挑
     elif not resolve_cfg["enabled"]:
         log("[resolve] auto_resolve 未开启（ops/central.config.json），跳过冲突拆分")
-
-    exec_cfg = auto_exec_config()
-    if dry:
-        dispatch_exec(True, exec_blocked)
-    elif exec_cfg["enabled"] and not (rc != 0 and not out.strip()):
-        exec_results = dispatch_exec(False, exec_blocked)
-        exec_landed = [r for r in exec_results if r.get("outcome") == "landed"]
-    elif not exec_cfg["enabled"]:
-        log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
 
     # 落过盘就再刷一次控制面，让看板/快照反映新 main。
     if (landed or ported or resolve_landed_any or exec_landed) and not dry:

@@ -886,10 +886,14 @@ def test_prune_exec_blocked_landed_commit():
         os.environ["KG_REPO"] = str(repo)
         try:
             import central_daemon
+            old_git = central_daemon._git
+            central_daemon._git = lambda _repo, *args, **_kw: (
+                run(["git", "-C", str(repo), *args]).returncode, "", "")
             blocked = {"L-TEST": {"reason": "land_error", "commit": commit, "ts": "now"}}
             stale = central_daemon._prune_exec_blocked(blocked)
             assert "L-TEST" in stale, blocked
             assert not blocked, blocked
+            central_daemon._git = old_git
             latest = {r["id"]: r for r in central_daemon._ledger_latest().values()}
             assert latest["L-TEST"]["status"] == "done", latest
         finally:
