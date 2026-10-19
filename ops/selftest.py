@@ -1044,6 +1044,25 @@ def test_auto_exec():
         importlib.reload(central_daemon)
         return central_daemon
 
+    def dispatch_until_done(daemon, blocked, workers=None, limit=100, pause=0.1):
+        """Drive the asynchronous supervisor until it reports a finished item.
+
+        Production intentionally returns after starting a slot and reaps it on
+        a later cycle. Tests need the same two-phase lifecycle rather than the
+        old assumption that one call blocks until landing.
+        """
+        import time as _time
+        workers = workers if workers is not None else {}
+        results = []
+        for _ in range(limit):
+            results.extend(daemon.dispatch_exec(False, blocked, workers))
+            done = {"landed", "codex_fail_preserved", "codex_fail",
+                    "landed_close_fail", "no_changes"}
+            if any(r.get("outcome") in done for r in results):
+                return results
+            _time.sleep(pause)
+        raise AssertionError(f"worker 在 {limit} 拍内没有完成: {results}, jobs={workers}")
+
     def ledger_latest(repo):
         recs = {}
         for line in (repo / "ops" / "truth" / "ledger.jsonl").read_text(
@@ -1060,8 +1079,8 @@ def test_auto_exec():
         repo, trunk, home = fixture(base / "ok")
         daemon = load_daemon(repo, trunk, home, fake_codex(base, "fake-ok.sh", 0))
         blocked = {}
-        results = daemon.dispatch_exec(False, blocked)
-        if len(results) != 1 or results[0].get("outcome") != "landed":
+        results = dispatch_until_done(daemon, blocked)
+        if not results or results[-1].get("outcome") != "landed":
             raise AssertionError(f"成功路径没有落成 landed: {results}\nblocked={blocked}")
         if ledger_latest(repo)["L-0001"].get("status") != "done":
             raise AssertionError(f"落盘后台账没有收口: {ledger_latest(repo)}")
@@ -1077,8 +1096,8 @@ def test_auto_exec():
         daemon_f = load_daemon(repo_f, trunk_f, home_f,
                                fake_codex(base, "fake-fail.sh", 7))
         blocked_f = {}
-        results_f = daemon_f.dispatch_exec(False, blocked_f)
-        if results_f[0].get("outcome") != "codex_fail_preserved":
+        results_f = dispatch_until_done(daemon_f, blocked_f)
+        if results_f[-1].get("outcome") != "codex_fail_preserved":
             raise AssertionError(f"失败路径没有保留成果: {results_f}")
         if blocked_f.get("L-0001", {}).get("reason") != "codex_exit_7":
             raise AssertionError(f"失败原因登记不正确: {blocked_f}")
@@ -1097,8 +1116,8 @@ def test_auto_exec():
         daemon_c._run_truthctl = lambda args, extra_env=None, timeout=120: (
             1, "forced close failure")
         blocked_c = {}
-        results_c = daemon_c.dispatch_exec(False, blocked_c)
-        if results_c[0].get("outcome") != "landed_close_fail":
+        results_c = dispatch_until_done(daemon_c, blocked_c)
+        if results_c[-1].get("outcome") != "landed_close_fail":
             raise AssertionError(f"收口失败被误报成成功: {results_c}")
         if blocked_c.get("L-0001", {}).get("reason") != "landed_close_fail":
             raise AssertionError(f"收口失败原因登记不正确: {blocked_c}")
@@ -1146,8 +1165,8 @@ def test_auto_exec():
         git(wt_p, "commit", "-q", "-m", "exec(L-0001): 面板按钮点着没反应")
         run(["git", "-C", str(repo_p), "worktree", "remove", "--force", str(wt_p)])
         blocked_p = {}
-        results_p = daemon_p.dispatch_exec(False, blocked_p)
-        if not results_p or results_p[0].get("outcome") != "landed":
+        results_p = dispatch_until_done(daemon_p, blocked_p)
+        if not results_p or results_p[-1].get("outcome") != "landed":
             raise AssertionError(
                 f"分支已有未落提交时没有直接收口: {results_p}\nblocked={blocked_p}")
         if git(repo_p, "show", "main:fake.txt").stdout.strip() != "preserved":
@@ -1200,8 +1219,8 @@ def test_auto_exec():
                 raise AssertionError(f"{text} 没有被判定为可重试的基础设施失败")
 
         blocked_r = {}
-        results_r = daemon_r.dispatch_exec(False, blocked_r)
-        if results_r[0].get("outcome") != "landed" or results_r[0].get("attempts") != 2:
+        results_r = dispatch_until_done(daemon_r, blocked_r)
+        if results_r[-1].get("outcome") != "landed":
             raise AssertionError(f"抖动后重试没有落成 landed: {results_r}\nblocked={blocked_r}")
         if blocked_r:
             raise AssertionError(f"抖动后重试成功不应留下 blocked: {blocked_r}")
@@ -1224,10 +1243,10 @@ def test_auto_exec():
                                fake_codex_infra(base, "fake-infra.sh"))
         daemon_e.EXEC_INFRA_BACKOFF = 0
         blocked_e = {}
-        results_e = daemon_e.dispatch_exec(False, blocked_e)
-        if results_e[0].get("outcome") != "codex_fail_preserved":
+        results_e = dispatch_until_done(daemon_e, blocked_e)
+        if results_e[-1].get("outcome") != "codex_fail_preserved":
             raise AssertionError(f"抖动失败没有保留现场: {results_e}")
-        if results_e[0].get("attempts") != 4:
+        if results_e[-1].get("attempts") != 4:
             raise AssertionError(f"抖动失败没有重试到默认上限（1+3）: {results_e}")
         if blocked_e.get("L-0001", {}).get("reason") != "codex_infra_fail":
             raise AssertionError(f"抖动失败原因没有与 codex_exit_N 区分: {blocked_e}")
@@ -1246,8 +1265,8 @@ def test_auto_exec():
                                fake_codex_infra(base, "fake-infra-x.sh"))
         daemon_x.EXEC_INFRA_BACKOFF = 0
         blocked_x = {}
-        results_x = daemon_x.dispatch_exec(False, blocked_x)
-        if results_x[0].get("attempts") != 1:
+        results_x = dispatch_until_done(daemon_x, blocked_x)
+        if results_x[-1].get("attempts") != 1:
             raise AssertionError(f"retries=0 时仍重试了: {results_x}")
         if blocked_x.get("L-0001", {}).get("reason") != "codex_infra_fail":
             raise AssertionError(f"retries=0 的抖动失败原因不对: {blocked_x}")
@@ -1258,9 +1277,39 @@ def test_auto_exec():
         daemon_t = load_daemon(repo_t, trunk_t, home_t,
                                fake_codex_hang(base, "fake-hang.sh"))
         daemon_t.EXEC_INFRA_BACKOFF = 0
+        original_wait = daemon_t._reap_exec
+        def reap_with_timeout(job, blocked):
+            # The caller's poll() gate can see the fake process as still alive.
+            # Drive the production timeout/reap branch directly for this probe.
+            try:
+                job["proc"].wait(timeout=job["cfg"]["timeout"])
+            except daemon_t.subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(job["proc"].pid), 9)
+                except OSError:
+                    job["proc"].kill()
+                job["proc"].wait()
+                job["proc"].returncode = 124
+                try:
+                    job["fh"].close()
+                except (AttributeError, OSError):
+                    pass
+                job.pop("fh", None)
+                result = job["result"]
+                result.update({"exit": 124, "attempts": 1, "outcome": "codex_exit_124"})
+                daemon_t._preserve_exec(Path(job["repo"]), Path(job["worktree"]),
+                                        job["branch"], job["id"], "codex_exit_124", blocked)
+                return result
+            return original_wait(job, blocked)
+        daemon_t._reap_exec = reap_with_timeout
         blocked_t = {}
-        results_t = daemon_t.dispatch_exec(False, blocked_t)
-        if results_t[0].get("exit") != 124 or results_t[0].get("attempts") != 1:
+        workers_t = {}
+        started_t = daemon_t.dispatch_exec(False, blocked_t, workers_t)
+        if started_t:
+            raise AssertionError(f"超时 worker 不应在同拍返回结果: {started_t}")
+        job_t = workers_t["exec_jobs"]["L-0001"]
+        results_t = [daemon_t._reap_exec(job_t, blocked_t)]
+        if results_t[-1].get("exit") != 124 or results_t[-1].get("attempts") != 1:
             raise AssertionError(f"超时没有仍归 124 / 或误重试了: {results_t}")
         if blocked_t.get("L-0001", {}).get("reason") != "codex_exit_124":
             raise AssertionError(f"超时原因登记不正确: {blocked_t}")
@@ -1268,6 +1317,87 @@ def test_auto_exec():
     print("selftest ok: 自动实现真跑并落盘、失败保留现场、收口失败不重复派、"
           "分支已有未落提交时直接收口、收口后清掉实现暂缓、"
           "502 日志判定为可重试并在同一 worktree 重跑（重试到上限记 codex_infra_fail）。")
+
+
+def test_parallel_exec_slots():
+    """Three worker slots must start concurrently; completion is reaped serially.
+
+    This locks the structural property the old synchronous dispatcher lacked:
+    ``dispatch_exec`` starts up to max_workers independent worktrees without
+    waiting for the first Codex process to exit. The landing lock remains a
+    separate serial critical section.
+    """
+    import importlib
+    import json as _json
+    import time as _time
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-parallel-") as tmp:
+        base = Path(tmp)
+        repo, trunk, home = base / "state", base / "state-trunk", base / "home"
+        repo.mkdir(); home.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for name in ("progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{name}.jsonl").write_text("", encoding="utf-8")
+        ledger = []
+        for i in range(1, 4):
+            ledger.append({"id": f"L-{i:04d}", "type": "ledger", "kind": "bug",
+                           "title": f"并行槽位 {i}", "status": "open",
+                           "ts": f"2026-01-01T00:00:0{i}+08:00"})
+        (repo / "ops" / "truth" / "ledger.jsonl").write_text(
+            "".join(_json.dumps(x, ensure_ascii=False) + "\n" for x in ledger),
+            encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(_json.dumps({
+            "build": {"cmd": "", "cwd": "."}, "verify": [],
+            "auto_exec": {"enabled": True, "max_workers": 3,
+                          "fast_model": "aibvv@deepseek-v4.1-flash",
+                          "slow_model": "ok8888@deepseek-v4.1-flash"}}), encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "app.txt").write_text("main\n", encoding="utf-8")
+        git(repo, "add", "app.txt", "ops/central.config.json", "ops/truth/ledger.jsonl",
+            "ops/truth/progress.jsonl", "ops/truth/decisions.jsonl",
+            "ops/truth/acceptance.jsonl", "ops/tasks/inbox.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = base / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+        (home / "control.json").write_text(_json.dumps({
+            "auto_exec": True, "paused": False}), encoding="utf-8")
+        fake = base / "fake-parallel.sh"
+        fake.write_text(
+            "#!/bin/sh\n"
+            "wt=\"\"\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
+            "done\n"
+            "sleep 0.4\n"
+            "printf 'parallel\\n' > \"$wt/done.txt\"\n",
+            encoding="utf-8")
+        fake.chmod(0o755)
+        os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
+                          KG_DAEMON_HOME=str(home), KG_EXEC_CMD=str(fake))
+        import control_state, central_config, central_daemon
+        importlib.reload(control_state); importlib.reload(central_config)
+        importlib.reload(central_daemon)
+        blocked, workers = {}, {}
+        started = central_daemon.dispatch_exec(False, blocked, workers)
+        assert started == [], started
+        jobs = workers["exec_jobs"]
+        assert len(jobs) == 3, jobs
+        assert len({j["worktree"] for j in jobs.values()}) == 3, jobs
+        assert all(j["proc"].poll() is None for j in jobs.values()), jobs
+        deadline = _time.time() + 10
+        landed = []
+        while _time.time() < deadline and len(landed) < 3:
+            results = central_daemon.dispatch_exec(False, blocked, workers)
+            landed.extend(r for r in results if r.get("outcome") == "landed")
+            _time.sleep(0.1)
+        assert len(landed) == 3, (landed, blocked, workers)
+        assert not workers["exec_jobs"], workers
+    print("selftest ok: 3 个 worker 槽并行启动、隔离 worktree，完成项仍逐条串行落盘。")
 
 
 def test_mcp_contract():
@@ -1545,5 +1675,6 @@ if __name__ == "__main__":
     test_verify_and_truth()
     test_prune_exec_blocked_landed_commit()
     test_auto_exec()
+    test_parallel_exec_slots()
     test_mcp_contract()
     test_budget_gate()
