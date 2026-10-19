@@ -2477,6 +2477,11 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     pending = [line for line in trunk_status(wt) if is_truth_path(line)]
     if not pending:
         return False
+    non_truth = [line for line in trunk_status(wt) if not is_truth_path(line)]
+    if non_truth:
+        print(f"× 主干工作树有非真相层改动，拒绝同步真相层：{wt}")
+        print("\n".join(non_truth[:20])[:1000])
+        return False
     for rel in TRUTH_PATHS:
         if (wt / rel).exists():
             subprocess.run(["git", "-C", str(wt), "add", "--", rel],
