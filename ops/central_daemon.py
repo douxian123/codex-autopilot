@@ -528,6 +528,26 @@ def _prune_exec_blocked(blocked: dict) -> list:
     stale = [k for k in list(blocked) if k not in open_ids]
     for k in stale:
         blocked.pop(k, None)
+    # A previous land may have reached main while close/network failed. Once the
+    # commit is an ancestor of main, the work is landed and the stale block would
+    # otherwise suppress that item forever.
+    repo = _state_repo()
+    if repo:
+        for rid, rec in list(blocked.items()):
+            if rid not in open_ids or not isinstance(rec, dict):
+                continue
+            commit = str(rec.get("commit") or "").strip()
+            if not commit:
+                continue
+            rc, _, _ = _git(repo, "merge-base", "--is-ancestor", commit, "main")
+            if rc != 0:
+                continue
+            close_rc, _ = _run_truthctl(
+                ["close", rid, "auto-close: commit already in main"],
+                extra_env={"KG_TRUTH_COMMIT": commit})
+            if close_rc == 0:
+                blocked.pop(rid, None)
+                stale.append(rid)
     return stale
 
 
@@ -974,6 +994,25 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
         log("[pause] 周期开始前被暂停：只刷新状态，不做路由/落盘")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
                 "paused": True, "summary": {}, "landed": [], "failures": []}
+    # Route new intake before filling worker slots. dispatch_exec only sees
+    # rows that already exist in the ledger; routing after dispatch makes a
+    # freshly captured task wait a full cycle while all slots sit idle.
+    route_rc, route_out = run_kgctl(["route", "--go"], timeout=TICK_TIMEOUT)
+    log_block("route(pre-exec)", route_rc, route_out)
+    exec_results, exec_landed = [], []
+    exec_blocked = dict(load_state().get("exec_blocked") or {})
+    for _stale in _prune_exec_blocked(exec_blocked):
+        log(f"[exec] 台账已收口，清掉实现暂缓：{_stale}")
+    exec_cfg = auto_exec_config()
+    if dry:
+        dispatch_exec(True, exec_blocked)
+    elif exec_cfg["enabled"] and route_rc == 0:
+        exec_results = _collect_exec(exec_blocked) + dispatch_exec(False, exec_blocked)
+        save_worker_state(exec_done=exec_results)
+        exec_landed = [r for r in exec_results if r.get("outcome") == "landed"]
+    elif not exec_cfg["enabled"]:
+        log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
+
     rc, out = run_kgctl(["tick"])
     log_block("tick", rc, out)
     convergence = parse_convergence(out)
@@ -1096,22 +1135,6 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
                 break  # 落盘推进了 main，下一周期基于新 main 重挑
     elif not resolve_cfg["enabled"]:
         log("[resolve] auto_resolve 未开启（ops/central.config.json），跳过冲突拆分")
-
-    # 自动实现：把台账里还没做的待办派给一个真实 codex 会话，在独立 worktree 里
-    # 实现 -> 门禁 -> 落盘 -> 收口。默认关闭（面板「自动实现需求」开关 / control.json）。
-    exec_results, exec_landed = [], []
-    exec_blocked = dict(load_state().get("exec_blocked") or {})
-    # 已收口的需求不该继续挂在「实现暂缓」名单里（代码/台账都已落定）。
-    for _stale in _prune_exec_blocked(exec_blocked):
-        log(f"[exec] 台账已收口，清掉实现暂缓：{_stale}")
-    exec_cfg = auto_exec_config()
-    if dry:
-        dispatch_exec(True, exec_blocked)
-    elif exec_cfg["enabled"] and not (rc != 0 and not out.strip()):
-        exec_results = dispatch_exec(False, exec_blocked)
-        exec_landed = [r for r in exec_results if r.get("outcome") == "landed"]
-    elif not exec_cfg["enabled"]:
-        log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
 
     # 落过盘就再刷一次控制面，让看板/快照反映新 main。
     if (landed or ported or resolve_landed_any or exec_landed) and not dry:

@@ -2095,9 +2095,14 @@ def _trunk_worktree():
 def _align_main():
     """落盘前先把本地 main 引用对齐 origin/main，拒绝在分叉引用上继续。"""
     fetched = subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
-                             capture_output=True, text=True)
+                             capture_output=True, text=True, timeout=120)
     if fetched.returncode != 0:
-        raise RuntimeError(f"fetch origin/{MAIN} 失败: {fetched.stderr.strip()}")
+        output = (fetched.stdout or "") + (fetched.stderr or "")
+        classifier = getattr(central_config, "is_network_unreachable", None)
+        if callable(classifier) and classifier(output):
+            print(f"  origin 网络不可达，保留本地 {MAIN} 并继续：{output.strip()[:240]}")
+            return
+        raise RuntimeError(f"fetch origin/{MAIN} 失败: {output.strip()}")
     local = git("rev-parse", MAIN)
     remote = git("rev-parse", f"origin/{MAIN}")
     if local == remote:
@@ -2354,14 +2359,27 @@ def _mirror_truth_into_trunk(wt: Path) -> None:
             shutil.copy2(src, dst)
 
 
-def _run_verify_gates(wt: Path) -> tuple:
+def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
     """落盘前的验证门禁：逐条真实执行，返回 (ok, results, output)。
 
     门禁清单来自 ops/central.config.json 的 verify（没配就退化成 build 那一条）。
-    每条结果保留 name/cmd/cwd/ok/output，供验收台账写「可复核的证据」，而不是一句
-    「通过构建」。工作目录不存在时按失败处理，不抛未捕获异常。
+    verify_by_change 可按本次 merge 的实际 diff 追加相关门禁；没命中规则时仍保留
+    build 作为真实验证底线。工作目录不存在时按失败处理，不抛未捕获异常。
     """
-    gates = central_config.verify_gates(CFG)
+    changed = []
+    try:
+        base = pre or "HEAD"
+        p = subprocess.run(["git", "-C", str(wt), "diff", "--name-only", base, "HEAD"],
+                           capture_output=True, text=True, errors="replace")
+        if p.returncode == 0:
+            changed = [line for line in (p.stdout or "").splitlines() if line.strip()]
+    except Exception:
+        changed = []
+    selector = getattr(central_config, "verify_gates_for_changes", None)
+    # Runtime copies can briefly lag the staged source copy. Falling back to the
+    # stable gate list keeps landing possible while the change selector is absent.
+    gates = (selector(CFG, changed) if callable(selector)
+             else central_config.verify_gates(CFG))
     if not gates:
         return True, [], "(未配置验证门禁，跳过)"
     results, chunks, all_ok = [], [], True
@@ -2410,7 +2428,7 @@ def _push_main_with_one_retry(wt: Path) -> str:
                            capture_output=True, text=True)
             raise RuntimeError(
                 f"远端 main 前进且自动同步出现冲突，未推送：{(synced.stdout + synced.stderr).strip()[:500]}")
-        ok, _results, out = _run_verify_gates(wt)
+        ok, _results, out = _run_verify_gates(wt, "")
         if not ok:
             raise RuntimeError(f"同步远端 main 后验证门禁失败，未推送：{out[-800:]}")
     raise RuntimeError(f"push origin HEAD:main 失败：{last[:800]}")
@@ -3234,7 +3252,7 @@ def cmd_land(args):
             print("× 合并失败，已丢弃：", m.stderr.strip()[:300])
             sys.exit(1)
         print("  merge ok（main 未动）")
-        gate_ok, gate_results, gate_out = _run_verify_gates(wt)
+        gate_ok, gate_results, gate_out = _run_verify_gates(wt, pre)
         print(f"  验证门禁 {'ok' if gate_ok else '× 失败 → 丢弃，main 不动'}")
         if not gate_ok:
             print(gate_out[-800:])

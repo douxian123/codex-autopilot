@@ -40,6 +40,8 @@ DEFAULTS = {
     #   "verify": [{"name": "typecheck", "cmd": "npx tsc --noEmit", "cwd": "frontend"}]
     # None = 退化成上面 build 那一条；[] = 明确表示这个项目没有可跑的验证。
     "verify": None,
+    # 按实际改动选择额外门禁。未配置时保持旧行为。
+    "verify_by_change": None,
     # 归类兜底泳道：任何规则都没命中时落这里。
     "default_lane": "bug",
     # 自定义归类规则（可选）：[[泳道名, [关键词...]], ...]，第一条命中即归类。
@@ -143,6 +145,92 @@ def verify_gates(cfg) -> list:
             cmd = (item.get("cmd") or "").strip()
             if not cmd:
                 continue
-            out.append({"name": item.get("name") or "gate%d" % (i + 1),
-                        "cmd": cmd, "cwd": item.get("cwd") or "."})
+            gate = {"name": item.get("name") or "gate%d" % (i + 1),
+                    "cmd": cmd, "cwd": item.get("cwd") or "."}
+            if item.get("always"):
+                gate["always"] = True
+            out.append(gate)
     return out
+
+
+def verify_gates_for_changes(cfg, changed_paths) -> list:
+    """Select gates from the actual diff while preserving the old behavior by default."""
+    base = verify_gates(cfg)
+    rule_cfg = cfg.get("verify_by_change")
+    if not rule_cfg:
+        return base
+    if isinstance(rule_cfg, dict):
+        if not rule_cfg.get("enabled", True):
+            return base
+    elif not isinstance(rule_cfg, bool) or not rule_cfg:
+        return base
+    else:
+        rule_cfg = {"enabled": True}
+
+    paths = [str(p).replace("\\", "/").lstrip("./") for p in (changed_paths or []) if str(p).strip()]
+    out = [g for g in base if g.get("always")]
+    seen = {(g.get("name"), g.get("cmd"), g.get("cwd")) for g in out}
+    matched = 0
+    for i, item in enumerate(rule_cfg.get("rules") or []):
+        if not isinstance(item, dict):
+            continue
+        patterns = item.get("paths") or item.get("path") or []
+        if isinstance(patterns, str):
+            patterns = [patterns]
+        if not patterns:
+            continue
+        hit = any(_path_matches_any(path, patterns) for path in paths)
+        cmd = str(item.get("cmd") or "").strip()
+        if not hit or not cmd:
+            continue
+        gate = {"name": item.get("name") or "change%d" % (i + 1),
+                "cmd": cmd, "cwd": item.get("cwd") or "."}
+        key = (gate["name"], gate["cmd"], gate["cwd"])
+        if key not in seen:
+            out.append(gate)
+            seen.add(key)
+        matched += 1
+    if matched:
+        return out
+
+    # A changed file always has a real verification floor. Prefer the configured
+    # build, then the first non-always gate from verify.
+    build = next((g for g in base if g.get("name") == "build"), None)
+    if build is None:
+        build = next((g for g in base if not g.get("always")), None)
+    if build is not None:
+        key = (build.get("name"), build.get("cmd"), build.get("cwd"))
+        if key not in seen:
+            out.append(build)
+    return out
+
+
+def _path_matches_any(path: str, patterns) -> bool:
+    from fnmatch import fnmatchcase
+    p = str(path).replace("\\", "/").lstrip("./")
+    for raw in patterns:
+        pat = str(raw).replace("\\", "/").lstrip("./")
+        if not pat:
+            continue
+        if p == pat or p.startswith(pat.rstrip("/") + "/"):
+            return True
+        if fnmatchcase(p, pat):
+            return True
+    return False
+
+
+NETWORK_FAILURE_MARKERS = (
+    "ssl connection timeout",
+    "empty reply from server",
+    "operation too slow",
+    "couldn't connect",
+    "failed to connect",
+    "connection timed out",
+    "timed out",
+)
+
+
+def is_network_unreachable(output: str) -> bool:
+    """Use one classifier for fetch/push failures so offline work stays safe."""
+    text = str(output or "").lower()
+    return any(marker in text for marker in NETWORK_FAILURE_MARKERS)

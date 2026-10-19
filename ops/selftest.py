@@ -7,6 +7,7 @@
 这里用临时仓库锁住这道门禁：坏分支不能入队，也不能 land。
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -672,6 +673,30 @@ def test_verify_and_truth():
         {"name": "typecheck", "cmd": "npx tsc --noEmit", "cwd": "frontend"},
         {"name": "gate2", "cmd": "npm run build", "cwd": "."}]
 
+    assert central_config.verify_gates({"verify": [
+        {"name": "build", "cmd": "npm run build", "cwd": ".", "always": True}]}) == [
+        {"name": "build", "cmd": "npm run build", "cwd": ".", "always": True}]
+
+    by_change = central_config.verify_gates_for_changes(
+        {"verify": [{"name": "build", "cmd": "npm run build", "cwd": ".", "always": True}],
+         "verify_by_change": {"enabled": True, "rules": [
+             {"name": "benchmark", "paths": ["backend/test/benchmark-*"],
+              "cmd": "npm run verify:benchmark-quality-gate", "cwd": "backend"}]}},
+        ["backend/test/benchmark-zero-source-provenance.mjs"])
+    assert [g["name"] for g in by_change] == ["build", "benchmark"], by_change
+    fallback = central_config.verify_gates_for_changes(
+        {"verify": [{"name": "build", "cmd": "npm run build", "cwd": "."}],
+         "verify_by_change": {"enabled": True, "rules": [
+             {"name": "frontend", "paths": ["frontend/**"], "cmd": "npm run build", "cwd": "frontend"}]}},
+        ["backend/test/other.mjs"])
+    assert [g["name"] for g in fallback] == ["build"], fallback
+    assert central_config.is_network_unreachable(
+        "fatal: unable to access ...: SSL connection timeout")
+    assert central_config.is_network_unreachable(
+        "fatal: unable to access ...: Empty reply from server")
+    assert not central_config.is_network_unreachable(
+        "fatal: authentication failed")
+
     def fresh_fixture(base, verify):
         base.mkdir(parents=True, exist_ok=True)
         repo = base / "state"
@@ -835,6 +860,44 @@ def test_verify_and_truth():
         if "需要你验收" not in text2:
             raise AssertionError("产品主线没有拆出「需要你验收」段")
     print("selftest ok: 验证门禁真跑真写真拦；产品状态与判断逻辑可回写；问题可闭环；主线可综合。")
+
+
+def test_prune_exec_blocked_landed_commit():
+    """A commit already in main must close the ledger and clear stale blocking."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        repo = base / "repo"
+        repo.mkdir()
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "truth" / "ledger.jsonl").write_text(
+            json.dumps({"id": "L-TEST", "type": "ledger", "status": "open",
+                         "ts": "2026-01-01 00:00", "title": "landed"}) + "\n",
+            encoding="utf-8")
+        (repo / "ops" / "truth" / "progress.jsonl").write_text("", encoding="utf-8")
+        (repo / "a.txt").write_text("a\n", encoding="utf-8")
+        git(repo, "add", "a.txt", "ops/truth/ledger.jsonl", "ops/truth/progress.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        commit = git(repo, "rev-parse", "HEAD").stdout.strip()
+        old_repo = os.environ.get("KG_REPO")
+        os.environ["KG_REPO"] = str(repo)
+        try:
+            import central_daemon
+            blocked = {"L-TEST": {"reason": "land_error", "commit": commit, "ts": "now"}}
+            stale = central_daemon._prune_exec_blocked(blocked)
+            assert "L-TEST" in stale, blocked
+            assert not blocked, blocked
+            latest = {r["id"]: r for r in central_daemon._ledger_latest().values()}
+            assert latest["L-TEST"]["status"] == "done", latest
+        finally:
+            if old_repo is None:
+                os.environ.pop("KG_REPO", None)
+            else:
+                os.environ["KG_REPO"] = old_repo
+    print("selftest ok: 已在 main 的提交会自动收口并清掉陈旧 land_error。")
 
 
 def test_auto_exec():
@@ -1476,6 +1539,7 @@ if __name__ == "__main__":
     test_reset_trunk_truth_conflict()
     test_control_state()
     test_verify_and_truth()
+    test_prune_exec_blocked_landed_commit()
     test_auto_exec()
     test_mcp_contract()
     test_budget_gate()
