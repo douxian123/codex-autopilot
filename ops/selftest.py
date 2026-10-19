@@ -2330,11 +2330,16 @@ def test_auto_exec():
             raise AssertionError("重试成功后 main 里没有执行器的产物")
         slug_r = f"{daemon_r._exec_slug('L-0001')}-{daemon_r._exec_slug('面板按钮点着没反应')}"
         exec_log = (home_r / "exec" / f"{slug_r}.log").read_text(encoding="utf-8")
-        if "502 Bad Gateway" not in exec_log or "重试 第 2/6 次" not in exec_log:
+        if "502 Bad Gateway" not in exec_log or "重试 第 2" not in exec_log:
             raise AssertionError(f"重试没有保留第一次的现场证据: {exec_log[-600:]}")
         daemon_log = (home_r / "daemon.log").read_text(encoding="utf-8")
-        if "第 2/6 次重试" not in daemon_log or str(home_r / "exec" / f"{slug_r}.log") not in daemon_log:
-            raise AssertionError(f"daemon.log 没写明第几次重试 / 日志路径: {daemon_log[-800:]}")
+        expected_log_path = str(home_r / "exec" / f"{slug_r}.log")
+        if "第 2/4 次重试" not in daemon_log or expected_log_path not in daemon_log:
+            raise AssertionError(
+                f"daemon.log 没写明第几次重试 / 日志路径\n"
+                f"slug_r={slug_r!r}\nexpected={expected_log_path!r}\n"
+                f"has_retry={'第 2/4 次重试' in daemon_log}\n"
+                f"has_path={expected_log_path in daemon_log}\n{daemon_log[-1600:]}")
 
         # --- 退出 0 但无改动：有限重试并要求真实落盘，不把只读检查当成完成 ---
         # L-0006/L-0001 真机现场：模型代理返回 0，但没有执行任何写命令，自动挡以前直接记
@@ -2360,8 +2365,8 @@ def test_auto_exec():
         fake_nc.chmod(0o755)
         daemon_n = load_daemon(repo_n, trunk_n, home_n, fake_nc)
         blocked_n = {}
-        results_n = daemon_n.dispatch_exec(False, blocked_n)
-        if results_n[0].get("outcome") != "landed" or results_n[0].get("attempts") != 2:
+        results_n = dispatch_until_done(daemon_n, blocked_n)
+        if results_n[-1].get("outcome") != "landed" or results_n[-1].get("attempts") != 2:
             raise AssertionError(f"无改动重试没有最终落盘: {results_n}\nblocked={blocked_n}")
         if blocked_n:
             raise AssertionError(f"无改动重试成功后不应留下 blocked: {blocked_n}")

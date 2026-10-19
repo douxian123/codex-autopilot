@@ -417,12 +417,15 @@ def auto_exec_config() -> dict:
 
     `retries` 是「基础设施抖动」在同一 worktree 上的重跑上限（默认 3 次，指数退避），
     与「需求真做不出来」区分开；只在日志尾部命中抖动特征时才生效。
+    `no_change_retries` 是「退出 0 但没有任何产物」在同一 worktree 上的重跑上限
+    （默认 1 次），第二次仍无改动才记 no_changes，避免只读检查冒充完成。
     """
     out = {"enabled": True, "max_per_cycle": EXEC_MAX_PER_CYCLE,
            "max_workers": EXEC_DEFAULT_MAX_WORKERS,
            "timeout": EXEC_DEFAULT_TIMEOUT, "sandbox": "workspace-write",
            "model": None, "fast_model": None, "slow_model": None,
-           "retries": EXEC_INFRA_RETRIES}
+           "retries": EXEC_INFRA_RETRIES,
+           "no_change_retries": 1}
     repo = _state_repo()
     if repo:
         try:
@@ -441,6 +444,11 @@ def auto_exec_config() -> dict:
                     pass
             try:
                 out["retries"] = max(0, int(cfg.get("retries", out["retries"])))
+            except (TypeError, ValueError):
+                pass
+            try:
+                out["no_change_retries"] = max(
+                    0, int(cfg.get("no_change_retries", out["no_change_retries"])))
             except (TypeError, ValueError):
                 pass
             if cfg.get("sandbox"):
@@ -657,6 +665,9 @@ def _exec_prompt(item: dict) -> str:
         "- 只做非破坏性、正向的改动：不要 `git checkout .` / `git reset --hard` / `git stash` / `git add -A`。",
         "- 目标只有两个：(1) 击穿产品预期——前后端真正闭环生效；(2) 保证现有体验——功能、",
         "  性能不能因为这次改动变差或更难用。不达标的实现不如不做。",
+        "- 第一步就要在当前 worktree 产出改动；先做真实文件改动，再验证，再自证。",
+        "- 只读检查不算完成：只跑 ls/find/git status/看代码/问 AI 而没有落盘产物，一律不算做完。",
+        "- 如目标确实无需改动，必须明说“无需改动”并给出理由，不能把只读检查当交付。",
         "- 动手前先读仓库里的 AGENTS.md 和相关上下文（如 AI_SESSION_CONTEXT.md、产品决策文件）。",
         "- 改完跑与改动相关的验证（如 `npx tsc --noEmit`、`npm run build`、相关 `verify:*` 脚本）；",
         "  失败就继续修，直到通过或有明确的外部阻塞。",
@@ -896,17 +907,22 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
         return _finish_exec(item, cfg, repo, wt, branch, rid,
                             {"id": rid, "branch": branch, "worktree": str(wt)}, blocked)
     retries = max(0, int(cfg.get("retries", EXEC_INFRA_RETRIES)))
+    no_change_retries = max(0, int(cfg.get("no_change_retries", 0)))
     total, attempt, code, infra = retries + 1, 0, 0, False
     result = job["result"]
     while True:
         attempt += 1
         if attempt > 1:
+            marker = (f"\n===== auto_exec 重试 第 {attempt}/{total} 次（{_now()}，"
+                      f"上一次退出码={code}，判定为基础设施抖动）=====\n")
+            if not infra:
+                marker = (f"\n===== auto_exec 重试 第 {attempt - 1}/{no_change_retries} 次"
+                          f"（{_now()}，上一次无改动）=====\n")
             log(f"[exec] {rid} 第 {attempt}/{total} 次重试"
                 f"（同一 worktree={wt}，日志 {log_path}）")
             try:
                 fh = log_path.open("a", encoding="utf-8")
-                fh.write(f"\n===== auto_exec 重试 第 {attempt}/{total} 次（{_now()}，"
-                         f"上一次退出码={code}，判定为基础设施抖动）=====\n")
+                fh.write(marker)
                 fh.flush()
                 proc = subprocess.Popen(
                     _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
@@ -915,7 +931,7 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
                 log(f"[exec] 无法启动 codex: {exc}")
                 code = 125
                 break
-            job["proc"], job["fh"] = proc, fh
+            job["proc"], job["fh"], job["pid"] = proc, fh, proc.pid
         try:
             code = job["proc"].wait(timeout=cfg["timeout"])
         except subprocess.TimeoutExpired:
@@ -944,6 +960,16 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
         result["exit"] = code
         log(f"[exec] {rid} codex 退出码={code}（第 {attempt}/{total} 次，日志 {log_path}）")
         if code == 0:
+            conf = central_config.load(repo)
+            main_branch = conf.get("main_branch", "main")
+            changed = _changed_paths(wt)
+            pending = _branch_pending_commits(repo, branch, main_branch)
+            if changed or pending:
+                break
+            no_change_attempts = attempt - 1
+            if no_change_attempts < no_change_retries:
+                infra = False
+                continue
             break
         # Timeouts and startup failures are not retried. Only a transport
         # failure with a matching log tail gets another attempt.
@@ -975,8 +1001,7 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
         return result
     result["ready_to_finish"] = True
     result["outcome"] = "worker_done"
-    return result
-
+    return _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked)
 
 def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
     """codex 已实现（或从在途现场恢复）之后的公共收尾：add -> commit -> land -> close。"""
@@ -1220,6 +1245,10 @@ def run_cycle(dry: bool, max_land: int) -> dict:
       * 因此这里是最外层也最可靠的闸门；`_run_cycle` 里的逐子系统闸门是第二道保险，
         防止别的调用方绕过本函数直接进内部实现。
     """
+    if not control_state.is_enabled():
+        log("[control] 自动挡已关闭：本轮不启动任何新工作（面板可恢复）")
+        return {"ts": time.time(), "iso": _now(), "dry": dry,
+                "disabled": True, "summary": {}, "landed": [], "failures": []}
     if control_state.is_paused():
         log("[pause] 已暂停：本轮不启动任何新工作（面板可恢复）")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
@@ -1241,6 +1270,10 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
                 "summary": summary, "landed": [], "failures": []}
 
     log("--- cycle start (live) ---")
+    if not control_state.is_enabled():
+        log("[control] 周期开始前自动挡已关闭：只刷新状态，不做路由/落盘")
+        return {"ts": time.time(), "iso": _now(), "dry": dry,
+                "disabled": True, "summary": {}, "landed": [], "failures": []}
     if control_state.is_paused():
         log("[pause] 周期开始前被暂停：只刷新状态，不做路由/落盘")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
