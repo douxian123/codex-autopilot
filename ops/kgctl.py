@@ -2092,12 +2092,68 @@ def _trunk_worktree():
     return wt
 
 
+def _is_network_unreachable(text: str) -> bool:
+    """只识别传输层不可达；认证/non-fast-forward/hook 拒绝绝不能降成本地落盘。"""
+    lowered = (text or "").lower()
+    signals = (
+        "couldn't connect to server",
+        "could not connect to server",
+        "failed to connect",
+        "connection refused",
+        "connection timed out",
+        "operation timed out",
+        "network is unreachable",
+        "could not resolve host",
+        "temporary failure in name resolution",
+        "proxy connect",
+        "could not read from remote repository",
+    )
+    return any(s in lowered for s in signals)
+
+
+def _push_main_with_offline_fallback(wt: Path) -> str:
+    """推送 main；网络明确不可达时本地推进，其他失败仍 fail-closed。"""
+    try:
+        return _push_main_with_one_retry(wt)
+    except RuntimeError as exc:
+        text = str(exc)
+        if not _is_network_unreachable(text):
+            raise
+        # The merge happened in the trunk worktree. Advance the local main
+        # ref only when it is still exactly the pre-merge value; this is a
+        # compare-and-swap, so a concurrent writer can never be overwritten.
+        new = git("-C", str(wt), "rev-parse", "HEAD")
+        pre = git("rev-parse", MAIN)
+        if not new or not pre:
+            raise
+        if not git("rev-parse", "--verify", new):
+            raise RuntimeError("离线落盘无法读取合并提交")
+        cas = subprocess.run(
+            ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}", new, pre],
+            capture_output=True, text=True)
+        if cas.returncode != 0:
+            raise RuntimeError(
+                f"离线落盘无法安全推进本地 {MAIN}（引用已变化）："
+                f"{pre[:10]} -> {new[:10]}；{(cas.stdout + cas.stderr).strip()[:500]}")
+        return ("origin 当前网络不可达，已在本地安全推进 main，尚未推送；"
+                "联网后 daemon 会继续推送。原始错误：" + text[:300])
+
+
 def _align_main():
     """落盘前先把本地 main 引用对齐 origin/main，拒绝在分叉引用上继续。"""
     fetched = subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
                              capture_output=True, text=True)
     if fetched.returncode != 0:
-        raise RuntimeError(f"fetch origin/{MAIN} 失败: {fetched.stderr.strip()}")
+        err = fetched.stderr.strip()
+        if not _is_network_unreachable(err):
+            raise RuntimeError(f"fetch origin/{MAIN} 失败: {err}")
+        # Network outage is different from an unknown remote state: use the
+        # last fetched origin/main only, and never invent or fetch a new one.
+        remote = git("rev-parse", f"origin/{MAIN}")
+        if not remote:
+            raise RuntimeError(
+                f"fetch origin/{MAIN} 失败且本地没有已知 origin/{MAIN}：{err}")
+        print(f"  ! origin 网络不可达，使用已知 origin/{MAIN} {remote[:8]} 本地收口：{err[:180]}")
     local = git("rev-parse", MAIN)
     remote = git("rev-parse", f"origin/{MAIN}")
     if local == remote:
@@ -2105,6 +2161,11 @@ def _align_main():
     ff = subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
                          local, remote], capture_output=True, text=True)
     if ff.returncode != 0:
+        rev = subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
+                              remote, local], capture_output=True, text=True)
+        if rev.returncode == 0:
+            print(f"  {MAIN} 本地领先已知 origin/{MAIN}，保留本地提交等待联网推送")
+            return
         raise RuntimeError(
             f"本地 {MAIN} 与 origin/{MAIN} 已分叉：local={local[:10]} remote={remote[:10]}；"
             "先人工合并/推送本地提交，再执行 land")
@@ -3244,7 +3305,7 @@ def cmd_land(args):
                                       capture_output=True, text=True).stdout.strip()
         manifest = _land_manifest(wt, branch, merge_commit, pre)
         _record_land_progress(wt, branch, merge_commit, gate_results, manifest, pre)
-        pushed = _push_main_with_one_retry(wt)
+        pushed = _push_main_with_offline_fallback(wt)
         if pushed:
             print("  " + pushed.replace("\n", "\n  "))
         new = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],

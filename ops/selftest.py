@@ -97,6 +97,17 @@ def main():
         if land.returncode != 0 or "拒绝自动 land" not in land.stdout:
             raise AssertionError(f"land 没有拒绝坏分支:\n{land.stdout}\n{land.stderr}")
 
+        # Regression: network errors are classified as transport failures;
+        # authentication failures stay fatal. The full land path below covers
+        # the actual local-main advance.
+        sys.path.insert(0, str(OPS))
+        import kgctl as _kgctl
+        if not _kgctl._is_network_unreachable(
+                "fatal: unable to access: Failed to connect to 127.0.0.1 port 9674"):
+            raise AssertionError("网络不可达没有被识别为可离线收口")
+        if _kgctl._is_network_unreachable("fatal: Authentication failed for repository"):
+            raise AssertionError("认证失败被错误地识别为网络抖动")
+
         good = kgctl(repo, trunk, "land", "codex/good", "--dry")
         if good.returncode != 0 or "无冲突" not in good.stdout:
             raise AssertionError(f"干净分支 dry-run 失败:\n{good.stdout}\n{good.stderr}")
