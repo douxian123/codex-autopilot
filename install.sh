@@ -196,6 +196,10 @@ cp "$REPO"/ops/*.py "$STAGE/ops/"
 # 运行时可能带非 .py 的配套文件（模板/示例配置）。一并复制，避免安装后缺文件。
 cp "$REPO"/ops/*.md "$STAGE/ops/" 2>/dev/null || true
 cp "$REPO"/ops/*.json "$STAGE/ops/" 2>/dev/null || true
+# 自测需要真实基线 fixture；嵌套目录不能靠通配符漏掉。
+if [ -d "$REPO/ops/selftest_fixtures" ]; then
+  cp -R "$REPO/ops/selftest_fixtures" "$STAGE/ops/"
+fi
 # Companion 源码随版本目录一起装：以后任何一次升级都能从版本目录重建菜单栏应用，
 # 不依赖原始仓库还在不在。
 mkdir -p "$STAGE/companion"
