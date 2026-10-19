@@ -916,7 +916,9 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
             job["proc"].returncode = 124
         finally:
             try:
-                job["fh"].close()
+                fh = job.get("fh")
+                if fh is not None:
+                    fh.close()
             except (AttributeError, OSError):
                 pass
             job.pop("fh", None)
