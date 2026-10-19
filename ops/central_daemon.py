@@ -1163,7 +1163,7 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     if dry:
         # 真预演：只问队列，不 tick（tick 会提交并推送真相层）、不 land、不通知。
         log("--- dry-run: 只预测本轮会 land 哪些分支 ---")
-        rc, qout = run_kgctl(["queue"])
+        rc, qout = run_kgctl(["queue", "--light"])
         clean, summary = parse_queue(qout)
         log_block("queue(dry)", rc, qout)
         log(f"[dry] 本轮会 land {min(len(clean), max_land)} / {len(clean)} 个: "
@@ -1213,7 +1213,7 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
 
     # Refresh truth after local work has already started. A slow/unreachable
     # remote must not hold worker dispatch behind the network timeout.
-    rc, out = run_kgctl(["tick"])
+    rc, out = run_kgctl(["tick", "--no-converge"], env_extra={"KG_TICK_LIGHT": "1"})
     log_block("tick", rc, out)
     convergence = parse_convergence(out)
     log(f"[converge] 可收拢族 {convergence['families']}，本轮新建 {convergence['made']}")
@@ -1221,7 +1221,8 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     # 归档「内容已全部在 main」的重复分支。这一步只写台账（加法），不动任何代码，
     # 也不动任何源分支，所以放进守护的安全子集。用 --fast（patch-id）保证秒级返回。
     superseded = 0
-    src, sout = run_kgctl(["supersede", "--go", "--fast"], timeout=SUPERSEDE_TIMEOUT)
+    src, sout = run_kgctl(["supersede", "--go", "--fast"], timeout=SUPERSEDE_TIMEOUT,
+                              env_extra={"KG_SUPERSEDE_LIGHT": "1"})
     log_block("supersede", src, sout)
     m = SUPERSEDE_DONE_RE.search(sout)
     if m:
@@ -1239,7 +1240,7 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     summary = {"other": 0, "merged": 0, "conflict": 0, "unresolved": 0}
     attempts = 0
     while auto_land and attempts < max_land:
-        rc, qout = run_kgctl(["queue"])
+        rc, qout = run_kgctl(["queue", "--light"])
         clean, summary = parse_queue(qout)
         if rc != 0:
             log_block("queue", rc, qout)
@@ -1292,7 +1293,8 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
             port_blocked[pb] = {"reason": po, "ts": _now()}
         # 移植推进了 main，可能让别的分支的改动「现在全部在 main 了」——再扫一次归档。
         if ported:
-            src2, sout2 = run_kgctl(["supersede", "--go", "--fast"], timeout=SUPERSEDE_TIMEOUT)
+            src2, sout2 = run_kgctl(["supersede", "--go", "--fast"], timeout=SUPERSEDE_TIMEOUT,
+                                       env_extra={"KG_SUPERSEDE_LIGHT": "1"})
             log_block("supersede(post-port)", src2, sout2)
             m2 = SUPERSEDE_DONE_RE.search(sout2)
             if m2:
@@ -1338,7 +1340,7 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
 
     # 落过盘就再刷一次控制面，让看板/快照反映新 main。
     if (landed or ported or resolve_landed_any or exec_landed) and not dry:
-        rc2, out2 = run_kgctl(["tick"])
+        rc2, out2 = run_kgctl(["tick", "--no-converge"], env_extra={"KG_TICK_LIGHT": "1"})
         log_block("tick(post-land)", rc2, out2)
 
     result = {"ts": time.time(), "iso": _now(), "dry": dry,

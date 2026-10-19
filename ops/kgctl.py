@@ -563,7 +563,12 @@ def cmd_supersede(args):
     """
     go = "--go" in args
     fast = "--fast" in args
-    rows = [r for r in scan() if r["kind"] != "MERGED"]
+    if os.environ.get("KG_SUPERSEDE_LIGHT") == "1":
+        # 自动周期只收口 exec 执行分支；不跑全量 scan()，否则 286 个分支逐个
+        # merge-tree/merge-base 又会把一轮拖到超时。land 的 merge-tree 门禁不受影响。
+        rows = [r for r in scan(light=True) if r["kind"] != "MERGED"]
+    else:
+        rows = [r for r in scan() if r["kind"] != "MERGED"]
     mode = "patch-id" if fast else "patch-id + 逐文件比对"
     print(f"扫描「分支独有内容是否已全部在 main」……（{mode}）\n")
     done = already_superseded()
@@ -925,14 +930,18 @@ def cmd_suggest(args):
 
 # ---------------------------------------------------------------- 分诊
 
-def scan():
+def scan(light=False):
     rows = []
     # 已裁决的源分支不再算「待裁决冲突」。resolve.json 里 landed/abandoned 的、
     # progress.jsonl 里 superseded 的，git 层还可能显示 ahead+conflict（它们本来就是
     # 没合进 main 的历史分支），只按 ahead/conflict 判定就会把它们反复捞回 C 组：
     # 队列数字虚高，守护进程每轮还重拆同一条已收口的分支。单列一档 SETTLED。
-    settled = _decided_resolve_branches() | already_superseded()
+    settled = set()
+    if not light:
+        settled = _decided_resolve_branches() | already_superseded()
     for b in codex_branches():
+        if light and not b.startswith("codex/exec-"):
+            continue
         # 收拢分支是自动挡生成的任务容器，不是待裁决的用户分支。把它排除在一屏 /
         # matrix / queue 之外，否则它自己带 conflict markers 时会被当成“残留冲突
         # 标记”反复报出来，用户会误以为还有一条工作没收拾。
@@ -1025,7 +1034,11 @@ def _acceptance_by_lane() -> dict:
 
 def cmd_queue(args):
     show_gates = "--gates" in (args or [])
-    rows = scan()
+    light = "--light" in (args or [])
+    if light:
+        rows = scan(light=True)
+    else:
+        rows = scan()
     clean = sorted([r for r in rows if r["kind"] == "CLEAN"],
                    key=lambda x: (x["ahead"], -x["behind"]))
     acc = _acceptance_by_lane() if show_gates else {}
@@ -3408,12 +3421,16 @@ def cmd_tick(args):
     _stage(3, "synthesize product mainline")
     _truth("synthesize")
 
-    rows = scan()
-    print("  merged=%d clean=%d conflict=%d unresolved=%d" % (
-        sum(1 for r in rows if r["kind"] == "MERGED"),
-        sum(1 for r in rows if r["kind"] == "CLEAN"),
-        sum(1 for r in rows if r["kind"] == "CONFLICT"),
-        sum(1 for r in rows if r["kind"] == "UNRESOLVED")))
+    if os.environ.get("KG_TICK_LIGHT") == "1":
+        rows = []
+        print("  (light tick: 跳过全量分支 merge-tree 扫描)")
+    else:
+        rows = scan()
+        print("  merged=%d clean=%d conflict=%d unresolved=%d" % (
+            sum(1 for r in rows if r["kind"] == "MERGED"),
+            sum(1 for r in rows if r["kind"] == "CLEAN"),
+            sum(1 for r in rows if r["kind"] == "CONFLICT"),
+            sum(1 for r in rows if r["kind"] == "UNRESOLVED")))
 
     _stage(4, "consolidate conflict families")
     if "--no-converge" not in args:
@@ -3422,11 +3439,15 @@ def cmd_tick(args):
         print("  （--no-converge：跳过）")
 
     _stage(5, "refresh board + dashboard")
-    cmd_board([])
-    cmd_dash([])
+    if os.environ.get("KG_TICK_LIGHT") == "1":
+        print("  (light tick: 跳过 CONTROL_BOARD/CONTROL_PLANE 渲染)")
+    else:
+        cmd_board([])
+        cmd_dash([])
 
     _stage(6, "write context packs for next tasks")
-    rows = scan()
+    if os.environ.get("KG_TICK_LIGHT") != "1":
+        rows = scan()
     branches = [r["branch"] for r in rows if r["kind"] == "CLEAN"][:20]
     branches += [g.get("branch") for g in load_convergence().get("groups", [])[:20]
                  if g.get("branch")]
