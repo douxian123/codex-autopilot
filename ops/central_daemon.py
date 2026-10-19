@@ -1052,9 +1052,24 @@ def _worker_alive(pid) -> bool:
 def _hydrate_exec_jobs(workers: dict) -> dict:
     """Restore live worker jobs after daemon restart without starting new sessions."""
     jobs = workers.setdefault("exec_jobs", {})
+    open_items = {item.get("id"): item for item in _ledger_open_items(100)}
     for rid, job in list(jobs.items()):
         if job.get("proc") is not None or job.get("recover"):
             continue
+        if job.get("item") is None:
+            item = open_items.get(rid)
+            if item is None:
+                # Persisted job whose ledger row is gone cannot be reaped safely.
+                # Keep the slot metadata out of active jobs instead of letting
+                # _reap_exec raise KeyError('item') every cycle.
+                job["partial"] = True
+                jobs.pop(rid, None)
+                continue
+            job["item"] = item
+        if not job.get("cfg"):
+            job["cfg"] = auto_exec_config()
+        if job.get("codex") is None:
+            job["codex"] = _codex_bin()
         if job.get("pid") and _worker_alive(job["pid"]):
             # A restarted daemon cannot wait() an unrelated process. Preserve
             # the slot and finish it once the PID disappears.
