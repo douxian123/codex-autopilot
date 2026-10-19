@@ -2107,6 +2107,8 @@ def _is_network_unreachable(text: str) -> bool:
         "temporary failure in name resolution",
         "proxy connect",
         "could not read from remote repository",
+        "operation too slow",
+        "less than 1 bytes/sec",
     )
     return any(s in lowered for s in signals)
 
