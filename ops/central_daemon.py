@@ -1056,7 +1056,7 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
     jobs = workers.setdefault("exec_jobs", {})
     open_items = {item.get("id"): item for item in _ledger_open_items(100)}
     for rid, job in list(jobs.items()):
-        if job.get("proc") is not None or job.get("recover"):
+        if job.get("proc") is not None:
             continue
         if job.get("item") is None:
             item = open_items.get(rid)
@@ -1072,6 +1072,8 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
             job["cfg"] = auto_exec_config()
         if job.get("codex") is None:
             job["codex"] = _codex_bin()
+        if job.get("recover"):
+            continue
         if job.get("pid") and _worker_alive(job["pid"]):
             # A restarted daemon cannot wait() an unrelated process. Preserve
             # the slot and finish it once the PID disappears.
@@ -1109,6 +1111,10 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
             continue
         result = _reap_exec(job, blocked)
         jobs.pop(rid, None)
+        if result.get("outcome") == "worker_done":
+            result = _finish_exec(job["item"], job["cfg"],
+                                  Path(job["repo"]), Path(job["worktree"]),
+                                  job["branch"], rid, result, blocked)
         results.append(result)
         # One land per cycle; another completed worker is collected next
         # cycle. This keeps the critical section serial and auditable.
