@@ -72,7 +72,7 @@
   .brand{width:34px;height:34px;border-radius:11px;background:linear-gradient(150deg,var(--brand-mark-a),var(--brand-mark-b));display:grid;place-items:center;flex:0 0 auto;box-shadow:0 1px 2px rgba(51,58,132,.30),inset 0 1px 0 rgba(255,255,255,.22)}
   .brand svg{width:18px;height:18px}
   .hdr-tx{flex:1 1 auto;min-width:0}
-  .hdr-title{font-size:15px;font-weight:650;letter-spacing:0;color:var(--ink)}
+  .hdr-title{font-size:16px;font-weight:650;letter-spacing:0;color:var(--ink)}
   .hdr-sub{font-size:12.5px;color:var(--ink-3);margin-top:1px}
   .hdr-act{display:flex;gap:7px;flex:0 0 auto}
   .iconbtn{width:31px;height:31px;border-radius:9px;border:1px solid var(--line);background:var(--surface);color:var(--ink-2);display:grid;place-items:center;cursor:pointer;padding:0;box-shadow:var(--shadow-1);transition:background .14s,color .14s,border-color .14s}
@@ -86,13 +86,28 @@
   .pulse{width:9px;height:9px;border-radius:50%;background:var(--acc);flex:0 0 auto;position:relative}
   body.s-working .pulse::after{content:"";position:absolute;inset:-4px;border-radius:50%;border:2px solid var(--acc);opacity:.5;animation:ping 1.6s ease-out infinite}
   @keyframes ping{0%{transform:scale(.6);opacity:.55}100%{transform:scale(1.5);opacity:0}}
-  .hero-state{font-size:17px;font-weight:650;color:var(--ink);letter-spacing:0}
+  .hero-state{font-size:20px;font-weight:680;color:var(--ink);letter-spacing:0}
   .hero-time{margin-left:auto;font-size:11.5px;color:var(--ink-3);white-space:nowrap;font-variant-numeric:tabular-nums}
   .hero-sub{font-size:13px;color:var(--ink-2);margin-top:7px}
+  .hero-context{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:11px;color:var(--ink-3);font-size:11.5px}
+  .hero-context span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .hero-context b{color:var(--ink-2);font-weight:600}
+  .northstar{display:flex;align-items:baseline;gap:7px;margin-top:11px;padding-top:10px;border-top:1px dashed var(--line)}
+  .northstar .ns-k{font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+  .northstar .ns-v{font-size:13px;font-weight:650;color:var(--ink)}
+  .northstar .ns-d{font-size:11.5px;color:var(--ink-3);margin-left:auto;font-variant-numeric:tabular-nums}
+  .northstar.unknown .ns-v{color:var(--ink-2);font-weight:500}
+  .northstar.missing{opacity:.6}
   .hero-bar{height:3px;border-radius:999px;background:var(--surface-3);margin-top:13px;overflow:hidden}
   .hero-bar span{display:block;height:100%;width:34%;border-radius:999px;background:var(--acc);opacity:0}
   body.s-working .hero-bar span{opacity:1;animation:slide 1.7s ease-in-out infinite}
   @keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(400%)}}
+  .triple{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:14px}
+  .triple .cell{border:1px solid var(--line);border-radius:var(--r-xs);background:var(--surface-2);padding:10px 11px;min-width:0}
+  .triple .cell .k{display:block;font-size:12px;font-weight:650;color:var(--ink-3);letter-spacing:.01em}
+  .triple .cell .v{display:block;margin-top:5px;font-size:15px;font-weight:640;color:var(--ink);line-height:1.4;overflow-wrap:anywhere}
+  .triple .cell.work{border-color:var(--brand-200);background:var(--brand-50)}
+  .triple .cell.work .v{color:var(--brand-700)}
   .execnow{margin-top:12px;border-radius:var(--r-xs);padding:9px 12px;background:var(--brand-50);color:var(--brand-700);font-size:12.5px;display:flex;gap:8px;align-items:flex-start;border:1px solid var(--brand-100)}
   .execnow[hidden]{display:none}
   .execnow .edot{width:7px;height:7px;border-radius:50%;background:var(--brand-500);margin-top:6px;flex:0 0 auto;animation:fade 1.5s ease-in-out infinite}
@@ -104,7 +119,7 @@
   .alert{--lv:var(--brand-600);display:flex;gap:11px;align-items:flex-start;border-radius:var(--r-sm);padding:12px 15px;margin-bottom:11px;font-size:13px;background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--lv);box-shadow:var(--shadow-1);color:var(--ink)}
   .alert .al-ic{width:17px;height:17px;flex:0 0 auto;margin-top:1px;color:var(--lv)}
   .alert .al-ic svg{width:17px;height:17px}
-  .alert .al-tx{flex:1 1 auto;min-width:0;font-weight:600;line-height:1.5;color:var(--ink)}
+  .alert .al-tx{flex:1 1 auto;min-width:0;font-size:14px;font-weight:600;line-height:1.5;color:var(--ink)}
   .alert.lv-ok{--lv:var(--ok)}
   .alert.lv-brand{--lv:var(--brand-600)}
   .alert.lv-warn{--lv:var(--warn)}
@@ -112,6 +127,58 @@
 
   /* ---- track ---- */
   .track{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px 14px;margin-bottom:11px;box-shadow:var(--shadow-1)}
+  .orientation{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:15px 18px 16px;margin-bottom:11px;box-shadow:var(--shadow-1)}
+  .orientation-head{display:flex;align-items:baseline;gap:8px;margin-bottom:13px}
+  .orientation-head h2{margin:0;font-size:15px;font-weight:650}
+  .orientation-head span{font-size:11.5px;color:var(--ink-3)}
+  .journey{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:0;position:relative}
+  .journey::before{content:"";position:absolute;left:9%;right:9%;top:14px;height:1px;background:var(--line)}
+  .journey-step{position:relative;z-index:1;display:grid;justify-items:center;gap:6px;text-align:center;min-width:0}
+  .journey-dot{width:29px;height:29px;border-radius:50%;display:grid;place-items:center;background:var(--surface);border:2px solid var(--line);color:var(--ink-3);font-size:11px;font-weight:700}
+  .journey-step.done .journey-dot{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)}
+  .journey-step.current .journey-dot{background:var(--brand-50);border-color:var(--brand);color:var(--brand-700);box-shadow:0 0 0 4px var(--brand-50)}
+  .journey-step.next .journey-dot{background:var(--warn-soft);border-color:var(--warn);color:var(--warn)}
+  .journey-label{font-size:11px;color:var(--ink-3);line-height:1.35;overflow-wrap:anywhere}
+  .journey-step.current .journey-label{color:var(--ink);font-weight:650}
+  .orientation-note{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);font-size:12px;color:var(--ink-2)}
+  .orientation-note b{color:var(--ink);font-weight:650}
+  .folders{display:grid;gap:9px}
+  .folder{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2);overflow:hidden}
+  .folder.active{border-color:var(--brand-200);background:var(--brand-50)}
+  .folder-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;padding:11px 13px}
+  .folder-title{font-size:13px;font-weight:650;color:var(--ink);overflow-wrap:anywhere}
+  .folder-meta{margin-top:3px;color:var(--ink-3);font-size:11.5px;overflow-wrap:anywhere}
+  .folder-source{margin-top:4px;color:var(--ink-3);font-size:11px;overflow-wrap:anywhere}
+  .folder-source b{color:var(--ink-2);font-weight:600}
+  .folder-error{margin-top:6px;color:var(--warn);font-size:11.5px;overflow-wrap:anywhere}
+  .folder-step{margin-top:5px;color:var(--brand-700);font-size:12px;font-weight:600;overflow-wrap:anywhere}
+  .folder-stats{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+  .fstat{font-size:10.5px;border-radius:999px;padding:2px 8px;background:var(--surface);border:1px solid var(--line);color:var(--ink-3);white-space:nowrap}
+  .fstat.warn{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
+  .fstat.live{background:var(--brand-50);border-color:var(--brand-100);color:var(--brand-700)}
+  .folder-work{border-top:1px solid var(--line-2);background:var(--surface)}
+  .folder-work-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:baseline;padding:7px 13px;border-bottom:1px solid var(--line-2);font-size:11.5px}
+  .folder-work-row:last-child{border-bottom:0}
+  .folder-work-row .id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink-3);font-size:10.5px}
+  .folder-work-row .name{min-width:0;color:var(--ink-2);overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .folder-work-row .state{color:var(--ink-3);white-space:nowrap}
+  .lane-group{margin-top:10px}
+  .lane-head{display:flex;align-items:baseline;gap:7px;margin:0 0 6px;color:var(--ink-3);font-size:11px;font-weight:650}
+  .lane-head span{font-weight:500}
+  .route-hierarchy{display:grid;grid-template-columns:minmax(0,1fr) 28px minmax(0,1.15fr) 28px minmax(0,1fr);align-items:stretch;gap:5px;margin-top:13px}
+  .route-node{min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:var(--r-xs);background:var(--surface-2)}
+  .route-node.active{border-color:var(--brand-200);background:var(--brand-50)}
+  .route-node .k{display:block;color:var(--ink-3);font-size:10.5px;font-weight:600}
+  .route-node .v{display:block;margin-top:3px;color:var(--ink);font-size:12px;font-weight:650;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .route-node.active .v{color:var(--brand-700)}
+  .route-arrow{display:grid;place-items:center;color:var(--ink-3);font-size:15px}
+
+  @media(max-width:520px){
+    .route-hierarchy{grid-template-columns:minmax(0,1fr);gap:4px}
+    .route-arrow{height:13px;transform:rotate(90deg)}
+    .triple{grid-template-columns:1fr}
+    .orientation{padding:13px}
+  }
   .stages{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
   .stage{border-radius:var(--r-xs);padding:11px 12px;background:var(--surface-2);border:1px solid var(--line)}
   .stage .n{font-size:23px;font-weight:700;line-height:1.1;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink-3);transition:color .2s}
@@ -126,14 +193,21 @@
   /* ---- card ---- */
   .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px 18px;margin-bottom:11px;box-shadow:var(--shadow-1)}
   .chead{display:flex;align-items:center;gap:9px;margin-bottom:12px}
-  .chead h2{font-size:13.5px;margin:0;color:var(--ink);font-weight:650;letter-spacing:0}
+  .chead h2{font-size:15px;margin:0;color:var(--ink);font-weight:650;letter-spacing:0}
   .chead .count{margin-left:auto;font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;background:var(--surface-3);border-radius:999px;padding:2px 9px;white-space:nowrap}
   .chead .count:empty{display:none}
   h2{font-size:13.5px}
-  .subhead{font-size:11px;font-weight:650;color:var(--ink-3);margin:14px 0 7px;letter-spacing:.02em}
+  .subhead{font-size:12.5px;font-weight:650;color:var(--ink-3);margin:14px 0 7px;letter-spacing:.01em}
   .subhead:first-child{margin-top:0}
   .meta{margin-top:10px;color:var(--ink-3);font-size:11.5px;line-height:1.6}
   .empty{color:var(--ink-3);font-size:12.5px}
+  .route-row{padding:9px 0;border-bottom:1px solid var(--line-2)}
+  .route-row:last-child{border-bottom:0}
+  .route-row .t{font-size:12.5px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+  .route-row .d{margin-top:4px;color:var(--ink-3);font-size:11.5px;overflow-wrap:anywhere}
+  .route-group{padding:8px 0;border-bottom:1px solid var(--line-2)}
+  .route-group:last-child{border-bottom:0}
+  .route-group .t{font-size:12px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
   .tiny{font-size:11.5px;color:var(--ink-3)}
 
   /* ---- chips ---- */
@@ -230,6 +304,21 @@
   .toast{font-size:12.5px;color:var(--ink-3);min-height:16px;flex:1 1 auto;text-align:right}
   .toast.ok{color:var(--ok)}
   .toast.err{color:var(--err)}
+  .intake{margin:14px 0 18px}
+  .intake label{display:block;font-size:13px;font-weight:600;margin-bottom:7px}
+  .intake textarea{display:block;width:100%;min-height:76px;resize:vertical;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font:inherit;padding:10px 12px}
+  .intake textarea:focus{outline:2px solid var(--brand-500);outline-offset:1px}
+  .intake-actions{display:flex;align-items:center;gap:10px;margin-top:8px}
+  .intake-actions .btn{border-radius:8px}
+  .nativeline{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
+  .projline{margin-top:8px;overflow-wrap:anywhere}
+  .nativeline #nativeState{font-size:12.5px;color:var(--ink-2);line-height:1.5}
+  .nativeline .btn{padding:5px 10px;font-size:12px;border-radius:8px;flex:0 0 auto}
+  .intake-state{font-size:12px;color:var(--ink-3);min-width:0;overflow-wrap:anywhere}
+  .overview-detail{margin:18px 0}
+  .overview-detail>summary{list-style:none;cursor:pointer;padding:11px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:13px;font-weight:600;color:var(--ink)}
+  .overview-detail>summary::-webkit-details-marker{display:none}
+  .overview-detail[open]>summary{margin-bottom:12px}
 
   /* switches */
   .switchrow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line-2)}
@@ -280,13 +369,39 @@
     </div>
   </header>
 
+  <section class="card" style="padding:11px 14px;margin-bottom:10px">
+    <div class="switchrow" style="padding:0;border:0">
+      <div><div class="t">Codex 自动挡</div><div class="d" id="masterState">正在读取状态…</div></div>
+      <button class="sw" id="masterToggle" aria-label="启用或关闭 Codex 自动挡" aria-pressed="true"></button>
+    </div>
+    <div class="d projline" id="projectLine">绑定项目：读取中…</div>
+  </section>
+
   <section class="hero">
     <div class="hero-top">
       <span class="pulse"></span>
       <span class="hero-state" id="stateLabel">读取中</span>
       <span class="hero-time" id="statusTime"></span>
     </div>
-    <div class="hero-sub" id="heroSub">正在读取状态…</div>
+    <div class="triple" aria-label="一眼三问">
+      <div class="cell">
+        <span class="k">① 现在是什么状态</span>
+        <span class="v" id="focusStatus">读取中…</span>
+      </div>
+      <div class="cell work">
+        <span class="k">② 现在在干嘛</span>
+        <span class="v" id="focusDoing">读取中…</span>
+      </div>
+      <div class="cell">
+        <span class="k">③ 现在在哪个步骤</span>
+        <span class="v" id="focusStep">读取中…</span>
+      </div>
+    </div>
+    <div class="northstar missing" id="northStar">
+      <span class="ns-k">首问闭环率</span>
+      <span class="ns-v" id="nsValue">取不到</span>
+      <span class="ns-d" id="nsDetail"></span>
+    </div>
     <div class="hero-bar" aria-hidden="true"><span></span></div>
     <div class="execnow" id="execNow" hidden><span class="edot"></span><span class="etx" id="execNowText"></span></div>
   </section>
@@ -296,41 +411,106 @@
     <span class="al-tx">读取中…</span>
   </div>
 
-  <section class="track">
-    <div class="stages">
-      <div class="stage" id="stageTodo"><div class="n" id="stTodo">0</div><div class="l">待处理</div></div>
-      <div class="stage" id="stageDoing"><div class="n" id="stDoing">0</div><div class="l">进行中</div></div>
-      <div class="stage" id="stageReview"><div class="n" id="stReview">0</div><div class="l">待你验收</div></div>
-      <div class="stage" id="stageStuck"><div class="n" id="stStuck">0</div><div class="l">卡住</div></div>
-    </div>
-    <div class="stats">
-      <span><b id="cReceived">0</b>收到反馈</span>
-      <span><b id="cLanded">0</b>已合入</span>
-      <span><b id="cResolved">0</b>已收口</span>
+  <section class="intake">
+    <label for="intakeText">把问题交给自动挡</label>
+    <textarea id="intakeText" placeholder="说说你发现的问题或想完成的事"></textarea>
+    <div class="intake-actions">
+      <button class="btn primary" id="intakeSubmit">提交任务</button>
+      <span class="intake-state" id="intakeState" role="status" aria-live="polite"></span>
     </div>
   </section>
 
-  <section class="card">
-    <div class="chead"><h2>正在做 · 还差什么</h2><span class="count" id="workCount"></span></div>
-    <div id="progressBox"></div>
+  <section class="card" id="folderCard">
+    <div class="chead"><h2>项目文件夹</h2><span class="count" id="folderNote"></span></div>
+    <div class="folders" id="folderBox"></div>
   </section>
 
-  <section class="card">
-    <div class="chead"><h2>产品路线</h2><span class="count" id="roadFrac"></span></div>
-    <div class="roadbar"><span id="roadFill"></span></div>
-    <div class="roadnow" id="roadNow"></div>
-    <details class="fold" style="margin-top:12px"><summary>每一步到哪了</summary><div class="foldbody"><div id="roadmapBox"></div></div></details>
+  <section class="orientation" id="routeOverview">
+    <div class="orientation-head">
+      <h2>工作项走到哪了</h2>
+      <span id="routeScope">项目 → 路线 → 工作项 → 验收</span>
+    </div>
+    <div class="journey" aria-label="需求到验收的产品路线">
+      <div class="journey-step done" id="journeyNeed">
+        <div class="journey-dot">1</div><div class="journey-label">需求</div>
+      </div>
+      <div class="journey-step done" id="journeyProduct">
+        <div class="journey-dot">2</div><div class="journey-label">项目</div>
+      </div>
+      <div class="journey-step current" id="journeyRoad">
+        <div class="journey-dot">3</div><div class="journey-label">路线</div>
+      </div>
+      <div class="journey-step" id="journeyWork">
+        <div class="journey-dot">4</div><div class="journey-label">工作项</div>
+      </div>
+      <div class="journey-step next" id="journeyAccept">
+        <div class="journey-dot">5</div><div class="journey-label">验收</div>
+      </div>
+    </div>
+    <div class="route-hierarchy" aria-label="项目路线与当前工作项">
+      <div class="route-node"><span class="k">项目</span><span class="v" id="hierProject">读取中…</span></div>
+      <div class="route-arrow" aria-hidden="true">→</div>
+      <div class="route-node active"><span class="k">产品路线 · 当前阶段</span><span class="v" id="hierRoad">读取中…</span></div>
+      <div class="route-arrow" aria-hidden="true">→</div>
+      <div class="route-node"><span class="k">当前工作项</span><span class="v" id="hierWork">读取中…</span></div>
+    </div>
+    <div class="orientation-note" id="orientationNote">正在读取当前路线…</div>
   </section>
 
   <section class="card" id="acceptCard">
-    <div class="chead"><h2>需要你验收</h2><span class="count" id="accNote"></span></div>
+    <div class="chead"><h2>需要你介入</h2><span class="count" id="accNote"></span></div>
     <div id="acceptBox"></div>
   </section>
 
-  <section class="card">
-    <div class="chead"><h2>产品主线</h2></div>
-    <div id="mainlineBox"></div>
+  <section class="card" id="recentCard">
+    <div class="chead"><h2>最近收口</h2><span class="count" id="recentNote"></span></div>
+    <div id="recentBox"></div>
   </section>
+
+  <details class="overview-detail">
+    <summary>工程详情与证据</summary>
+    <section class="track">
+      <div class="stages">
+        <div class="stage" id="stageTodo"><div class="n" id="stTodo">0</div><div class="l">待处理</div></div>
+        <div class="stage" id="stageDoing"><div class="n" id="stDoing">0</div><div class="l">进行中</div></div>
+        <div class="stage" id="stageReview"><div class="n" id="stReview">0</div><div class="l">待你验收</div></div>
+        <div class="stage" id="stageStuck"><div class="n" id="stStuck">0</div><div class="l">卡住</div></div>
+      </div>
+      <div class="stats">
+        <span><b id="cReceived">0</b>收到反馈</span>
+        <span><b id="cLanded">0</b>已合入</span>
+        <span><b id="cResolved">0</b>已收口</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="chead"><h2>全部工作项</h2><span class="count" id="workCount"></span></div>
+      <div class="meta" id="workContext" style="margin-top:-5px;margin-bottom:10px"></div>
+      <div id="progressBox"></div>
+    </section>
+
+    <section class="card">
+      <div class="chead"><h2>任务路线</h2><span class="count">Codex 原生工作区</span></div>
+      <div class="route-summary" id="routeSummary">任务由自动挡账本、泳道分支和 worktree 关联；Codex thread 的实时列表由宿主提供时再显示。</div>
+      <div class="nativeline">
+        <span id="nativeState">原生直连：正在读取…</span>
+        <button class="btn" id="nativeProbe" type="button">原生自检</button>
+      </div>
+      <details class="fold" style="margin-top:10px"><summary>路线与工作区详情</summary><div class="foldbody"><div id="routeBox"></div></div></details>
+    </section>
+
+    <section class="card">
+      <div class="chead"><h2>产品路线</h2><span class="count" id="roadFrac"></span></div>
+      <div class="roadbar"><span id="roadFill"></span></div>
+      <div class="roadnow" id="roadNow"></div>
+      <details class="fold" style="margin-top:12px"><summary>每一步到哪了</summary><div class="foldbody"><div id="roadmapBox"></div></div></details>
+    </section>
+
+    <section class="card">
+      <div class="chead"><h2>产品主线</h2></div>
+      <div id="mainlineBox"></div>
+    </section>
+  </details>
 
   <section class="ctrl">
     <button class="btn danger" id="pauseBtn">暂停</button>
@@ -438,6 +618,7 @@
   var pending = {};
   var nextId = 1;
   var state = null;
+  var loadError = null;
   if (/[?&]adv=1/.test(location.search)) document.body.classList.add("adv");
 
   function request(method, params){
@@ -467,6 +648,10 @@
 
   function callTool(name, args){
     return request("tools/call", {name:name, arguments:args||{}}).then(function(res){
+      if (res && res.isError) {
+        var message = res.content && res.content[0] && res.content[0].text;
+        throw new Error(message || "操作未完成");
+      }
       if (res && res.structuredContent) return res.structuredContent;
       var t = "";
       if (res && res.content && res.content[0]) t = res.content[0].text || "";
@@ -476,9 +661,40 @@
 
   function loadStatus(fast){
     return callTool("autopilot_status", {fast: fast !== false}).then(function(sc){
-      if (sc && sc.state) { state = sc; render(state); }
+      if (sc && sc.state) { state = sc; loadError = null; render(state); }
       return sc;
-    }).catch(function(){});
+    }).catch(function(err){
+      loadError = (err && err.message) || "状态服务没有响应";
+      renderLoadError();
+    });
+  }
+
+  // 取不到就说取不到，并告诉用户能做什么；绝不降级成 0 / 正常 / 一直读取中。
+  function renderLoadError(){
+    var reason = loadError || "状态服务没有响应";
+    document.body.className = "s-error";
+    setText("stateLabel", "读不到状态");
+    setText("subtitle", "自动挡面板读不到当前状态");
+    setText("statusTime", "更新失败");
+    setText("projectLine", "绑定项目：读不到");
+    setText("focusStatus", "读不到");
+    setText("focusDoing", "读不到");
+    setText("focusStep", "读不到");
+    var crBox = el("northStar");
+    if (crBox) {
+      crBox.classList.remove("missing");
+      crBox.classList.add("unknown");
+      setText("nsValue", "取不到");
+      setText("nsDetail", "状态读不到");
+      crBox.title = reason;
+    }
+    var box = el("need");
+    if (box) {
+      box.className = "alert lv-err";
+      var icn = box.querySelector(".al-ic"); if (icn) icn.innerHTML = IC_WARN;
+      var tx = box.querySelector(".al-tx"); if (tx) tx.textContent = "读不到自动挡状态：" + reason;
+    }
+    var en = el("execNow"); if (en) en.hidden = true;
   }
 
   function el(id){ return document.getElementById(id); }
@@ -515,8 +731,8 @@
     var wasAdv = document.body.classList.contains("adv");
     document.body.className = "s-" + (s.state || "idle") + (wasAdv ? " adv" : "");
     setText("stateLabel", s.state_label);
-    setText("heroSub", s.doing);
     setText("statusTime", "更新于 " + fmtTime(s.generated_at));
+    renderNorthStar(s.closure_rate);
     setAlert(s);
     renderExecNow(s.exec_now);
     var c = s.counters || {};
@@ -538,7 +754,28 @@
     if (s.paused) { pb.innerHTML = IC_PLAY + "<span>恢复运行</span>"; pb.className = "btn primary"; }
     else { pb.innerHTML = IC_PAUSE + "<span>暂停</span>"; pb.className = "btn danger"; }
     if (s.error) { el("subtitle").textContent = s.error; }
+    else if (!s.enabled) { el("subtitle").textContent = "自动挡已关闭，Codex 保持原生状态"; }
     else { el("subtitle").textContent = s.paused ? "已暂停，不再推进新工作" : "零散问题直接说，其余我来"; }
+    var master = el("masterToggle");
+    master.classList.toggle("on", !!s.enabled);
+    master.setAttribute("aria-pressed", s.enabled ? "true" : "false");
+    master.disabled = !!s.error;
+    setText("masterState", s.error || (!s.enabled ? "已关闭 · Codex 原生功能不受影响" :
+      (s.lifecycle === "draining" ? "暂停推进 · 当前安全操作可收尾" : "正在运行")));
+    var proj = s.project || {};
+    var pl = el("projectLine");
+    if (pl) {
+      pl.textContent = "绑定项目：" + (proj.name || "未绑定") + (proj.path ? "（" + proj.path + "）" : "");
+      pl.title = proj.path || "";
+    }
+    var ml = s.mainline || {};
+    var road = s.roadmap || [];
+    var activeRoad = road.filter(function(r){ return r.status === "doing"; })[0]
+      || road.filter(function(r){ return r.status === "next"; })[0];
+    setFocusAnswers(s, activeRoad);
+    el("runBtn").disabled = !s.enabled || !!s.paused;
+    el("pauseBtn").disabled = !s.enabled;
+    renderNative(s);
 
     var sw = s.switches || {};
     var sws = document.querySelectorAll(".sw");
@@ -561,9 +798,175 @@
     renderJudgments(s.judgments || []);
     renderVerify(s.last_verification);
     renderRoadmap(s.roadmap || [], s.mainline || {});
+    renderFolders(s.project_folders || {}, s);
+    renderOrientation(s);
     renderAcceptance(humanAcc, s.machine_verified || []);
+    renderRecent(s.recent_completed || []);
     renderProgress(doingItems, s.todo_items || [], todoCount);
+    renderRoute(s.route || {});
     renderMainline(s.mainline || {});
+    var intakeButton = el("intakeSubmit");
+    if (intakeButton) intakeButton.disabled = !s.enabled || !!s.error;
+  }
+
+  var LANE_LABEL = {design:"体验 / 视觉", bug:"Bug", arch:"架构", gate:"门禁", reprocess:"待重排"};
+  function laneLabel(lane){ return LANE_LABEL[lane] || lane || "未分泳道"; }
+  function renderFolders(folders, s){
+    var box = el("folderBox"); if (!box) return;
+    box.innerHTML = "";
+    var list = (folders && folders.folders) || [];
+    var note = el("folderNote");
+    if (note) note.textContent = list.length ? (list.length + " 个项目") : "";
+    if (!list.length){
+      box.innerHTML = '<div class="empty">还没有项目文件夹。当前绑定项目会作为一个文件夹显示。</div>';
+      return;
+    }
+    list.forEach(function(f){
+      var card = document.createElement("div");
+      card.className = "folder" + (f.active ? " active" : "");
+      var head = document.createElement("div"); head.className = "folder-head";
+      var info = document.createElement("div");
+      var title = document.createElement("div"); title.className = "folder-title";
+      title.textContent = f.name || f.id || "未命名项目";
+      var meta = document.createElement("div"); meta.className = "folder-meta";
+      meta.textContent = [f.product || "", f.path || ""].filter(Boolean).join(" · ");
+      var step = document.createElement("div"); step.className = "folder-step";
+      step.textContent = "当前步骤：" + (f.current_step || "路线待拆解");
+      var source = document.createElement("div"); source.className = "folder-source";
+      var sourceThread = f.source_thread_id || "";
+      source.textContent = "来源对话 " + (sourceThread ? sourceThread.slice(0, 12) : "未标注来源") +
+        " · 路线 " + (f.current_step || "待拆解");
+      info.appendChild(title); info.appendChild(meta); info.appendChild(step); info.appendChild(source);
+      if (f.readable === false){
+        var err = document.createElement("div"); err.className = "folder-error";
+        err.textContent = "项目账本读不到：" + (f.read_error || "未知原因");
+        info.appendChild(err);
+      }
+      var stats = document.createElement("div"); stats.className = "folder-stats";
+      var c = f.counts || {};
+      [["doing", c.doing || 0, "进行"], ["todo", c.todo || 0, "待办"], ["human", c.human || 0, "验收"]].forEach(function(row){
+        if (!row[1] && row[0] !== "doing") return;
+        var tag = document.createElement("span");
+        tag.className = "fstat" + (row[0] === "human" && row[1] ? " warn" : row[0] === "doing" && row[1] ? " live" : "");
+        tag.textContent = row[2] + " " + row[1];
+        stats.appendChild(tag);
+      });
+      head.appendChild(info); head.appendChild(stats); card.appendChild(head);
+      var work = document.createElement("div"); work.className = "folder-work";
+      // 工作项只在这里展开一次；路线图只负责「现在走到哪一步」，不复制明细。
+      var doingRows = (f.doing_items || []).map(function(x){ return {x:x, state:"进行中"}; });
+      var todoRows = (f.todo_items || []).map(function(x){ return {x:x, state:"待处理"}; });
+      var rows = doingRows.concat(todoRows);
+      if (!rows.length){
+        var empty = document.createElement("div"); empty.className = "folder-work-row";
+        empty.textContent = (f.human_acceptance || []).length
+          ? "工作项已完成，下面需要你验收。"
+          : "当前项目没有未决工作项。";
+        work.appendChild(empty);
+      } else {
+        rows.slice(0, 4).forEach(function(row){
+          var line = document.createElement("div"); line.className = "folder-work-row";
+          var id = document.createElement("span"); id.className = "id"; id.textContent = row.x.id || "";
+          var name = document.createElement("span"); name.className = "name";
+          name.textContent = (laneLabel(row.x.lane || row.x.kind)) + " · " + (row.x.title || row.x.detail || "未命名工作项") +
+            (row.x.source_thread_id ? " · 来自对话 " + String(row.x.source_thread_id).slice(0, 12) : "");
+          var state = document.createElement("span"); state.className = "state"; state.textContent = row.state;
+          line.appendChild(id); line.appendChild(name); line.appendChild(state); work.appendChild(line);
+        });
+      }
+      card.appendChild(work); box.appendChild(card);
+    });
+  }
+
+  function renderOrientation(s){
+    var proj = s.project || {};
+    var ml = s.mainline || {};
+    var road = s.roadmap || [];
+    var current = road.filter(function(r){ return r.status === "doing"; })[0]
+      || road.filter(function(r){ return r.status === "next"; })[0];
+    var doingItems = s.doing_items || [];
+    var todoItems = s.todo_items || [];
+    var doing = doingItems.length || (s.exec_now ? 1 : 0);
+    var human = (s.human_acceptance || []).length;
+    var blocked = s.state === "blocked" || s.state === "error";
+    var stage = current ? (current.step || "当前路线") : "路线待拆解";
+    var product = ml.product || proj.name || "当前项目";
+    var projectName = proj.name || (proj.path ? proj.path.split("/").pop() : "未绑定项目");
+    var currentWork = doingItems[0] || s.exec_now || todoItems[0] || null;
+    var workTitle = currentWork
+      ? (currentWork.title || currentWork.detail || "正在处理")
+      : human ? "等待人工验收" : blocked ? "等待解除卡点" : "等待下一条需求";
+    var projectNode = el("hierProject");
+    var roadNodeLabel = el("hierRoad");
+    var workNodeLabel = el("hierWork");
+    if (projectNode) { projectNode.textContent = projectName; projectNode.title = proj.path || projectName; }
+    if (roadNodeLabel) { roadNodeLabel.textContent = product + " · " + stage; roadNodeLabel.title = product + " · " + stage; }
+    if (workNodeLabel) { workNodeLabel.textContent = workTitle; workNodeLabel.title = workTitle; }
+    var note = el("orientationNote");
+    if (note){
+      var action = doing ? "正在推进工作项" : human ? "等待你验收" : blocked ? "卡住，等待处理" : "等待下一条需求";
+      note.textContent = product + " · 当前路线：" + stage + " · " + action + "。";
+    }
+    var ids = ["journeyNeed","journeyProduct","journeyRoad","journeyWork","journeyAccept"];
+    ids.forEach(function(id){ var n = el(id); if (n) n.className = "journey-step"; });
+    var roadNode = el("journeyRoad"), workNode = el("journeyWork"), acceptNode = el("journeyAccept");
+    if (roadNode) roadNode.classList.add(doing || human || blocked ? "done" : "current");
+    if (doing && workNode) workNode.classList.add("current");
+    else if (workNode) workNode.classList.add("next");
+    if (human || blocked) {
+      if (workNode) workNode.classList.remove("next");
+      if (workNode && doing) workNode.classList.add("done");
+      if (acceptNode) acceptNode.classList.add("current");
+    } else if (acceptNode) {
+      acceptNode.classList.add("next");
+    }
+    var wc = el("workContext");
+    if (wc) wc.textContent = (ml.product || proj.name || "当前项目") + " · " + stage;
+  }
+
+  function setFocusAnswers(s, activeRoad){
+    var proj = s.project || {};
+    var doingItems = s.doing_items || [];
+    var human = s.human_acceptance || [];
+    var blocked = s.blocked || {};
+    var hasBlock = (blocked.failures && blocked.failures.length) ||
+      (blocked.resolve && blocked.resolve.length) || (blocked.exec && blocked.exec.length);
+    var statusText = (s.enabled === false ? "已关闭" : (s.paused ? "已暂停" : (s.error ? "异常" : "运行中"))) +
+      " · " + (s.state_label || "读取中");
+    if (s.error) statusText = "异常 · " + s.error;
+    else if (human.length) statusText = "运行中 · 等你验收";
+    else if (hasBlock) statusText = "运行中 · 有卡点要处理";
+    var workText;
+    if (human.length) workText = "等待你验收：" + (human[0].title || "人工验收");
+    else if (s.exec_now) workText = (s.exec_now.id ? s.exec_now.id + " · " : "") + (s.exec_now.title || "正在自动实现");
+    else if (doingItems.length) workText = doingItems[0].title || doingItems[0].detail || "正在处理工作项";
+    else if (hasBlock) workText = "等待处理卡点";
+    else workText = "当前没有进行中的工作";
+    var stepText = activeRoad
+      ? (activeRoad.step || "当前路线") + " · " + (activeRoad.status === "doing" ? "进行中" : "下一步")
+      : "路线待拆解 · 项目：" + (proj.name || "未绑定");
+    setText("focusStatus", statusText);
+    setText("focusDoing", workText);
+    setText("focusStep", stepText);
+  }
+
+  // 北极星首问闭环率：只有算得出才给数字；算不出就明写「取不到」，
+  // 绝不用 0% / 正常去冒充（「没有」和「不知道」是两回事）。
+  function renderNorthStar(cr){
+    var box = el("northStar"), val = el("nsValue"), det = el("nsDetail");
+    if (!box) return;
+    cr = cr || {};
+    box.classList.remove("unknown", "missing");
+    if (cr.status === "ok"){
+      setText("nsValue", (cr.rate_pct == null ? "—" : Number(cr.rate_pct).toFixed(1) + "%"));
+      setText("nsDetail", cr.numerator + "/" + cr.denominator + " 已闭环");
+      box.title = cr.policy || "";
+    } else {
+      box.classList.add(cr.status === "no_data" ? "missing" : "unknown");
+      setText("nsValue", "取不到");
+      setText("nsDetail", cr.status === "no_data" ? "还没有需求台账" : "指标算不出来");
+      box.title = cr.reason || "闭环率取不到，不能当成 0% 或正常";
+    }
   }
 
   function renderExecNow(en){
@@ -749,7 +1152,7 @@
     var box = el("progressBox"); if (!box) return; box.innerHTML = "";
     var cnt = el("workCount"); if (cnt) cnt.textContent = (doing.length + todoCount) ? ((doing.length + todoCount) + " 项") : "";
     if (!doing.length && !todo.length){
-      box.innerHTML = '<div class="empty">当前没有未决的工作项。你提的需求会先进问题台账，再从这里被推进到收口。</div>';
+      box.innerHTML = '<div class="empty">当前没有未决工作项。新需求会先归入项目路线，再拆成可追踪的工作项。</div>';
       return;
     }
     if (doing.length){
@@ -765,6 +1168,106 @@
       todo.forEach(function(it){ wrap2.appendChild(chip(it)); });
       box.appendChild(h2); box.appendChild(wrap2);
     }
+  }
+
+  function renderNative(s){
+    var box = el("nativeState"); if (!box) return;
+    var native = (s && s.native) || {};
+    var probe = native.last_probe || null;
+    var text = native.label || (native.socket_present ? "原生直连：未自检" : "原生直连：Codex 未运行");
+    if (probe && probe.at) { text += "（自检于 " + probe.at + "）"; }
+    box.textContent = text;
+    var tip = (probe && probe.reason) ? probe.reason : "";
+    if (probe && probe.hint && probe.blocked_by === "remote-control-chatgpt-pairing") {
+      tip = (tip ? tip + " " : "") + probe.hint;
+    }
+    var btn = el("nativeProbe");
+    if (btn) { btn.disabled = false; btn.title = tip || "真跑一次原生直连自检"; }
+  }
+
+  function renderRoute(route){
+    var box = el("routeBox"); if (!box) return; box.innerHTML = "";
+    route = route || {};
+    var note = document.createElement("div"); note.className = "empty";
+    note.textContent = route.thread_note || "Codex 原生窗口由宿主维护；这里只展示已有的真实关联。";
+    box.appendChild(note);
+    var native = route.native || {};
+    var threads = native.threads || [];
+    var sections = native.sections || [];
+    if (sections.length){
+      sections.forEach(function(section){
+        var group = document.createElement("div"); group.className = "route-group";
+        var heading = document.createElement("div"); heading.className = "t";
+        heading.textContent = section.name || "未命名窗口集合";
+        group.appendChild(heading);
+        var members = threads.filter(function(thread){
+          var sid = thread.sectionId || (thread.section && thread.section.id);
+          return sid === section.id;
+        });
+        if (!members.length){
+          var empty = document.createElement("div"); empty.className = "d";
+          empty.textContent = "暂无窗口";
+          group.appendChild(empty);
+        }
+        members.forEach(function(thread){
+          var item = document.createElement("div"); item.className = "d";
+          item.textContent = thread.name || thread.title || thread.id || "Codex 对话";
+          group.appendChild(item);
+        });
+        box.appendChild(group);
+      });
+    } else if (threads.length){
+      var historical = document.createElement("div"); historical.className = "empty";
+      historical.textContent = "Codex 对话历史（只读）";
+      box.appendChild(historical);
+      threads.slice(0, 12).forEach(function(thread){
+        var item = document.createElement("div"); item.className = "route-row";
+        var title = document.createElement("div"); title.className = "t";
+        title.textContent = thread.name || thread.title || "Codex 对话";
+        var meta = document.createElement("div"); meta.className = "d";
+        meta.textContent = thread.id || "";
+        item.appendChild(title); item.appendChild(meta); box.appendChild(item);
+      });
+    }
+    var tasks = route.tasks || [];
+    if (!tasks.length){
+      var empty = document.createElement("div"); empty.className = "empty";
+      empty.textContent = "当前没有未决子任务。新需求会从主司令窗进入，再按泳道进入独立 worktree。";
+      box.appendChild(empty);
+      return;
+    }
+    tasks.forEach(function(t){
+      var row = document.createElement("div"); row.className = "route-row";
+      var title = document.createElement("div"); title.className = "t";
+      title.textContent = (t.id ? t.id + " · " : "") + (t.title || "未命名任务");
+      var meta = document.createElement("div"); meta.className = "d";
+      var bits = [];
+      if (t.status) bits.push(t.status);
+      if (t.lane) bits.push("泳道 " + t.lane);
+      if (t.branch) bits.push(t.branch);
+      if (t.worktree) bits.push(t.worktree);
+      if (t.thread_id) bits.push("Codex window " + t.thread_id);
+      meta.textContent = bits.join(" · ") || "已进入账本，等待路由";
+      row.appendChild(title); row.appendChild(meta); box.appendChild(row);
+    });
+  }
+
+  function renderRecent(list){
+    var box = el("recentBox"); if (!box) return; box.innerHTML = "";
+    var note = el("recentNote");
+    list = list || [];
+    if (note) note.textContent = list.length ? (list.length + " 项") : "";
+    if (!list.length){
+      box.innerHTML = '<div class="empty">还没有收口记录。走完一次「修复 → 验证 → 关闭台账」后会出现在这里。</div>';
+      return;
+    }
+    var ul = document.createElement("ul"); ul.className = "list";
+    list.slice(0,5).forEach(function(text){
+      var li = document.createElement("li");
+      var g = document.createElement("span"); g.className = "grow"; g.textContent = text;
+      li.appendChild(g); ul.appendChild(li);
+    });
+    box.appendChild(ul);
   }
 
   function renderAcceptance(human, machine){
@@ -911,7 +1414,18 @@
     if (msg){ clearTimeout(toast._t); toast._t = setTimeout(function(){ t.textContent=""; t.className="toast"; }, 6000); }
   }
 
+  el("masterToggle").addEventListener("click", function(){
+    var target = !(state && state.enabled);
+    this.disabled = true;
+    callTool("autopilot_control", {action:target ? "enable" : "disable"}).then(function(sc){
+      if (sc && sc.state) { state = sc; render(state); }
+      toast(target ? "自动挡已开启" : "自动挡已关闭", "ok");
+    }).catch(function(e){ toast("操作失败：" + (e && e.message || e), "err"); })
+      .then(function(){ el("masterToggle").disabled = false; });
+  });
+
   el("pauseBtn").addEventListener("click", function(){
+    if (!state || !state.enabled) return;
     var pausing = !(state && state.paused);
     var btn = this; btn.disabled = true;
     callTool("autopilot_control", {action: pausing ? "pause" : "resume"}).then(function(sc){
@@ -928,6 +1442,33 @@
       return loadStatus(false);
     }).catch(function(e){ toast("检查失败：" + (e && e.message || e), "err"); })
       .then(function(){ btn.disabled = false; });
+  });
+
+  el("intakeSubmit").addEventListener("click", function(){
+    var field = el("intakeText");
+    var text = field.value.trim();
+    if (!text) {
+      el("intakeState").textContent = "先写下要处理的事";
+      return;
+    }
+    var button = el("intakeSubmit");
+    button.disabled = true;
+    el("intakeState").textContent = "正在加入自动挡任务…";
+    callTool("intake_request", {text:text, kind:"unknown"}).then(function(result){
+      field.value = "";
+      el("intakeState").textContent = result.__text__ || "已加入任务并开始归类";
+      return loadStatus(false);
+    }).catch(function(error){
+      el("intakeState").textContent = "没有提交成功：" + (error.message || error);
+    }).then(function(){
+      button.disabled = !(state && state.enabled);
+    });
+  });
+  el("intakeText").addEventListener("keydown", function(event){
+    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+      event.preventDefault();
+      el("intakeSubmit").click();
+    }
   });
 
   Array.prototype.forEach.call(document.querySelectorAll(".sw"), function(sw){
@@ -952,6 +1493,19 @@
   });
 
   el("refresh").addEventListener("click", function(e){ e.preventDefault(); toast("已刷新"); loadStatus(); });
+
+  el("nativeProbe").addEventListener("click", function(){
+    var btn = this; btn.disabled = true;
+    var box = el("nativeState");
+    if (box) { box.textContent = "原生直连：正在自检…"; }
+    callTool("codex_native_probe", {}).then(function(res){
+      var probe = (res && res.last_probe) || res || {};
+      if (probe.connected) { toast("原生直连已连通：可以把任务派进 Codex 窗口", "ok"); }
+      else { toast("原生直连不可用：" + (probe.reason || "原因见原生直连这一行"), "err"); }
+      return loadStatus(false);
+    }).catch(function(e){ toast("自检失败：" + (e && e.message || e), "err"); })
+      .then(function(){ btn.disabled = false; });
+  });
 
   el("exportBtn").addEventListener("click", function(){
     var blob = new Blob([document.documentElement.outerHTML], {type:"text/html"});

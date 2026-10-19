@@ -28,6 +28,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULTS = {
+    # 总开关独立于旧 paused：关闭外挂不改各细分自动动作设置。
+    "enabled": True,
     "paused": False,
     "auto_land": True,
     "auto_resolve": True,
@@ -68,10 +70,12 @@ def load() -> dict:
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
+        out["enabled"] = False
         out["paused"] = True
         out["error"] = f"control.json 读不出来（{exc}）；已按「暂停」处理，避免误操作"
         return out
     if not isinstance(data, dict):
+        out["enabled"] = False
         out["paused"] = True
         out["error"] = "control.json 不是对象；已按「暂停」处理"
         return out
@@ -105,6 +109,54 @@ def set_keys(**kwargs) -> dict:
 
 def is_paused() -> bool:
     return bool(load().get("paused"))
+
+
+def status(cfg: dict | None = None) -> str:
+    """返回用户可见的总状态；配置损坏始终 fail-closed。"""
+    cfg = cfg or load()
+    if cfg.get("error"):
+        return "error"
+    if not cfg.get("enabled", True):
+        return "off"
+    return "on"
+
+
+def is_enabled() -> bool:
+    """总开关与旧暂停开关都必须允许，自动动作才可启动。"""
+    cfg = load()
+    return bool(cfg.get("enabled", True)) and not bool(cfg.get("error"))
+
+
+def mutation_guard() -> dict | None:
+    """Return a structured refusal when the add-on is off or configuration is unsafe."""
+    cfg = load()
+    if cfg.get("error"):
+        return {
+            "code": "AUTOPILOT_CONTROL_ERROR",
+            "message": cfg["error"],
+        }
+    if not cfg.get("enabled", True):
+        return disabled_error()
+    return None
+
+
+def lifecycle_status(cfg: dict | None = None) -> str:
+    """Map the compatible enabled/paused flags to the public lifecycle vocabulary."""
+    cfg = cfg or load()
+    if cfg.get("error"):
+        return "error"
+    if not cfg.get("enabled", True):
+        return "off"
+    if cfg.get("paused"):
+        return "draining"
+    return "on"
+
+
+def disabled_error() -> dict:
+    return {
+        "code": "AUTOPILOT_DISABLED",
+        "message": "Codex 自动挡已关闭；重新开启后可继续处理，现有任务与工作区未改动。",
+    }
 
 
 def append_event(kind: str, **fields) -> None:

@@ -19,8 +19,10 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -30,6 +32,31 @@ OPS_DIR = Path(__file__).resolve().parent
 REPO = OPS_DIR.parent
 KGCTL = OPS_DIR / "kgctl.py"
 TRUTHCTL = OPS_DIR / "truthctl.py"
+
+
+def _closure_rate_summary():
+    """北极星「首问闭环率」的三态摘要。
+
+    取不到就说取不到：这里绝不把失败降级成 0% 或「正常」，否则面板会用一个
+    假绿灯掩盖「根本没在测」这件事（本项目自己的硬规则 10）。
+    """
+    try:
+        import closure_rate
+        res = closure_rate.compute(os.environ.get("KG_REPO") or REPO)
+    except Exception as exc:  # 模块坏了本身就是要上报的问题，不能静默成「没问题」
+        res = {"status": "unknown",
+               "reason": "闭环率计算失败（%s）" % exc,
+               "denominator": 0, "numerator": 0, "rate_pct": None}
+    return res
+
+
+def _closure_rate_line(res):
+    """给模型/人看的一行；算不出来必须说「取不到」，不能伪装成 0% 或正常。"""
+    res = res or {}
+    if res.get("status") == "ok":
+        return "北极星首问闭环率：%s%%（%s/%s 已闭环）" % (
+            res.get("rate_pct"), res.get("numerator"), res.get("denominator"))
+    return "北极星首问闭环率取不到：%s" % (res.get("reason") or "原因未记录")
 
 
 def _server_version() -> str:
@@ -48,6 +75,7 @@ SERVER_VERSION = _server_version()
 from plugin_binding import apply_plugin_env  # noqa: E402
 
 import control_state  # noqa: E402
+import codex_native  # noqa: E402
 
 try:
     import exec_status  # noqa: E402
@@ -331,7 +359,7 @@ TOOLS = [
     },
     {
         "name": "autopilot_status",
-        "description": "自动挡的当前状态：是否暂停、三个自动开关、常驻是否在跑、正在做什么/为什么、最近替你完成了什么、累计收到多少反馈与收口多少项、是否有需要你拍板的事。面板用它渲染；模型回答“自动挡现在在干嘛 / 开着吗 / 做了什么”时也用它。默认 fast=true 只读本机缓存，不发命令、不改任何东西。",
+        "description": "自动挡的当前状态：总开关 on/draining/off/error、自动开关、Codex 原生 task/worktree 映射（仅已有真实记录）、正在做什么和需要处理的事项。面板用它渲染；fast=true 只读缓存。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -342,19 +370,91 @@ TOOLS = [
     },
     {
         "name": "autopilot_control",
-        "description": "控制自动挡。action=pause 随时停（不再启动新工作，当前 Git 操作安全收尾）；resume 恢复；run_once 立刻检查一轮；set_auto_land/set_auto_resolve/set_auto_port 真开关三个自动动作；enable_daemon/disable_daemon 开关后台常驻。返回控制后的最新状态。",
+        "description": "控制自动挡总开关与运行状态。disable 关闭外挂并拒绝新自动工作，enable 恢复；pause 暂停推进但允许安全收尾，resume 恢复；其余 action 控制自动动作和后台常驻。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["pause", "resume", "run_once", "set_auto_land",
+                    "enum": ["enable", "disable", "pause", "resume", "run_once", "set_auto_land",
                              "set_auto_resolve", "set_auto_port", "set_auto_exec",
                              "enable_daemon", "disable_daemon"],
                 },
                 "enabled": {"type": "boolean", "description": "set_auto_* 的目标值"},
             },
             "required": ["action"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "codex_native_threads",
+        "description": "只读查看 Codex 对话与窗口集合；优先读取独立 app-server，连接不可用时降级到本地只读历史。独立 app-server 不保证等同于当前桌面窗口实时状态。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "codex_native_probe",
+        "description": "真跑一次「原生直连」自检：桌面端控制 socket 通不通、能不能把任务派进 Codex 窗口。结果会记下来，面板显示的是这次实测结果而不是猜测。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "codex_native_create_section",
+        "description": "通过 Codex app-server 创建原生 thread section；属于显式写操作，自动挡关闭时拒绝。独立 app-server 不保证立即同步到当前桌面窗口。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "codex_native_start_thread",
+        "description": "通过 Codex app-server 创建对话窗口。必须提供真实项目 cwd；可选 section_id 指定 Codex 原生窗口集合。该接口的结果不保证立即出现在当前桌面窗口。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"cwd": {"type": "string"}, "section_id": {"type": "string"}},
+            "required": ["cwd"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "codex_native_move_thread",
+        "description": "通过 Codex thread/section/move 调整真实对话窗口的集合归属；section_id 为空表示移出集合。独立 app-server 不保证立即同步到当前桌面窗口。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "thread_id": {"type": "string"},
+                "section_id": {"type": ["string", "null"]},
+                "before_thread_id": {"type": "string"},
+            },
+            "required": ["thread_id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "codex_native_dispatch_task",
+        "description": "创建一个真实 Codex 原生子对话并立即用 turn/start 派活；成功后把 thread/turn 与自动挡台账关联。未指定窗口集合时自动归入本项目的集合（同名复用，不重复创建）；集合操作失败不拦派活，但会如实记进路线记录。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ledger_id": {"type": "string"},
+                "cwd": {"type": "string"},
+                "prompt": {"type": "string"},
+                "section_id": {"type": "string"},
+            },
+            "required": ["ledger_id", "cwd", "prompt"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "codex_native_follow_up",
+        "description": "向已关联的 Codex 原生子对话继续派活；这是 follow-up，不创建第二份任务账本。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "thread_id": {"type": "string"},
+                "prompt": {"type": "string"},
+            },
+            "required": ["thread_id", "prompt"],
             "additionalProperties": False,
         },
     },
@@ -404,6 +504,7 @@ TOOLS = [
                 "set": {
                     "type": "object",
                     "properties": {
+                        "enabled": {"type": "boolean"},
                         "paused": {"type": "boolean"},
                         "auto_land": {"type": "boolean"},
                         "auto_resolve": {"type": "boolean"},
@@ -435,6 +536,11 @@ SETTINGS_UPDATE_TOOL = "autopilot_settings_update"
 SETTINGS_SCHEMA = {
     "type": "object",
     "properties": {
+        "enabled": {
+            "type": "boolean",
+            "title": "启用 Codex 自动挡",
+            "description": "关闭后停止自动挡的 intake、调度与后台动作；已有任务和工作区保留。",
+        },
         "paused": {
             "type": "boolean",
             "title": "暂停自动挡",
@@ -466,12 +572,13 @@ SETTINGS_SCHEMA = {
             "description": "用系统自带的常驻机制定时检查；关掉后只在对话里手动触发。",
         },
     },
-    "required": ["paused", "auto_land", "auto_resolve", "auto_port", "auto_exec",
+    "required": ["enabled", "paused", "auto_land", "auto_resolve", "auto_port", "auto_exec",
                  "daemon_enabled"],
 }
 
 SETTINGS_LAYOUT = [
     {"kind": "group", "title": "运行", "items": [
+        {"kind": "property", "property": "enabled"},
         {"kind": "property", "property": "paused"},
         {"kind": "tool", "tool": "autopilot_run_once",
          "description": "立刻检查一轮，不改任何开关"},
@@ -500,27 +607,24 @@ def _daemon_state():
 
 
 def _daemon_live():
-    """常驻是否真在跑：launchd 的 plist 存在，且实例锁背后确实有一个活进程。"""
-    if not (Path.home() / "Library" / "LaunchAgents"
-            / "com.codex-autopilot.daemon.plist").exists():
-        return False, None
-    lock = RUNTIME / "daemon.lock"
+    """从 launchd 读取存活状态和绑定项目，不用受沙箱限制的 kill(pid, 0)。"""
+    uid = os.getuid() if hasattr(os, "getuid") else 0
     try:
-        raw = lock.read_text(encoding="utf-8").strip()
-    except OSError:
-        return True, None
-    pid = None
-    for tok in raw.replace("\n", " ").split():
-        if tok.isdigit():
-            pid = int(tok)
-            break
-    if pid is None:
-        return True, None
-    try:
-        os.kill(pid, 0)
-        return True, pid
-    except (OSError, ProcessLookupError):
-        return False, pid
+        result = subprocess.run(
+            ["launchctl", "print", f"gui/{uid}/com.codex-autopilot.daemon"],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False, None, None
+    if result.returncode != 0:
+        return False, None, None
+    text = result.stdout or ""
+    state = re.search(r"(?m)^\s*state = (\w+)\s*$", text)
+    pid_match = re.search(r"(?m)^\s*pid = (\d+)\s*$", text)
+    repo_match = re.search(r"(?m)^\s*KG_REPO => (.+?)\s*$", text)
+    pid = int(pid_match.group(1)) if pid_match else None
+    bound_repo = str(Path(repo_match.group(1)).expanduser().resolve()) if repo_match else None
+    return bool(state and state.group(1) == "running" and pid), pid, bound_repo
 
 
 def _ledger_count():
@@ -577,6 +681,223 @@ def _roadmap():
     return rows
 
 
+def _project_folder_project_ids():
+    """Resolve registry entries to the local project roots that own their truth."""
+    raw = _json_file(_truth_dir() / "project_folders.json")
+    folders = raw.get("folders") if isinstance(raw, dict) else []
+    out = []
+    if not isinstance(folders, list):
+        return out
+    for item in folders:
+        if not isinstance(item, dict):
+            continue
+        path = item.get("path")
+        if not path:
+            continue
+        try:
+            root = Path(str(path)).expanduser().resolve()
+        except (OSError, ValueError):
+            continue
+        out.append({
+            "id": item.get("id") or root.name,
+            "name": item.get("name") or root.name,
+            "path": str(root),
+            "active": bool(item.get("active")),
+            "product": item.get("product") or root.name,
+            "one_liner": item.get("one_liner") or "",
+            "stage": item.get("stage") or "",
+            "source_thread_id": item.get("source_thread_id"),
+        })
+    return out
+
+
+def _read_project_truth(root):
+    """Read one project folder without mutating either the current or foreign tree."""
+    root = Path(root)
+    truth = root / "ops" / "truth"
+    latest = {}
+    for record in _read_jsonl(truth / "ledger.jsonl"):
+        if record.get("id"):
+            latest[record["id"]] = record
+    opens = [r for r in latest.values() if r.get("status") in ("open", "doing")]
+    doing = [r for r in opens if r.get("status") == "doing"]
+    todo = [r for r in opens if r.get("status") != "doing"]
+
+    acc_latest = {}
+    for record in _read_jsonl(truth / "acceptance.jsonl"):
+        if record.get("id"):
+            acc_latest[record["id"]] = record
+    acc = list(acc_latest.values())
+    human = [r for r in acc
+             if r.get("needs_human") and r.get("status") in ("todo", "wip", "blocked")]
+    machine = [r for r in acc if r.get("status") == "verified" and not r.get("needs_human")]
+    route_latest = {}
+    for row in _read_jsonl(truth / "native_routes.jsonl"):
+        if row.get("ledger_id"):
+            route_latest[row["ledger_id"]] = row
+    route_tasks = list(route_latest.values())
+
+    ml = _json_file(truth / "mainline.json")
+    mainline_product = ml.get("product") or ""
+    mainline_one_liner = ml.get("one_liner") or ""
+    mainline_stage = ml.get("stage") or ""
+    road = []
+    for item in (ml.get("roadmap") or []):
+        if isinstance(item, str):
+            road.append({"step": item, "expected": "", "status": "todo"})
+        elif isinstance(item, dict):
+            road.append({"step": item.get("step", ""), "expected": item.get("expected", ""),
+                         "status": item.get("status") or "todo"})
+    current_step = next((r for r in road if r.get("status") == "doing"), None)
+    if not current_step:
+        current_step = next((r for r in road if r.get("status") == "next"), None)
+    current_step = current_step or next((r for r in road if r.get("status") != "done"), None)
+    return {
+        "roadmap": road,
+        "current_step": (current_step or {}).get("step") or "路线待拆解",
+        "current_step_status": (current_step or {}).get("status") or "todo",
+        "doing_items": doing,
+        "todo_items": todo,
+        "human_acceptance": human,
+        "machine_verified": machine,
+        "route_tasks": route_tasks,
+        "product": mainline_product,
+        "one_liner": mainline_one_liner,
+        "stage": mainline_stage,
+    }
+
+
+def _project_folders(fast=True):
+    """项目文件夹：把「项目 → 产品路线 → 工作项 → 验收」归一成面板能扫描的一层。
+
+    当前绑定项目永远会出现；`ops/truth/project_folders.json` 里的其他项目只读它们
+    自己的 ops/truth，绝不写回，也不把别的项目工作项混进当前项目。读不到某个项目
+    账本时，该文件夹保留并明确标成无法读取，不静默显示 0。
+    """
+    current = str(Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve())
+    ml = _mainline_summary()
+    board = _acceptance_board()
+    road = _roadmap()
+    current_meta = next((m for m in _project_folder_project_ids()
+                         if m.get("path") == current), {})
+    current_step = next((r for r in road if r.get("status") == "doing"), None)
+    if not current_step:
+        current_step = next((r for r in road if r.get("status") == "next"), None)
+    current_step = current_step or next((r for r in road if r.get("status") != "done"), None)
+
+    route_tasks = []
+    for row in (_route_summary(timeout=0.0 if fast else None).get("tasks") or []):
+        route_tasks.append({
+            "id": row.get("id"),
+            "title": row.get("title") or "",
+            "status": row.get("status"),
+            "lane": row.get("lane"),
+            "branch": row.get("branch"),
+            "worktree": row.get("worktree"),
+            "thread_id": row.get("thread_id") or ((row.get("native_route") or {}).get("thread_id")),
+        })
+
+    def summarize_folder(meta, data):
+        doing = data.get("doing_items") or []
+        todo = data.get("todo_items") or []
+        human = data.get("human_acceptance") or []
+        machine = data.get("machine_verified") or []
+        return {
+            "id": meta.get("id") or Path(meta.get("path") or current).name,
+            "name": meta.get("name") or Path(meta.get("path") or current).name,
+            "kind": "project",
+            "path": meta.get("path") or current,
+            "active": bool(meta.get("active") or (meta.get("path") or current) == current),
+            "product": data.get("product") or meta.get("product") or Path(meta.get("path") or current).name,
+            "one_liner": data.get("one_liner") or meta.get("one_liner") or "",
+            "stage": data.get("stage") or meta.get("stage") or "",
+            "source_thread_id": meta.get("source_thread_id"),
+            "current_step": data.get("current_step") or "路线待拆解",
+            "current_step_status": data.get("current_step_status") or "todo",
+            "roadmap": data.get("roadmap") or [],
+            "open_items": doing + todo,
+            "doing_items": doing,
+            "todo_items": todo,
+            "human_acceptance": human,
+            "machine_verified": machine,
+            "route_tasks": data.get("route_tasks") or [],
+            "counts": {
+                "doing": len(doing),
+                "todo": len(todo),
+                "human": len(human),
+                "machine": len(machine),
+            },
+            "readable": data.get("readable", True),
+            "read_error": data.get("read_error"),
+        }
+
+    current_folder = summarize_folder({
+        "id": Path(current).name or "current",
+        "name": Path(current).name or "当前项目",
+        "path": current,
+        "active": True,
+        "product": ml.get("product") or Path(current).name,
+        "one_liner": ml.get("one_liner") or "",
+        "stage": ml.get("stage") or "",
+        "source_thread_id": current_meta.get("source_thread_id"),
+    }, {
+        "roadmap": road,
+        "current_step": (current_step or {}).get("step") or "路线待拆解",
+        "current_step_status": (current_step or {}).get("status") or "todo",
+        "doing_items": board.get("doing") or [],
+        "todo_items": board.get("todo") or [],
+        "human_acceptance": board.get("human") or [],
+        "machine_verified": board.get("machine") or [],
+        "route_tasks": route_tasks,
+    })
+
+    folders = [current_folder]
+    seen = {current}
+    for meta in _project_folder_project_ids():
+        path = meta.get("path")
+        if not path or path in seen:
+            continue
+        seen.add(path)
+        truth_dir = Path(path) / "ops" / "truth"
+        if not truth_dir.is_dir():
+            data = {
+                "readable": False,
+                "read_error": "没有找到 ops/truth，无法读取项目账本",
+                "roadmap": [],
+                "current_step": "项目账本不可读",
+                "current_step_status": "blocked",
+                "doing_items": [],
+                "todo_items": [],
+                "human_acceptance": [],
+                "machine_verified": [],
+                "route_tasks": [],
+            }
+        else:
+            try:
+                data = _read_project_truth(path)
+                data["readable"] = True
+            except OSError as exc:
+                data = {
+                    "readable": False,
+                    "read_error": str(exc),
+                    "roadmap": [],
+                    "current_step": "项目账本读取失败",
+                    "current_step_status": "blocked",
+                    "doing_items": [],
+                    "todo_items": [],
+                    "human_acceptance": [],
+                    "machine_verified": [],
+                    "route_tasks": [],
+                }
+        folders.append(summarize_folder(meta, data))
+
+    return {
+        "source": "ops/truth/project_folders.json + 当前绑定项目",
+        "count": len(folders),
+        "folders": folders,
+    }
+
+
 def _read_jsonl(path):
     try:
         raw = Path(path).read_text(encoding="utf-8")
@@ -591,6 +912,99 @@ def _read_jsonl(path):
             out.append(json.loads(line))
         except ValueError:
             continue
+    return out
+
+
+def _native_routes_path():
+    return _truth_dir() / "native_routes.jsonl"
+
+
+def _auto_section_name():
+    """派活时自动归入的窗口集合名：按绑定项目分桶。
+
+    用户要的是「窗口拉太多时自动给它们一个文件夹」。名字里带项目名，
+    多个项目的子对话不会混进同一个集合；同名集合会被复用，不重复创建。
+    """
+    base = codex_native.DEFAULT_SECTION_NAME
+    try:
+        project = Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve().name
+    except (OSError, ValueError):
+        project = ""
+    return "%s · %s" % (base, project) if project else base
+
+
+def _append_native_route(ledger_id, result, status):
+    """Persist host linkage metadata without creating a second task ledger."""
+    path = _native_routes_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    turn = result.get("turn") or {}
+    record = {
+        "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "ledger_id": ledger_id,
+        "status": status,
+        "thread_id": result.get("thread_id"),
+        "turn_id": result.get("turn_id") or turn.get("id")
+        or (turn.get("turn") or {}).get("id") or result.get("turnId"),
+        "section_id": result.get("section_id"),
+        "section_note": result.get("section_note"),
+        "cwd": result.get("cwd"),
+    }
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    return record
+
+
+def _ledger_item(ledger_id):
+    latest = {}
+    for record in _read_jsonl(_truth_dir() / "ledger.jsonl"):
+        if record.get("id"):
+            latest[record["id"]] = record
+    item = latest.get(ledger_id)
+    if item and item.get("status") in ("open", "doing", "todo", "wip", "blocked"):
+        return item
+    return None
+
+
+def _native_route_map():
+    latest = {}
+    for record in _read_jsonl(_native_routes_path()):
+        if record.get("ledger_id"):
+            latest[record["ledger_id"]] = record
+    return latest
+
+
+def _recent_done(landed, limit=5):
+    """最近完成了什么：真相层里已收口的问题 + 守护进程刚合入的分支。
+
+    以前这一行只显示「自动合入过的分支」，在没有常驻守护、只是走完台账闭环的项目里
+    永远是空的；可用户问「最近完成了什么」，问的是这个项目最近真正收口了什么事。
+    """
+    rows = []
+    latest = {}
+    for r in _read_jsonl(_truth_dir() / "ledger.jsonl"):
+        if r.get("id"):
+            latest[r["id"]] = r
+    for r in latest.values():
+        if r.get("status") in ("done", "wontfix"):
+            title = " ".join((r.get("title") or "").split())
+            rows.append((r.get("ts") or "", f"{r.get('id')} 已收口：{title[:70]}"))
+    for item in (landed or []):
+        if isinstance(item, dict):
+            name = item.get("branch") or item.get("target") or item.get("id") or ""
+            when = item.get("ts") or item.get("at") or ""
+        else:
+            name, when = str(item), ""
+        if name:
+            rows.append((when, f"{name} 已合入"))
+    rows.sort(key=lambda pair: pair[0], reverse=True)
+    seen, out = set(), []
+    for _, text in rows:
+        if text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+        if len(out) >= limit:
+            break
     return out
 
 
@@ -617,11 +1031,17 @@ def _acceptance_board():
 
     def brief(r):
         return {"id": r.get("id"), "kind": r.get("kind"), "title": r.get("title", ""),
-                "status": r.get("status"), "lane": r.get("lane")}
+                "status": r.get("status"), "lane": r.get("lane"),
+                "project_id": r.get("project_id"), "route_id": r.get("route_id"),
+                "work_item_id": r.get("work_item_id"),
+                "source_thread_id": r.get("source_thread_id") or r.get("thread_id")}
 
     def acc_brief(r):
         return {"id": r.get("id"), "title": r.get("title", ""), "level": r.get("level"),
-                "status": r.get("status"), "steps": r.get("steps") or "", "lane": r.get("lane")}
+                "status": r.get("status"), "steps": r.get("steps") or "", "lane": r.get("lane"),
+                "project_id": r.get("project_id"), "route_id": r.get("route_id"),
+                "work_item_id": r.get("work_item_id"),
+                "source_thread_id": r.get("source_thread_id") or r.get("thread_id")}
 
     return {
         "doing": [brief(r) for r in doing[:8]],
@@ -669,6 +1089,56 @@ def _mainline_summary(limit=6):
         "open_items": [{"id": r.get("id"), "kind": r.get("kind"),
                         "title": r.get("title", ""), "status": r.get("status")}
                        for r in opens[:limit]],
+    }
+
+
+def _route_summary(limit=20, timeout=None):
+    """Merge the ledger route with the host-owned Codex sections and threads.
+
+    timeout 控制在宿主上查会话的预算：面板/开关那条路给很短的预算，
+    免得桌面宿主不回话时，点一下开关要等上一整段超时。
+    """
+    latest = {}
+    for rec in _read_jsonl(_truth_dir() / "ledger.jsonl"):
+        if rec.get("id"):
+            latest[rec["id"]] = rec
+    bindings = _native_route_map()
+    rows = []
+    for rec in latest.values():
+        if rec.get("status") not in ("open", "doing", "todo", "wip", "blocked"):
+            continue
+        binding = bindings.get(rec.get("id"), {})
+        rows.append({
+            "id": rec.get("id"),
+            "title": rec.get("title") or rec.get("detail") or "",
+            "status": rec.get("status"),
+            "lane": rec.get("lane"),
+            "branch": rec.get("branch"),
+            "worktree": rec.get("worktree"),
+            "parent_thread_id": rec.get("parent_thread_id"),
+            "thread_id": rec.get("thread_id") or binding.get("thread_id"),
+            "thread_group_id": rec.get("thread_group_id"),
+            "route_key": rec.get("route_key"),
+            "native_route": binding or None,
+        })
+    rows.sort(key=lambda r: (0 if r.get("status") == "doing" else 1, r.get("id") or ""))
+    native = codex_native.snapshot(timeout=timeout)
+    thread_by_id = {t.get("id"): t for t in native.get("threads", []) if t.get("id")}
+    for row in rows:
+        host_thread = thread_by_id.get(row.get("thread_id"))
+        if host_thread:
+            row["native_thread"] = host_thread
+    return {
+        "commander": {"kind": "autopilot", "label": "主司令窗"},
+        "source": "ops/truth/ledger.jsonl",
+        "thread_api": "available" if native.get("available") else "unavailable",
+        "native": native,
+        "thread_note": (
+            "数据来自独立 Codex app-server；不代表当前桌面宿主窗口的实时状态。自动挡只保存已有真实关联。"
+            if native.get("available") else
+            "Codex 原生 app-server 当前不可用；窗口仅从宿主历史只读展示，不虚构实时窗口。"
+        ),
+        "tasks": rows[:limit],
     }
 
 
@@ -771,12 +1241,36 @@ def _running_exec():
     return info
 
 
+def _native_status():
+    """原生直连状态：socket 在不在是即时事实；能不能派活只看已跑过的自检结果。
+
+    没跑过自检就说没跑过，不去猜「应该连得上」——这个区分是为了让「已连通」
+    永远是一条实测结论，而不是推断。
+    """
+    state = dict(codex_native.socket_state())
+    probe = codex_native.last_probe()
+    state["last_probe"] = probe
+    if probe is None:
+        state["label"] = ("原生直连：未自检（点「原生自检」跑一次）"
+                          if state.get("socket_present") else "原生直连：Codex 未运行")
+    elif probe.get("connected"):
+        state["label"] = "原生直连：已连通，可派活到 Codex 窗口"
+    else:
+        if probe.get("blocked_by") == "remote-control-chatgpt-pairing":
+            state["label"] = "原生直连：需 ChatGPT 登录/配对后才能派活"
+        else:
+            state["label"] = "原生直连：不可派活，只能只读历史"
+    return state
+
+
 def _status_payload(fast=True):
     """把控制开关 + 缓存状态 + 项目计数，拼成面板和模型都能用的一个 JSON。"""
     from datetime import datetime, timezone
     ctrl = control_state.load()
-    st = _daemon_state()
-    live, pid = _daemon_live()
+    job_running, pid, daemon_project = _daemon_live()
+    current_project = str(Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve())
+    live = bool(job_running and daemon_project == current_project)
+    st = _daemon_state() if live else {}
     summary = st.get("last_summary") or {}
     board = _acceptance_board()
     failures = [{"target": t, "kind": k} for t, k in (st.get("last_failures") or [])]
@@ -784,25 +1278,38 @@ def _status_payload(fast=True):
     blocked = st.get("resolve_blocked") or {}
     port_blocked = st.get("port_blocked") or {}
     paused = bool(ctrl.get("paused"))
+    enabled = bool(ctrl.get("enabled", True))
+    lifecycle = control_state.lifecycle_status(ctrl)
 
-    exec_now = _running_exec()
+    exec_now = _running_exec() if live else None
     if ctrl.get("error"):
         state_key, state_label = "error", "状态异常，已安全暂停"
+    elif not enabled:
+        state_key, state_label = "off", "自动挡已关闭，Codex 已恢复原生状态"
     elif paused:
         state_key, state_label = "paused", "已暂停"
     elif exec_now:
         state_key, state_label = "working", "正在自动实现一条需求"
     elif failures:
         state_key, state_label = "blocked", "有分支需要你拍板"
+    elif board["human"]:
+        state_key, state_label = "blocked", "需要你验收"
     elif not live:
-        state_key, state_label = "session_only", "仅会话内运行（常驻未开）"
+        state_key, state_label = "session_only", (
+            "当前项目未连接常驻守护"
+            if job_running and daemon_project and daemon_project != current_project
+            else "仅会话内运行（常驻未开）"
+        )
     elif summary.get("clean") or summary.get("merged"):
         state_key, state_label = "working", "正在检查可合入的分支"
     else:
         state_key, state_label = "idle", "运行中，暂无待办"
 
     # 大白话的「正在做什么 / 为什么 / 最近做了什么 / 需要你做什么」。
-    if paused:
+    if not enabled:
+        doing = "自动挡已关闭；Codex 原生会话、项目与工作区保持不变"
+        why = "总开关关闭后不再接收或启动自动挡工作"
+    elif paused:
         doing = "暂停中，没有在动任何分支"
         why = "你按了暂停。恢复后它才会继续检查、合入"
     elif exec_now:
@@ -816,12 +1323,19 @@ def _status_payload(fast=True):
         tgt, kind = failures[0]["target"], failures[0]["kind"]
         doing = f"卡在 {tgt}（{kind}），已停下等你决定"
         why = "这类改动要么改了产品方向、要么门禁过不了，按约定不自动合"
+    elif board["human"]:
+        title = board["human"][0].get("title") or "一项已完成功能"
+        doing = f"已完成 {title}，现在停下来等你验收"
+        why = "这一步需要真实桌面操作或产品判断，自动挡不会替你假装通过"
     elif summary.get("clean"):
         doing = f"正在把 {summary.get('clean')} 个和主线无冲突的分支逐个合入"
         why = "它们和 main 无冲突、验证门禁已过，属于可以安全自动合入的那一类"
     elif rtasks:
         doing = f"正在处理 {len(rtasks)} 条冲突，拆成可执行任务后逐条收口"
         why = "冲突不丢给你逐条裁决，先自动拆成任务，解完再走同一道门禁"
+    elif job_running and daemon_project and daemon_project != current_project:
+        doing = "后台守护正在服务另一个项目；当前项目的任务与进度不会混入它的队列"
+        why = "常驻守护按项目绑定，面板只读取当前项目自己的账本"
     else:
         doing = "已检查一轮，当前没有能安全自动合入的分支"
         why = "和 main 冲突的、或门禁没过的，不会被自动合，等你处理"
@@ -833,8 +1347,12 @@ def _status_payload(fast=True):
     else:
         recent = "还没有自动合入过分支"
 
-    if failures:
+    if not enabled:
+        need_action = "需要继续使用自动挡时，重新开启总开关"
+    elif failures:
         need_action = f"需要你拍板：{failures[0]['target']}（{failures[0]['kind']}）"
+    elif board["human"]:
+        need_action = f"需要你验收：{board['human'][0].get('title') or '请打开面板查看验收步骤'}"
     elif ctrl.get("error"):
         need_action = "控制文件异常，去高级面板看一眼或恢复默认"
     else:
@@ -845,13 +1363,20 @@ def _status_payload(fast=True):
         "generated_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
         "fast": bool(fast),
         "paused": paused,
+        "enabled": enabled,
+        "lifecycle": lifecycle,
         "error": ctrl.get("error"),
         "state": state_key,
         "state_label": state_label,
+        "project": {
+            "path": current_project,
+            "name": Path(current_project).name,
+        },
         "doing": doing,
         "why": why,
         "recent": recent,
         "need_action": need_action,
+        "recent_completed": _recent_done(last, 5),
         "switches": {
             "auto_land": bool(ctrl.get("auto_land", True)),
             "auto_resolve": bool(ctrl.get("auto_resolve", True)),
@@ -861,10 +1386,13 @@ def _status_payload(fast=True):
         },
         "daemon": {
             "live": bool(live),
+            "job_running": bool(job_running),
             "pid": pid,
+            "project": daemon_project,
             "last_cycle": st.get("last_cycle_iso"),
             "interval_min": st.get("interval_min"),
         },
+        "native": _native_status(),
         "counters": {
             "received": _ledger_count(),
             "open_items": _open_ledger_count(),
@@ -894,8 +1422,12 @@ def _status_payload(fast=True):
         "product_state": _product_state(),
         "judgments": _active_judgments(),
         "last_verification": _last_verification(),
+        "closure_rate": _closure_rate_summary(),
         "mainline": _mainline_summary(),
+        # fast=True 是面板/开关那条路：只读缓存，不连宿主，绝不因此变慢。
+        "route": _route_summary(timeout=0.0 if fast else None),
         "roadmap": _roadmap(),
+        "project_folders": _project_folders(),
         "doing_items": board["doing"],
         "todo_items": board["todo"],
         "todo_count": board["todo_count"],
@@ -917,6 +1449,7 @@ def _status_text(payload):
         payload["recent"],
         payload["need_action"],
         "",
+        _closure_rate_line(payload.get("closure_rate")),
         "开关：自动合入=%s  自动拆冲突=%s  自动移植=%s  后台常驻=%s"
         % ("开" if sw["auto_land"] else "关",
            "开" if sw["auto_resolve"] else "关",
@@ -972,23 +1505,41 @@ def control_action(action, enabled=None):
     """执行一个控制动作，返回 (dict 或文本, rc)。开关都真落到用户级 control.json。"""
     if not action:
         return "autopilot_control 需要 action", 2
+    if action == "disable":
+        control_state.set_keys(enabled=False)
+        control_state.append_event("disable")
+        return _with_status("自动挡已关闭；Codex 原生功能和现有工作区未改动。"), 0
+    if action == "enable":
+        control_state.set_keys(enabled=True)
+        control_state.append_event("enable")
+        return _with_status("自动挡已开启；保留的任务与工作区可继续处理。"), 0
     if action == "pause":
+        if not control_state.is_enabled():
+            return control_state.mutation_guard(), 2
         control_state.set_keys(paused=True)
         control_state.append_event("pause")
         return _with_status("已暂停：不再启动新工作；当前 Git 操作会安全收尾。"), 0
     if action == "resume":
+        if not control_state.is_enabled():
+            return control_state.mutation_guard(), 2
         control_state.set_keys(paused=False)
         control_state.append_event("resume")
         return _with_status("已恢复运行：下一轮会继续检查、合入。"), 0
     if action == "run_once":
+        if not control_state.is_enabled():
+            return control_state.mutation_guard(), 2
         if control_state.is_paused():
             return "当前处于暂停中，不会偷偷跑一轮。先恢复运行再试。", 2
         daemon = OPS_DIR / "central_daemon.py"
         control_state.append_event("run_once")
         out, rc = _run([str(daemon), "--once"], timeout=2400)
         return _with_status("已跑完一轮：\n" + out), rc
+    if action.startswith("set_") and not action.startswith("set_auto_"):
+        return "未知 action：%s" % action, 2
     if action in ("set_auto_land", "set_auto_resolve", "set_auto_port",
                    "set_auto_exec"):
+        if not control_state.is_enabled():
+            return control_state.mutation_guard(), 2
         if not isinstance(enabled, bool):
             return "%s 需要 enabled（true/false）" % action, 2
         key = action[len("set_"):]
@@ -996,6 +1547,8 @@ def control_action(action, enabled=None):
         control_state.append_event("switch", name=key, value=enabled)
         return _with_status("%s 已%s。" % (key, "打开" if enabled else "关闭")), 0
     if action in ("enable_daemon", "disable_daemon"):
+        if not control_state.is_enabled():
+            return control_state.mutation_guard(), 2
         daemon = OPS_DIR / "central_daemon.py"
         want = action == "enable_daemon"
         out, rc = _run([str(daemon), "--install" if want else "--uninstall"], timeout=120)
@@ -1029,8 +1582,21 @@ def _settings_update(set_values):
     """把宿主送来的变更落到用户级 control.json，并回读权威值。"""
     if not isinstance(set_values, dict) or not set_values:
         return "autopilot_settings_update 需要 set（至少一项）", 2
+    if "enabled" in set_values and set_values.get("enabled") is False:
+        control_state.set_keys(enabled=False)
+        control_state.append_event("disable")
+        return {"values": _settings_values(),
+                "__text__": "自动挡已关闭；Codex 原生功能和现有工作区未改动。"}, 0
+    guard = control_state.mutation_guard()
+    if guard:
+        return guard, 2
     changed = {k: v for k, v in set_values.items()
                if k in control_state.DEFAULTS and isinstance(v, bool)}
+    if "enabled" in changed:
+        control_state.set_keys(**changed)
+        control_state.append_event("settings", **changed)
+        return {"values": _settings_values(),
+                "__text__": "设置已更新。"}, 0
     if not changed:
         return "set 里没有可识别的开关项", 2
     control_state.set_keys(**changed)
@@ -1042,9 +1608,97 @@ def _settings_update(set_values):
 
 def call_tool(name, args):
     args = args or {}
+    read_only_tools = {
+        "project_status", "next_actions", "product_state", "distill_review",
+        "suggest_branch", "resolve_list", "resolve_plan", "generate_context",
+        "dashboard", "autopilot_status", "render_autopilot_panel",
+        "autopilot_settings_read", "codex_native_threads", "codex_native_probe",
+    }
+    control_tools = {
+        "autopilot_control", "autopilot_run_once",
+        "autopilot_settings_update",
+    }
+    native_mutation_tools = {
+        "codex_native_create_section", "codex_native_start_thread",
+        "codex_native_move_thread", "codex_native_dispatch_task",
+        "codex_native_follow_up",
+    }
+    if name in native_mutation_tools:
+        guard = control_state.mutation_guard()
+        if guard:
+            return guard, 2
+        if name == "codex_native_create_section":
+            result, error = codex_native.create_section((args.get("name") or "").strip())
+        elif name == "codex_native_start_thread":
+            cwd = (args.get("cwd") or "").strip()
+            result, error = codex_native.start_thread(cwd, args.get("section_id"))
+        elif name == "codex_native_dispatch_task":
+            ledger_id = (args.get("ledger_id") or "").strip()
+            if not _ledger_item(ledger_id):
+                return {
+                    "code": "AUTOPILOT_LEDGER_ITEM_NOT_DISPATCHABLE",
+                    "message": "只能给自动挡台账中仍未收口的问题派活。",
+                }, 2
+            result, error = codex_native.dispatch_task(
+                (args.get("cwd") or "").strip(),
+                args.get("prompt"),
+                args.get("section_id"),
+                auto_section=_auto_section_name(),
+            )
+            if result:
+                _append_native_route(
+                    ledger_id,
+                    result,
+                    status="dispatch_failed" if error else "dispatched",
+                )
+        elif name == "codex_native_follow_up":
+            thread_id = (args.get("thread_id") or "").strip()
+            result, error = codex_native.follow_up(
+                thread_id,
+                args.get("prompt"),
+            )
+            if not error:
+                binding = next(
+                    (row for row in _native_route_map().values()
+                     if row.get("thread_id") == thread_id),
+                    None,
+                )
+                if binding:
+                    _append_native_route(
+                        binding["ledger_id"],
+                        {"thread_id": thread_id, "turn": result or {},
+                         "section_id": binding.get("section_id"),
+                         "cwd": binding.get("cwd")},
+                        status="follow_up_started",
+                    )
+        else:
+            result, error = codex_native.move_thread(
+                (args.get("thread_id") or "").strip(),
+                args.get("section_id"),
+                (args.get("before_thread_id") or "").strip() or None,
+            )
+        if error:
+            return {"code": "CODEX_NATIVE_UNAVAILABLE", "message": error}, 2
+        control_state.append_event("codex_native", action=name, result=result)
+        return result, 0
+    if name not in read_only_tools | control_tools:
+        guard = control_state.mutation_guard()
+        if guard:
+            return guard, 2
     if name == "project_status":
         return kgctl("status")
+    if name == "codex_native_threads":
+        return codex_native.snapshot()
+    if name == "codex_native_probe":
+        # 自检是诊断动作：不碰任务、不碰账本，所以即使总开关关着也允许跑，
+        # 否则用户没法在「关着」的时候判断到底是不是权限/环境的问题。
+        result = codex_native.probe()
+        codex_native.record_probe(result)
+        return result
     if name == "capture_request":
+        guard = control_state.mutation_guard()
+        if guard:
+            return guard, 2
         text = (args.get("text") or "").strip()
         if not text:
             return "capture_request 需要 text", 2
@@ -1053,8 +1707,14 @@ def call_tool(name, args):
                "KG_INBOX_KIND": args.get("kind") or "unknown"}
         return kgctl("inbox", text, extra_env=env)
     if name == "sync_control_plane":
+        guard = control_state.mutation_guard()
+        if guard:
+            return guard, 2
         return kgctl("tick")
     if name == "route_inbox":
+        guard = control_state.mutation_guard()
+        if guard:
+            return guard, 2
         return kgctl("route", *(["--go"] if args.get("confirm") else []))
     if name == "next_actions":
         return truthctl("next")
@@ -1107,6 +1767,9 @@ def call_tool(name, args):
     if name == "suggest_branch":
         return kgctl("suggest")
     if name == "intake_request":
+        guard = control_state.mutation_guard()
+        if guard:
+            return guard, 2
         text = (args.get("text") or "").strip()
         if not text:
             return "intake_request 需要 text", 2

@@ -98,6 +98,7 @@ RESOLVE_MAX_ATTEMPTS = 1
 # 里实现 -> 门禁 -> 落盘 -> 收口。默认关闭；打开后每周期最多派一条，避免一次开一堆会话。
 EXEC_DEFAULT_TIMEOUT = 3600
 EXEC_MAX_PER_CYCLE = 1
+EXEC_NO_CHANGE_RETRIES = 2
 # 基础设施抖动 vs 需求真做不出来：底层模型代理（127.0.0.1:15721）偶发 502 /
 # Transport channel closed，会让 codex 进程以非 0 退出，但需求本身没问题。同一
 # worktree 上指数退避重跑即可，默认 3 次；重试仍失败记 codex_infra_fail，与
@@ -375,6 +376,7 @@ def auto_exec_config() -> dict:
     与「需求真做不出来」区分开；只在日志尾部命中抖动特征时才生效。
     """
     out = {"enabled": True, "max_per_cycle": EXEC_MAX_PER_CYCLE,
+           "no_change_retries": EXEC_NO_CHANGE_RETRIES,
            "timeout": EXEC_DEFAULT_TIMEOUT, "sandbox": "workspace-write", "model": None,
            "retries": EXEC_INFRA_RETRIES}
     repo = _state_repo()
@@ -395,6 +397,11 @@ def auto_exec_config() -> dict:
                     pass
             try:
                 out["retries"] = max(0, int(cfg.get("retries", out["retries"])))
+            except (TypeError, ValueError):
+                pass
+            try:
+                out["no_change_retries"] = max(0, int(
+                    cfg.get("no_change_retries", out["no_change_retries"])))
             except (TypeError, ValueError):
                 pass
             if cfg.get("sandbox"):
@@ -557,6 +564,11 @@ def _exec_prompt(item: dict) -> str:
         "- 目标只有两个：(1) 击穿产品预期——前后端真正闭环生效；(2) 保证现有体验——功能、",
         "  性能不能因为这次改动变差或更难用。不达标的实现不如不做。",
         "- 动手前先读仓库里的 AGENTS.md 和相关上下文（如 AI_SESSION_CONTEXT.md、产品决策文件）。",
+        "- 对直接、可验证的小任务（写文件、修文本、补配置等），第一步就要在当前 worktree 产出改动：",
+        "  先执行实际命令（如 `printf '...' > 文件`、修改文本、补配置），再用命令自证；",
+        "  只读检查不算完成，不能以“先看看 / 我先确认 / 发现已有”结束。",
+        "- 如果该需求确实无需改动（例如功能已存在），必须用一条命令或读取结果证明现状满足需求，",
+        "  并在总结里写清“无需改动 + 证明命令 + 现状”，否则一律按未完成处理。",
         "- 改完跑与改动相关的验证（如 `npx tsc --noEmit`、`npm run build`、相关 `verify:*` 脚本）；",
         "  失败就继续修，直到通过或有明确的外部阻塞。",
         "- 不要 `git commit`、不要 `git push`、不要合并分支：把改动留在工作区即可，落盘由自动挡统一走门禁。",
@@ -719,28 +731,39 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
         _git(repo, "branch", "-D", branch)
         return {"id": rid, "outcome": "no_codex"}
 
-    cmd = [*codex, "exec", "-C", str(wt), "-s", cfg["sandbox"],
-           "--skip-git-repo-check"]
-    if cfg.get("model"):
-        cmd += ["-m", cfg["model"]]
-    cmd += [ _exec_prompt(item) ]
     log_path = _exec_dir() / f"{slug}.log"
     retries = max(0, int(cfg.get("retries", EXEC_INFRA_RETRIES)))
-    total = retries + 1
+    no_change_retries = max(0, int(cfg.get("no_change_retries",
+                                           EXEC_NO_CHANGE_RETRIES)))
+    total = retries + no_change_retries + 1
     code, attempt, infra = 0, 0, False
+    no_change_tries = 0
+    base_prompt = _exec_prompt(item)
     while True:
         attempt += 1
         first = attempt == 1
+        prompt = base_prompt
+        if no_change_tries:
+            prompt += ("\n\n重要：上一次自动执行没有产生任何工作区改动，不能作为完成。"
+                       "现在必须重新执行能留下改动的命令（写文件、修文本、补配置等），"
+                       "并在命令后立刻自证。不要再做一轮只读检查。")
         if first:
             log(f"[exec] 派发 {rid} -> {branch}（worktree={wt}, codex={codex[0]}）")
         else:
             log(f"[exec] {rid} 第 {attempt}/{total} 次重试"
                 f"（同一 worktree={wt}，日志 {log_path}）")
+        cmd = [*codex, "exec", "-C", str(wt), "-s", cfg["sandbox"],
+               "--skip-git-repo-check"]
+        if cfg.get("model"):
+            cmd += ["-m", cfg["model"]]
+        cmd += [prompt]
         try:
             with log_path.open("w" if first else "a", encoding="utf-8") as fh:
                 if not first:
+                    retry_reason = ("无改动需重试" if no_change_tries
+                                    else "基础设施抖动")
                     fh.write(f"\n===== auto_exec 重试 第 {attempt}/{total} 次（{_now()}，"
-                             f"上一次退出码={code}，判定为基础设施抖动）=====\n")
+                             f"上一次退出码={code}，判定为{retry_reason}）=====\n")
                     fh.flush()
                 r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=fh,
                                    stderr=subprocess.STDOUT, cwd=str(wt),
@@ -753,7 +776,14 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
             code = 125
         result["exit"] = code
         log(f"[exec] {rid} codex 退出码={code}（第 {attempt}/{total} 次，日志 {log_path}）")
+        if code == 0 and _changed_paths(wt):
+            break
         if code == 0:
+            no_change_tries += 1
+            if no_change_tries <= no_change_retries:
+                log(f"[exec] {rid} 退出 0 但无改动，第 {no_change_tries}/{no_change_retries} 次"
+                    f"重试（工作区仍保留）")
+                continue
             break
         # 超时(124) 与启动失败(125) 不重试：超时已经吃掉一整个 cfg["timeout"]，再乘 N 会把
         # 一个周期拖垮；启动失败重跑也没有新证据。只有日志尾部命中抖动特征才重跑。
@@ -782,6 +812,12 @@ def _dispatch_one(item: dict, cfg: dict, blocked: dict) -> dict:
             blocked[rid] = {"reason": reason, "ts": _now()}
             _cleanup_exec(repo, wt, branch)
             result["outcome"] = "codex_fail"
+        return result
+    if code == 0 and not _changed_paths(wt):
+        log(f"[exec] {rid} 重试后仍没有产生改动，记为无变化")
+        blocked[rid] = {"reason": "no_changes", "ts": _now()}
+        _cleanup_exec(repo, wt, branch)
+        result["outcome"] = "no_changes"
         return result
     return _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked)
 
@@ -914,6 +950,10 @@ def run_cycle(dry: bool, max_land: int) -> dict:
       * 因此这里是最外层也最可靠的闸门；`_run_cycle` 里的逐子系统闸门是第二道保险，
         防止别的调用方绕过本函数直接进内部实现。
     """
+    if not control_state.is_enabled():
+        log("[disabled] 自动挡已关闭或控制文件异常：本轮不启动任何新工作")
+        return {"ts": time.time(), "iso": _now(), "dry": dry,
+                "disabled": True, "summary": {}, "landed": [], "failures": []}
     if control_state.is_paused():
         log("[pause] 已暂停：本轮不启动任何新工作（面板可恢复）")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
@@ -935,6 +975,10 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
                 "summary": summary, "landed": [], "failures": []}
 
     log("--- cycle start (live) ---")
+    if not control_state.is_enabled():
+        log("[disabled] 周期开始前自动挡已关闭：不做路由/落盘")
+        return {"ts": time.time(), "iso": _now(), "dry": dry,
+                "disabled": True, "summary": {}, "landed": [], "failures": []}
     if control_state.is_paused():
         log("[pause] 周期开始前被暂停：只刷新状态，不做路由/落盘")
         return {"ts": time.time(), "iso": _now(), "dry": dry,

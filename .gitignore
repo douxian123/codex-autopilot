@@ -9,5 +9,10 @@ ops/tasks/matrix.json
 docs/CONTROL_PLANE.html
 docs/CONTROL_BOARD.md
 docs/PROJECT_STATUS.md
+docs/panel-first-screen.png
 ops/context/
 ops/tasks/convergence.json
+
+# Companion 构建产物（可随时重建：companion/build.sh）
+companion/.build/
+companion/dist/

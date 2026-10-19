@@ -1,0 +1,11 @@
+{
+ "main": "7c7d8ddaf58c7582293f4b11bec9e9dcef1f0342",
+ "branches": [
+  "codex/closure-rate-metric",
+  "codex/panel-project-route-ia"
+ ],
+ "burden": {
+  "codex/closure-rate-metric": 3,
+  "codex/panel-project-route-ia": 5
+ }
+}

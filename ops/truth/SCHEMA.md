@@ -17,6 +17,7 @@
 ```text
 ops/truth/
   mainline.json      # 产品主线：阶段 / 北极星 / 当前焦点 / 产品路线 / 明确不做（单对象，人工维护）
+  project_folders.json # 项目注册表：本控制面关心哪些项目、各自根目录与来源对话
   product_state.json # 产品状态：产品今天实际是怎么工作的（按模块，随代码同步）
   decisions.jsonl    # 决策台账：做过哪些决定、为什么、备选是什么（追加式）
   judgments.jsonl    # 判断逻辑台账：人为什么这么判断（每轮蒸馏回写，追加式）
@@ -69,6 +70,18 @@ judgment 记「以后遇到同类情况该怎么判断」——记的是判断�
 结构：`{"updated": "YYYY-MM-DD", "modules": [{"area": "模块名", "behavior": "现在的行为",
 "why": "为什么", "files": ["..."], "updated": "YYYY-MM-DD"}]}`。
 改产品行为的会话应在同一轮把它更新进来，人验收时只看它的变化，不读实现。
+
+### project_folders.json（单对象，非追加）
+
+它是「一个控制面看多个项目」的最小注册表，不复制任何项目账本。每个项目仍以自己
+仓库里的 `ops/truth` 为唯一事实来源；面板只按这里登记的根目录去读，绝不把别的项目
+工作项写进当前项目。
+
+结构：`{"updated": "YYYY-MM-DD", "folders": [{"id": "...", "name": "...",
+"path": "/absolute/project/root", "active": true, "source_thread_id": "..."}]}`。
+`path` 必须是该项目自己的仓库根；`source_thread_id` 可选，用来回答「这个项目由哪个
+Codex 对话负责 / 入口从哪里来」。项目账本不可读时，面板必须保留文件夹并显示读取失败，
+不能显示成 0 个工作项。
 
 ### acceptance.jsonl
 

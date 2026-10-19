@@ -79,7 +79,7 @@ def resolve_state_root() -> Path:
     main = main_worktree()
     trunk = Path(os.environ.get("KG_TRUNK",
                                 str(main.parent / (main.name + "-trunk")))).expanduser()
-    for cand in (trunk, main, current_worktree()):
+    for cand in (main, trunk, current_worktree()):
         if looks_like_state_root(cand):
             return cand.resolve()
 
