@@ -1400,6 +1400,118 @@ def test_parallel_exec_slots():
     print("selftest ok: 3 个 worker 槽并行启动、隔离 worktree，完成项仍逐条串行落盘。")
 
 
+def test_resolve_exec_parallel():
+    """Resolve tasks are filled into the same parallel codex worker slots.
+
+    kgctl resolve creates an isolated resolve worktree with markers. The daemon
+    must reuse that worktree for a real paid worker, then commit and hand the
+    branch back to kgctl resolve --finish instead of creating a second
+    codex/exec-* worktree and losing the registered resolve task.
+    """
+    import importlib
+    import json as _json
+    import time as _time
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-resolve-exec-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        trunk = root / "state-trunk"
+        home = root / "home"
+        repo.mkdir(); home.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for f in ("ledger", "progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{f}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(_json.dumps({
+            "build": {"cmd": "", "cwd": "."}, "verify": [],
+            "auto_exec": {"enabled": True, "max_workers": 2,
+                          "fast_model": "aibvv@deepseek-v4.1-flash",
+                          "slow_model": "ok8888@deepseek-v4.1-flash"}}), encoding="utf-8")
+        (home / "control.json").write_text(_json.dumps({
+            "auto_exec": True, "paused": False}), encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "doc.txt").write_text("base\n", encoding="utf-8")
+        git(repo, "add", "doc.txt", "ops/central.config.json", "ops/truth/mainline.json",
+            "ops/truth/ledger.jsonl", "ops/truth/progress.jsonl",
+            "ops/truth/decisions.jsonl", "ops/truth/acceptance.jsonl",
+            "ops/tasks/inbox.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = root / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+        base = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        git(repo, "checkout", "-q", "-b", "codex/light", base)
+        (repo / "doc.txt").write_text("light\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "codex/light")
+        git(repo, "checkout", "-q", "main")
+        (repo / "doc.txt").write_text("mainline\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "main advances")
+        git(repo, "push", "-q", "origin", "main")
+
+        go = kgctl(repo, trunk, "resolve", "--auto", "--go")
+        if "outcome=needs_agent" not in (go.stdout + go.stderr):
+            raise AssertionError(f"resolve 没建出待解任务:\n{go.stdout}\n{go.stderr}")
+        wt = root / "state-resolve-light"
+        if not wt.is_dir():
+            raise AssertionError(f"resolve 没建出 worktree {wt}")
+
+        fake = root / "fake-resolve.sh"
+        fake.write_text(
+            "#!/bin/sh\n"
+            "wt=\"\"\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
+            "done\n"
+            "sed -i '' '/^<<<<<<< /d;/^=======$/d;/^>>>>>>> /d' \"$wt/doc.txt\"\n"
+            "printf 'light\\nmainline\\n' > \"$wt/doc.txt\"\n"
+            "exit 0\n", encoding="utf-8")
+        fake.chmod(0o755)
+
+        os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
+                          KG_DAEMON_HOME=str(home), KG_EXEC_CMD=str(fake))
+        import control_state, central_config, central_daemon
+        importlib.reload(control_state); importlib.reload(central_config)
+        importlib.reload(central_daemon)
+
+        original = (wt / "doc.txt").read_text(encoding="utf-8")
+        (wt / "doc.txt").write_text(original + "external-worker\n", encoding="utf-8")
+        if central_daemon._resolve_open_items():
+            raise AssertionError("worktree 已有外部未提交改动时仍被当作可派任务")
+        (wt / "doc.txt").write_text(original, encoding="utf-8")
+        open_ids = [i["id"] for i in central_daemon._resolve_open_items()]
+        if open_ids != ["resolve:light"]:
+            raise AssertionError(f"恢复干净后 resolve 任务没有重新进入可派队列: {open_ids!r}")
+
+        blocked, workers = {}, {}
+        started = central_daemon.dispatch_exec(False, blocked, workers)
+        assert started == [], started
+        jobs = workers["exec_jobs"]
+        assert list(jobs) == ["resolve:light"], jobs
+        job = jobs["resolve:light"]
+        assert job["branch"] == "codex/resolve-light", job
+        assert Path(job["worktree"]).resolve() == wt.resolve(), job
+        assert job["model"] == "ok8888@deepseek-v4.1-flash", job
+        assert job["proc"].poll() is None, job
+
+        deadline = _time.time() + 15
+        landed = []
+        while _time.time() < deadline and not landed:
+            results = central_daemon.dispatch_exec(False, blocked, workers)
+            landed.extend(r for r in results if r.get("outcome") == "landed")
+            _time.sleep(0.1)
+        assert landed, (results, blocked, workers)
+        assert not workers["exec_jobs"], workers
+        merged = git(repo, "show", "main:doc.txt").stdout
+        if "light" not in merged or "mainline" not in merged:
+            raise AssertionError(f"resolve-exec 落盘内容不对: {merged!r}")
+    print("selftest ok: resolve 冲突任务进入同一并行 codex worker，复用 resolve worktree 并由 kgctl finish 串行落盘。")
+
+
 def test_mcp_contract():
     """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
     import json as _json
@@ -1670,6 +1782,7 @@ if __name__ == "__main__":
     main()
     test_replan()
     test_resolve()
+    test_resolve_exec_parallel()
     test_reset_trunk_truth_conflict()
     test_control_state()
     test_verify_and_truth()

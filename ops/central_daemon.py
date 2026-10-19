@@ -526,6 +526,141 @@ def _ledger_open_items(limit=20):
     return opens[:limit]
 
 
+def _resolve_tasks_path(repo=None):
+    repo = repo or _state_repo()
+    if not repo:
+        return None
+    return Path(repo) / "ops" / "tasks" / "resolve.json"
+
+
+def _resolve_task(slug):
+    p = _resolve_tasks_path()
+    if not p or not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    for rec in data.get("tasks") or []:
+        if rec.get("slug") == slug:
+            return rec
+    return None
+
+
+def _set_resolve_status(repo, slug, status):
+    p = _resolve_tasks_path(repo)
+    if not p or not p.exists():
+        return
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    for rec in data.get("tasks") or []:
+        if rec.get("slug") == slug:
+            rec["status"] = status
+            rec["updated"] = _now()
+            break
+    tmp = p.with_suffix(".json.tmp")
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(p)
+    except OSError:
+        pass
+
+
+def _resolve_worktree_dirty(wt: Path) -> bool:
+    if not wt or not wt.exists():
+        return True
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(wt), "status", "--porcelain"],
+            capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    return bool((out.stdout or "").strip())
+
+
+def _resolve_worktree_owned(wt: Path) -> bool:
+    """Has an external agent process already opened this resolve worktree?"""
+    if not wt or not wt.exists():
+        return True
+    target = str(wt.resolve())
+    try:
+        out = subprocess.run(
+            ["ps", "-axo", "pid=,command="],
+            capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    for line in (out.stdout or "").splitlines():
+        if target in line:
+            return True
+    return False
+
+
+def _resolve_task_item(slug):
+    rec = _resolve_task(slug)
+    if not rec or rec.get("status") not in ("needs_agent", "gate_fail"):
+        return None
+    wt = rec.get("worktree") or ""
+    if not wt or not Path(wt).exists():
+        return None
+    files = rec.get("unresolved_files") or []
+    return {
+        "id": f"resolve:{slug}",
+        "kind": "resolve",
+        "slug": slug,
+        "title": f"解决冲突任务 {slug}",
+        "detail": (
+            f"源分支：{rec.get("branch")}；执行分支：{rec.get("resolve_branch")}；"
+            f"工作树：{wt}；待解文件：{chr(44).join(files) or "无"}。保留冲突两侧的真实意图，不要机械二选一。"
+        ),
+        "files": files,
+        "resolve_branch": rec.get("resolve_branch"),
+        "worktree": wt,
+        "branch": rec.get("resolve_branch"),
+        "repo": str(_state_repo() or ""),
+    }
+
+
+def _resolve_open_items(limit=10):
+    repo = _state_repo()
+    if not repo:
+        return []
+    p = _resolve_tasks_path(repo)
+    if not p or not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for rec in data.get("tasks") or []:
+        if rec.get("status") not in ("needs_agent", "gate_fail"):
+            continue
+        wt = Path(rec.get("worktree") or "")
+        if not wt.exists():
+            continue
+        if _resolve_worktree_dirty(wt) or _resolve_worktree_owned(wt):
+            continue
+        item = _resolve_task_item(rec.get("slug"))
+        if item:
+            out.append(item)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _exec_open_items(limit=20):
+    seen = set()
+    for item in _ledger_open_items(limit):
+        seen.add(item.get("id"))
+        yield item
+    for item in _resolve_open_items(limit):
+        if item.get("id") not in seen:
+            seen.add(item["id"])
+            yield item
+
+
 def _main_contains(commit: str) -> bool:
     """Read-only ancestry check used to detect false 'land failed' records."""
     repo = _state_repo()
@@ -620,7 +755,35 @@ def _link_side_dirs(wt: Path, cfg: dict) -> None:
                 break
 
 
+def _resolve_exec_prompt(item: dict) -> str:
+    slug = item.get("slug") or ""
+    files = item.get("files") or []
+    lines = [
+        "你是 Codex 自动挡的冲突执行者。下面是一条已经拆好的冲突任务，请在当前 worktree 里把它解干净。",
+        "",
+        f"冲突任务 [{item.get('id')}]：{item.get('title') or ''}",
+        "",
+        "目标：保留冲突两侧的真实意图，不要机械二选一；除非能证明一侧能力已被另一侧同义替代，否则不删任何一方独有语义。",
+    ]
+    if item.get("detail"):
+        lines += ["", "任务说明：", str(item["detail"])]
+    if files:
+        lines += ["", "待解文件：" + "、".join(str(f) for f in files)]
+    lines += [
+        "",
+        "硬规则（必须遵守）：",
+        "- 只改当前 worktree 里自己的文件；不 `git checkout .` / `git reset --hard` / `git stash` / `git add -A`。",
+        "- 不要 `git commit`、不要 `git push`、不要合并分支：把改动留在工作区即可，落盘由自动挡统一走门禁。",
+        "- 解完 marker 后跑与改动相关的验证（如 `npx tsc --noEmit`、`npm run build`、相关 `verify:*` 脚本）；",
+        "  失败就继续修，直到通过或有明确的外部阻塞。",
+        "- 做完用一句话总结：改了哪些文件、跑了什么验证、结果如何。",
+    ]
+    return "\n".join(lines)
+
+
 def _exec_prompt(item: dict) -> str:
+    if item.get("kind") == "resolve":
+        return _resolve_exec_prompt(item)
     files = item.get("files") or []
     lines = [
         "你是 Codex 自动挡的执行者。下面是一条用户抛出的零散需求，已经在唯一入口归好类、",
@@ -763,6 +926,31 @@ def _exec_model(item: dict, cfg: dict) -> str | None:
     return str(cfg.get("slow_model") or cfg.get("fast_model") or "") or None
 
 
+def _prepare_resolve_exec(item: dict, cfg: dict, blocked: dict) -> dict:
+    """Prepare a Codex worker inside the resolve worktree already registered by kgctl."""
+    slug = item.get("slug") or ""
+    rec = _resolve_task(slug)
+    if not rec:
+        blocked[item["id"]] = {"reason": "resolve_missing", "ts": _now()}
+        return {"id": item["id"], "outcome": "resolve_missing"}
+    wt = Path(rec.get("worktree") or "")
+    branch = rec.get("resolve_branch") or ""
+    if not wt.exists() or not branch:
+        blocked[item["id"]] = {"reason": "resolve_missing", "ts": _now()}
+        return {"id": item["id"], "outcome": "resolve_missing"}
+    codex = _codex_bin()
+    if not codex:
+        blocked[item["id"]] = {"reason": "no_codex", "ts": _now()}
+        return {"id": item["id"], "outcome": "no_codex"}
+    log_path = _exec_dir() / f"resolve-{_exec_slug(slug)}.log"
+    model = _exec_model(item, cfg)
+    return {"id": item["id"], "outcome": "ready", "item": item, "cfg": cfg,
+            "repo": str(_state_repo() or ""), "branch": branch, "worktree": str(wt),
+            "codex": codex, "log": str(log_path), "model": model,
+            "started_at": _now(), "recover": False,
+            "result": {"id": item["id"], "branch": branch, "worktree": str(wt)}}
+
+
 def _prepare_exec(item: dict, cfg: dict, blocked: dict) -> dict:
     """Create the isolated worktree for one worker without waiting for it.
 
@@ -874,6 +1062,10 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
     log_path = Path(job["log"])
     if job.get("recover"):
         log(f"[exec] {rid} 已有在途 worktree -> 跳过新会话，接着收口")
+        if item.get("kind") == "resolve":
+            return _finish_resolve_exec(
+                item, cfg, repo, wt, branch, rid,
+                {"id": rid, "branch": branch, "worktree": str(wt)}, blocked)
         return _finish_exec(item, cfg, repo, wt, branch, rid,
                             {"id": rid, "branch": branch, "worktree": str(wt)}, blocked)
     retries = max(0, int(cfg.get("retries", EXEC_INFRA_RETRIES)))
@@ -944,6 +1136,16 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
         if infra:
             detail = (f"基础设施抖动，同一 worktree 重试 {attempt - 1} 次仍失败；"
                       f"日志尾部: {_exec_log_tail(log_path)[-200:].strip()}")
+        if item.get("kind") == "resolve":
+            preserved = _preserve_exec(repo, wt, branch, rid, reason, blocked, detail=detail)
+            if preserved.get("preserve"):
+                result.update({"outcome": "codex_fail_preserved",
+                               "commit": preserved.get("commit"),
+                               "worktree": preserved.get("worktree")})
+            else:
+                blocked[rid] = {"reason": reason, "ts": _now()}
+                result["outcome"] = "codex_fail"
+            return result
         preserved = _preserve_exec(repo, wt, branch, rid, reason, blocked, detail=detail)
         if preserved.get("preserve"):
             result.update({"outcome": "codex_fail_preserved",
@@ -1032,6 +1234,44 @@ def _cleanup_exec(repo, wt: Path, branch: str) -> None:
     _git(repo, "branch", "-D", branch)
 
 
+def _finish_resolve_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
+    """codex 解完冲突后的公共收尾：显式提交，再交给 kgctl resolve --finish 走门禁。
+
+    resolve worktree 和 resolve 分支由 kgctl 登记并回收；这里不能像普通 exec 一样
+    在 land 前删除 resolve worktree，否则 finish 会认为现场丢失。
+    """
+    changed = _changed_paths(wt)
+    commit = None
+    if changed:
+        add_rc, add_err = _git_add_retry(wt, changed)
+        if add_rc != 0:
+            log(f"[resolve-exec] {rid} git add 失败：{(add_err or '')[:300]}")
+            return _preserve_exec(repo, wt, branch, rid, "add_fail", blocked, detail=add_err)
+        msg = f"resolve-exec({item.get('slug')}): keep both intents"
+        if _git(wt, "commit", "-m", msg)[0] != 0:
+            return _preserve_exec(repo, wt, branch, rid, "commit_fail", blocked)
+        _, commit, _ = _git(wt, "rev-parse", "HEAD")
+        result["commit"] = commit
+    else:
+        log(f"[resolve-exec] {rid} 没有产生改动，记为无变化")
+        blocked[rid] = {"reason": "no_changes", "ts": _now()}
+        result["outcome"] = "no_changes"
+        return result
+
+    slug = item.get("slug") or ""
+    rrc, rout = run_kgctl(["resolve", "--finish", slug, "--go"], timeout=LAND_TIMEOUT)
+    log_block(f"resolve-exec finish {slug}", rrc, rout)
+    result["resolve_finish"] = rrc
+    if "outcome=landed" in rout:
+        _set_resolve_status(repo, slug, "landed")
+        result["outcome"] = "landed"
+        return result
+    blocked[rid] = {"reason": "resolve_gate_fail", "branch": branch,
+                    "worktree": str(wt), "commit": commit, "ts": _now()}
+    result["outcome"] = "resolve_gate_fail"
+    return result
+
+
 def _looks_like_command(text: str) -> bool:
     """判断一串输入是不是「终端命令尾巴」而非一条产品需求。
 
@@ -1064,7 +1304,7 @@ def _worker_alive(pid) -> bool:
 def _hydrate_exec_jobs(workers: dict) -> dict:
     """Restore live worker jobs after daemon restart without starting new sessions."""
     jobs = workers.setdefault("exec_jobs", {})
-    open_items = {item.get("id"): item for item in _ledger_open_items(100)}
+    open_items = {item.get("id"): item for item in _exec_open_items(100)}
     for rid, job in list(jobs.items()):
         if job.get("proc") is not None:
             continue
@@ -1102,6 +1342,8 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
         proc = job.get("proc")
         if job.get("recover"):
             pass
+        elif (job.get("item") or {}).get("kind") == "resolve" and proc is None:
+            continue
         elif proc is None and job.get("detached") and _worker_alive(job.get("pid")):
             continue
         elif proc is None and job.get("detached"):
@@ -1122,14 +1364,22 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
         result = _reap_exec(job, blocked)
         jobs.pop(rid, None)
         if result.get("outcome") == "worker_done":
-            result = _finish_exec(job["item"], job["cfg"],
-                                  Path(job["repo"]), Path(job["worktree"]),
-                                  job["branch"], rid, result, blocked)
+            item = job["item"]
+            if item.get("kind") == "resolve":
+                result = _finish_resolve_exec(
+                    item, job["cfg"], Path(job["repo"]), Path(job["worktree"]),
+                    job["branch"], rid, result, blocked)
+            else:
+                result = _finish_exec(item, job["cfg"],
+                                      Path(job["repo"]), Path(job["worktree"]),
+                                      job["branch"], rid, result, blocked)
         results.append(result)
         # One land per cycle; another completed worker is collected next
         # cycle. This keeps the critical section serial and auditable.
         if result.get("outcome") in ("landed", "land_locked", "land_error",
-                                     "land_conflict", "land_gate_fail"):
+                                     "land_conflict", "land_gate_fail",
+                                     "resolve_gate_fail", "no_changes",
+                                     "codex_fail", "codex_fail_preserved"):
             break
     return results
 
@@ -1150,7 +1400,7 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None) -> list
     # A completed worker frees one slot immediately. Keep filling in the same
     # cycle instead of idling until the next 10-minute heartbeat.
     active_ids = {rid for rid, job in jobs.items() if not job.get("recover")}
-    for item in _ledger_open_items():
+    for item in _exec_open_items():
         rid = item.get("id")
         if rid in blocked or rid in jobs or rid in active_ids:
             continue
@@ -1163,7 +1413,10 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None) -> list
         if dry:
             log(f"[dry] 会派发 {rid}（{item.get('kind')}）{item.get('title')}")
             break
-        job = _prepare_exec(item, cfg, blocked)
+        if item.get("kind") == "resolve":
+            job = _prepare_resolve_exec(item, cfg, blocked)
+        else:
+            job = _prepare_exec(item, cfg, blocked)
         if job.get("outcome") != "ready":
             results.append(job)
             continue
