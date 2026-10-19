@@ -1093,7 +1093,13 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
         elif proc is None and job.get("detached") and _worker_alive(job.get("pid")):
             continue
         elif proc is None and job.get("detached"):
-            job["proc"] = type("_Finished", (), {"poll": lambda self: 0})()
+            # A restarted daemon cannot wait() the original process. Treat a
+            # dead detached worker as finished; _reap_exec then reads the
+            # persisted log and runs the normal commit/land/close path.
+            job["proc"] = type("_Finished", (), {
+                "poll": lambda self: 0,
+                "wait": lambda self, timeout=None: 0,
+            })()
         elif proc is None:
             blocked[rid] = {"reason": "start_fail", "ts": _now()}
             jobs.pop(rid, None)
