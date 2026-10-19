@@ -20,9 +20,14 @@ KGCTL = OPS / "kgctl.py"
 
 def _installed_version() -> str:
     import json
-    return json.loads(
-        (OPS.parent / "plugin" / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
-    )["version"]
+    candidates = (
+        OPS.parent / "plugin" / ".codex-plugin" / "plugin.json",
+        OPS.parent / ".codex-plugin" / "plugin.json",
+    )
+    for path in candidates:
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))["version"]
+    raise AssertionError(f"找不到插件清单：{candidates[0]}")
 
 
 def run(cmd, cwd=None, env=None, check=True):
@@ -1308,7 +1313,10 @@ def test_panel_contract():
     """
     import re
 
-    html = (OPS.parent / "plugin" / "ui" / "panel.html").read_text(encoding="utf-8")
+    panel = OPS.parent / "ui" / "panel.html"
+    if not panel.exists():
+        panel = OPS.parent / "plugin" / "ui" / "panel.html"
+    html = panel.read_text(encoding="utf-8")
     script = "\n".join(re.findall(r"<script>([\s\S]*?)</script>", html))
     assert script.strip(), "面板里没有脚本，等于没接上控制层"
 

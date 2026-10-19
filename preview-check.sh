@@ -26,8 +26,10 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+PLUGIN_JSON="$REPO/plugin/.codex-plugin/plugin.json"
+[ -f "$PLUGIN_JSON" ] || PLUGIN_JSON="$REPO/.codex-plugin/plugin.json"
 VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-  "$REPO/plugin/.codex-plugin/plugin.json" | head -1)"
+  "$PLUGIN_JSON" | head -1)"
 [ -n "${VERSION}" ] || { echo "读不到插件版本，仓库不完整？" >&2; exit 2; }
 
 RELEASE_DIR="${HOME}/plugins/codex-autopilot/releases/${VERSION}"

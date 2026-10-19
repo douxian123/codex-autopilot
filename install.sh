@@ -53,6 +53,13 @@ done
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$REPO/plugin"
+# 源码仓库里插件本体在 plugin/，已发布的版本目录直接以自身为插件根。
+# 两者都允许，发布目录因此也能完整跑安装/自测，不再依赖源码仓库布局。
+if [ -d "$REPO/plugin/.codex-plugin" ]; then
+  PLUGIN_DIR="$REPO/plugin"
+else
+  PLUGIN_DIR="$REPO"
+fi
 # Codex 的 personal marketplace 根是 ${HOME}：清单在 $HOME/.agents/plugins/marketplace.json，
 # 而清单里的 "./plugins/<name>" 是相对根解析的，所以插件实体必须落在 $HOME/plugins/<name>。
 # 这两个目录不是同一个地方，装错了会被 marketplace 列出、却 add 不进去。
@@ -185,17 +192,21 @@ esac
 DEST="$RELEASE_ROOT/$VERSION"
 if [ -e "$DEST" ]; then
   echo "× 版本目录已存在，拒绝覆盖：$DEST" >&2
-  echo "  已有发布不可变；请提升 plugin/.codex-plugin/plugin.json 的版本号后再安装。" >&2
+  echo "  已有发布不可变；请提升插件清单里的版本号后再安装。" >&2
   exit 1
 fi
 STAGE="$RELEASE_ROOT/.staging-$VERSION-$$"
 mkdir -p "$STAGE/ops"
 trap 'if [ -n "${STAGE:-}" ] && [ -d "$STAGE" ]; then rm -rf -- "$STAGE"; fi' EXIT
 cp -R "$PLUGIN_DIR/." "$STAGE/"
+cp "$REPO/install.sh" "$STAGE/install.sh"
+chmod +x "$STAGE/install.sh"
 cp "$REPO"/ops/*.py "$STAGE/ops/"
 # 运行时可能带非 .py 的配套文件（模板/示例配置）。一并复制，避免安装后缺文件。
 cp "$REPO"/ops/*.md "$STAGE/ops/" 2>/dev/null || true
 cp "$REPO"/ops/*.json "$STAGE/ops/" 2>/dev/null || true
+cp "$REPO/preview-check.sh" "$STAGE/preview-check.sh"
+chmod +x "$STAGE/preview-check.sh"
 # 自测需要真实基线 fixture；嵌套目录不能靠通配符漏掉。
 if [ -d "$REPO/ops/selftest_fixtures" ]; then
   cp -R "$REPO/ops/selftest_fixtures" "$STAGE/ops/"

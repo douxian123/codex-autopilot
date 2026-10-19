@@ -23,7 +23,9 @@ from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
 REPO = OPS.parent
-PANEL = REPO / "plugin" / "ui" / "panel.html"
+PANEL = REPO / "ui" / "panel.html"
+if not PANEL.exists():
+    PANEL = REPO / "plugin" / "ui" / "panel.html"
 
 HARNESS = r"""
 const fs = require("fs");
