@@ -1003,16 +1003,8 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     exec_blocked = dict(load_state().get("exec_blocked") or {})
     for _stale in _prune_exec_blocked(exec_blocked):
         log(f"[exec] 台账已收口，清掉实现暂缓：{_stale}")
-    exec_cfg = auto_exec_config()
-    if dry:
-        dispatch_exec(True, exec_blocked)
-    elif exec_cfg["enabled"] and route_rc == 0:
-        exec_results = _collect_exec(exec_blocked) + dispatch_exec(False, exec_blocked)
-        save_worker_state(exec_done=exec_results)
-        exec_landed = [r for r in exec_results if r.get("outcome") == "landed"]
-    elif not exec_cfg["enabled"]:
-        log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
-
+    # Keep the existing synchronous dispatch until a real worker supervisor is
+    # introduced. It runs one item at a time and each item lands serially.
     rc, out = run_kgctl(["tick"])
     log_block("tick", rc, out)
     convergence = parse_convergence(out)
@@ -1135,6 +1127,15 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
                 break  # 落盘推进了 main，下一周期基于新 main 重挑
     elif not resolve_cfg["enabled"]:
         log("[resolve] auto_resolve 未开启（ops/central.config.json），跳过冲突拆分")
+
+    exec_cfg = auto_exec_config()
+    if dry:
+        dispatch_exec(True, exec_blocked)
+    elif exec_cfg["enabled"] and not (rc != 0 and not out.strip()):
+        exec_results = dispatch_exec(False, exec_blocked)
+        exec_landed = [r for r in exec_results if r.get("outcome") == "landed"]
+    elif not exec_cfg["enabled"]:
+        log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
 
     # 落过盘就再刷一次控制面，让看板/快照反映新 main。
     if (landed or ported or resolve_landed_any or exec_landed) and not dry:
