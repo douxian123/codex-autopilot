@@ -1528,6 +1528,7 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
 
     auto_land = control_state.load().get("auto_land", True)
     summary = {"other": 0, "merged": 0, "conflict": 0, "unresolved": 0}
+    land_blocked = dict(load_state().get("land_blocked") or {})
     attempts = 0
     while auto_land and attempts < max_land:
         rc, qout = run_kgctl(["queue", "--light"])
@@ -1536,6 +1537,7 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
             log_block("queue", rc, qout)
             failures.append(("(queue)", "queue_error"))
             break
+        clean = [b for b in clean if b not in land_blocked]
         if not clean:
             log(f"[queue] 可落盘 0 个（merged={summary['merged']} "
                 f"conflict={summary['conflict']}）")
@@ -1550,12 +1552,18 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
         log_block(f"land {target} -> {kind}", lrc, lout)
         if kind == "landed":
             landed.append(target)
+            land_blocked.pop(target, None)
             continue
         if kind == "already":
+            land_blocked.pop(target, None)
             continue
         if kind in ("locked", "noop"):
             break
         failures.append((target, kind))
+        if kind in ("merge_fail", "gate_fail", "conflict", "unresolved_markers"):
+            land_blocked[target] = {"reason": kind, "ts": _now()}
+            log(f"[land] {target} 记进 land_blocked（{kind}），后续周期跳过，"
+                f"避免反复占用自动落盘")
         break
 
     # 自动移植「只差几个提交」的冲突分支：cherry-pick 到当前 main，过门禁才落盘，
@@ -1705,6 +1713,7 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     state["total_resolved"] = int(state.get("total_resolved", 0)) + (
         1 if resolve_landed_any else 0) + len(resolved_tasks)
     state["last_resolved_tasks"] = resolved_tasks or state.get("last_resolved_tasks", [])
+    state["land_blocked"] = land_blocked
     state["resolve_blocked"] = resolve_blocked
     state["port_blocked"] = port_blocked
     state["exec_blocked"] = exec_blocked
