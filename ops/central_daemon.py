@@ -984,6 +984,16 @@ def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
         log(f"[exec] {rid} worktree 干净但分支已有未落提交 -> 直接收口 {(commit or '')[:12]}")
     else:
         log(f"[exec] {rid} 没有产生改动，记为无变化")
+        # A worker may have no pending changes because its target commit was
+        # already landed by an earlier pass. Keep the ledger accurate in that
+        # case instead of leaving an open no_changes row forever.
+        commit = str(item.get("commit") or "").strip()
+        if commit:
+            ancestor_rc, _, _ = _git(repo, "merge-base", "--is-ancestor",
+                                     commit, main_branch)
+            if ancestor_rc == 0:
+                _run_truthctl(["close", rid, "auto-close: commit already in main"],
+                              extra_env={"KG_TRUTH_COMMIT": commit})
         blocked[rid] = {"reason": "no_changes", "ts": _now()}
         _cleanup_exec(repo, wt, branch)
         result["outcome"] = "no_changes"
