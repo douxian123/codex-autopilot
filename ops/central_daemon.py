@@ -120,6 +120,25 @@ def _now() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
 
 
+class _Finished:
+    """Stand-in for a process that already exited before daemon restart.
+
+    Detached workers are persisted without Popen handles. Once their PID is
+    gone we cannot wait() the original process, but the log still contains the
+    exit evidence, so the same reap path should treat them as finished and let
+    infra retry/land handle the outcome.
+    """
+
+    def __init__(self, returncode: int = 1):
+        self.returncode = returncode
+
+    def poll(self) -> int:
+        return self.returncode
+
+    def wait(self, timeout=None) -> int:
+        return self.returncode
+
+
 def _rotate_log() -> None:
     try:
         if LOG.exists() and LOG.stat().st_size > MAX_LOG_BYTES:
@@ -915,10 +934,12 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
             # returncode yet on every platform, so synchronize it explicitly.
             job["proc"].returncode = 124
         finally:
-            try:
-                job["fh"].close()
-            except (AttributeError, OSError):
-                pass
+            fh = job.get("fh")
+            if fh is not None:
+                try:
+                    fh.close()
+                except (AttributeError, OSError):
+                    pass
             job.pop("fh", None)
         result["exit"] = code
         log(f"[exec] {rid} codex 退出码={code}（第 {attempt}/{total} 次，日志 {log_path}）")
@@ -1053,7 +1074,28 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
     """Restore live worker jobs after daemon restart without starting new sessions."""
     jobs = workers.setdefault("exec_jobs", {})
     for rid, job in list(jobs.items()):
-        if job.get("proc") is not None or job.get("recover"):
+        if job.get("proc") is not None:
+            continue
+        # Persisted jobs do not carry in-memory item/cfg. Rebuild them from the
+        # ledger before reaping so a daemon restart can still finish a branch
+        # that was already implemented (recover or detached).
+        if job.get("item") is None:
+            for cand in _ledger_open_items():
+                if cand.get("id") == rid:
+                    job["item"] = cand
+                    break
+            if job.get("item") is None:
+                # Persisted job whose ledger row is gone cannot be reaped
+                # safely. Keep the slot metadata out of active jobs instead of
+                # letting _reap_exec raise KeyError('item') every cycle.
+                job["partial"] = True
+                jobs.pop(rid, None)
+                continue
+        if "cfg" not in job or not job.get("cfg"):
+            job["cfg"] = auto_exec_config()
+        if job.get("codex") is None:
+            job["codex"] = _codex_bin()
+        if job.get("recover"):
             continue
         if job.get("pid") and _worker_alive(job["pid"]):
             # A restarted daemon cannot wait() an unrelated process. Preserve
@@ -1070,13 +1112,40 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
     jobs = workers.setdefault("exec_jobs", {})
     results = []
     for rid, job in list(jobs.items()):
+        if job.get("partial"):
+            continue
         proc = job.get("proc")
         if job.get("recover"):
-            pass
+            # Recover jobs are persisted without the in-memory item/cfg. Rebuild
+            # them from the ledger before reaping so a daemon restart can still
+            # finish a branch that was already implemented.
+            item = job.get("item")
+            if item is None:
+                for cand in _ledger_open_items():
+                    if cand.get("id") == rid:
+                        job["item"] = cand
+                        break
+            if "cfg" not in job or not job.get("cfg"):
+                job["cfg"] = auto_exec_config()
+            result = _reap_exec(job, blocked)
+            jobs.pop(rid, None)
+            results.append(result)
+            if result.get("outcome") in ("landed", "land_locked", "land_error",
+                                         "land_conflict", "land_gate_fail"):
+                break
+            if result.get("outcome") == "recover_empty":
+                # The recovered branch had no work and no pending commit. Do not
+                # block it; the next dispatch attempt should start a real worker.
+                blocked.pop(rid, None)
+            continue
         elif proc is None and job.get("detached") and _worker_alive(job.get("pid")):
             continue
         elif proc is None and job.get("detached"):
-            job["proc"] = type("_Finished", (), {"poll": lambda self: 0})()
+            # A restarted daemon cannot wait() the original process. Let the
+            # normal reap path read the persisted log and classify the outcome;
+            # that preserves WIP and retries infra failures instead of blocking
+            # every detached worker as a permanent codex_exit_1.
+            job["proc"] = _Finished(returncode=1)
         elif proc is None:
             blocked[rid] = {"reason": "start_fail", "ts": _now()}
             jobs.pop(rid, None)
@@ -1163,7 +1232,7 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     if dry:
         # 真预演：只问队列，不 tick（tick 会提交并推送真相层）、不 land、不通知。
         log("--- dry-run: 只预测本轮会 land 哪些分支 ---")
-        rc, qout = run_kgctl(["queue"])
+        rc, qout = run_kgctl(["queue", "--light"])
         clean, summary = parse_queue(qout)
         log_block("queue(dry)", rc, qout)
         log(f"[dry] 本轮会 land {min(len(clean), max_land)} / {len(clean)} 个: "
@@ -1213,7 +1282,7 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
 
     # Refresh truth after local work has already started. A slow/unreachable
     # remote must not hold worker dispatch behind the network timeout.
-    rc, out = run_kgctl(["tick"])
+    rc, out = run_kgctl(["tick", "--no-converge"], env_extra={"KG_TICK_LIGHT": "1"})
     log_block("tick", rc, out)
     convergence = parse_convergence(out)
     log(f"[converge] 可收拢族 {convergence['families']}，本轮新建 {convergence['made']}")
@@ -1221,7 +1290,8 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     # 归档「内容已全部在 main」的重复分支。这一步只写台账（加法），不动任何代码，
     # 也不动任何源分支，所以放进守护的安全子集。用 --fast（patch-id）保证秒级返回。
     superseded = 0
-    src, sout = run_kgctl(["supersede", "--go", "--fast"], timeout=SUPERSEDE_TIMEOUT)
+    src, sout = run_kgctl(["supersede", "--go", "--fast"], timeout=SUPERSEDE_TIMEOUT,
+                              env_extra={"KG_SUPERSEDE_LIGHT": "1"})
     log_block("supersede", src, sout)
     m = SUPERSEDE_DONE_RE.search(sout)
     if m:
@@ -1239,7 +1309,7 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     summary = {"other": 0, "merged": 0, "conflict": 0, "unresolved": 0}
     attempts = 0
     while auto_land and attempts < max_land:
-        rc, qout = run_kgctl(["queue"])
+        rc, qout = run_kgctl(["queue", "--light"])
         clean, summary = parse_queue(qout)
         if rc != 0:
             log_block("queue", rc, qout)
@@ -1292,7 +1362,8 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
             port_blocked[pb] = {"reason": po, "ts": _now()}
         # 移植推进了 main，可能让别的分支的改动「现在全部在 main 了」——再扫一次归档。
         if ported:
-            src2, sout2 = run_kgctl(["supersede", "--go", "--fast"], timeout=SUPERSEDE_TIMEOUT)
+            src2, sout2 = run_kgctl(["supersede", "--go", "--fast"], timeout=SUPERSEDE_TIMEOUT,
+                                       env_extra={"KG_SUPERSEDE_LIGHT": "1"})
             log_block("supersede(post-port)", src2, sout2)
             m2 = SUPERSEDE_DONE_RE.search(sout2)
             if m2:
@@ -1338,7 +1409,7 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
 
     # 落过盘就再刷一次控制面，让看板/快照反映新 main。
     if (landed or ported or resolve_landed_any or exec_landed) and not dry:
-        rc2, out2 = run_kgctl(["tick"])
+        rc2, out2 = run_kgctl(["tick", "--no-converge"], env_extra={"KG_TICK_LIGHT": "1"})
         log_block("tick(post-land)", rc2, out2)
 
     result = {"ts": time.time(), "iso": _now(), "dry": dry,

@@ -2531,6 +2531,95 @@ def test_parallel_exec_slots():
     print("selftest ok: 3 个 worker 槽并行启动、隔离 worktree，完成项仍逐条串行落盘。")
 
 
+def test_persisted_exec_hydrate():
+    """Persisted exec jobs must not crash dispatch when runtime fields are absent.
+
+    After a daemon restart, state.json only contains JSON-safe fields. The old
+    reap path accessed job["item"]/job["cfg"] directly and also replaced a dead
+    detached worker with an anonymous object that lacked wait(), producing
+    KeyError and AttributeError every cycle.
+    """
+    import importlib
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="autopilot-exec-hydrate-") as tmp:
+        base = Path(tmp)
+        repo, trunk, home = base / "state", base / "state-trunk", base / "home"
+        repo.mkdir(); home.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for name in ("progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{name}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "ledger.jsonl").write_text(
+            _json.dumps({"id": "L-9001", "type": "ledger", "kind": "bug",
+                         "title": "恢复僵尸槽", "status": "open",
+                         "ts": "2026-01-01T00:00:00+08:00"}, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(_json.dumps({
+            "build": {"cmd": "", "cwd": "."}, "verify": []}), encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "app.txt").write_text("main\n", encoding="utf-8")
+        git(repo, "add", "app.txt", "ops/central.config.json", "ops/truth/ledger.jsonl",
+            "ops/truth/progress.jsonl", "ops/truth/decisions.jsonl",
+            "ops/truth/acceptance.jsonl", "ops/tasks/inbox.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        (home / "control.json").write_text(_json.dumps({
+            "auto_exec": True, "paused": False}), encoding="utf-8")
+        # A pid that cannot be alive in this test process.
+        gone_pid = 999999
+        while True:
+            try:
+                os.kill(gone_pid, 0)
+                gone_pid += 1
+            except ProcessLookupError:
+                break
+        os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
+                          KG_DAEMON_HOME=str(home))
+        os.environ.pop("KG_EXEC_CMD", None)
+        import control_state, central_config, central_daemon
+        importlib.reload(control_state); importlib.reload(central_config)
+        importlib.reload(central_daemon)
+        blocked = {}
+        workers = {"exec_jobs": {
+            "L-9001": {
+                "id": "L-9001", "outcome": "ready",
+                "repo": str(repo), "branch": "codex/exec-l-9001-test",
+                "worktree": str(base / "state-exec-l-9001-test"),
+                "log": str(home / "exec" / "l-9001-test.log"),
+                "model": "aibvv@deepseek-v4.1-flash",
+                "started_at": "2026-10-20 03:23:48",
+                "recover": False,
+                "result": {"id": "L-9001", "branch": "codex/exec-l-9001-test",
+                           "worktree": str(base / "state-exec-l-9001-test")},
+                "pid": gone_pid, "detached": True,
+            },
+            "L-9002": {
+                "id": "L-9002", "outcome": "ready",
+                "repo": str(repo), "branch": "codex/exec-l-9002-orphan",
+                "worktree": str(base / "state-exec-l-9002-orphan"),
+                "log": str(home / "exec" / "l-9002-orphan.log"),
+                "model": "aibvv@deepseek-v4.1-flash",
+                "started_at": "2026-10-20 03:24:00",
+                "recover": False,
+                "result": {"id": "L-9002", "branch": "codex/exec-l-9002-orphan",
+                           "worktree": str(base / "state-exec-l-9002-orphan")},
+                "pid": gone_pid, "detached": True,
+            },
+        }}
+        try:
+            hydrated = central_daemon._hydrate_exec_jobs(workers)
+            before_collect = "L-9001" in hydrated["exec_jobs"]
+            central_daemon._collect_exec(workers, blocked)
+        except Exception as exc:
+            raise AssertionError(f"persisted exec jobs caused exception: {exc!r}") from exc
+        if not before_collect:
+            raise AssertionError("recoverable persisted job was dropped during hydrate")
+        if "L-9002" in hydrated["exec_jobs"]:
+            raise AssertionError("orphan persisted job was not dropped")
+    print("selftest ok: 持久化 exec job 缺失运行时字段时安全重建/移除，不抛 KeyError。")
+
 def test_mcp_contract():
     """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
     import json as _json
@@ -2744,5 +2833,6 @@ if __name__ == "__main__":
     test_verify_and_truth()
     test_auto_exec()
     test_parallel_exec_slots()
+    test_persisted_exec_hydrate()
     test_mcp_contract()
     test_closure_rate()
