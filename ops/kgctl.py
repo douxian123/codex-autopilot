@@ -866,6 +866,7 @@ def cmd_intake(args):
     if args[0] in ('-h', '--help'):
         print('用法: kgctl intake "用户原话"')
         return
+    _restore_truth_keep_files_from_origin()
     cmd_inbox(args)
     sys.stdout.flush()
     print("\n[1/5] route inbox", flush=True)
@@ -2397,6 +2398,17 @@ TRUTH_PATHS = ("ops/truth", "ops/tasks", "ops/context", "docs/PROJECT_STATUS.md"
                "docs/PRODUCT_MAINLINE.md")
 TRUTH_COMMIT_RE = re.compile(r"^(chore\(truth\)|train: (sync|merge))")
 
+# 产品真相证据：这些文件由真实质量/运维命令生成，不能由旧真相同步或冲突合并覆盖。
+TRUTH_KEEP_IF_BASELINE_MISSING = ("ops/truth/benchmark-contract-report.json",
+                                  "ops/truth/stability-alerts.jsonl",
+                                  "ops/truth/backup-restore-receipt.json")
+
+# 36 题真实评分基线（2026-10-20 已恢复并验证）:
+#   itemCount=36, averageScore=78.1, verifiedCount=27,
+#   fabricatedCount=2, fabricatedSources=4, missingProvenanceCount=7,
+#   claimUpgradeViolations=0, terminalSubstanceFailedItems=v1-action-04/v1-action-06
+TRUTH_BENCHMARK_REAL_HASH = "a9e242bff237e3836484776640ce751e9470948e976bc1f4c795401d6767050f"
+
 
 def trunk_status(wt: Path):
     # 只看已跟踪改动：未跟踪文件（如 ops/__pycache__/）不影响合并，若真要覆盖它们
@@ -2438,6 +2450,81 @@ def trunk_head_is_truth_only(wt: Path, base: str = None) -> bool:
         return False
     return all(any(f == t or f.startswith(t.rstrip("/") + "/") for t in TRUTH_PATHS)
                for f in files)
+
+
+def _hash_blob(ref: str, rel: str) -> str:
+    """取 ref 下文件的 Git blob SHA-1；文件不存在时返回空串。"""
+    p = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--verify", "--quiet",
+                        f"{ref}:{rel}"], capture_output=True, text=True)
+    return p.stdout.strip() if p.returncode == 0 else ""
+
+
+def _sha256_file(path: Path) -> str:
+    """取文件内容 SHA-256，与 TRUTH_BENCHMARK_REAL_HASH 固定常量同口径。"""
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _remote_benchmark_sha() -> str:
+    """取 origin/{MAIN} 下 36 题基线的 SHA-256；文件不存在时返回空串。"""
+    rel = "ops/truth/benchmark-contract-report.json"
+    if not _hash_blob(f"origin/{MAIN}", rel):
+        return ""
+    blob = subprocess.run(
+        ["git", "-C", str(REPO), "show", f"origin/{MAIN}:{rel}"],
+        capture_output=True,
+        text=True,
+    ).stdout
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _ensure_truth_baselines(wt: Path = None) -> bool:
+    """防止真相层把真实评分证据覆盖成旧/伪快照。
+
+    当前唯一带真实运行上下文且保持 RED 的 36 题报告是 ops/truth/
+    benchmark-contract-report.json。tick 同步会先恢复保护文件；这里再用固定哈希
+    复核它没有被旧状态覆盖。文件缺失时保持旧行为（自包含插件可用于任何项目），
+    哈希不符则 fail-closed，不让错误版本继续被后续合并/提交当成事实。
+    """
+    base = wt or REPO
+    rel = "ops/truth/benchmark-contract-report.json"
+    target = base / rel
+    if not target.exists():
+        return True
+    local_sha = _sha256_file(target)
+    if local_sha == TRUTH_BENCHMARK_REAL_HASH:
+        remote_sha = _remote_benchmark_sha()
+        if remote_sha and remote_sha != TRUTH_BENCHMARK_REAL_HASH:
+            print(
+                f"  × 远端保护证据本身已被污染：{rel} "
+                f"remote={remote_sha[:10]} != {TRUTH_BENCHMARK_REAL_HASH[:10]}"
+            )
+            return False
+        return True
+    remote_sha = _remote_benchmark_sha()
+    if remote_sha and remote_sha != TRUTH_BENCHMARK_REAL_HASH:
+        print(
+            f"  × 稳定性基准被覆盖且远端也不含真实基线：{rel} "
+            f"local={local_sha[:10]} remote={remote_sha[:10]}"
+        )
+        return False
+    if remote_sha == TRUTH_BENCHMARK_REAL_HASH:
+        print(f"  基准内容被覆盖（{local_sha[:10]} != {TRUTH_BENCHMARK_REAL_HASH[:10]}），从 origin/{MAIN} 恢复真实 36 题报告")
+        blob = subprocess.run(["git", "-C", str(base), "show", f"origin/{MAIN}:{rel}"],
+                              capture_output=True, text=True)
+        if blob.returncode != 0 or not blob.stdout:
+            print(f"  × 恢复失败：origin/{MAIN} 的 {rel} 不可读")
+            return False
+        target.write_text(blob.stdout, encoding="utf-8")
+        return True
+    print(
+        f"  × 稳定性基准被覆盖且远端也不含真实基线：{rel} "
+        f"local={local_sha[:10]} remote={remote_sha[:10] or '(missing)'}"
+    )
+    return False
 
 
 def _snapshot_truth_files(wt: Path) -> dict:
@@ -2482,6 +2569,9 @@ def reset_trunk_head(wt: Path) -> None:
         但在切换前先把真相文件抓进内存，切完再写回，保证路由结果、台账追加一条不丢。
         被丢弃的代码来自仍存在的源分支，可随时重放；真相层不能丢，因为它没有别处副本。
     """
+    if not _ensure_truth_baselines(wt):
+        print("  × 稳定性基准保护失败，拒绝重置主干工作树")
+        sys.exit(1)
     if trunk_head_is_truth_only(wt):
         merged = subprocess.run(["git", "-C", str(wt), "merge", "--no-ff", f"origin/{MAIN}",
                                  "-m", "train: sync origin/main over truth state"],
@@ -2521,6 +2611,9 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     if non_truth:
         print(f"× 主干工作树有非真相层改动，拒绝同步真相层：{wt}")
         print("\n".join(non_truth[:20])[:1000])
+        return False
+    if not _ensure_truth_baselines(wt):
+        print("  × 稳定性基准保护失败，拒绝提交真相层")
         return False
     for rel in TRUTH_PATHS:
         if (wt / rel).exists():
@@ -2587,16 +2680,29 @@ def _resolve_truth_merge(wt: Path) -> bool:
         return False
     for rel in unmerged:
         ours, theirs = _stage_blob(wt, 2, rel), _stage_blob(wt, 3, rel)
+        target = wt / rel
         if rel.endswith(".jsonl"):
-            write_text(wt / rel, _union_jsonl_text(ours, theirs))
+            target.write_text(_union_jsonl_text(ours, theirs), encoding="utf-8")
         elif rel.endswith(".json"):
-            try:
-                merged = _merge_json_value(json.loads(theirs), json.loads(ours))
-                write_json(wt / rel, merged)
-            except Exception:
-                write_text(wt / rel, theirs)
+            if rel in TRUTH_KEEP_IF_BASELINE_MISSING:
+                # Product evidence snapshots are generated by real repo commands;
+                # truth tick must not overwrite newly landed evidence with stale state.
+                # stage3 may itself be a polluted truth snapshot, so verify the
+                # pinned byte hash before allowing this conflict resolution to land.
+                target.write_text(theirs or ours, encoding="utf-8")
+                if rel == "ops/truth/benchmark-contract-report.json" and _sha256_file(target) != TRUTH_BENCHMARK_REAL_HASH:
+                    print("  × 稳定性基准在真相冲突中被污染，拒绝该次同步")
+                    subprocess.run(["git", "-C", str(wt), "merge", "--abort"],
+                                   capture_output=True, text=True)
+                    return False
+            else:
+                try:
+                    merged = _merge_json_value(json.loads(theirs), json.loads(ours))
+                    write_json(target, merged)
+                except Exception:
+                    target.write_text(theirs or ours, encoding="utf-8")
         else:
-            write_text(wt / rel, theirs or ours)
+            target.write_text(theirs or ours, encoding="utf-8")
         subprocess.run(["git", "-C", str(wt), "add", "--", rel], check=True)
     committed = subprocess.run(
         ["git", "-C", str(wt), "commit", "-m", "chore(truth): merge origin/main into truth state"],
@@ -2609,6 +2715,9 @@ def _resolve_truth_merge(wt: Path) -> bool:
 
 
 def _merge_truth_from_origin() -> bool:
+    if not _ensure_truth_baselines(REPO):
+        print("  × 稳定性基准保护失败，拒绝合并 origin/main")
+        return False
     merged = subprocess.run(
         ["git", "-C", str(REPO), "merge", "--no-ff", f"origin/{MAIN}",
          "-m", "train: merge origin/main into truth state"],
@@ -2630,6 +2739,9 @@ def push_truth_state() -> None:
                              capture_output=True, text=True)
     if fetched.returncode != 0:
         print(f"  fetch origin/{MAIN} 失败：{fetched.stderr.strip()[:200]}")
+        return
+    if not _ensure_truth_baselines(REPO):
+        print("  × 稳定性基准保护失败，拒绝推送真相层")
         return
     ahead = int(git("rev-list", "--count", f"origin/{MAIN}..HEAD") or 0)
     if ahead == 0:
@@ -3307,8 +3419,46 @@ def cmd_next(args):
     _truth("next")
 
 
+def _restore_truth_keep_files_from_origin() -> None:
+    """tick/intake 前恢复必须保留的真相证据，并拒绝远端伪快照。
+
+    远端确实不存在时不伪造文件；远端如果本身已被污染成伪快照，也不能把它写回
+    本地，必须停止并保留真实字节。
+    """
+    fetched = subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
+                             capture_output=True, text=True)
+    if fetched.returncode != 0:
+        print(f"  保护证据恢复失败：fetch origin/{MAIN} 失败")
+        return
+    rel = "ops/truth/benchmark-contract-report.json"
+    remote_sha = _remote_benchmark_sha()
+    if remote_sha and remote_sha != TRUTH_BENCHMARK_REAL_HASH:
+        print(
+            f"  × 远端保护证据本身已被污染：{rel} "
+            f"remote={remote_sha[:10]} != {TRUTH_BENCHMARK_REAL_HASH[:10]}"
+        )
+        if _ensure_truth_baselines(REPO):
+            print("  已保留本地真实 36 题基线并停止 tick/intake/truth-replay")
+        sys.exit("× 稳定性基准远端污染，拒绝 tick/intake/truth-replay，不传播伪快照")
+    restored = []
+    for rel in TRUTH_KEEP_IF_BASELINE_MISSING:
+        blob = subprocess.run(["git", "-C", str(REPO), "show", f"origin/{MAIN}:{rel}"],
+                              capture_output=True, text=True)
+        if blob.returncode != 0 or not blob.stdout:
+            continue
+        target = REPO / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(blob.stdout, encoding="utf-8")
+        restored.append(rel)
+    if restored:
+        print(f"  已从 origin/{MAIN} 恢复 {len(restored)} 个保护证据文件")
+    if not _ensure_truth_baselines(REPO):
+        sys.exit("× 稳定性基准保护失败，停止 tick/intake/truth-replay，不推送可能被污染的真相层")
+
+
 def cmd_tick(args):
     """自动挡主循环：输入归一 -> 真相刷新 -> 冲突收拢 -> 看板/上下文 -> 落盘状态。"""
+    _restore_truth_keep_files_from_origin()
     print("[1/8] route inbox", flush=True)
     _truth("route", "--go")
     print("\n[2/8] refresh project status", flush=True)

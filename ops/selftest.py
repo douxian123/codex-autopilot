@@ -662,6 +662,75 @@ def test_sync_trunk_truth_failclosed_non_truth():
     print("selftest ok: 工作树夹带代码改动时，真相同步 fail-closed 不吞文件、不产生 chore(truth) 提交。")
 
 
+def test_remote_benchmark_pollution_failclosed():
+    """锁住稳定基线保护的运行入口：远端 origin/main 的 36 题报告被伪快照覆盖时，
+    tick/intake 必须 fail-closed，不能把伪快照写回本地真实基线，也不能继续推送。
+    """
+    import hashlib as _hashlib
+    REAL_HASH = "a9e242bff237e3836484776640ce751e9470948e976bc1f4c795401d6767050f"
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-benchmark-pollution-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        trunk = root / "state-trunk"
+        repo.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "docs").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for f in ("ledger", "progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{f}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        (repo / "docs" / "PROJECT_STATUS.md").write_text("# status\n\nbase\n", encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(
+            json.dumps({"build": {"cmd": "", "cwd": "."}}), encoding="utf-8")
+        fixture = OPS / "selftest_fixtures" / "benchmark-contract-report.json"
+        if not fixture.exists():
+            raise AssertionError("真实 36 题基线 fixture 缺失")
+        real_bytes = fixture.read_bytes()
+        if _hashlib.sha256(real_bytes).hexdigest() != REAL_HASH:
+            raise AssertionError("自测基线 fixture 与真实基线常量不一致")
+        (repo / "ops" / "truth" / "benchmark-contract-report.json").write_bytes(real_bytes)
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        git(repo, "add", ".")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = root / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+
+        # 远端被覆盖成伪快照，同时本地仍保留真实字节。
+        git(repo, "checkout", "-q", "-b", "codex/pollute", "main")
+        (repo / "ops" / "truth" / "benchmark-contract-report.json").write_text(
+            '{"itemCount": 1, "fabricated": true}\n', encoding="utf-8")
+        git(repo, "add", "ops/truth/benchmark-contract-report.json")
+        git(repo, "commit", "-q", "-m", "pollute remote baseline")
+        git(repo, "checkout", "-q", "main")
+        git(repo, "update-ref", "refs/heads/main", "codex/pollute")
+        git(repo, "push", "-q", "origin", "main")
+        git(repo, "update-ref", "refs/heads/main", "HEAD@{1}")
+
+        before_local = (repo / "ops" / "truth" / "benchmark-contract-report.json").read_text(
+            encoding="utf-8")
+        before_main = git(repo, "rev-parse", "main").stdout.strip()
+        tick = kgctl(repo, trunk, "tick", "--no-converge")
+        out = tick.stdout + tick.stderr
+        if tick.returncode == 0:
+            raise AssertionError(f"远端污染时 tick 没有 fail-closed:\n{out}")
+        if "远端保护证据本身已被污染" not in out:
+            raise AssertionError(f"tick 没有报告远端污染:\n{out}")
+        if "不传播伪快照" not in out:
+            raise AssertionError(f"tick 没有说明不传播伪快照:\n{out}")
+        after_local = (repo / "ops" / "truth" / "benchmark-contract-report.json").read_text(
+            encoding="utf-8")
+        if after_local != before_local:
+            raise AssertionError("tick 覆盖了本地真实基线")
+        if git(repo, "rev-parse", "main").stdout.strip() != before_main:
+            raise AssertionError("tick 推进了 main 或本地 main 引用")
+    print("selftest ok: 远端基准被污染时 tick fail-closed，本地真实基线不被动、不传播伪快照。")
+
+
 def test_control_state():
     """用户级开关：暂停闸门、开关持久化、损坏即安全暂停。"""
     import importlib
@@ -2596,6 +2665,7 @@ if __name__ == "__main__":
     test_resolve()
     test_reset_trunk_truth_conflict()
     test_sync_trunk_truth_failclosed_non_truth()
+    test_remote_benchmark_pollution_failclosed()
     test_control_state()
     test_installer()
     test_installer_shell_portability()

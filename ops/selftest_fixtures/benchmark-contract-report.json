@@ -1,0 +1,632 @@
+{
+  "itemCount": 36,
+  "averageScore": 78.1,
+  "verifiedCount": 27,
+  "typeMatchCount": 36,
+  "centerJudgmentCount": 36,
+  "typeMatchRate": 100,
+  "intentClassificationRate": null,
+  "intentEvidenceCount": 0,
+  "centerDefinitionRate": 100,
+  "retrievalPlanCoverage": 80.6,
+  "maxTrunkCount": 3,
+  "missingProvenanceCount": 7,
+  "invalidEdgeReferenceCount": 0,
+  "invalidSourceUrlCount": 0,
+  "fabricatedCount": 2,
+  "fabricatedSources": 4,
+  "unprovenSourceUrls": {
+    "v1-action-01": [],
+    "v1-action-02": [],
+    "v1-action-03": [],
+    "v1-action-04": [],
+    "v1-action-05": [],
+    "v1-action-06": [],
+    "v1-comparison-01": [],
+    "v1-comparison-02": [],
+    "v1-comparison-03": [],
+    "v1-comparison-04": [],
+    "v1-comparison-05": [],
+    "v1-comparison-06": [],
+    "v1-concept-01": [],
+    "v1-concept-02": [],
+    "v1-concept-03": [
+      "http://www.cqvip.com/QK/80805X/200703/24622995.html"
+    ],
+    "v1-concept-04": [],
+    "v1-concept-05": [],
+    "v1-concept-06": [],
+    "v1-entity-01": [],
+    "v1-entity-02": [],
+    "v1-entity-03": [],
+    "v1-entity-04": [],
+    "v1-entity-05": [],
+    "v1-entity-06": [],
+    "v1-event-01": [],
+    "v1-event-02": [],
+    "v1-event-03": [],
+    "v1-event-04": [],
+    "v1-event-05": [],
+    "v1-event-06": [],
+    "v1-system-01": [],
+    "v1-system-02": [],
+    "v1-system-03": [],
+    "v1-system-04": [],
+    "v1-system-05": [
+      "http://www.cqvip.com/qk/88571X/200930/31158885.html"
+    ],
+    "v1-system-06": []
+  },
+  "duplicateRate": 0,
+  "duplicateNodes": 0,
+  "severeIdentityConfusions": 0,
+  "claimUpgradeViolations": 0,
+  "terminalSubstance": [
+    {
+      "caseId": "v1-action-01",
+      "totalNodes": 5,
+      "substanceCards": 5,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-action-02",
+      "totalNodes": 5,
+      "substanceCards": 5,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-action-03",
+      "totalNodes": 5,
+      "substanceCards": 1,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-action-04",
+      "totalNodes": 1,
+      "substanceCards": 0,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-action-05",
+      "totalNodes": 6,
+      "substanceCards": 1,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-action-06",
+      "totalNodes": 6,
+      "substanceCards": 0,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-comparison-01",
+      "totalNodes": 13,
+      "substanceCards": 13,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-comparison-02",
+      "totalNodes": 8,
+      "substanceCards": 8,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-comparison-03",
+      "totalNodes": 6,
+      "substanceCards": 6,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-comparison-04",
+      "totalNodes": 2,
+      "substanceCards": 2,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-comparison-05",
+      "totalNodes": 2,
+      "substanceCards": 2,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-comparison-06",
+      "totalNodes": 3,
+      "substanceCards": 3,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-concept-01",
+      "totalNodes": 10,
+      "substanceCards": 8,
+      "hollowNodes": 2
+    },
+    {
+      "caseId": "v1-concept-02",
+      "totalNodes": 10,
+      "substanceCards": 10,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-concept-03",
+      "totalNodes": 8,
+      "substanceCards": 8,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-concept-04",
+      "totalNodes": 10,
+      "substanceCards": 10,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-concept-05",
+      "totalNodes": 8,
+      "substanceCards": 8,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-concept-06",
+      "totalNodes": 9,
+      "substanceCards": 9,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-entity-01",
+      "totalNodes": 8,
+      "substanceCards": 8,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-entity-02",
+      "totalNodes": 6,
+      "substanceCards": 6,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-entity-03",
+      "totalNodes": 6,
+      "substanceCards": 6,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-entity-04",
+      "totalNodes": 8,
+      "substanceCards": 8,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-entity-05",
+      "totalNodes": 9,
+      "substanceCards": 9,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-entity-06",
+      "totalNodes": 9,
+      "substanceCards": 9,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-event-01",
+      "totalNodes": 9,
+      "substanceCards": 9,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-event-02",
+      "totalNodes": 8,
+      "substanceCards": 8,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-event-03",
+      "totalNodes": 7,
+      "substanceCards": 7,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-event-04",
+      "totalNodes": 7,
+      "substanceCards": 7,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-event-05",
+      "totalNodes": 10,
+      "substanceCards": 10,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-event-06",
+      "totalNodes": 6,
+      "substanceCards": 6,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-system-01",
+      "totalNodes": 8,
+      "substanceCards": 8,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-system-02",
+      "totalNodes": 8,
+      "substanceCards": 8,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-system-03",
+      "totalNodes": 9,
+      "substanceCards": 9,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-system-04",
+      "totalNodes": 9,
+      "substanceCards": 9,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-system-05",
+      "totalNodes": 9,
+      "substanceCards": 9,
+      "hollowNodes": 0
+    },
+    {
+      "caseId": "v1-system-06",
+      "totalNodes": 6,
+      "substanceCards": 6,
+      "hollowNodes": 0
+    }
+  ],
+  "terminalSubstanceFailedItems": [
+    "v1-action-04",
+    "v1-action-06"
+  ],
+  "auditBasis": "dist:auditGraphCompilation",
+  "singlePassCount": 33,
+  "missingContextCount": 0,
+  "typeAverages": {
+    "entity": 80,
+    "concept": 78.2,
+    "event": 80,
+    "system": 80,
+    "comparison": 76.2,
+    "action": 74.3
+  },
+  "items": [
+    {
+      "caseId": "v1-action-01",
+      "score": 80,
+      "searchProvider": "bing",
+      "retryCount": 2,
+      "latencyMs": 8151,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-action-02",
+      "score": 80,
+      "searchProvider": "bing",
+      "retryCount": 3,
+      "latencyMs": 70187,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-action-03",
+      "score": 80,
+      "searchProvider": "free_recall",
+      "retryCount": 2,
+      "latencyMs": 46137,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-action-04",
+      "score": 46,
+      "searchProvider": "free_recall",
+      "retryCount": 2,
+      "latencyMs": 52062,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-action-05",
+      "score": 80,
+      "searchProvider": "free_recall",
+      "retryCount": 2,
+      "latencyMs": 43693,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-action-06",
+      "score": 80,
+      "searchProvider": "free_recall",
+      "retryCount": 2,
+      "latencyMs": 66158,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-comparison-01",
+      "score": 80,
+      "searchProvider": "free_recall",
+      "retryCount": 2,
+      "latencyMs": 90106,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-comparison-02",
+      "score": 80,
+      "searchProvider": "bing",
+      "retryCount": 1,
+      "latencyMs": 118200,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-comparison-03",
+      "score": 80,
+      "searchProvider": "bing",
+      "retryCount": 1,
+      "latencyMs": 149572,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-comparison-04",
+      "score": 69,
+      "searchProvider": "bing",
+      "retryCount": 2,
+      "latencyMs": 91450,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-comparison-05",
+      "score": 74,
+      "searchProvider": "bing",
+      "retryCount": 2,
+      "latencyMs": 19452,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-comparison-06",
+      "score": 74,
+      "searchProvider": "bing",
+      "retryCount": 2,
+      "latencyMs": 37625,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-concept-01",
+      "score": 80,
+      "searchProvider": "free_recall",
+      "retryCount": 2,
+      "latencyMs": 95717,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-concept-02",
+      "score": 80,
+      "searchProvider": "openalex",
+      "retryCount": 2,
+      "latencyMs": 92225,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-concept-03",
+      "score": 80,
+      "searchProvider": "openalex",
+      "retryCount": 2,
+      "latencyMs": 85820,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-concept-04",
+      "score": 69,
+      "searchProvider": "openalex",
+      "retryCount": 2,
+      "latencyMs": 124299,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-concept-05",
+      "score": 80,
+      "searchProvider": "bing",
+      "retryCount": 2,
+      "latencyMs": 102116,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-concept-06",
+      "score": 80,
+      "searchProvider": "bing",
+      "retryCount": 2,
+      "latencyMs": 129500,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-entity-01",
+      "score": 80,
+      "searchProvider": "bing",
+      "retryCount": 2,
+      "latencyMs": 88180,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-entity-02",
+      "score": 80,
+      "searchProvider": "crossref",
+      "retryCount": 1,
+      "latencyMs": 90054,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-entity-03",
+      "score": 80,
+      "searchProvider": "crossref",
+      "retryCount": 1,
+      "latencyMs": 141983,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-entity-04",
+      "score": 80,
+      "searchProvider": "crossref",
+      "retryCount": 2,
+      "latencyMs": 108082,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-entity-05",
+      "score": 80,
+      "searchProvider": "openalex",
+      "retryCount": 2,
+      "latencyMs": 100623,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-entity-06",
+      "score": 80,
+      "searchProvider": "crossref",
+      "retryCount": 2,
+      "latencyMs": 105750,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-event-01",
+      "score": 80,
+      "searchProvider": "free_recall",
+      "retryCount": 2,
+      "latencyMs": 106887,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-event-02",
+      "score": 80,
+      "searchProvider": "free_recall",
+      "retryCount": 2,
+      "latencyMs": 75586,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-event-03",
+      "score": 80,
+      "searchProvider": "free_recall",
+      "retryCount": 2,
+      "latencyMs": 71820,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-event-04",
+      "score": 80,
+      "searchProvider": "free_recall",
+      "retryCount": 2,
+      "latencyMs": 83916,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-event-05",
+      "score": 80,
+      "searchProvider": "bing",
+      "retryCount": 2,
+      "latencyMs": 85306,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-event-06",
+      "score": 80,
+      "searchProvider": "free_recall",
+      "retryCount": 2,
+      "latencyMs": 78877,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-system-01",
+      "score": 80,
+      "searchProvider": "openalex",
+      "retryCount": 2,
+      "latencyMs": 130981,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-system-02",
+      "score": 80,
+      "searchProvider": "crossref",
+      "retryCount": 3,
+      "latencyMs": 105800,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-system-03",
+      "score": 80,
+      "searchProvider": "openalex",
+      "retryCount": 2,
+      "latencyMs": 109228,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-system-04",
+      "score": 80,
+      "searchProvider": "crossref",
+      "retryCount": 2,
+      "latencyMs": 103811,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-system-05",
+      "score": 80,
+      "searchProvider": "free_recall",
+      "retryCount": 2,
+      "latencyMs": 73671,
+      "terminal": true,
+      "modelProvider": "env"
+    },
+    {
+      "caseId": "v1-system-06",
+      "score": 80,
+      "searchProvider": "free_recall",
+      "retryCount": 2,
+      "latencyMs": 67016,
+      "terminal": true,
+      "modelProvider": "env"
+    }
+  ],
+  "passed": false,
+  "failures": [
+    "9 条结果没有可核验来源，不得作为内容质量通过",
+    "3 条结果低于单题 70/100 门槛",
+    "7 条结果缺少搜索溯源记录",
+    "36 条结果缺少严格意图命中证据，不得用类型判定冒充意图命中（v1-action-01, v1-action-02, v1-action-03, v1-action-04, v1-action-05, v1-action-06, v1-comparison-01, v1-comparison-02, v1-comparison-03, v1-comparison-04, v1-comparison-05, v1-comparison-06, v1-concept-01, v1-concept-02, v1-concept-03, v1-concept-04, v1-concept-05, v1-concept-06, v1-entity-01, v1-entity-02, v1-entity-03, v1-entity-04, v1-entity-05, v1-entity-06, v1-event-01, v1-event-02, v1-event-03, v1-event-04, v1-event-05, v1-event-06, v1-system-01, v1-system-02, v1-system-03, v1-system-04, v1-system-05, v1-system-06）",
+    "2 条结果存在编造来源",
+    "2 条结果终态只有空槽/提问主干，没有实质结论卡（v1-action-04, v1-action-06）"
+  ]
+}
