@@ -2495,7 +2495,7 @@ def trunk_status(wt: Path):
 
 def is_truth_path(line: str) -> bool:
     """judge whether a `git status --porcelain` line belongs to the truth layer."""
-    body = line[3:].strip()
+    body = line[3:].strip() if len(line) > 3 else line.strip()
     if " -> " in body:
         body = body.split(" -> ", 1)[1]
     body = body.strip('"')
@@ -2602,6 +2602,18 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     """把主干工作树上真相层 / 生成视图的改动提交掉（只显式列出这些路径）。"""
     pending = [line for line in trunk_status(wt) if is_truth_path(line)]
     if not pending:
+        return False
+    dirty = [line for line in trunk_status(wt) if not is_truth_path(line)]
+    if dirty:
+        # 共享检出里可能有并行任务在写代码/产品文件。只提交真相层会把它们吞进
+        # `chore(truth)`，并让本地 main 与 origin/main 分叉，随后 land 永久卡死。
+        # 这里必须和 land / supersede 一样 fail-closed：先撤回已暂存的真相层，
+        # 不留下半暂存状态；等真正只有真相层改动时再同步。
+        subprocess.run(["git", "-C", str(wt), "reset", "-q", "--", *TRUTH_PATHS],
+                       capture_output=True, text=True)
+        print(f"  主干工作树有非真相层改动，拒绝同步真相层：{wt}")
+        for line in dirty[:20]:
+            print("  " + line)
         return False
     for rel in TRUTH_PATHS:
         if (wt / rel).exists():
