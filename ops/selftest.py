@@ -597,6 +597,64 @@ def test_reset_trunk_truth_conflict():
     print("selftest ok: 失败 land 留下的真相层残留不再锁死后续落盘，JSONL 并集、main 正常推进。")
 
 
+def test_sync_trunk_truth_failclosed_non_truth():
+    """锁住 tick/sync 的回归：主干工作树带非真相层改动时，真相同步必须放弃提交。
+
+    旧实现只把 TRUTH_PATHS 显式 add，但如果同一棵树里已经有大量代码/测试改动，
+    `git commit` 仍会把索引里那些非真相文件一起卷进 `chore(truth)`。这里构造
+    「真相文件 + 代码文件同时脏」的共享检出场景，要求 sync_trunk_truth 返回 False、
+    不产生 chore(truth) 提交、非真相文件继续留在工作区。
+    """
+    import importlib
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-truth-sync-failclosed-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        trunk = root / "state-trunk"
+        repo.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for f in ("ledger", "progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{f}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        (repo / "docs").mkdir(parents=True)
+        (repo / "docs" / "PROJECT_STATUS.md").write_text("# status\n\nbase\n", encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(
+            json.dumps({"build": {"cmd": "", "cwd": "."}}), encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        git(repo, "add", ".")
+        git(repo, "commit", "-q", "-m", "init")
+        git(repo, "worktree", "add", "-q", "--detach", str(trunk), "main")
+
+        # 共享检出同时存在真相层改动和代码改动。
+        (trunk / "docs" / "PROJECT_STATUS.md").write_text("# status\n\nnew-truth\n", encoding="utf-8")
+        (trunk / "backend" / "src" / "app.ts").parent.mkdir(parents=True, exist_ok=True)
+        (trunk / "backend" / "src" / "app.ts").write_text("export const x = 1;\n", encoding="utf-8")
+        git(trunk, "add", "backend/src/app.ts")
+
+        before = git(trunk, "rev-parse", "HEAD").stdout.strip()
+        sys.path.insert(0, str(OPS))
+        import kgctl
+        importlib.reload(kgctl)
+        os.environ["KG_REPO"] = str(repo)
+        os.environ["KG_TRUNK"] = str(trunk)
+        os.environ.pop("KG_TICK_LIGHT", None)
+        ok = kgctl.sync_trunk_truth(trunk, "sync from tick")
+        if ok:
+            raise AssertionError("非真相层改动存在时 sync_trunk_truth 仍提交了")
+        after = git(trunk, "rev-parse", "HEAD").stdout.strip()
+        if after != before:
+            raise AssertionError(f"sync_trunk_truth 产生了提交: {before} -> {after}")
+        status = git(trunk, "status", "--porcelain").stdout
+        if "backend/src/app.ts" not in status:
+            raise AssertionError("非真相层改动被 sync_trunk_truth 吞掉或清掉")
+        if "docs/PROJECT_STATUS.md" not in status:
+            raise AssertionError("真相层改动被 sync_trunk_truth 吞掉或清掉")
+    print("selftest ok: 工作树夹带代码改动时，真相同步 fail-closed 不吞文件、不产生 chore(truth) 提交。")
+
+
 def test_control_state():
     """用户级开关：暂停闸门、开关持久化、损坏即安全暂停。"""
     import importlib
@@ -1671,6 +1729,7 @@ if __name__ == "__main__":
     test_replan()
     test_resolve()
     test_reset_trunk_truth_conflict()
+    test_sync_trunk_truth_failclosed_non_truth()
     test_control_state()
     test_verify_and_truth()
     test_prune_exec_blocked_landed_commit()
