@@ -1253,10 +1253,21 @@ def _finish_resolve_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> d
         _, commit, _ = _git(wt, "rev-parse", "HEAD")
         result["commit"] = commit
     else:
-        log(f"[resolve-exec] {rid} 没有产生改动，记为无变化")
-        blocked[rid] = {"reason": "no_changes", "ts": _now()}
-        result["outcome"] = "no_changes"
-        return result
+        # A resolved worktree may already be committed by the Codex worker while
+        # leaving the worktree clean. Treat that as delivered work and send it
+        # through the same resolve landing gate instead of dropping the slot.
+        conf = central_config.load(repo)
+        main_branch = conf.get("main_branch", "main")
+        if _branch_pending_commits(repo, branch, main_branch):
+            _, commit, _ = _git(repo, "rev-parse", branch)
+            result["commit"] = commit or result.get("commit")
+            log(f"[resolve-exec] {rid} worktree 干净但分支已有未落提交 -> 直接收口 "
+                f"{(commit or '')[:12]}")
+        else:
+            log(f"[resolve-exec] {rid} 没有产生改动，记为无变化")
+            blocked[rid] = {"reason": "no_changes", "ts": _now()}
+            result["outcome"] = "no_changes"
+            return result
 
     slug = item.get("slug") or ""
     rrc, rout = run_kgctl(["resolve", "--finish", slug, "--go"], timeout=LAND_TIMEOUT)
