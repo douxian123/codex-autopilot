@@ -1342,8 +1342,6 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
         proc = job.get("proc")
         if job.get("recover"):
             pass
-        elif (job.get("item") or {}).get("kind") == "resolve" and proc is None:
-            continue
         elif proc is None and job.get("detached") and _worker_alive(job.get("pid")):
             continue
         elif proc is None and job.get("detached"):

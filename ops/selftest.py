@@ -1487,6 +1487,20 @@ def test_resolve_exec_parallel():
         if open_ids != ["resolve:light"]:
             raise AssertionError(f"恢复干净后 resolve 任务没有重新进入可派队列: {open_ids!r}")
 
+        stale_workers = {"exec_jobs": {"resolve:light": {
+            "id": "resolve:light",
+            "item": central_daemon._resolve_task_item("light"),
+            "cfg": central_daemon.auto_exec_config(),
+            "repo": str(repo), "branch": "codex/resolve-light",
+            "worktree": str(wt), "codex": ["codex"],
+            "log": str(home / "exec" / "stale-resolve.log"),
+            "pid": 999999, "detached": True, "proc": None,
+            "result": {"id": "resolve:light"}}}}
+        stale_results = central_daemon._collect_exec(stale_workers, {})
+        if not stale_results or stale_workers["exec_jobs"]:
+            raise AssertionError(
+                f"重启后已死 resolve worker 仍占槽: {stale_results!r} {stale_workers!r}")
+
         blocked, workers = {}, {}
         started = central_daemon.dispatch_exec(False, blocked, workers)
         assert started == [], started
