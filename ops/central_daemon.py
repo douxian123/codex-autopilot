@@ -1931,7 +1931,8 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
                                    "--max-files", str(resolve_cfg["max_files"]),
                                    "--max-lines", str(resolve_cfg["max_lines"])],
                                   timeout=RESOLVE_TIMEOUT,
-                                  env_extra={"KG_RESOLVE_SKIP": skip})
+                                  env_extra={"KG_RESOLVE_SKIP": skip,
+                                             "KG_RESOLVE_LIGHT": "1"})
             log_block("resolve(auto)", rrc, rout)
             rm = RESOLVE_RESULT_RE.search(rout)
             if not rm:
