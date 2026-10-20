@@ -650,12 +650,73 @@ def _resolve_open_items(limit=10):
     return out
 
 
+def _resolve_ready_items(limit=10):
+    """Resolve worktrees with markers removed are ready to finish.
+
+    Codex resolve workers are told to leave changes uncommitted; the daemon
+    normally skips dirty worktrees, so those finished works never enter the
+    finish gate. Re-admit dirty worktrees whose unresolved files no longer
+    contain markers, and let the normal commit + resolve finish path land them.
+    """
+    repo = _state_repo()
+    if not repo:
+        return []
+    p = _resolve_tasks_path(repo)
+    if not p or not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for rec in data.get("tasks") or []:
+        if rec.get("status") not in ("needs_agent", "gate_fail"):
+            continue
+        wt = Path(rec.get("worktree") or "")
+        if not wt.exists():
+            continue
+        if _resolve_worktree_owned(wt):
+            continue
+        files = rec.get("unresolved_files") or []
+        if any(_has_conflict_markers(wt, f) for f in files):
+            continue
+        if not files or not all(
+            f.startswith(("backend/", "frontend/", "packages/"))
+            and not f.startswith(("backend/docs/", "frontend/docs/"))
+            for f in files
+        ):
+            continue
+        item = _resolve_task_item(rec.get("slug"))
+        if item:
+            out.append(item)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _has_conflict_markers(wt: Path, relative_path: str) -> bool:
+    if not wt or not relative_path:
+        return False
+    path = Path(wt) / relative_path
+    if not path.exists():
+        return False
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return True
+    return any(text.startswith(marker) for marker in ("<<<<<<< ", ">>>>>>> ", "======="))
+
+
 def _exec_open_items(limit=20):
     seen = set()
     for item in _ledger_open_items(limit):
         seen.add(item.get("id"))
         yield item
     for item in _resolve_open_items(limit):
+        if item.get("id") not in seen:
+            seen.add(item["id"])
+            yield item
+    for item in _resolve_ready_items(limit):
         if item.get("id") not in seen:
             seen.add(item["id"])
             yield item
