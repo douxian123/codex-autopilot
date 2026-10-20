@@ -1400,6 +1400,23 @@ def test_parallel_exec_slots():
     print("selftest ok: 3 个 worker 槽并行启动、隔离 worktree，完成项仍逐条串行落盘。")
 
 
+def test_exec_prompt_includes_patch_recovery():
+    """Sub-workers must know how to recover from wrapped apply_patch failures."""
+    import importlib
+    import sys
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+    prompt = central_daemon._exec_prompt({
+        "id": "L-0001", "kind": "bug", "title": "test", "detail": "test"
+    })
+    assert "first line of the patch" in prompt, prompt
+    assert "count == 1" in prompt, prompt
+    print("selftest ok: exec prompt includes patch recovery guidance.")
+
+
 def test_hydrate_drops_unverifiable_exec_slots():
     """Restart must not resurrect jobs that no live worktree can finish."""
     import importlib
@@ -2029,6 +2046,7 @@ if __name__ == "__main__":
     test_prune_exec_blocked_landed_commit()
     test_auto_exec()
     test_parallel_exec_slots()
+    test_exec_prompt_includes_patch_recovery()
     test_hydrate_drops_unverifiable_exec_slots()
     test_mcp_contract()
     test_budget_gate()

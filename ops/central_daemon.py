@@ -863,6 +863,7 @@ def _exec_prompt(item: dict) -> str:
         "- 目标只有两个：(1) 击穿产品预期——前后端真正闭环生效；(2) 保证现有体验——功能、",
         "  性能不能因为这次改动变差或更难用。不达标的实现不如不做。",
         "- 动手前先读仓库里的 AGENTS.md 和相关上下文（如 AI_SESSION_CONTEXT.md、产品决策文件）。",
+        "- 如果 `apply_patch` 报 `The first line of the patch must be '*** Begin Patch'`，不要反复重试；改用 `apply_patch` heredoc 的标准文本形式，或做带 `count == 1` 断言的精确字符串替换，然后立刻 `git diff --check` 与相关编译验证。",
         "- 改完跑与改动相关的验证（如 `npx tsc --noEmit`、`npm run build`、相关 `verify:*` 脚本）；",
         "  失败就继续修，直到通过或有明确的外部阻塞。",
         "- 不要 `git commit`、不要 `git push`、不要合并分支：把改动留在工作区即可，落盘由自动挡统一走门禁。",
