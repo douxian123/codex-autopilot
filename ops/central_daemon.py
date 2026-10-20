@@ -1494,6 +1494,13 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
     for rid, job in list(jobs.items()):
         if job.get("proc") is not None:
             continue
+        persisted_worktree = str(job.get("worktree") or "").strip()
+        if persisted_worktree and not Path(persisted_worktree).exists():
+            # A closed ledger item or a removed worktree leaves a persisted
+            # slot that no process can finish. Drop it before calculating
+            # active_ids; otherwise the daemon idles a worker forever.
+            jobs.pop(rid, None)
+            continue
         if job.get("item") is None:
             item = open_items.get(rid)
             if item is None and str(rid).startswith("resolve:"):
@@ -1510,6 +1517,10 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
                 jobs.pop(rid, None)
                 continue
             job["item"] = item
+        ledger_status = str((job.get("item") or {}).get("status") or "")
+        if ledger_status in ("done", "closed", "cancelled", "superseded"):
+            jobs.pop(rid, None)
+            continue
         if not job.get("cfg"):
             job["cfg"] = auto_exec_config()
         if job.get("codex") is None:
@@ -2198,6 +2209,8 @@ def open_resolve_tasks():
 
 def show_status() -> int:
     state = load_state()
+    workers = _hydrate_exec_jobs(dict(state.get("exec_workers") or {}))
+    state["exec_workers"] = workers
     uid = os.getuid()
     loaded = launchctl("print", f"gui/{uid}/{PLIST_LABEL}", capture=True) == 0
     lock = DAEMON_LOCK.read_text().strip() if DAEMON_LOCK.exists() else "(无)"
