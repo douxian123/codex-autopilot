@@ -1314,8 +1314,56 @@ def _worker_alive(pid) -> bool:
         return False
 
 
+def _adopt_orphan_resolve_workers(workers: dict) -> dict:
+    """Adopt a resolve worktree that has a live codex exec from a prior daemon.
+
+    The persisted slot can be overwritten by an older daemon during restart, so
+    rebuilding only from state.json is not enough. Match the open resolve worktree
+    against live codex exec processes; this is cheap and only touches worktrees
+    that were already registered by kgctl resolve.
+    """
+    jobs = workers.setdefault("exec_jobs", {})
+    if not _codex_bin():
+        return workers
+    try:
+        procs = subprocess.run(
+            ["ps", "-axo", "pid=,command="], capture_output=True,
+            text=True, timeout=15).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return workers
+    for item in _resolve_open_items(50):
+        rid = item.get("id") or ""
+        if not rid or rid in jobs:
+            continue
+        wt = str(Path(item.get("worktree") or "").resolve())
+        if not wt:
+            continue
+        pid = None
+        for line in procs.splitlines():
+            if wt in line and "codex" in line:
+                fields = line.strip().split(None, 1)
+                if fields and fields[0].isdigit():
+                    pid = int(fields[0])
+                    break
+        if not pid or not _worker_alive(pid):
+            continue
+        jobs[rid] = {
+            "id": rid, "outcome": "ready", "item": item,
+            "cfg": auto_exec_config(), "codex": _codex_bin(),
+            "repo": str(_state_repo() or ""), "branch": item.get("branch") or "",
+            "worktree": str(item.get("worktree") or ""), "log": str(_exec_dir() / f"resolve-{_exec_slug(item.get('slug') or rid)}.log"),
+            "model": _exec_model(item, auto_exec_config()),
+            "started_at": _now(), "recover": False,
+            "pid": pid, "detached": True,
+            "result": {"id": rid, "branch": item.get("branch") or "",
+                       "worktree": str(item.get("worktree") or "")},
+        }
+    return workers
+
+
 def _hydrate_exec_jobs(workers: dict) -> dict:
     """Restore live worker jobs after daemon restart without starting new sessions."""
+    workers = _adopt_orphan_resolve_workers(workers)
     jobs = workers.setdefault("exec_jobs", {})
     open_items = {item.get("id"): item for item in _exec_open_items(100)}
     for rid, job in list(jobs.items()):
