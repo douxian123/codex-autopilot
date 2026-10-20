@@ -1526,6 +1526,204 @@ def test_resolve_exec_parallel():
     print("selftest ok: resolve 冲突任务进入同一并行 codex worker，复用 resolve worktree 并由 kgctl finish 串行落盘。")
 
 
+def test_resolve_gate_fail_auto_retry():
+    """A resolve gate_fail must retry finish on the next cycle, not start codex again.
+
+    A committed clean resolve worktree can hit gate_fail once because the remote
+    moved between validation and push. The daemon previously wrote it into
+    exec_blocked and never retried it, so an already-solved conflict stayed
+    stuck forever. This locks the retry path: the next dispatch calls
+    resolve --finish directly and removes the block on success.
+    """
+    import importlib
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-resolve-retry-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        trunk = root / "state-trunk"
+        home = root / "home"
+        repo.mkdir(); home.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for f in ("ledger", "progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{f}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(_json.dumps({
+            "build": {"cmd": "", "cwd": "."}, "verify": [],
+            "auto_exec": {"enabled": True, "max_workers": 2,
+                          "fast_model": "aibvv@deepseek-v4.1-flash",
+                          "slow_model": "ok8888@deepseek-v4.1-flash"}}), encoding="utf-8")
+        (home / "control.json").write_text(_json.dumps({
+            "auto_exec": True, "paused": False}), encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "doc.txt").write_text("base\n", encoding="utf-8")
+        git(repo, "add", "doc.txt", "ops/central.config.json", "ops/truth/mainline.json",
+            "ops/truth/ledger.jsonl", "ops/truth/progress.jsonl",
+            "ops/truth/decisions.jsonl", "ops/truth/acceptance.jsonl",
+            "ops/tasks/inbox.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = root / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+        base = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        git(repo, "checkout", "-q", "-b", "codex/light", base)
+        (repo / "doc.txt").write_text("light\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "codex/light")
+        git(repo, "checkout", "-q", "main")
+        (repo / "doc.txt").write_text("mainline\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "main advances")
+        git(repo, "push", "-q", "origin", "main")
+
+        go = kgctl(repo, trunk, "resolve", "--auto", "--go")
+        if "outcome=needs_agent" not in (go.stdout + go.stderr):
+            raise AssertionError(f"resolve 没建出待解任务:\n{go.stdout}\n{go.stderr}")
+        wt = root / "state-resolve-light"
+        if not wt.is_dir():
+            raise AssertionError(f"resolve 没建出 worktree {wt}")
+
+        (wt / "doc.txt").write_text("light\nmainline\n", encoding="utf-8")
+        git(wt, "add", "doc.txt")
+        git(wt, "commit", "-q", "-m", "resolve: keep both intents")
+        commit = git(wt, "rev-parse", "HEAD").stdout.strip()
+
+        rp = repo / "ops" / "tasks" / "resolve.json"
+        data = _json.loads(rp.read_text(encoding="utf-8"))
+        for rec in data.get("tasks") or []:
+            if rec.get("slug") == "light":
+                rec["status"] = "gate_fail"
+                rec["updated"] = "2026-10-20T00:00:00+08:00"
+        rp.write_text(_json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+
+        os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
+                          KG_DAEMON_HOME=str(home), KG_EXEC_CMD="/bin/true")
+        import control_state, central_config, central_daemon
+        importlib.reload(control_state); importlib.reload(central_config)
+        importlib.reload(central_daemon)
+
+        blocked = {"resolve:light": {
+            "reason": "resolve_gate_fail", "_id": "resolve:light",
+            "branch": "codex/resolve-light", "worktree": str(wt),
+            "commit": commit, "ts": "2026-10-20T00:00:00+08:00"}}
+        workers = {}
+        results = central_daemon.dispatch_exec(False, blocked, workers)
+        landed = [r for r in results if r.get("outcome") == "landed"]
+        if not landed:
+            raise AssertionError(f"gate_fail 没有下轮直接收口: {results} {blocked} {workers}")
+        if "resolve:light" in blocked:
+            raise AssertionError(f"落盘成功后仍保留 exec_blocked: {blocked}")
+        if workers.get("exec_jobs"):
+            raise AssertionError(f"重试 finish 不应新派 codex worker: {workers}")
+        merged = git(repo, "show", "main:doc.txt").stdout
+        if "light" not in merged or "mainline" not in merged:
+            raise AssertionError(f"resolve 重试落盘内容不对: {merged!r}")
+    print("selftest ok: resolve gate_fail 下一轮直接重试 finish 并落地，不重新派 codex。")
+
+
+def test_resolve_gate_fail_not_retried_same_cycle():
+    """A gate_fail written by _collect_exec must wait for the next cycle.
+
+    Retrying resolve --finish in the same cycle can race a second resolve
+    worker that was already dispatched for the same slug. The dispatcher
+    should recognize a failure produced in this exact call and leave the task
+    for the next cycle.
+    """
+    import importlib
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-resolve-no-same-cycle-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        trunk = root / "state-trunk"
+        home = root / "home"
+        repo.mkdir(); home.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for f in ("ledger", "progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{f}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(_json.dumps({
+            "build": {"cmd": "", "cwd": "."}, "verify": [],
+            "auto_exec": {"enabled": True, "max_workers": 2,
+                          "fast_model": "aibvv@deepseek-v4.1-flash",
+                          "slow_model": "ok8888@deepseek-v4.1-flash"}}), encoding="utf-8")
+        (home / "control.json").write_text(_json.dumps({
+            "auto_exec": True, "paused": False}), encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "doc.txt").write_text("base\n", encoding="utf-8")
+        git(repo, "add", "doc.txt", "ops/central.config.json", "ops/truth/mainline.json",
+            "ops/truth/ledger.jsonl", "ops/truth/progress.jsonl",
+            "ops/truth/decisions.jsonl", "ops/truth/acceptance.jsonl",
+            "ops/tasks/inbox.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = root / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+        base = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        git(repo, "checkout", "-q", "-b", "codex/light", base)
+        (repo / "doc.txt").write_text("light\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "codex/light")
+        git(repo, "checkout", "-q", "main")
+        (repo / "doc.txt").write_text("mainline\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "main advances")
+        git(repo, "push", "-q", "origin", "main")
+
+        go = kgctl(repo, trunk, "resolve", "--auto", "--go")
+        if "outcome=needs_agent" not in (go.stdout + go.stderr):
+            raise AssertionError(f"resolve 没建出待解任务:\n{go.stdout}\n{go.stderr}")
+        wt = root / "state-resolve-light"
+        if not wt.is_dir():
+            raise AssertionError(f"resolve 没建出 worktree {wt}")
+        (wt / "doc.txt").write_text("light\nmainline\n", encoding="utf-8")
+        git(wt, "add", "doc.txt")
+        git(wt, "commit", "-q", "-m", "resolve: keep both intents")
+        commit = git(wt, "rev-parse", "HEAD").stdout.strip()
+
+        rp = repo / "ops" / "tasks" / "resolve.json"
+        data = _json.loads(rp.read_text(encoding="utf-8"))
+        for rec in data.get("tasks") or []:
+            if rec.get("slug") == "light":
+                rec["status"] = "gate_fail"
+                rec["updated"] = "2026-10-20T00:00:00+08:00"
+        rp.write_text(_json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+
+        os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
+                          KG_DAEMON_HOME=str(home), KG_EXEC_CMD="/bin/true")
+        import control_state, central_config, central_daemon
+        importlib.reload(control_state); importlib.reload(central_config)
+        importlib.reload(central_daemon)
+
+        blocked = {"resolve:light": {
+            "reason": "resolve_gate_fail", "_id": "resolve:light",
+            "branch": "codex/resolve-light", "worktree": str(wt),
+            "commit": commit, "ts": "2026-10-20T00:00:00+08:00"}}
+        workers = {}
+        # Simulate _collect_exec having just produced this cycle's failure.
+        # dispatch must see it in results and not immediately run finish again.
+        original_collect = central_daemon._collect_exec
+        central_daemon._collect_exec = lambda workers, blocked: [{
+            "id": "resolve:light", "outcome": "resolve_gate_fail",
+            "branch": "codex/resolve-light", "worktree": str(wt),
+            "commit": commit}]
+        try:
+            results = central_daemon.dispatch_exec(False, blocked, workers)
+        finally:
+            central_daemon._collect_exec = original_collect
+        retried = [r for r in results if r.get("outcome") == "landed"]
+        if retried:
+            raise AssertionError(f"同一轮不应立即重试 finish: {results}")
+        if workers.get("exec_jobs"):
+            raise AssertionError(f"同一轮失败后不应再派 worker: {workers}")
+    print("selftest ok: resolve gate_fail 当轮不立即重试，留到下一轮再 finish。")
+
 def test_mcp_contract():
     """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
     import json as _json
@@ -1797,6 +1995,8 @@ if __name__ == "__main__":
     test_replan()
     test_resolve()
     test_resolve_exec_parallel()
+    test_resolve_gate_fail_auto_retry()
+    test_resolve_gate_fail_not_retried_same_cycle()
     test_reset_trunk_truth_conflict()
     test_control_state()
     test_verify_and_truth()

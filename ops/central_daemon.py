@@ -1234,6 +1234,51 @@ def _cleanup_exec(repo, wt: Path, branch: str) -> None:
     _git(repo, "branch", "-D", branch)
 
 
+def _should_retry_resolve_finish(item: dict, rec: dict | None) -> bool:
+    """Resolve finish may fail once for a remote push race; retry without a new worker."""
+    return bool(
+        item
+        and item.get("kind") == "resolve"
+        and rec
+        and rec.get("reason") == "resolve_gate_fail")
+
+
+def _retry_resolve_finish(item, cfg, repo, wt, branch, rid, blocked) -> dict | None:
+    """Retry a committed resolve finish that previously hit gate_fail.
+
+    The worktree is kept by resolve registrations, and the branch can be clean
+    with unlanded commits after a successful Codex resolution. Retrying the
+    finish uses the same land gate as a normal finish and avoids burning a new
+    Codex session on already-resolved conflict work. The existing block is
+    replaced on failure so a genuinely stuck gate stays visible.
+    """
+    slug = item.get("slug") or ""
+    rec = _resolve_task(slug)
+    if not rec:
+        return None
+    branch = rec.get("resolve_branch") or branch
+    wt = Path(rec.get("worktree") or wt)
+    main_branch = (central_config.load(repo) or {}).get("main_branch", "main")
+    if not wt.exists() or _resolve_worktree_dirty(wt):
+        return None
+    _, commit, _ = _git(repo, "rev-parse", branch)
+    if not _branch_pending_commits(repo, branch, main_branch):
+        return None
+    result = {"id": rid, "branch": branch, "worktree": str(wt), "commit": commit}
+    rrc, rout = run_kgctl(["resolve", "--finish", slug, "--go"], timeout=LAND_TIMEOUT)
+    log_block(f"resolve-exec finish retry {slug}", rrc, rout)
+    result["resolve_finish"] = rrc
+    if "outcome=landed" in rout:
+        _set_resolve_status(repo, slug, "landed")
+        result["outcome"] = "landed"
+        blocked.pop(rid, None)
+        return result
+    blocked[rid] = {"reason": "resolve_gate_fail", "_id": rid, "branch": branch,
+                    "worktree": str(wt), "commit": commit, "ts": _now()}
+    result["outcome"] = "resolve_gate_fail"
+    return result
+
+
 def _finish_resolve_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
     """codex 解完冲突后的公共收尾：显式提交，再交给 kgctl resolve --finish 走门禁。
 
@@ -1279,7 +1324,7 @@ def _finish_resolve_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> d
         _set_resolve_status(repo, slug, "landed")
         result["outcome"] = "landed"
         return result
-    blocked[rid] = {"reason": "resolve_gate_fail", "branch": branch,
+    blocked[rid] = {"reason": "resolve_gate_fail", "_id": rid, "branch": branch,
                     "worktree": str(wt), "commit": commit, "ts": _now()}
     result["outcome"] = "resolve_gate_fail"
     return result
@@ -1484,9 +1529,28 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None) -> list
     # A completed worker frees one slot immediately. Keep filling in the same
     # cycle instead of idling until the next 10-minute heartbeat.
     active_ids = {rid for rid, job in jobs.items() if not job.get("recover")}
+    # If _collect_exec just wrote a resolve gate_fail into blocked, it must not
+    # be retried until the next cycle. Retrying inside the same cycle can race
+    # another resolve worker that has already been dispatched for the same slug.
+    failed_this_cycle = {r.get("id") for r in results
+                         if r.get("outcome") == "resolve_gate_fail"}
     for item in _exec_open_items():
         rid = item.get("id")
-        if rid in blocked or rid in jobs or rid in active_ids:
+        if rid in jobs or rid in active_ids:
+            continue
+        if rid in blocked:
+            if _should_retry_resolve_finish(item, blocked[rid]) and rid not in failed_this_cycle:
+                # Previous cycle left a committed resolve branch at gate_fail.
+                # Do not start a new Codex session; finish the same resolved
+                # branch through the land gate now.
+                if item.get("kind") == "resolve":
+                    retried = _retry_resolve_finish(
+                        item, cfg, Path(item.get("repo") or ""),
+                        Path(item.get("worktree") or ""), item.get("branch") or "",
+                        rid, blocked)
+                    if retried:
+                        results.append(retried)
+                continue
             continue
         if _looks_like_command(item.get("title")) or _looks_like_command(item.get("detail")):
             log(f"[exec] {rid} 输入像命令残片（{(item.get('title') or '')[:24]!r}），"
