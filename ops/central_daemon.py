@@ -1496,11 +1496,31 @@ def _looks_like_command(text: str) -> bool:
 
 
 def _worker_alive(pid) -> bool:
+    # os.kill(pid, 0) 对已退出的子进程可能仍返回“存在”（父进程还没 wait 的
+    # 僵尸态）。僵尸只占槽位、不会再产出任何结果，必须视为已完成，否则
+    # max_workers=3 会被几个 defunct worker 占满，后续任务一直派不出去。
     try:
-        os.kill(int(pid), 0)
-        return True
+        pid_int = int(pid)
+        os.kill(pid_int, 0)
     except (OSError, TypeError, ValueError):
         return False
+    try:
+        with open(f"/proc/{pid_int}/stat", "r", encoding="utf-8") as fh:
+            state = fh.read().split()[2]
+        if state == "Z":
+            return False
+    except (OSError, ValueError, IndexError):
+        # macOS 没有 /proc：回退到进程表探测，僵尸态由父进程 wait 回收。
+        try:
+            out = subprocess.run(
+                ["ps", "-o", "stat=", "-p", str(pid_int)],
+                capture_output=True, text=True, timeout=5)
+            stat = (out.stdout or "").strip()
+            if stat.startswith("Z"):
+                return False
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return True
 
 
 def _resolve_records_all():

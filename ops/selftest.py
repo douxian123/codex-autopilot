@@ -1491,6 +1491,44 @@ def test_exec_prompt_includes_patch_recovery():
     print("selftest ok: exec prompt includes patch recovery guidance.")
 
 
+def test_worker_alive_treats_zombie_as_dead():
+    """A defunct child must not occupy an auto_exec slot.
+
+    os.kill(pid, 0) keeps succeeding for an unreaped zombie, so the daemon can
+    mark a finished worker as still active and stop filling max_workers slots.
+    The new _worker_alive reads the process state table and treats Z as dead.
+    """
+    import importlib
+    import sys as _sys
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in _sys.path:
+        _sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    # Already-exited PID: os.kill(pid, 0) raises ProcessLookupError -> dead.
+    assert not central_daemon._worker_alive(999999999), (
+        "nonexistent pid must be treated as dead")
+
+    # Zombie state: os.kill(pid, 0) succeeds but ps reports Z -> dead.
+    zombie_pid = 424242
+    with mock.patch("central_daemon.os.kill", return_value=None), \
+         mock.patch("central_daemon.subprocess.run",
+                    return_value=type("R", (), {"stdout": "Z+"})()):
+        assert not central_daemon._worker_alive(zombie_pid), (
+            "zombie state must be treated as dead")
+
+    # Live state: os.kill succeeds and ps reports R+ -> alive.
+    with mock.patch("central_daemon.os.kill", return_value=None), \
+         mock.patch("central_daemon.subprocess.run",
+                    return_value=type("R", (), {"stdout": "R+"})()):
+        assert central_daemon._worker_alive(zombie_pid), (
+            "live state must remain alive")
+    print("selftest ok: zombie worker is treated as dead and its slot is reclaimed.")
+
+
 def test_hydrate_drops_unverifiable_exec_slots():
     """Restart must not resurrect jobs that no live worktree can finish."""
     import importlib
@@ -2122,6 +2160,7 @@ if __name__ == "__main__":
     test_exec_model_balance_fallback()
     test_parallel_exec_slots()
     test_exec_prompt_includes_patch_recovery()
+    test_worker_alive_treats_zombie_as_dead()
     test_hydrate_drops_unverifiable_exec_slots()
     test_mcp_contract()
     test_budget_gate()
