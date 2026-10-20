@@ -1400,6 +1400,32 @@ def test_parallel_exec_slots():
     print("selftest ok: 3 个 worker 槽并行启动、隔离 worktree，完成项仍逐条串行落盘。")
 
 
+def test_hydrate_drops_unverifiable_exec_slots():
+    """Restart must not resurrect jobs that no live worktree can finish."""
+    import importlib
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-hydrate-") as tmp:
+        base = Path(tmp)
+        repo, trunk, home = base / "state", base / "state-trunk", base / "home"
+        repo.mkdir(); home.mkdir(); (repo / "ops" / "truth").mkdir(parents=True)
+        ledger = [{"id": "L-0001", "type": "ledger", "kind": "bug",
+                   "title": "open but no worktree", "status": "open",
+                   "ts": "2026-01-01T00:00:00+08:00"}]
+        (repo / "ops" / "truth" / "ledger.jsonl").write_text(
+            "".join(_json.dumps(x, ensure_ascii=False) + "\n" for x in ledger),
+            encoding="utf-8")
+        os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
+                          KG_DAEMON_HOME=str(home))
+        import control_state, central_config, central_daemon
+        importlib.reload(control_state); importlib.reload(central_config)
+        importlib.reload(central_daemon)
+        workers = {"exec_jobs": {"L-0001": {
+            "id": "L-0001", "outcome": "ready", "worktree": ""}}}
+        hydrated = central_daemon._hydrate_exec_jobs(workers)
+        assert hydrated["exec_jobs"] == {}, hydrated
+    print("selftest ok: 无 worktree 的旧 worker 槽在重启时不会复活。")
+
+
 def test_resolve_exec_parallel():
     """Resolve tasks are filled into the same parallel codex worker slots.
 
@@ -2003,5 +2029,6 @@ if __name__ == "__main__":
     test_prune_exec_blocked_landed_commit()
     test_auto_exec()
     test_parallel_exec_slots()
+    test_hydrate_drops_unverifiable_exec_slots()
     test_mcp_contract()
     test_budget_gate()

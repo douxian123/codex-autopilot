@@ -1496,9 +1496,15 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
             continue
         persisted_worktree = str(job.get("worktree") or "").strip()
         if persisted_worktree and not Path(persisted_worktree).exists():
-            # A closed ledger item or a removed worktree leaves a persisted
-            # slot that no process can finish. Drop it before calculating
-            # active_ids; otherwise the daemon idles a worker forever.
+            # A removed worktree leaves a persisted slot that no process can
+            # finish. Drop it before calculating active_ids; otherwise the
+            # daemon idles a worker forever or re-dispatches the same ledger row.
+            jobs.pop(rid, None)
+            continue
+        if not persisted_worktree:
+            # Jobs without a worktree cannot be reaped or verified safely.
+            # Reconstruct from the ledger only through normal dispatch, not by
+            # resurrecting a stale active slot.
             jobs.pop(rid, None)
             continue
         if job.get("item") is None:
