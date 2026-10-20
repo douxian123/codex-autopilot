@@ -3273,9 +3273,12 @@ def cmd_land(args):
         m = subprocess.run(["git", "-C", str(wt), "merge", "--no-ff", branch,
                             "-m", f"train: merge {branch}"], capture_output=True, text=True)
         if m.returncode != 0:
-            subprocess.run(["git", "-C", str(wt), "merge", "--abort"], capture_output=True, text=True)
-            print("× 合并失败，已丢弃：", m.stderr.strip()[:300])
-            sys.exit(1)
+            if not _resolve_truth_merge(wt):
+                subprocess.run(["git", "-C", str(wt), "merge", "--abort"],
+                               capture_output=True, text=True)
+                print("× 合并失败，已丢弃：", m.stderr.strip()[:300])
+                sys.exit(1)
+            print("  合并的冲突全部属于真相层，已按台账规则自动解后继续")
         print("  merge ok（main 未动）")
         gate_ok, gate_results, gate_out = _run_verify_gates(wt, pre)
         print(f"  验证门禁 {'ok' if gate_ok else '× 失败 → 丢弃，main 不动'}")
