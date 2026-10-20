@@ -1314,6 +1314,20 @@ def _worker_alive(pid) -> bool:
         return False
 
 
+def _resolve_records_all():
+    repo = _state_repo()
+    if not repo:
+        return []
+    p = _resolve_tasks_path(repo)
+    if not p or not p.exists():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return data.get("tasks") or []
+
+
 def _adopt_orphan_resolve_workers(workers: dict) -> dict:
     """Adopt a resolve worktree that has a live codex exec from a prior daemon.
 
@@ -1331,7 +1345,12 @@ def _adopt_orphan_resolve_workers(workers: dict) -> dict:
             text=True, timeout=15).stdout
     except (OSError, subprocess.TimeoutExpired):
         return workers
-    for item in _resolve_open_items(50):
+    for rec in _resolve_records_all():
+        if rec.get("status") not in ("needs_agent", "gate_fail"):
+            continue
+        item = _resolve_task_item(rec.get("slug") or "")
+        if not item:
+            continue
         rid = item.get("id") or ""
         if not rid or rid in jobs:
             continue
