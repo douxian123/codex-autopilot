@@ -66,6 +66,7 @@ from plugin_binding import apply_plugin_env  # noqa: E402
 
 import central_config  # noqa: E402
 import control_state  # noqa: E402
+import workspace_guard  # noqa: E402
 
 # KG_REPO（账本）/ KG_TRUNK（落盘主干）优先取显式环境变量，其次读插件 .mcp.json。
 apply_plugin_env()
@@ -94,6 +95,12 @@ PORT_MAX_ATTEMPTS = 6
 # 一个周期最多拆几条冲突分支。每条先做确定性并集（只 jsonl）或留下一个可执行
 # 任务书；拆不动 / 门禁没过记进 resolve_blocked，后续周期跳过，不再反复骚扰。
 RESOLVE_MAX_ATTEMPTS = 1
+# Disk pressure triggers a conservative lifecycle pass. The pass only removes
+# merged worktrees and sufficiently old clean worktrees after a remote backup.
+# It is low-frequency because scanning hundreds of Git worktrees is expensive.
+REAP_MIN_INTERVAL_SECONDS = 6 * 60 * 60
+REAP_DISK_PERCENT = 85
+REAP_OLD_WORKTREE_DAYS = 2
 # 自动实现（auto_exec）：把台账里还没做的待办派给真实 codex 会话，在独立 worktree
 # 里并发实现 -> 串行门禁落盘 -> 收口。默认关闭；打开后按 max_workers 填满空闲槽位。
 EXEC_DEFAULT_TIMEOUT = 3600
@@ -204,6 +211,40 @@ def save_state(state: dict) -> None:
     tmp = STATE.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(STATE)
+
+
+def _disk_percent(path: Path) -> float:
+    try:
+        usage = shutil.disk_usage(path)
+    except OSError:
+        return 0.0
+    return 100.0 * usage.used / usage.total if usage.total else 0.0
+
+
+def maybe_reap(dry: bool = False) -> bool:
+    """Run the conservative worktree lifecycle pass under disk pressure."""
+    if os.environ.get("KG_AUTO_REAP", "1").lower() in ("0", "false", "off", "no"):
+        return False
+    state = load_state()
+    now = time.time()
+    last = float(state.get("last_reap_ts") or 0)
+    if now - last < REAP_MIN_INTERVAL_SECONDS:
+        return False
+    if _disk_percent(RUNTIME) < REAP_DISK_PERCENT:
+        return False
+    if dry:
+        log(f"[reap] disk {_disk_percent(RUNTIME):.1f}% exceeds threshold; dry-run")
+        return True
+    log(f"[reap] disk {_disk_percent(RUNTIME):.1f}% exceeds threshold; reaping")
+    state["last_reap_ts"] = now
+    save_state(state)
+    rc, out = run_kgctl(
+        ["reap", "--go", "--backup-unique", "--min-age-days",
+         str(REAP_OLD_WORKTREE_DAYS)],
+        timeout=TICK_TIMEOUT,
+    )
+    log_block("reap", rc, out)
+    return rc == 0
 
 
 def _state_repo():
@@ -685,11 +726,7 @@ def _resolve_ready_items(limit=10):
         files = rec.get("unresolved_files") or []
         if any(_has_conflict_markers(wt, f) for f in files):
             continue
-        if not files or not all(
-            f.startswith(("backend/", "frontend/", "packages/"))
-            and not f.startswith(("backend/docs/", "frontend/docs/"))
-            for f in files
-        ):
+        if not files:
             continue
         item = _resolve_task_item(rec.get("slug"))
         if item:
@@ -1327,7 +1364,17 @@ def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
 
 
 def _cleanup_exec(repo, wt: Path, branch: str) -> None:
-    _git(repo, "worktree", "remove", "--force", str(wt))
+    assessment = workspace_guard.worktree_removable(
+        Path(repo), wt, branch, "main", commands="", backup_unique=False)
+    if assessment.get("ok"):
+        ok, detail = workspace_guard.remove_worktree(Path(repo), wt)
+        if not ok:
+            log(f"[exec] worktree cleanup skipped: {detail}")
+    else:
+        # Keep live/dirty worktrees. Their branch is still available for a
+        # later landing pass; deleting it here would lose the recovery path.
+        log(f"[exec] worktree cleanup skipped ({assessment.get('reason')}): {wt}")
+        return
     _git(repo, "branch", "-D", branch)
 
 
