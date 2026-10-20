@@ -1323,6 +1323,12 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
             continue
         if job.get("item") is None:
             item = open_items.get(rid)
+            if item is None and str(rid).startswith("resolve:"):
+                # Resolve worktrees are intentionally skipped by _resolve_open_items
+                # while dirty or owned, so a persisted worker could not be restored
+                # from the ledger after a daemon restart. Reconstruct it from the
+                # resolve record instead; the live PID is reaped when it exits.
+                item = _resolve_task_item(str(rid).split(":", 1)[1])
             if item is None:
                 # Persisted job whose ledger row is gone cannot be reaped safely.
                 # Keep the slot metadata out of active jobs instead of letting
