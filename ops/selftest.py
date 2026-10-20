@@ -1509,7 +1509,7 @@ def test_resolve_exec_parallel():
         job = jobs["resolve:light"]
         assert job["branch"] == "codex/resolve-light", job
         assert Path(job["worktree"]).resolve() == wt.resolve(), job
-        assert job["model"] == "ok8888@deepseek-v4.1-flash", job
+        assert job["model"] == "aibvv@deepseek-v4.1-flash", job
         assert job["proc"].poll() is None, job
 
         deadline = _time.time() + 15

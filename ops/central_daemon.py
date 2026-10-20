@@ -921,7 +921,7 @@ def _exec_model(item: dict, cfg: dict) -> str | None:
     """
     if cfg.get("model"):
         return str(cfg["model"])
-    if (item.get("kind") or "") in ("bug", "gate") and cfg.get("fast_model"):
+    if (item.get("kind") or "") in ("bug", "gate", "resolve") and cfg.get("fast_model"):
         return str(cfg["fast_model"])
     return str(cfg.get("slow_model") or cfg.get("fast_model") or "") or None
 
