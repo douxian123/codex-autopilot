@@ -1030,6 +1030,7 @@ def test_auto_exec():
         path.chmod(0o755)
         return path
 
+
     def load_daemon(repo, trunk, home, exec_cmd):
         """把环境切到本 fixture，并重载读取环境变量的那几个模块。"""
         os.environ["KG_REPO"] = str(repo)
@@ -1176,6 +1177,43 @@ def test_auto_exec():
         if git(repo_p, "branch", "--list", branch_p).stdout.strip():
             raise AssertionError("直接收口后执行分支没有回收")
 
+        # --- worktree 已回收但分支还有未落提交：恢复槽不能永久占住并发空转 ---
+        # 守护重启后从 state.json 还原 recover job，但上一轮 worker 的 worktree
+        # 已被删除时，_hydrate_exec_jobs 应把该槽转成 detached 收口，而不是清掉后
+        # 每轮重复 dispatch。锁定「分支未落 -> 直接收口」的自愈路径。
+        repo_h, trunk_h, home_h = fixture(base / "hydrate-dead-recover")
+        daemon_h = load_daemon(repo_h, trunk_h, home_h,
+                               fake_codex(base, "fake-recover-done.sh", 0))
+        slug_h = f"{daemon_h._exec_slug('L-0001')}-{daemon_h._exec_slug('面板按钮点着没反应')}"
+        branch_h = f"codex/exec-{slug_h}"
+        wt_h = Path(repo_h).parent / f"{Path(repo_h).name}-exec-{slug_h}"
+        run(["git", "-C", str(repo_h), "worktree", "add", "-q", "-b",
+             branch_h, str(wt_h)])
+        (wt_h / "fake.txt").write_text("recover-preserved\n", encoding="utf-8")
+        git(wt_h, "add", "fake.txt")
+        git(wt_h, "commit", "-q", "-m", "exec(L-0001): 面板按钮点着没反应")
+        run(["git", "-C", str(repo_h), "worktree", "remove", "--force", str(wt_h)])
+        stale_jobs = {"exec_jobs": {"L-0001": {
+            "id": "L-0001", "outcome": "ready",
+            "item": daemon_h._exec_open_items().__next__(),
+            "cfg": daemon_h.auto_exec_config(), "repo": str(repo_h),
+            "branch": branch_h, "worktree": str(wt_h),
+            "log": str(home_h / "exec" / "recover.log"),
+            "model": "aibvv@deepseek-v4.1-flash", "recover": True,
+            "result": {"id": "L-0001", "branch": branch_h,
+                       "worktree": str(wt_h)}}}}
+        hydrated = daemon_h._hydrate_exec_jobs(stale_jobs)
+        if not hydrated["exec_jobs"]:
+            raise AssertionError("recover 槽不应在分支仍有未落提交时被直接清掉")
+        blocked_h = {}
+        results_h = [daemon_h._reap_exec(
+            list(hydrated["exec_jobs"].values())[0], blocked_h)]
+        if results_h[-1].get("outcome") != "landed":
+            raise AssertionError(
+                f"recover 槽没有直接收口已提交成果: {results_h}\nblocked={blocked_h}")
+        if git(repo_h, "show", "main:fake.txt").stdout.strip() != "recover-preserved":
+            raise AssertionError("recover 槽没有把已提交成果落进 main")
+
         # --- _changed_paths 必须保住 porcelain 首行的前导空格，否则 git add 必失败 ---
         # 曾经的 bug：_git() 整体 strip 掉 stdout，porcelain 首行 ' M app.txt' 变成
         # 'M app.txt'，line[3:] 便切出 'pp.txt'，git add 直接 fatal，成果永远落不了盘
@@ -1314,9 +1352,45 @@ def test_auto_exec():
         if blocked_t.get("L-0001", {}).get("reason") != "codex_exit_124":
             raise AssertionError(f"超时原因登记不正确: {blocked_t}")
 
+
     print("selftest ok: 自动实现真跑并落盘、失败保留现场、收口失败不重复派、"
           "分支已有未落提交时直接收口、收口后清掉实现暂缓、"
           "502 日志判定为可重试并在同一 worktree 重跑（重试到上限记 codex_infra_fail）。")
+
+
+def test_exec_model_balance_fallback():
+    """403 欠费日志必须被识别为慢通道 fallback，且 fast/slow 路由可预测。"""
+    import importlib
+    import sys
+    from pathlib import Path
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-model-fallback-") as tmp:
+        probe = Path(tmp) / "403.log"
+        probe.write_text(
+            "ERROR: unexpected status 403 Forbidden: insufficient balance, url: "
+            "http://127.0.0.1:15721/v1/responses\n", encoding="utf-8")
+        if not central_daemon.classify_exec_model_fallback(probe):
+            raise AssertionError("403 insufficient balance 没有被识别为模型通道额度失败")
+        quiet = Path(tmp) / "quiet.log"
+        quiet.write_text("验证通过\n", encoding="utf-8")
+        if central_daemon.classify_exec_model_fallback(quiet):
+            raise AssertionError("普通日志被误判成模型通道额度失败")
+        cfg = {"fast_model": "aibvv@deepseek-v4.1-flash",
+               "slow_model": "ok8888@deepseek-v4.1-flash"}
+        bug_item = {"kind": "bug"}
+        gate_item = {"kind": "gate"}
+        arch_item = {"kind": "arch"}
+        if central_daemon._exec_model(bug_item, cfg) != cfg["fast_model"]:
+            raise AssertionError("bug 泳道没有优先走 fast_model")
+        if central_daemon._exec_model(gate_item, cfg) != cfg["fast_model"]:
+            raise AssertionError("gate 泳道没有优先走 fast_model")
+        if central_daemon._exec_model(arch_item, cfg) != cfg["slow_model"]:
+            raise AssertionError("arch/其它泳道没有走 slow_model")
+    print("selftest ok: 403 欠费识别为模型通道额度失败，fast/slow 模型路由可预测。")
 
 
 def test_parallel_exec_slots():
@@ -2045,6 +2119,7 @@ if __name__ == "__main__":
     test_verify_and_truth()
     test_prune_exec_blocked_landed_commit()
     test_auto_exec()
+    test_exec_model_balance_fallback()
     test_parallel_exec_slots()
     test_exec_prompt_includes_patch_recovery()
     test_hydrate_drops_unverifiable_exec_slots()

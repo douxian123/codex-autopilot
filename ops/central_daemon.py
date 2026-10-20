@@ -110,6 +110,11 @@ EXEC_INFRA_PATTERN = re.compile(
     r"502 Bad Gateway|Transport channel closed|ECONNRESET|connection refused",
     re.IGNORECASE)
 EXEC_INFRA_TAIL_BYTES = 8192
+# 模型通道预扣费/额度失败不是“需求做不出来”，也不适合在 fast 通道上反复退避。
+# 检测到后再派一次慢通道（config 的 slow_model），仍失败才按基础设施失败保留现场。
+EXEC_MODEL_FALLBACK_PATTERN = re.compile(
+    r"403 Forbidden|insufficient balance|quota|额度|余额",
+    re.IGNORECASE)
 
 _stop = False
 
@@ -955,6 +960,11 @@ def classify_exec_infra_failure(log_path) -> bool:
     return bool(EXEC_INFRA_PATTERN.search(_exec_log_tail(log_path)))
 
 
+def classify_exec_model_fallback(log_path) -> bool:
+    """日志尾部是否命中预扣费 / 额度失败文案。"""
+    return bool(EXEC_MODEL_FALLBACK_PATTERN.search(_exec_log_tail(log_path)))
+
+
 def _preserve_exec(repo, wt: Path, branch: str, rid: str, reason: str, blocked: dict,
                    detail: str = "") -> dict:
     """保留一个执行 worktree：有改动就提交成 WIP，绝不因为失败删掉在途工作。"""
@@ -1136,12 +1146,23 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
     while True:
         attempt += 1
         if attempt > 1:
-            log(f"[exec] {rid} 第 {attempt}/{total} 次重试"
+            if job.get("model_fallback_used"):
+                retry_note = ("模型通道欠费/额度失败，切到慢通道重试"
+                              f"（model={job.get('model') or 'default'}）")
+            else:
+                retry_note = f"第 {attempt}/{total} 次重试"
+            log(f"[exec] {rid} {retry_note}"
                 f"（同一 worktree={wt}，日志 {log_path}）")
             try:
                 fh = log_path.open("a", encoding="utf-8")
-                fh.write(f"\n===== auto_exec 重试 第 {attempt}/{total} 次（{_now()}，"
-                         f"上一次退出码={code}，判定为基础设施抖动）=====\n")
+                if job.get("model_fallback_used"):
+                    fh.write(f"\n===== auto_exec 模型通道额度失败，"
+                             f"切换到 slow_model 重试（{_now()}，"
+                             f"model={job.get('model') or 'default'}）=====\n")
+                else:
+                    fh.write(f"\n===== auto_exec 重试 第 {attempt}/{total} 次"
+                             f"（{_now()}，上一次退出码={code}，"
+                             f"判定为基础设施抖动）=====\n")
                 fh.flush()
                 proc = subprocess.Popen(
                     _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
@@ -1180,9 +1201,22 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
         log(f"[exec] {rid} codex 退出码={code}（第 {attempt}/{total} 次，日志 {log_path}）")
         if code == 0:
             break
+        if (not job.get("model_fallback_used")
+                and cfg.get("slow_model")
+                and job.get("model") != cfg["slow_model"]
+                and classify_exec_model_fallback(log_path)):
+            job["model"] = str(cfg["slow_model"])
+            job["model_fallback_used"] = True
+            detail_tail = _exec_log_tail(log_path, limit=400).strip()
+            log(f"[exec] {rid} 判定为模型通道额度失败，切到 slow_model="
+                f"{job['model']} 重跑；日志尾部: {detail_tail[-120:]}")
+            continue
         # Timeouts and startup failures are not retried. Only a transport
         # failure with a matching log tail gets another attempt.
         infra = code not in (124, 125) and classify_exec_infra_failure(log_path)
+        if (not infra and job.get("model_fallback_used")
+                and classify_exec_model_fallback(log_path)):
+            infra = True
         if not infra or attempt > retries:
             break
         delay = EXEC_INFRA_BACKOFF * (2 ** (attempt - 1))
@@ -1229,6 +1263,7 @@ def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
     main_branch = conf.get("main_branch", "main")
     # 把 codex 留下的改动显式提交（不 git add -A；只加 status 里列出的、非忽略的路径）。
     changed = _changed_paths(wt)
+    pending = _branch_pending_commits(repo, branch, main_branch)
     if changed:
         add_rc, add_err = _git_add_retry(wt, changed)
         if add_rc != 0:
@@ -1240,7 +1275,7 @@ def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
             return _preserve_exec(repo, wt, branch, rid, "commit_fail", blocked)
         _, commit, _ = _git(wt, "rev-parse", "HEAD")
         result["commit"] = commit
-    elif _branch_pending_commits(repo, branch, main_branch):
+    elif pending:
         # 上一轮已经把改动提交进分支、只是没走完落盘（例如守护在 land 前退出）。
         # 重复实现会覆盖既定成果；直接把这笔提交交给同一道门禁收口。
         _, commit, _ = _git(repo, "rev-parse", branch)
@@ -1497,11 +1532,16 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
             continue
         persisted_worktree = str(job.get("worktree") or "").strip()
         if persisted_worktree and not Path(persisted_worktree).exists():
-            # A removed worktree leaves a persisted slot that no process can
-            # finish. Drop it before calculating active_ids; otherwise the
-            # daemon idles a worker forever or re-dispatches the same ledger row.
-            jobs.pop(rid, None)
-            continue
+            branch = str(job.get("branch") or "").strip()
+            if job.get("recover") and branch and _branch_pending_commits(
+                    Path(job.get("repo") or ""), branch, "main"):
+                # Recover only needs the branch: the worker worktree was
+                # collected by a previous cycle, but committed work is pending.
+                job.pop("proc", None)
+                job["detached"] = True
+            else:
+                jobs.pop(rid, None)
+                continue
         if not persisted_worktree:
             # Jobs without a worktree cannot be reaped or verified safely.
             # Reconstruct from the ledger only through normal dispatch, not by
