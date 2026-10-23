@@ -2338,10 +2338,13 @@ REAP_MIN_IDLE_H = float(os.environ.get("KG_REAP_MIN_IDLE_H", "3"))
                                # worktree 至少闲置这么久才回收（按目录 mtime 与分支最后提交取较新者）
 REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "5"))
 # 可用磁盘低于这个值就不派新 exec。
-# 2GB 对无人值守太薄：一个 worktree ~220MB，每个 worker 还要写 npm/prisma
-# 构建产物；实测一天能吃掉十几 GB。留 6GB 让守护在「快满」时自己收手，
-# 而不是刚好把机器撑死。可用环境变量覆盖。
-MIN_FREE_GB = float(os.environ.get("KG_MIN_FREE_GB", "6.0"))
+#
+# 取舍过程：2GB 对无人值守太薄（一个 worktree ~220MB，worker 还要写
+# npm/prisma 构建产物，实测一天吃掉十几 GB）；但一开始设 6GB 又踩到另一个坑——
+# APFS 自身在 5.6~6.3GB 之间持续波动回收，阈值卡在波动带上会让守护反复停派、
+# 看起来像「又不动了」。所以取 4GB：低于它才是真的接近撑死，高于它一律正常
+# 干活。可用 KG_MIN_FREE_GB 覆盖。
+MIN_FREE_GB = float(os.environ.get("KG_MIN_FREE_GB", "4.0"))
 
 
 def _safety_path() -> Path:
@@ -2462,6 +2465,8 @@ def _resource_gate() -> str | None:
             free_gb = st.f_bavail * st.f_frsize / 1e9
         except Exception:
             return None
+    if free_gb is not None:
+        log(f"[safety] 磁盘可用 {free_gb:.2f}GB（派活下限 {MIN_FREE_GB}GB）")
     if free_gb is not None and free_gb < MIN_FREE_GB:
         return f"磁盘可用 {free_gb:.1f}GB < {MIN_FREE_GB}GB"
     return None
