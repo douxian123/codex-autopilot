@@ -647,6 +647,8 @@ def branch_content_landed(branch):
     被重排或拆分」更稳。取并集意味着判据更宽，所以只用于归档（不产生任何代码改动、
     不改任何分支），不参与 land 的放行判断。
     """
+    if not changed_files(branch):
+        return True, ["净零文件：分支相对自身基线没有文件级改动"]
     if not unlanded_commits(branch):
         return True, ["patch-id 等价：分支的每个提交都能在 main 找到等价改动"]
     return branch_net_zero(branch)
@@ -677,7 +679,12 @@ def cmd_supersede(args):
     for r in sorted(rows, key=lambda x: (x["nfiles"], x["ahead"])):
         if r["branch"] in done:
             continue
-        if fast:
+        if r["nfiles"] == 0:
+            # 空壳分支可能有几十上百个旧提交，但相对自身 merge-base 的树完全相等。
+            # 先判文件净零，避免为每个分支跑昂贵的 `git cherry`；这正是守护进程
+            # 每个周期 `supersede --fast` 长期扫不完、空分支又永远不消失的根因。
+            ok, notes = True, ["净零文件"]
+        elif fast:
             ok = not unlanded_commits(r["branch"])
             notes = ["patch-id 等价"] if ok else []
         else:
@@ -1113,10 +1120,13 @@ def cmd_matrix(args):
     g = {"MERGED": [], "CLEAN": [], "CONFLICT": [], "UNRESOLVED": [], "SETTLED": []}
     for r in rows:
         g[r["kind"]].append(r)
+    landable = [r for r in g["CLEAN"] if row_is_landable(r)]
+    empty = [r for r in g["CLEAN"] if row_is_empty_candidate(r)]
     print(f"仓库 {REPO}")
     print(f"主干 {MAIN} @ {git('log','-1','--format=%h %s',MAIN)[:60]}\n")
     print(f"codex 分支 {len(rows)} 个 ->  已合并 {len(g['MERGED'])} | "
-          f"能干净合 {len(g['CLEAN'])} | 有冲突 {len(g['CONFLICT'])} | "
+          f"能干净合且可入队 {len(landable)} | 0 文件空壳 {len(empty)} | "
+          f"有冲突 {len(g['CONFLICT'])} | "
           f"残留冲突标记 {len(g['UNRESOLVED'])} | 已裁决 {len(g['SETTLED'])}\n")
 
     print("— A 已完全合并（可回收）—")
@@ -1124,9 +1134,11 @@ def cmd_matrix(args):
         print(f"   behind={r['behind']:4d} age={r['age']:5.1f}d  {r['branch']:44s} {r['subject']}")
 
     print("\n— B 无冲突·可入队 —")
-    for r in sorted(g["CLEAN"], key=lambda x: (x["ahead"], -x["behind"])):
+    for r in sorted(landable, key=lambda x: (x["ahead"], -x["behind"])):
         print(f"   ahead={r['ahead']:3d} behind={r['behind']:4d} {r['nfiles']:3d}文件 "
               f"age={r['age']:4.1f}d  {r['branch']:44s} {r['subject']}")
+    if empty:
+        print(f"   另有 {len(empty)} 个 0 文件空壳，等待 supersede 归档")
 
     print("\n— C 有冲突·必须裁决（同族不可并行）—")
     byfile = {}
@@ -1172,6 +1184,20 @@ def _acceptance_by_lane() -> dict:
     return out
 
 
+def row_is_landable(row: dict) -> bool:
+    """只有真的改了文件的 CLEAN 分支才允许入队落盘。
+
+    `CLEAN` 只说明与 main 不冲突；0 文件分支是历史提交相互抵消或内容已被
+    main 覆盖的空壳，应交给 supersede 归档，不能占用自动落盘队列。
+    """
+    return row.get("kind") == "CLEAN" and int(row.get("nfiles") or 0) > 0
+
+
+def row_is_empty_candidate(row: dict) -> bool:
+    """与 main 不冲突、但相对自身基线没有净文件改动的待归档空壳。"""
+    return row.get("kind") == "CLEAN" and int(row.get("nfiles") or 0) == 0
+
+
 def cmd_queue(args):
     show_gates = "--gates" in (args or [])
     light = "--light" in (args or [])
@@ -1179,8 +1205,9 @@ def cmd_queue(args):
         rows = scan(light=True)
     else:
         rows = scan()
-    clean = sorted([r for r in rows if r["kind"] == "CLEAN"],
+    clean = sorted([r for r in rows if row_is_landable(r)],
                    key=lambda x: (x["ahead"], -x["behind"]))
+    empty = [r for r in rows if row_is_empty_candidate(r)]
     acc = _acceptance_by_lane() if show_gates else {}
     print("合并队列（一次一个，合完立刻重算）\n")
     for i, r in enumerate(clean, 1):
@@ -1202,6 +1229,8 @@ def cmd_queue(args):
     print(f"\n其余 {len(rows)-len(clean)} 个："
           f"{sum(1 for r in rows if r['kind']=='MERGED')} 个已合并待回收、"
           f"{sum(1 for r in rows if r['kind']=='CONFLICT')} 个有冲突需裁决。")
+    if empty:
+        print(f"另有 {len(empty)} 个 0 文件空分支，等待 supersede 归档，不进入 land 队列。")
     unresolved = sum(1 for r in rows if r["kind"] == "UNRESOLVED")
     if unresolved:
         print(f"另有 {unresolved} 个分支残留冲突标记，已从队列排除。")
@@ -1864,7 +1893,7 @@ def cmd_dash(args):
     machine = [r for r in acc.values()
                if r.get("status") == "verified" and not r.get("needs_human")]
 
-    clean = [r for r in rows if r["kind"] == "CLEAN"]
+    clean = [r for r in rows if row_is_landable(r)]
     conflict = [r for r in rows if r["kind"] == "CONFLICT"]
     unresolved = [r for r in rows if r["kind"] == "UNRESOLVED"]
     merged = [r for r in rows if r["kind"] == "MERGED"]
@@ -3657,7 +3686,8 @@ def cmd_status(args):
     print(f"唯一入口       待路由 {unrouted} / 累计 {total} 条")
     print(f"codex 分支     {len(rows)}")
     print(f"  ├ 已合并可回收 {sum(1 for r in rows if r['kind']=='MERGED')}")
-    print(f"  ├ 可入队落盘   {sum(1 for r in rows if r['kind']=='CLEAN')}")
+    print(f"  ├ 可入队落盘   {sum(1 for r in rows if row_is_landable(r))}")
+    print(f"  ├ 0文件待归档  {sum(1 for r in rows if row_is_empty_candidate(r))}")
     print(f"  ├ 有冲突需裁决 {sum(1 for r in rows if r['kind']=='CONFLICT')}")
     print(f"  └ 残留冲突标记 {sum(1 for r in rows if r['kind']=='UNRESOLVED')}")
     groups = conflict_groups(rows)
@@ -3795,9 +3825,10 @@ def cmd_tick(args):
         print("  (light tick: 跳过全量分支 merge-tree 扫描)")
     else:
         rows = scan()
-        print("  merged=%d clean=%d conflict=%d unresolved=%d" % (
+        print("  merged=%d clean=%d empty=%d conflict=%d unresolved=%d" % (
             sum(1 for r in rows if r["kind"] == "MERGED"),
-            sum(1 for r in rows if r["kind"] == "CLEAN"),
+            sum(1 for r in rows if row_is_landable(r)),
+            sum(1 for r in rows if row_is_empty_candidate(r)),
             sum(1 for r in rows if r["kind"] == "CONFLICT"),
             sum(1 for r in rows if r["kind"] == "UNRESOLVED")))
 
@@ -3817,7 +3848,7 @@ def cmd_tick(args):
     _stage(6, "write context packs for next tasks")
     if os.environ.get("KG_TICK_LIGHT") != "1":
         rows = scan()
-    branches = [r["branch"] for r in rows if r["kind"] == "CLEAN"][:20]
+    branches = [r["branch"] for r in rows if row_is_landable(r)][:20]
     branches += [g.get("branch") for g in load_convergence().get("groups", [])[:20]
                  if g.get("branch")]
     if branches:

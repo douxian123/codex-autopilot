@@ -15,10 +15,10 @@
 **Codex 自动挡**是给 Codex 加的一层「工程控制面」：你平时打字的那个 Codex 输入框就是总输入框，零散需求进去，归类、落账、隔离工作区、跑验证、能合的自动合、收口、回写主线，全由它串起来。
 
 - 形态：Codex 插件（原生风格面板） + macOS 菜单栏 Companion（状态锚点，不是第二套产品）
-- 版本：仓库/远程/本机正在运行 `0.6.0-preview.19`；上一版 `0.6.0-preview.18` 保留可回滚，阶段：内部可用
+- 版本：源码/候选发布 `0.6.0-preview.20`；本机安装完成后应运行该版本，旧 `preview.19` 保留可回滚，阶段：内部可用
 - 13 步产品路线：**7 步已完成、6 步进行中、0 步未开始**
 - 验收：机器已自证项持续增加；当前 A-0005/A-0006/A-0007/A-0008 仍需真人/桌面操作
-- 本机实测（2026-10-24）：仓库/远程/本机当前安装 **`0.6.0-preview.19`**（上一版 `0.6.0-preview.18` 保留可回滚）；launchd 环境已确认带 `KG_SHARED=/Users/danta/.newmax/workspace/knowledge-graph`；`preview-check.sh --no-install` 全部通过（0 项失败）；原生直连真实桌面宿主 `connected=true`、`can_dispatch=true`。
+- 本机实测（2026-10-24）：候选版本 **`0.6.0-preview.20`** 包含 0 文件空壳队列修复；安装后旧 `preview.19` 保留可回滚。launchd 环境已确认带 `KG_SHARED=/Users/danta/.newmax/workspace/knowledge-graph`；原生直连真实桌面宿主 `connected=true`、`can_dispatch=true`。
 - 自检：`python3 ops/selftest.py` → **24 组全过、退出码 0、约 58 秒**；再开真编译 + 真二进制两个开关 → **26 组全过**
 - 自动实现（2026-10-17 补充）：`ops/central_daemon.py` 强制首步落盘并对“退出 0 但无改动”在同一 worktree 自动重试；真实 `codex exec` 已在隔离 fixture 完成 `L-0001` → `verify.txt` 内容 `hello-e2e` → 过门禁 → land → 收口。
 
@@ -504,6 +504,21 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
   阻塞式重试占住其他槽位。缺省并发从 3 提升到 10，磁盘压力不会再下调并发。
 - 证据：`python3 -u ops/selftest.py` 退出码 0；覆盖 3 槽真实并行启动、先完成后串行
   落盘、429 不阻塞其他 worker、僵尸 PID 释放槽位、无改动重派后落盘。
+
+### 12.12 0 文件空壳不再拖住并发布队列（2026-10-24）
+
+- 现象：真实状态根在磁盘只剩约 `400Mi` 时，`kgctl supersede` 对 0 文件旧分支仍逐个执行
+  `git cherry`，单条扫描进入分钟级；这些分支既没有可 land 的产品改动，又长期显示在
+  “可入队落盘”里，使自动挡看起来有大量候选却实际无可执行工作。
+- 处置：先用仓库自带 `kgctl reap --go` 回收 186 个 `ahead=0` 已合并分支指针；脏
+  worktree 保持原样。磁盘从约 `400Mi` 恢复到约 `4.0Gi`。
+- 修复：`branch_content_landed()` 先判“相对自身基线 0 文件”，再决定是否调用
+  `git cherry`；`supersede --fast` 直接归档 0 文件空壳；`queue`、`matrix`、`status`
+  与 tick 上下文生成不再把空壳算作可落盘候选。
+- 证据：新增自检“0 文件空壳不占 land 队列，supersede 不再为它们跑 git cherry”；
+  `python3 ops/selftest.py` 首次命中已知 `test_auto_exec` 抖动，单测复跑 exit 0，
+  完整复跑 exit 0；`panel_logic_check.py` 与 `panel_render_check.py --no-shot` 均 exit 0。
+  真实状态根 `kgctl queue --light` 不再列出 0 文件分支，并单独报告 1 个待归档空壳。
 
 ---
 

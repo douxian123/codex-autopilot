@@ -3614,6 +3614,74 @@ def test_scan_batches_branch_metadata():
     print("selftest ok: 大批量分支快照一次读取 ahead/behind，已合并分支不再白跑 diff。")
 
 
+def test_zero_file_branches_do_not_occupy_land_queue():
+    """0 文件空壳必须避开 land 队列，并在 supersede --fast 中直接归档。"""
+    import contextlib
+    import importlib
+    import io
+    from pathlib import Path
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    with tempfile.TemporaryDirectory(prefix="kgctl-zero-file-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        trunk = root / "state-trunk"
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "truth" / "progress.jsonl").write_text("", encoding="utf-8")
+        with mock.patch.dict(os.environ, {
+            "KG_REPO": str(repo),
+            "KG_TRUNK": str(trunk),
+        }):
+            spec = importlib.util.spec_from_file_location(
+                "kgctl_zero_file_selftest", ops / "kgctl.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            rows = [
+                {"branch": "codex/empty", "ahead": 40, "behind": 500,
+                 "nfiles": 0, "age": 10, "subject": "net-zero history",
+                 "kind": "CLEAN", "files": [], "conflicts": [], "markers": []},
+                {"branch": "codex/real", "ahead": 1, "behind": 2,
+                 "nfiles": 1, "age": 1, "subject": "real change",
+                 "kind": "CLEAN", "files": ["app.ts"], "conflicts": [], "markers": []},
+            ]
+            with mock.patch.object(module, "scan", return_value=rows):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    module.cmd_queue([])
+            queue_text = output.getvalue()
+            assert "kgctl land codex/real" in queue_text, queue_text
+            assert "kgctl land codex/empty" not in queue_text, queue_text
+            assert "1 个 0 文件空分支" in queue_text, queue_text
+
+            checked = []
+            def cherry(branch):
+                checked.append(branch)
+                return ["deadbeef"]
+
+            with mock.patch.object(module, "scan", return_value=rows), \
+                 mock.patch.object(module, "already_superseded", return_value=set()), \
+                 mock.patch.object(module, "unlanded_commits", side_effect=cherry):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    module.cmd_supersede(["--fast"])
+            supersede_text = output.getvalue()
+            assert "codex/empty" in supersede_text, supersede_text
+            assert "codex/real" not in supersede_text.split("可自动归档", 1)[1], supersede_text
+            assert checked == ["codex/real"], checked
+
+            with mock.patch.object(module, "changed_files", return_value=[]), \
+                 mock.patch.object(
+                     module, "unlanded_commits",
+                     side_effect=AssertionError("0 文件分支不应调用 git cherry")):
+                ok, notes = module.branch_content_landed("codex/empty")
+            assert ok is True and notes == ["净零文件：分支相对自身基线没有文件级改动"], notes
+
+    print("selftest ok: 0 文件空壳不占 land 队列，supersede 不再为它们跑 git cherry。")
+
+
 def test_prune_keeps_open_resolve_hold():
     """Restart cleanup must not erase a hold for a gate_fail resolve task."""
     import importlib
@@ -4042,6 +4110,7 @@ if __name__ == "__main__":
     test_resolve_gate_fail_not_retried_same_cycle()
     test_resolve_candidate_scan_skips_marker_grep()
     test_scan_batches_branch_metadata()
+    test_zero_file_branches_do_not_occupy_land_queue()
     test_conflict_decision_hold_survives_existing_markers()
     test_prune_keeps_open_resolve_hold()
     test_reset_trunk_truth_conflict()
