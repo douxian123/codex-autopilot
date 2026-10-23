@@ -1537,7 +1537,15 @@ def test_worker_alive_treats_zombie_as_dead():
                     return_value=type("R", (), {"stdout": "R+"})()):
         assert central_daemon._worker_alive(zombie_pid), (
             "live state must remain alive")
-    print("selftest ok: zombie worker is treated as dead and its slot is reclaimed.")
+
+    central_daemon._worker_alive = lambda pid: pid == 111
+    jobs = {
+        "live": {"pid": 111},
+        "dead": {"pid": 222},
+        "recover": {"pid": 333, "recover": True},
+    }
+    assert central_daemon._active_exec_session_count(jobs) == 1, jobs
+    print("selftest ok: 只有 PID 真活着的 worker 占并发槽；僵尸和待落盘槽位不占用。")
 
 
 def test_hydrate_drops_unverifiable_exec_slots():

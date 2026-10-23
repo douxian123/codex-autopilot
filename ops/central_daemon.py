@@ -2698,6 +2698,17 @@ def _reap_dead_worktrees() -> int:
     return reaped
 
 
+def _active_exec_session_count(jobs: dict) -> int:
+    """Count only model sessions with a live PID.
+
+    A finished worker can still own a slot briefly while its worktree is being
+    committed and landed. That cleanup work must keep the item reserved against
+    duplicate dispatch, but it must not consume a model concurrency slot.
+    """
+    return sum(1 for job in jobs.values()
+               if not job.get("recover") and _worker_alive(job.get("pid")))
+
+
 def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
     """Fill up to max_workers slots; completed workers still land serially."""
     cfg = auto_exec_config()
@@ -2736,7 +2747,7 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
 
     def _session_slots() -> int:
         # 只数「真在跑/真要用模型」的槽位；recover 只是等落盘，不占算力名额。
-        return sum(1 for j in jobs.values() if not j.get("recover"))
+        return _active_exec_session_count(jobs)
 
     # 守护重启会 hydrate 回一批仍在跑的 worker。若上一轮已经跑到上限，
     # 这里必须直接停手 —— 只在「新派一个之后」才检查上限，会让每次重启
