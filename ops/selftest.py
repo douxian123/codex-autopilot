@@ -3910,6 +3910,49 @@ def test_budget_gate():
           "用量熔断可停派活并自动恢复；状态坏掉 fail-open；一键关与预演零副作用。")
 
 
+def test_rotation_streaming():
+    """轮换只等 thread.started，不等首次长回复结束。"""
+    import importlib
+    import signal
+
+    sys.path.insert(0, str(OPS))
+    cr = importlib.import_module("cockpit_rotate")
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-rotate-") as tmp:
+        root = Path(tmp)
+        fake = root / "codex"
+        fake.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os, time\n"
+            "print(json.dumps({'type':'thread.started',"
+            "'thread_id':'01a12345-6789-7abc-8def-0123456789ab','pid':os.getpid()}),"
+            " flush=True)\n"
+            "time.sleep(5)\n",
+            encoding="utf-8",
+        )
+        fake.chmod(0o755)
+        real_cli, real_runs = cr._resolve_codex_cli, cr.ROTATE_RUNS
+        cr._resolve_codex_cli = lambda: (str(fake), "fake codex")
+        cr.ROTATE_RUNS = root / "rotate-runs"
+        try:
+            started = _time.monotonic()
+            tid, log_path = cr.new_thread("handoff", str(root), None)
+            elapsed = _time.monotonic() - started
+            assert tid == "01a12345-6789-7abc-8def-0123456789ab", (tid, log_path)
+            assert elapsed < 2.0, f"轮换等待了 {elapsed:.2f}s，仍在等首次回复"
+            log = Path(log_path).read_text(encoding="utf-8")
+            row = next(line for line in log.splitlines() if '"thread.started"' in line)
+            child_pid = json.loads(row)["pid"]
+            try:
+                os.killpg(child_pid, signal.SIGTERM)
+            except OSError:
+                pass
+        finally:
+            cr._resolve_codex_cli, cr.ROTATE_RUNS = real_cli, real_runs
+
+    print("selftest ok: 窗口轮换在 thread.started 后立即返回，不受首次长回复阻塞。")
+
+
 if __name__ == "__main__":
     main()
     test_replan()
@@ -3952,3 +3995,4 @@ if __name__ == "__main__":
     test_mcp_contract()
     test_closure_rate()
     test_budget_gate()
+    test_rotation_streaming()

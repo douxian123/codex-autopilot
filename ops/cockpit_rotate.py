@@ -26,6 +26,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import shutil
 import sqlite3
 import subprocess
@@ -37,6 +38,10 @@ HERE = Path(__file__).resolve().parent
 AUTOMATIONS = Path.home() / ".codex" / "automations"
 CODEX_DB = Path.home() / ".codex" / "state_5.sqlite"
 OFF_SWITCH = Path.home() / ".codex/cockpit-rotate.OFF"
+ROTATE_RUNS = Path(os.environ.get(
+    "KG_DAEMON_HOME", str(Path.home() / ".codex-autopilot")
+)).expanduser() / "rotate-runs"
+THREAD_START_TIMEOUT_SECONDS = 60.0
 
 # 轮换阈值：与 doctor / pulse 保持一致
 MAX_ROLLOUT_MB = 80.0
@@ -250,11 +255,15 @@ def _resolve_codex_cli() -> tuple[str | None, str]:
 
 
 def new_thread(handoff: str, cwd: str, model: str | None) -> tuple[str, str]:
-    """用 codex exec 起一个新线程，返回 (thread_id, log)。
+    """用 codex exec 起一个新线程，看到 thread.started 就返回 (thread_id, log)。
 
     Codex 桌面 app 会用 flock 持有它打开的线程，**不能 resume**；推进永远走
     `codex exec` 开新会话（项目已知硬约束）。
     入口由 `_resolve_codex_cli()` 选，且必须先过防护前置检查。
+
+    旧实现用 subprocess.run 等整段首次回复结束，导致「线程早已创建、自动化配置
+    却十几分钟没切过去」。这里把 stdout 直接落到独立日志，只等首个 thread.started；
+    首次回复继续在后台跑，轮换本身不再被长回复阻塞。
     """
     cli, why = _resolve_codex_cli()
     if not cli:
@@ -265,24 +274,90 @@ def new_thread(handoff: str, cwd: str, model: str | None) -> tuple[str, str]:
     if model:
         cmd += ["-m", model]
     cmd += [handoff]
-    rc, out = run(cmd, timeout=1800, env=env)
-    tid = ""
-    for line in out.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
+
+    ROTATE_RUNS.mkdir(parents=True, exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    log_path = ROTATE_RUNS / f"{stamp}-{os.getpid()}-{len(handoff)}.log"
+    with log_path.open("w", encoding="utf-8") as out:
+        out.write(f"[spawn] {time.strftime('%Y-%m-%d %H:%M:%S')} cwd={cwd}\n")
+        out.flush()
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=out,
+            stderr=subprocess.STDOUT,
+            env=env,
+            start_new_session=True,
+        )
+
+    deadline = time.monotonic() + THREAD_START_TIMEOUT_SECONDS
+    offset = 0
+    pending = ""
+    while True:
         try:
-            ev = json.loads(line)
-        except Exception:
-            continue
-        # codex exec --json 的首个事件就是 {"type":"thread.started","thread_id":...}
-        if ev.get("type") == "thread.started" and isinstance(ev.get("thread_id"), str):
-            tid = ev["thread_id"]
-        for key in ("thread_id", "conversation_id", "session_id"):
-            v = ev.get(key) or (ev.get("payload") or {}).get(key)
-            if not tid and isinstance(v, str) and re.fullmatch(r"[0-9a-f-]{8,}", v):
-                tid = v
-    return tid, out[-4000:] if rc != 0 else ""
+            size = log_path.stat().st_size
+            if size > offset:
+                with log_path.open("r", encoding="utf-8", errors="replace") as fh:
+                    fh.seek(offset)
+                    chunk = fh.read()
+                    offset = fh.tell()
+                pending += chunk
+                while "\n" in pending:
+                    line, pending = pending.split("\n", 1)
+                    tid = _thread_id_from_event(line)
+                    if tid:
+                        return tid, str(log_path)
+        except OSError as exc:
+            return "", f"读取 codex exec 日志失败：{exc}"
+
+        rc = proc.poll()
+        if rc is not None:
+            tail = pending + _read_log_tail(log_path)
+            return "", tail[-4000:]
+        if time.monotonic() >= deadline:
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+                proc.wait(timeout=2)
+            except Exception:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    pass
+            tail = _read_log_tail(log_path)
+            return "", (
+                f"codex exec 在 {THREAD_START_TIMEOUT_SECONDS:.0f}s 内没有发出 "
+                f"thread.started；日志：{log_path}\n{tail[-3500:]}"
+            )
+        time.sleep(0.05)
+
+
+def _thread_id_from_event(line: str) -> str:
+    """从一行 codex exec JSON 事件里提取线程 id；不是 JSON 就返回空。"""
+    line = line.strip()
+    if not line.startswith("{"):
+        return ""
+    try:
+        ev = json.loads(line)
+    except Exception:
+        return ""
+    if ev.get("type") == "thread.started" and isinstance(ev.get("thread_id"), str):
+        return ev["thread_id"]
+    for key in ("thread_id", "conversation_id", "session_id"):
+        value = ev.get(key) or (ev.get("payload") or {}).get(key)
+        if isinstance(value, str) and re.fullmatch(r"[0-9a-f-]{8,}", value):
+            return value
+    return ""
+
+
+def _read_log_tail(path: Path, limit: int = 8000) -> str:
+    try:
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - limit))
+            return fh.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
 
 
 def main() -> int:

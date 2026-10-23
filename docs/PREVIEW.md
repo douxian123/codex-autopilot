@@ -1,7 +1,9 @@
 # Codex 自动挡 · 预览包说明
 
-版本：`0.6.0-preview.15`
+版本：`0.6.0-preview.16`
 形态：Codex 插件 + macOS 菜单栏 Companion（一个状态锚点，不是第二套产品）
+
+本版修复司令窗轮换阻塞：`codex exec` 一发出 `thread.started` 就写回新线程并完成轮换，首次长回复继续在后台执行，不再让自动化配置等整轮结束。
 
 ## 一条命令验收
 
@@ -53,7 +55,7 @@ bash install.sh
 
 它会做四件事，全部可回退：
 
-1. 把这一版装进一个不可变版本目录：`~/plugins/codex-autopilot/releases/0.6.0-preview.15/`
+1. 把这一版装进一个不可变版本目录：`~/plugins/codex-autopilot/releases/0.6.0-preview.16/`
 2. 把插件市场清单里的一行指向这个版本目录（原子替换，只动自动挡这一条）
 3. 编译菜单栏 Companion 到 `~/Applications/CodexAutopilotCompanion.app`
 4. 写一份 Companion 配置到 `~/Library/Application Support/CodexAutopilot/companion.json`
