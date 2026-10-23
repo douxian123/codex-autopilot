@@ -2032,6 +2032,35 @@ def test_conflict_decision_hold_survives_existing_markers():
     print("selftest ok: 同一冲突标记不会绕过人工裁决停手，6h 内不再空转重试。")
 
 
+def test_prune_keeps_open_resolve_hold():
+    """Restart cleanup must not erase a hold for a gate_fail resolve task."""
+    import importlib
+    from unittest import mock
+    import sys
+    from pathlib import Path
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    rid = "resolve:stuck"
+    blocked = {rid: {"reason": "resolve_conflict_needs_decision",
+                     "ts": "2099-01-01 00:00:00"}}
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-hold-prune-") as tmp, \
+         mock.patch.object(central_daemon, "RUNTIME", Path(tmp)), \
+         mock.patch.object(central_daemon, "_ledger_latest", return_value={}), \
+         mock.patch.object(central_daemon, "_resolve_records_all",
+                           return_value=[{"slug": "stuck", "status": "gate_fail"}]), \
+         mock.patch.object(central_daemon, "_state_repo", return_value=None):
+        stale = central_daemon._prune_exec_blocked(blocked)
+
+    assert rid not in stale, stale
+    assert rid in blocked, blocked
+    print("selftest ok: 重启清理不会把仍 gate_fail 的 resolve 停手记录误删。")
+
+
 def test_mcp_contract():
     """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
     import json as _json
@@ -2306,6 +2335,7 @@ if __name__ == "__main__":
     test_resolve_gate_fail_auto_retry()
     test_resolve_gate_fail_not_retried_same_cycle()
     test_conflict_decision_hold_survives_existing_markers()
+    test_prune_keeps_open_resolve_hold()
     test_reset_trunk_truth_conflict()
     test_control_state()
     test_verify_and_truth()

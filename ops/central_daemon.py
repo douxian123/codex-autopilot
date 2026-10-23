@@ -909,6 +909,16 @@ def _prune_exec_blocked(blocked: dict) -> list:
     if latest is None:
         return []
     open_ids = {i for i, r in latest.items() if r.get("status") in ("open", "doing")}
+    # Resolve tasks live in resolve_tasks.json, not always in the ordinary
+    # ledger while they are gate_fail/needs_agent. Treating them as stale would
+    # erase a 6h human-decision hold on every daemon restart.
+    try:
+        open_ids |= {
+            f"resolve:{rec.get('slug')}" for rec in _resolve_records_all()
+            if rec.get("slug") and rec.get("status") in ("needs_agent", "gate_fail")
+        }
+    except Exception as exc:
+        log(f"[exec] 读取未决 resolve 任务失败（保留现有暂缓）：{exc!r}")
     stale = [k for k in list(blocked) if k not in open_ids]
     for k in stale:
         blocked.pop(k, None)
