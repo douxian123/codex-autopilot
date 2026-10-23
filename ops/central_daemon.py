@@ -2359,6 +2359,8 @@ REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "5"))
 # 看起来像「又不动了」。所以取 4GB：低于它才是真的接近撑死，高于它一律正常
 # 干活。可用 KG_MIN_FREE_GB 覆盖。
 MIN_FREE_GB = float(os.environ.get("KG_MIN_FREE_GB", "4.0"))
+# 空间自救阈值：可用低于它就回收零损失现场 + git gc（**不降低并发**）。
+REAP_PRESSURE_FREE_GB = float(os.environ.get("KG_REAP_PRESSURE_FREE_GB", "8"))
 
 
 def _safety_path() -> Path:
@@ -2487,25 +2489,27 @@ def _resource_gate() -> str | None:
 
 
 def _disk_pressure() -> int:
-    """磁盘逼近下限时返回建议的并发上限（0 表示不额外收紧）。
+    """磁盘偏紧信号。永远返回 0：**不限制并发**。
 
-    只会在「快没地方了」时降速，不会误停：
-      * 高于 MIN_FREE_GB + 2GB：不限（返回 0）
-      * 介于 MIN_FREE_GB ~ +2GB：压到 1 个会话，把空间留给正在跑的收尾
-      * 低于 MIN_FREE_GB：由 _resource_gate 完全停派
-    这样磁盘曲线是慢慢靠过去，而不是一脚踩到硬闸。
+    历史：这里曾经返回 1，把并发压到 1 个会话。但降速带（MIN_FREE_GB+2GB）
+    正好压住 APFS 自身在 5.6~6.3GB 之间的正常回收波动，结果是磁盘明明还有
+    5GB+、守护却把并发砍到 1，机器看起来「完全跑不动」。并发上限只由
+    auto_exec.max_workers 决定，磁盘不再参与限流。
+
+    磁盘偏紧时要做的不是少干活，而是把空间找回来：压力回收 + git gc
+    仍然照常由 `_reap_dead_worktrees()` / `_git_gc_maintenance()` 执行。
     """
-    if not _knob("resource_gate", True):
-        return 0
+    return 0
+
+
+def _disk_free_gb() -> float | None:
+    """当前可用 GB（df 口径）。仅用于日志与空间自救判断，不参与限流。"""
     try:
         out = subprocess.run(["df", "-k", "/System/Volumes/Data"],
                              capture_output=True, text=True, timeout=8).stdout
-        free_gb = int(out.strip().splitlines()[-1].split()[3]) / 1024 / 1024
+        return int(out.strip().splitlines()[-1].split()[3]) / 1024 / 1024
     except Exception:
-        return 0
-    if free_gb < MIN_FREE_GB + 2.0:
-        return 1
-    return 0
+        return None
 
 
 def _reap_backend_orphans() -> int:
@@ -2636,11 +2640,12 @@ def _reap_dead_worktrees() -> int:
     if not _knob("reap_worktrees", True):
         if not _knob("reap_on_disk_pressure", True):
             return 0
-        _d = _disk_pressure()
-        if not _d:
-            return 0          # 只有磁盘偏紧时才启用「零损失回收」这一层
+        _free = _disk_free_gb()
+        if _free is not None and _free >= REAP_PRESSURE_FREE_GB:
+            return 0          # 空间够用就不动任何现场
         _pressure_reap = True
-        log("[safety] 磁盘偏紧：对零损失现场做回收（只删目录，分支保留）")
+        log(f"[safety] 磁盘可用 {(_free if _free is not None else -1):.2f}GB "
+            f"< {REAP_PRESSURE_FREE_GB}GB：对零损失现场做回收（只删目录，分支保留）")
     reaped = 0
     try:
         root = _workspace_root()
@@ -2720,13 +2725,9 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
     if _gate:
         log(f"[safety] {_gate}，本轮不派新 exec（只收尾已跑的；关闭：KG_RESOURCE_GATE=0）")
         return results, workers
+    # 并发上限只看配置，不看磁盘：磁盘偏紧时去回收空间，而不是砍并发
+    # （实测降速带正好卡在 APFS 回收波动带，会把机器压成「一次只跑一个」）。
     limit = max(1, int(cfg.get("max_workers", EXEC_DEFAULT_MAX_WORKERS)))
-    # 磁盘逼近下限时先降速（不是硬停）：把并发压到 1，让正在跑的收尾，
-    # 空间不会在几个大任务同时写构建产物时被一脚踩穿。
-    _dpressure = _disk_pressure()
-    if _dpressure:
-        log(f"[safety] 磁盘偏紧，本轮并发压到 {_dpressure}")
-        limit = min(limit, _dpressure)
     # A completed worker frees one slot immediately. Keep filling in the same
     # cycle instead of idling until the next 10-minute heartbeat.
     active_ids = {rid for rid, job in jobs.items() if not job.get("recover")}
@@ -2905,7 +2906,8 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     try:
         _reap_backend_orphans()
         _reap_dead_worktrees()
-        if _disk_pressure():
+        _free = _disk_free_gb()
+        if _free is None or _free < REAP_PRESSURE_FREE_GB:
             _git_gc_maintenance()
     except Exception as exc:
         log(f"[safety] 回收阶段异常（忽略，继续本轮）：{exc}")
