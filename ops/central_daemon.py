@@ -2306,7 +2306,11 @@ RESOLVE_CONFLICT_BLOCK_H = 6   # 停手时长（小时），到期自动允许�
 REAP_MIN_IDLE_H = float(os.environ.get("KG_REAP_MIN_IDLE_H", "3"))
                                # worktree 至少闲置这么久才回收（按目录 mtime 与分支最后提交取较新者）
 REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "5"))
-MIN_FREE_GB = 2.0              # 可用磁盘低于这个值就不派新 exec
+# 可用磁盘低于这个值就不派新 exec。
+# 2GB 对无人值守太薄：一个 worktree ~220MB，每个 worker 还要写 npm/prisma
+# 构建产物；实测一天能吃掉十几 GB。留 6GB 让守护在「快满」时自己收手，
+# 而不是刚好把机器撑死。可用环境变量覆盖。
+MIN_FREE_GB = float(os.environ.get("KG_MIN_FREE_GB", "6.0"))
 
 
 def _safety_path() -> Path:
