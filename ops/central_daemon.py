@@ -2137,6 +2137,16 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
     results = []
     for rid, job in list(jobs.items()):
         proc = job.get("proc")
+        # 进程早就退出了，但 proc 对象还是上一轮 Popen 的句柄（重启后则是
+        # None）。先按 PID 活着与否对齐一次，避免对已死的进程反复 wait 或
+        # 反过来把死进程当在跑。
+        if proc is not None and job.get("pid"):
+            try:
+                if proc.poll() is None and not _worker_alive(job.get("pid")):
+                    job["proc"] = _finished_proc()
+                    proc = job["proc"]
+            except Exception:
+                pass
         if job.get("recover"):
             # 恢复型槽位不需要新会话，也不会有 proc。显式标成已结束，
             # 让同一轮就走 add/commit/land；否则它永远停在「等待」。
@@ -3380,7 +3390,22 @@ ACTIVE_BREATH_S = float(os.environ.get("KG_ACTIVE_BREATH_S", "45"))
 
 
 def _exec_pool_busy() -> bool:
-    """还有 codex exec worker 在跑吗？只读进程表，任何异常都当作不忙。"""
+    """这一拍还要不要快点回来？只读判断，任何异常都当作不忙。
+
+    两个来源都算「忙」：
+      1) 进程表里真有 codex exec 在跑；
+      2) 状态里还挂着 worker 槽位 —— 哪怕进程已经没了，也必须尽快回来
+         收口/回收。只看进程表会漏掉这一种：worker 退出后槽位还在，
+         但守护以为「没事干」于是睡满 15 分钟，槽位一直占着并发名额，
+         整池子看上去满员、实际一个会话都没有（实测空转过一次）。
+    """
+    try:
+        st = load_state()
+        jobs = ((st.get("exec_workers") or {}).get("exec_jobs") or {})
+        if jobs:
+            return True
+    except Exception:
+        pass
     try:
         out = subprocess.run(["ps", "-axo", "command="], capture_output=True,
                              text=True, timeout=10).stdout
