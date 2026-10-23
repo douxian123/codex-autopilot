@@ -1793,6 +1793,40 @@ def test_resolve_exec_parallel():
     print("selftest ok: resolve 冲突任务进入同一并行 codex worker，复用 resolve worktree 并由 kgctl finish 串行落盘。")
 
 
+def test_collect_exec_keeps_reaping_after_nonlanding_failure():
+    """A failed resolve must not hide other completed workers in the same cycle."""
+    import central_daemon
+
+    class _DoneProc:
+        def poll(self):
+            return 0
+
+    real_reap = central_daemon._reap_exec
+    try:
+        def fake_reap(job, blocked):
+            return {"id": job["id"], "outcome": job["test_outcome"]}
+
+        central_daemon._reap_exec = fake_reap
+        workers = {"exec_jobs": {
+            "r1": {"id": "r1", "test_outcome": "resolve_gate_fail", "proc": _DoneProc()},
+            "r2": {"id": "r2", "test_outcome": "no_changes", "proc": _DoneProc()},
+            "r3": {"id": "r3", "test_outcome": "landed", "proc": _DoneProc()},
+        }}
+        results = central_daemon._collect_exec(workers, {})
+        assert [r["id"] for r in results] == ["r1", "r2", "r3"], results
+
+        workers = {"exec_jobs": {
+            "r1": {"id": "r1", "test_outcome": "resolve_gate_fail", "proc": _DoneProc()},
+            "r2": {"id": "r2", "test_outcome": "land_conflict", "proc": _DoneProc()},
+            "r3": {"id": "r3", "test_outcome": "landed", "proc": _DoneProc()},
+        }}
+        results = central_daemon._collect_exec(workers, {})
+        assert [r["id"] for r in results] == ["r1", "r2"], results
+    finally:
+        central_daemon._reap_exec = real_reap
+    print("selftest ok: resolve gate_fail 不阻塞同轮其他已完成 worker；真正 land/冲突仍保持串行边界。")
+
+
 def test_resolve_gate_fail_auto_retry():
     """A resolve gate_fail must retry finish on the next cycle, not start codex again.
 
@@ -2332,6 +2366,7 @@ if __name__ == "__main__":
     test_replan()
     test_resolve()
     test_resolve_exec_parallel()
+    test_collect_exec_keeps_reaping_after_nonlanding_failure()
     test_resolve_gate_fail_auto_retry()
     test_resolve_gate_fail_not_retried_same_cycle()
     test_conflict_decision_hold_survives_existing_markers()

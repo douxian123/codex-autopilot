@@ -2309,6 +2309,13 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
             # 这里把串行收窄到「每次只做一件落盘」，做完继续收下一个。
             if result.get("outcome") == "landed":
                 continue
+            # 失败/无变化没有改变 main，也不持有落盘锁；继续收下一个已经
+            # 结束的 worker，避免一条 resolve_gate_fail 把同轮其他完成项
+            # 推迟到下一拍。真正 land 的分支仍在上面的 landed 分支里逐条
+            # 串行处理。
+            if result.get("outcome") in ("resolve_gate_fail", "no_changes",
+                                         "codex_fail", "codex_fail_preserved"):
+                continue
             break
     return results
 
