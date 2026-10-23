@@ -1262,6 +1262,19 @@ def _exec_model(item: dict, cfg: dict) -> str | None:
     """
     if cfg.get("model"):
         return str(cfg["model"])
+    # 29 号离线批次把「文档、审计、只读盘点」这类不赶交互的任务放到慢通道，
+    # 避免把 aibvv 快速额度烧在低时敏任务上。命中关键词才走慢卡，否则保持
+    # 原有行为：bug/gate/resolve 走 fast_model，其它走 slow_model。
+    title = str(item.get("title") or "")
+    slug = str(item.get("slug") or item.get("id") or "")
+    hay = f"{title}\n{slug}".lower()
+    offline_markers = (
+        "29号离线", "离线可并行", "只读", "审计", "盘点", "草案",
+        "官网结构", "marketing", "docs/29-oct", "source 失败账本",
+        "失败账本", "统计", "不依赖", "不发布",
+    )
+    if any(m in hay for m in offline_markers) and cfg.get("slow_model"):
+        return str(cfg["slow_model"])
     if (item.get("kind") or "") in ("bug", "gate", "resolve") and cfg.get("fast_model"):
         return str(cfg["fast_model"])
     return str(cfg.get("slow_model") or cfg.get("fast_model") or "") or None
