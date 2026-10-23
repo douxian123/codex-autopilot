@@ -2081,6 +2081,26 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
         if ledger_status in ("done", "closed", "cancelled", "superseded"):
             jobs.pop(rid, None)
             continue
+        # 台账里这条已经 done/closed 时，job["item"] 可能是上一轮缓存下来的旧
+        # 快照（status 还是 open）。以台账最新状态为准，否则收口完的槽位会一直
+        # 占着并发名额：实测 4 个槽位被 3 个「已 done」的僵尸占住，
+        # 真正要跑模型的位置只剩 1 个。
+        try:
+            _lts = open_items.get(rid)
+            if _lts is not None and str(_lts.get("status") or "") in (
+                    "done", "closed", "cancelled", "superseded"):
+                jobs.pop(rid, None)
+                continue
+        except Exception:
+            pass
+        try:
+            _live_status = (_ledger_latest() or {}).get(rid, {}).get("status")
+            if str(_live_status or "") in ("done", "closed", "cancelled",
+                                           "superseded"):
+                jobs.pop(rid, None)
+                continue
+        except Exception:
+            pass
         if not job.get("cfg"):
             job["cfg"] = auto_exec_config()
         if job.get("codex") is None:
@@ -2553,6 +2573,18 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
         return [], workers or {}
     workers = _hydrate_exec_jobs(workers if workers is not None else {})
     jobs = workers.setdefault("exec_jobs", {})
+    # 先按台账真实状态清掉已完成槽位。hydrate 只在启动时跑一次，而一轮里
+    # 可能有多个槽位刚收口完；不在这里清，它们会一直占着并发名额。
+    try:
+        _latest = _ledger_latest() or {}
+        for _rid in list(jobs):
+            _st = str((_latest.get(_rid) or {}).get("status") or "")
+            if _st in ("done", "closed", "cancelled", "superseded"):
+                jobs.pop(_rid, None)
+    except Exception:
+        pass
+    # 只差落盘的 recover 槽位不耗模型，先把它们收口可以立刻腾出「需要会话」
+    # 的名额，也不会和正在跑的 worker 争资源。
     results = _collect_exec(workers, blocked)
     _gate = _resource_gate()
     if _gate:
@@ -2649,7 +2681,11 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
             continue
         _start_exec(job)
         jobs[rid] = job
-        if len(jobs) >= limit:
+        # 槽位只统计「需要跑 codex 会话」的工作。recover 槽位不需要模型
+        # （只是等落盘门禁按序收口），把它们算进并发上限等于用一条不需要
+        # 算力的队列项去挤占真正要跑模型的位置 —— 实测 4 个槽位里 3 个是
+        # recover，机器上只剩 1 个 codex 在跑，看起来「没在并行」就是这个原因。
+        if sum(1 for j in jobs.values() if not j.get("recover")) >= limit:
             break
     return results, workers
 
