@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time as _time
 from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
@@ -1018,6 +1019,30 @@ def test_auto_exec():
         path.chmod(0o755)
         return path
 
+    def fake_codex_throttled(base, name):
+        """第一次 429 留下半成品，第二次在同一 worktree 完成。"""
+        path = base / name
+        counter = base / f"{name}.count"
+        path.write_text(
+            "#!/bin/sh\n"
+            "wt=\"\"\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
+            "done\n"
+            f"n=$(cat {counter} 2>/dev/null || echo 0)\n"
+            "n=$((n + 1))\n"
+            f"echo $n > {counter}\n"
+            "if [ \"$n\" = \"1\" ]; then\n"
+            "  printf 'partial\\n' > \"$wt/partial.txt\"\n"
+            "  echo 'ERROR: unexpected status 429 Too Many Requests'\n"
+            "  exit 1\n"
+            "fi\n"
+            "printf 'complete\\n' >> \"$wt/partial.txt\"\n"
+            "printf 'fake codex\\n' > \"$wt/fake.txt\"\n"
+            "exit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+        return path, counter
+
     def fake_codex_hang(base, name):
         """打一句 502 文本后就不退出：验证超时仍归 124，且不会被当成可重试抖动。"""
         path = base / name
@@ -1300,6 +1325,56 @@ def test_auto_exec():
         again_e, _w = daemon_e.dispatch_exec(False, blocked_e)
         if again_e:
             raise AssertionError(f"codex_infra_fail 后被重复派发: {again_e}")
+
+        # --- 429 是短期通道状态：不 sleeping 阻塞整条收口线程、不永久 codex_fail，
+        # 退避到期后在原 worktree 重开会话并把半成品继续做完 ---
+        repo_q, trunk_q, home_q = fixture(base / "infra-throttle")
+        throttle_cmd, throttle_count = fake_codex_throttled(base, "fake-throttle.sh")
+        daemon_q = load_daemon(repo_q, trunk_q, home_q, throttle_cmd)
+        daemon_q.EXEC_CHANNEL_RETRY_SECONDS = 3600
+        blocked_q, workers_q = {}, {}
+        daemon_q.dispatch_exec(False, blocked_q, workers_q)
+        results_q = []
+        for _ in range(100):
+            results_q, workers_q = daemon_q.dispatch_exec(False, blocked_q, workers_q)
+            if results_q:
+                break
+            _time.sleep(0.1)
+        if not results_q or results_q[-1].get("outcome") != "channel_unavailable":
+            raise AssertionError(f"429 没被记成可恢复通道失败: {results_q}, blocked={blocked_q}")
+        if int(throttle_count.read_text().strip()) != 1:
+            raise AssertionError("429 在收口线程内被重复重试，阻塞了其他 worker")
+        if blocked_q.get("L-0001", {}).get("reason") != "channel_unavailable":
+            raise AssertionError(f"429 被误记为永久阻塞: {blocked_q}")
+        if "codex_fail" in str(results_q[-1]):
+            raise AssertionError(f"429 仍被记成 codex_fail: {results_q}")
+        before_due, workers_q = daemon_q.dispatch_exec(False, blocked_q, workers_q)
+        if before_due or workers_q.get("exec_jobs"):
+            raise AssertionError(f"429 在退避到期前被提前重派: {before_due}, {workers_q}")
+
+        blocked_q["L-0001"]["retry_after_ts"] = 0
+        retry_started, workers_q = daemon_q.dispatch_exec(False, blocked_q, workers_q)
+        retry_job = (workers_q.get("exec_jobs") or {}).get("L-0001")
+        if retry_started or not retry_job:
+            raise AssertionError(f"429 退避到期没有重开会话: {retry_started}, {workers_q}")
+        if retry_job.get("recover"):
+            raise AssertionError("429 重试被误当成 recover，会绕过 Codex 直接落半成品")
+        retry_results = []
+        for _ in range(100):
+            retry_results, workers_q = daemon_q.dispatch_exec(False, blocked_q, workers_q)
+            if retry_results:
+                break
+            _time.sleep(0.1)
+        if not retry_results or retry_results[-1].get("outcome") != "landed":
+            raise AssertionError(f"429 后同一 worktree 没有继续完成并落盘: {retry_results}")
+        if int(throttle_count.read_text().strip()) != 2:
+            raise AssertionError("429 后没有恰好重开一次 Codex 会话")
+        partial_q = git(repo_q, "show", "main:partial.txt").stdout
+        if "partial" not in partial_q or "complete" not in partial_q:
+            raise AssertionError(f"429 重试丢了第一次半成品或没有继续完成: {partial_q!r}")
+        daemon_q_log = (home_q / "daemon.log").read_text(encoding="utf-8")
+        if "不记 codex_fail，不压低全局并发" not in daemon_q_log:
+            raise AssertionError("daemon.log 没有记录 429 的可恢复语义")
 
         # --- retries 可通过项目配置收紧；普通失败（exit 7，无抖动文本）不受影响 ---
         repo_x, trunk_x, home_x = fixture(base / "infra-retries-1",

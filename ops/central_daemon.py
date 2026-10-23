@@ -130,6 +130,11 @@ EXEC_MODEL_FALLBACK_PATTERN = re.compile(
 EXEC_THROTTLE_PATTERN = re.compile(
     r"429 Too Many Requests|exceeded retry limit, last status: 429",
     re.IGNORECASE)
+# A gateway 429 is transient. Delay only that task before restarting it; this
+# must never reduce the global worker limit or make the supervisor sleep while
+# other workers could still be started/reaped.
+EXEC_CHANNEL_RETRY_SECONDS = float(
+    os.environ.get("KG_EXEC_CHANNEL_RETRY_SECONDS", "20"))
 
 _stop = False
 
@@ -981,10 +986,10 @@ def _prune_exec_blocked(blocked: dict) -> list:
                 if not isinstance(rec, dict):
                     continue
                 if str(rec.get("reason") or "") not in ("land_locked", "land_error",
-                                                        "no_changes", "channel_unavailable"):
+                                                        "no_changes"):
                     continue
                 _reason = str(rec.get("reason") or "")
-                if _reason in ("no_changes", "channel_unavailable"):
+                if _reason == "no_changes":
                     blocked.pop(rid, None)
                     stale.append(rid)
                     log(f"[exec] {rid} 上一拍没有产出（{_reason}），放行重试")
@@ -1268,6 +1273,37 @@ def classify_exec_throttled(log_path) -> bool:
     return bool(EXEC_THROTTLE_PATTERN.search(_exec_log_tail(log_path)))
 
 
+def _channel_retry_due(rec: dict) -> bool:
+    """Return whether a transient channel block may restart its worker."""
+    try:
+        retry_at = float((rec or {}).get("retry_after_ts") or 0)
+    except (TypeError, ValueError):
+        retry_at = 0
+    return time.time() >= retry_at
+
+
+def _defer_exec_channel_failure(
+        rid: str, blocked: dict, *, branch: str = "", worktree: str = "",
+        error: str = "channel_unavailable", detail: str = "") -> dict:
+    """Record a provider/channel failure as resumable, not as a dead task."""
+    release_attempt_slot(rid)
+    rec = {
+        "reason": "channel_unavailable",
+        "error": error,
+        "branch": branch,
+        "worktree": worktree,
+        "retry_after_ts": time.time() + max(0.0, EXEC_CHANNEL_RETRY_SECONDS),
+        "restart_worker": True,
+        "detail": (detail or "")[:400],
+        "ts": _now(),
+    }
+    blocked[rid] = rec
+    log(f"[exec] {rid} 模型通道暂时不可用（{error}），"
+        f"{max(0.0, EXEC_CHANNEL_RETRY_SECONDS):.0f}s 后在同一现场重试；"
+        "不记 codex_fail，不压低全局并发")
+    return rec
+
+
 def _preserve_exec(repo, wt: Path, branch: str, rid: str, reason: str, blocked: dict,
                    detail: str = "") -> dict:
     """保留一个执行 worktree：有改动就提交成 WIP，绝不因为失败删掉在途工作。"""
@@ -1381,7 +1417,8 @@ def _exec_has_inflight_work(item: dict, cfg: dict, repo) -> bool:
     return False
 
 
-def _prepare_exec(item: dict, cfg: dict, blocked: dict) -> dict:
+def _prepare_exec(item: dict, cfg: dict, blocked: dict,
+                  force_session: bool = False) -> dict:
     """Create the isolated worktree for one worker without waiting for it.
 
     Returning a job description separates worker startup from worker
@@ -1406,6 +1443,34 @@ def _prepare_exec(item: dict, cfg: dict, blocked: dict) -> dict:
     # 直接沿用登记在案的现场，而不是用新路径重建/删除；在途改动和未落提交都不丢。
     existing_wt = wt if wt.exists() else (_worktree_for_branch(repo, branch) or wt)
     existing |= existing_wt.exists()
+    # A 429/provider failure preserves the worktree but invalidates the
+    # session. Restart Codex in that same worktree so partial files are visible
+    # to the next worker, while recover=True remains reserved for work that is
+    # already delivered and only needs landing.
+    if force_session and _git(repo, "rev-parse", "--verify", branch)[0] == 0:
+        if not existing_wt.exists():
+            _git(repo, "worktree", "prune")
+            _rc, _out, _err = _git(repo, "worktree", "add", str(existing_wt), branch)
+            if _rc != 0:
+                blocked[rid] = {"reason": "worktree_preserved",
+                                "worktree": str(existing_wt), "branch": branch,
+                                "ts": _now()}
+                log(f"[exec] {rid} 限流后重挂 worktree 失败：{_err[:200]}")
+                return {"id": rid, "outcome": "worktree_preserved",
+                        "branch": branch, "worktree": str(existing_wt)}
+            _link_side_dirs(existing_wt, conf)
+        codex = _codex_bin()
+        if not codex:
+            blocked[rid] = {"reason": "no_codex", "ts": _now()}
+            return {"id": rid, "outcome": "no_codex"}
+        log(f"[exec] {rid} 通道退避结束，沿用原 worktree 重开会话（不按 recover 直接落盘）")
+        return {"id": rid, "outcome": "ready", "item": item, "cfg": cfg,
+                "repo": str(repo), "branch": branch, "worktree": str(existing_wt),
+                "codex": codex, "log": str(_exec_dir() / f"{slug}.log"),
+                "model": _exec_model(item, cfg), "started_at": _now(),
+                "recover": False,
+                "result": {"id": rid, "branch": branch,
+                           "worktree": str(existing_wt)}}
     # If a leftover was cleaned and recreated, it is no longer an in-flight
     # branch and must get a fresh worker. Returning the stale `existing` flag
     # here made every rebuilt slot start as recover=True, so no codex session
@@ -1643,6 +1708,10 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
                 code = 1
                 infra = True
             break
+        # Do not burn the supervisor's single reaping thread on repeated 429
+        # sleeps. Defer this task briefly and keep every other slot moving.
+        if classify_exec_throttled(log_path):
+            break
         # Timeouts and startup failures are not retried. Only a transport
         # failure with a matching log tail gets another attempt.
         infra = code not in (124, 125) and classify_exec_infra_failure(log_path)
@@ -1659,13 +1728,14 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
         # Fail at spawn time, not by waiting a full worker timeout later.
         code = 125
     if code != 0:
-        reason = "codex_infra_fail" if infra else f"codex_exit_{code}"
         if classify_exec_throttled(log_path):
-            # The session never got to work: 429 throttling is not evidence the
-            # task cannot be done, so this attempt must not consume the
-            # repeat-cap slot that gates future dispatches.
-            if release_attempt_slot(rid):
-                log(f"[exec] {rid} 被模型通道限流（429），归还本轮派发名额")
+            _defer_exec_channel_failure(
+                rid, blocked, branch=branch, worktree=str(wt), error="throttled",
+                detail=_exec_log_tail(log_path, limit=400))
+            result.update({"outcome": "channel_unavailable",
+                           "retry_next_cycle": True})
+            return result
+        reason = "codex_infra_fail" if infra else f"codex_exit_{code}"
         detail = ""
         if infra:
             detail = (f"基础设施抖动，同一 worktree 重试 {attempt - 1} 次仍失败；"
@@ -1733,13 +1803,17 @@ def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked,
         # 额度耗尽/限流中途掐断（日志里有 403 insufficient balance、429），
         # 后者是通道问题、不是需求做不出来。把它记成 no_changes 会永久封死
         # 这条任务；这里先认通道失败，并按「不是这条任务的错」处理。
-        if (classify_exec_model_fallback(log_path)
-                or classify_exec_throttled(log_path)):
-            log(f"[exec] {rid} 无改动但日志是额度/限流失败 -> 归还派发名额，"
-                f"换通道重试，不算 no_changes")
-            release_attempt_slot(rid)
-            blocked.pop(rid, None)
-            result["outcome"] = "channel_unavailable"
+        channel_error = ""
+        if classify_exec_throttled(log_path):
+            channel_error = "throttled"
+        elif classify_exec_model_fallback(log_path):
+            channel_error = "provider_unavailable"
+        if channel_error:
+            _defer_exec_channel_failure(
+                rid, blocked, branch=branch, worktree=str(wt),
+                error=channel_error, detail=_exec_log_tail(log_path, limit=400))
+            result.update({"outcome": "channel_unavailable",
+                           "retry_next_cycle": True})
             return result
         log(f"[exec] {rid} 没有产生改动，记为无变化")
         # A worker may have no pending changes because its target commit was
@@ -1906,6 +1980,19 @@ def _finish_resolve_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> d
             log(f"[resolve-exec] {rid} worktree 干净且分支已有未落提交/已进 main "
                 f"-> 直接收口 {(commit or '')[:12]}")
         else:
+            resolve_log = _exec_dir() / f"resolve-{_exec_slug(item.get('slug') or '')}.log"
+            channel_error = ""
+            if classify_exec_throttled(resolve_log):
+                channel_error = "throttled"
+            elif classify_exec_model_fallback(resolve_log):
+                channel_error = "provider_unavailable"
+            if channel_error:
+                _defer_exec_channel_failure(
+                    rid, blocked, branch=branch, worktree=str(wt),
+                    error=channel_error, detail=_exec_log_tail(resolve_log, limit=400))
+                result.update({"outcome": "channel_unavailable",
+                               "retry_next_cycle": True})
+                return result
             log(f"[resolve-exec] {rid} 没有产生改动，不记永久阻塞（下一拍可重试）")
             blocked.pop(rid, None)
             result["outcome"] = "no_changes"
@@ -2813,6 +2900,7 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
     # another resolve worker that has already been dispatched for the same slug.
     failed_this_cycle = {r.get("id") for r in results
                          if r.get("outcome") == "resolve_gate_fail"}
+    force_session_ids = set()
     open_items = list(_exec_open_items())
 
     def _session_slots() -> int:
@@ -2852,23 +2940,31 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
             # Existing markers are the reason the conflict is still blocked;
             # they are not evidence that a human-decision hold has cleared.
             # Clearing here made the 6h stop-repeat gate retry every cycle.
-            if (blocked[rid].get("reason") != "resolve_conflict_needs_decision"
+            if (blocked[rid].get("reason") not in (
+                    "resolve_conflict_needs_decision", "channel_unavailable")
                     and _resolve_worktree_has_markers(rec)):
                 blocked.pop(rid, None)
         if rid in blocked:
-            if _should_retry_resolve_finish(item, blocked[rid]) and rid not in failed_this_cycle:
-                # Previous cycle left a committed resolve branch at gate_fail.
-                # Do not start a new Codex session; finish the same resolved
-                # branch through the land gate now.
-                if item.get("kind") == "resolve":
-                    retried = _retry_resolve_finish(
-                        item, cfg, Path(item.get("repo") or ""),
-                        Path(item.get("worktree") or ""), item.get("branch") or "",
-                        rid, blocked)
-                    if retried:
-                        results.append(retried)
+            if blocked[rid].get("reason") == "channel_unavailable":
+                if not _channel_retry_due(blocked[rid]):
+                    continue
+                blocked.pop(rid, None)
+                force_session_ids.add(rid)
+                log(f"[exec] {rid} 通道退避到期，重开模型会话")
+            else:
+                if (_should_retry_resolve_finish(item, blocked[rid])
+                        and rid not in failed_this_cycle):
+                    # Previous cycle left a committed resolve branch at gate_fail.
+                    # Do not start a new Codex session; finish the same resolved
+                    # branch through the land gate now.
+                    if item.get("kind") == "resolve":
+                        retried = _retry_resolve_finish(
+                            item, cfg, Path(item.get("repo") or ""),
+                            Path(item.get("worktree") or ""), item.get("branch") or "",
+                            rid, blocked)
+                        if retried:
+                            results.append(retried)
                 continue
-            continue
         if _looks_like_command(item.get("title")) or _looks_like_command(item.get("detail")):
             log(f"[exec] {rid} 输入像命令残片（{(item.get('title') or '')[:24]!r}），"
                 f"不派给执行器")
@@ -2927,7 +3023,8 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
         if item.get("kind") == "resolve":
             job = _prepare_resolve_exec(item, cfg, blocked)
         else:
-            job = _prepare_exec(item, cfg, blocked)
+            job = _prepare_exec(item, cfg, blocked,
+                                force_session=rid in force_session_ids)
         if job.get("outcome") != "ready":
             results.append(job)
             continue
@@ -3231,7 +3328,8 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
         notify("自动挡：已自己做完并落盘",
                f"{len(exec_landed)} 条需求由独立会话实现、过门禁并合进 main："
                f"{', '.join(str(r.get('id', '')) for r in exec_landed[:3])}")
-    exec_failed = [r for r in exec_results if r.get("outcome") != "landed"]
+    exec_failed = [r for r in exec_results
+                   if r.get("outcome") not in ("landed", "channel_unavailable")]
     if exec_failed:
         r0 = exec_failed[0]
         notify("自动挡：自动实现没走完",
