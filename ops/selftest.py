@@ -1991,6 +1991,47 @@ def test_resolve_gate_fail_not_retried_same_cycle():
             raise AssertionError(f"同一轮失败后不应再派 worker: {workers}")
     print("selftest ok: resolve gate_fail 当轮不立即重试，留到下一轮再 finish。")
 
+
+def test_conflict_decision_hold_survives_existing_markers():
+    """A human-decision hold must not be cleared by the same conflict markers."""
+    import importlib
+    from unittest import mock
+    import sys
+    from pathlib import Path
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    rid = "resolve:stuck"
+    item = {
+        "id": rid, "kind": "resolve", "slug": "stuck", "title": "stuck",
+        "repo": "/tmp", "worktree": "/tmp/stuck", "branch": "codex/stuck",
+    }
+    blocked = {rid: {"reason": "resolve_conflict_needs_decision",
+                     "ts": "2099-01-01 00:00:00"}}
+    cfg = {"enabled": True, "max_workers": 3, "max_per_cycle": 3}
+    with mock.patch.object(central_daemon, "auto_exec_config", return_value=cfg), \
+         mock.patch.object(central_daemon, "_codex_bin", return_value=["fake"]), \
+         mock.patch.object(central_daemon, "_hydrate_exec_jobs", side_effect=lambda w: w), \
+         mock.patch.object(central_daemon, "_collect_exec", return_value=[]), \
+         mock.patch.object(central_daemon, "_exec_open_items", return_value=[item]), \
+         mock.patch.object(central_daemon, "_live_exec_slugs", return_value=frozenset()), \
+         mock.patch.object(central_daemon, "_resolve_auto_allowed", return_value=True), \
+         mock.patch.object(central_daemon, "_resolve_task", return_value={"worktree": "/tmp/stuck"}), \
+         mock.patch.object(central_daemon, "_resolve_worktree_has_markers", return_value=True), \
+         mock.patch.object(central_daemon, "_retry_resolve_finish",
+                           side_effect=AssertionError("人工停手期间不应重试 finish")):
+        results, workers = central_daemon.dispatch_exec(False, blocked, {})
+
+    assert results == [], results
+    assert blocked[rid]["reason"] == "resolve_conflict_needs_decision", blocked
+    assert workers.get("exec_jobs") == {}, workers
+    print("selftest ok: 同一冲突标记不会绕过人工裁决停手，6h 内不再空转重试。")
+
+
 def test_mcp_contract():
     """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
     import json as _json
@@ -2264,6 +2305,7 @@ if __name__ == "__main__":
     test_resolve_exec_parallel()
     test_resolve_gate_fail_auto_retry()
     test_resolve_gate_fail_not_retried_same_cycle()
+    test_conflict_decision_hold_survives_existing_markers()
     test_reset_trunk_truth_conflict()
     test_control_state()
     test_verify_and_truth()

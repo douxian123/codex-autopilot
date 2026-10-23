@@ -2821,7 +2821,11 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
             continue
         if rid in blocked and item.get("kind") == "resolve":
             rec = _resolve_task(item.get("slug") or "")
-            if _resolve_worktree_has_markers(rec):
+            # Existing markers are the reason the conflict is still blocked;
+            # they are not evidence that a human-decision hold has cleared.
+            # Clearing here made the 6h stop-repeat gate retry every cycle.
+            if (blocked[rid].get("reason") != "resolve_conflict_needs_decision"
+                    and _resolve_worktree_has_markers(rec)):
                 blocked.pop(rid, None)
         if rid in blocked:
             if _should_retry_resolve_finish(item, blocked[rid]) and rid not in failed_this_cycle:
