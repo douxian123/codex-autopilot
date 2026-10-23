@@ -1082,6 +1082,7 @@ def _resolve_exec_prompt(item: dict) -> str:
         "硬规则（必须遵守）：",
         "- 只改当前 worktree 里自己的文件；不 `git checkout .` / `git reset --hard` / `git stash` / `git add -A`。",
         "- 不要 `git commit`、不要 `git push`、不要合并分支：把改动留在工作区即可，落盘由自动挡统一走门禁。",
+        "- 如果 `apply_patch` 报 `The first line of the patch must be '*** Begin Patch'`，不要反复重试；改用 `apply_patch` heredoc 的标准文本形式，或做带 `count == 1` 断言的精确字符串替换，然后立刻 `git diff --check` 与相关编译验证。",
         "- 解完 marker 后跑与改动相关的验证（如 `npx tsc --noEmit`、`npm run build`、相关 `verify:*` 脚本）；",
         "  失败就继续修，直到通过或有明确的外部阻塞。",
         "- 做完用一句话总结：改了哪些文件、跑了什么验证、结果如何。",

@@ -1579,12 +1579,17 @@ def test_exec_prompt_includes_patch_recovery():
         sys.path.insert(0, str(ops))
     import central_daemon
     importlib.reload(central_daemon)
-    prompt = central_daemon._exec_prompt({
+    exec_prompt = central_daemon._exec_prompt({
         "id": "L-0001", "kind": "bug", "title": "test", "detail": "test"
     })
-    assert "first line of the patch" in prompt, prompt
-    assert "count == 1" in prompt, prompt
-    print("selftest ok: exec prompt includes patch recovery guidance.")
+    resolve_prompt = central_daemon._resolve_exec_prompt({
+        "id": "resolve:test", "kind": "resolve", "title": "test",
+        "slug": "test", "files": ["frontend/src/App.tsx"],
+    })
+    for prompt in (exec_prompt, resolve_prompt):
+        assert "first line of the patch" in prompt, prompt
+        assert "count == 1" in prompt, prompt
+    print("selftest ok: 普通与冲突 worker prompt 都包含 apply_patch 故障恢复规则。")
 
 
 def test_worker_alive_treats_zombie_as_dead():
