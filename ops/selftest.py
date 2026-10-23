@@ -1195,7 +1195,17 @@ def test_daemon_project_binding():
             os.environ.pop("KG_REPO", None)
         else:
             os.environ["KG_REPO"] = old_repo
-    print("selftest ok: launchd 状态通过 launchctl 查询，跨项目 daemon 不冒充当前项目。")
+    import central_daemon
+    with mock.patch.dict(os.environ, {
+        "KG_SHARED": "/tmp/autopilot-shared-code",
+        "KG_REPO": "/tmp/autopilot-state-root",
+        "KG_TRUNK": "/tmp/autopilot-trunk",
+    }):
+        plist = central_daemon.build_plist(15)
+        assert plist["EnvironmentVariables"]["KG_SHARED"] == "/tmp/autopilot-shared-code", \
+            "launchd 丢了共享检出，自包含状态根的门禁找不到 node_modules"
+    print("selftest ok: launchd 状态通过 launchctl 查询，跨项目 daemon 不冒充当前项目；"
+          "共享检出会传给启动后的门禁。")
 
 
 def test_daemon_control_action():

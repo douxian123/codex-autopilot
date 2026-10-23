@@ -3556,6 +3556,10 @@ def build_plist(interval_min: int) -> dict:
         env["KG_EXEC_FAST_MODEL"] = os.environ["KG_EXEC_FAST_MODEL"]
     if os.environ.get("KG_EXEC_MODEL"):
         env["KG_EXEC_MODEL"] = os.environ["KG_EXEC_MODEL"]
+    # 自包含状态根不是代码主工作树，不能靠默认值找到前端/后端 node_modules。
+    # 把共享检出显式带进 launchd，kgctl gate / auto_exec 才能真的跑门禁。
+    if os.environ.get("KG_SHARED"):
+        env["KG_SHARED"] = str(Path(os.environ["KG_SHARED"]).expanduser())
     # KG_REPO 是账本所在；自包含安装下它和 KG_TRUNK 不一定同一个目录。
     repo_env = os.environ.get("KG_REPO")
     trunk_env = os.environ.get("KG_TRUNK")
