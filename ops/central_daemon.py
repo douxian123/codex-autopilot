@@ -1747,6 +1747,15 @@ def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
 def _cleanup_exec(repo, wt: Path, branch: str) -> None:
     assessment = workspace_guard.worktree_removable(
         Path(repo), wt, branch, "main", commands="", backup_unique=False)
+    if assessment.get("reason") == "missing":
+        # 工作区已经不在了（上一轮收尾/压力回收把它删了），但分支还在。
+        # 内容已全部进 main 时应当把分支一起清掉，否则每落一条就在本地留一个
+        # 永远没人删的 codex/exec-* 分支。分支未进 main 时一律保留。
+        rc, ahead, _ = _git(repo, "rev-list", "--count", f"main..{branch}")
+        if rc == 0 and ahead.strip() == "0":
+            _git(repo, "branch", "-D", branch)
+            log(f"[exec] 工作区已不在，分支内容全在 main，顺手清掉 {branch}")
+        return
     if assessment.get("ok"):
         ok, detail = workspace_guard.remove_worktree(Path(repo), wt)
         if not ok:

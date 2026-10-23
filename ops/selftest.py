@@ -1056,7 +1056,10 @@ def test_auto_exec():
         workers = workers if workers is not None else {}
         results = []
         for _ in range(limit):
-            results.extend(daemon.dispatch_exec(False, blocked, workers))
+            # dispatch_exec 返回 (results, workers)：只累积「收口结果」，
+            # workers 由调用方持有并被本函数就地更新。
+            _res, workers = daemon.dispatch_exec(False, blocked, workers)
+            results.extend(_res)
             done = {"landed", "codex_fail_preserved", "codex_fail",
                     "landed_close_fail", "no_changes"}
             if any(r.get("outcome") in done for r in results):
@@ -1126,7 +1129,9 @@ def test_auto_exec():
             raise AssertionError("收口失败删掉了现场，无法复核")
         if ledger_latest(repo_c)["L-0001"].get("status") == "done":
             raise AssertionError("收口失败却把台账标成 done")
-        again = daemon_c.dispatch_exec(False, blocked_c)
+        # 只看「收口结果」：dispatch_exec 返回 (results, workers)，
+        # 元组本身永远为真，直接判真会把空结果误判成重复派发。
+        again, _w = daemon_c.dispatch_exec(False, blocked_c)
         if again:
             raise AssertionError(f"收口失败后台账项被重复派发: {again}")
 
@@ -1292,7 +1297,7 @@ def test_auto_exec():
             raise AssertionError(f"codex_infra_fail 没有留下抖动原文证据: {blocked_e}")
         if not Path(blocked_e["L-0001"]["worktree"]).exists():
             raise AssertionError("抖动失败丢掉了在途 worktree")
-        again_e = daemon_e.dispatch_exec(False, blocked_e)
+        again_e, _w = daemon_e.dispatch_exec(False, blocked_e)
         if again_e:
             raise AssertionError(f"codex_infra_fail 后被重复派发: {again_e}")
 
@@ -1342,7 +1347,7 @@ def test_auto_exec():
         daemon_t._reap_exec = reap_with_timeout
         blocked_t = {}
         workers_t = {}
-        started_t = daemon_t.dispatch_exec(False, blocked_t, workers_t)
+        started_t, workers_t = daemon_t.dispatch_exec(False, blocked_t, workers_t)
         if started_t:
             raise AssertionError(f"超时 worker 不应在同拍返回结果: {started_t}")
         job_t = workers_t["exec_jobs"]["L-0001"]
@@ -1457,7 +1462,10 @@ def test_parallel_exec_slots():
         importlib.reload(control_state); importlib.reload(central_config)
         importlib.reload(central_daemon)
         blocked, workers = {}, {}
-        started = central_daemon.dispatch_exec(False, blocked, workers)
+        # dispatch_exec 返回 (results, workers)：results 是本轮「已收口结果」，
+        # 首次派发时还没有任何 worker 完成，所以必须为空；新起的 worker 在
+        # workers["exec_jobs"] 里，由下面几行断言。断言意图没变，只是跟上签名。
+        started, workers = central_daemon.dispatch_exec(False, blocked, workers)
         assert started == [], started
         jobs = workers["exec_jobs"]
         assert len(jobs) == 3, jobs
@@ -1466,7 +1474,7 @@ def test_parallel_exec_slots():
         deadline = _time.time() + 10
         landed = []
         while _time.time() < deadline and len(landed) < 3:
-            results = central_daemon.dispatch_exec(False, blocked, workers)
+            results, workers = central_daemon.dispatch_exec(False, blocked, workers)
             landed.extend(r for r in results if r.get("outcome") == "landed")
             _time.sleep(0.1)
         assert len(landed) == 3, (landed, blocked, workers)
@@ -1657,7 +1665,10 @@ def test_resolve_exec_parallel():
                 f"重启后已死 resolve worker 仍占槽: {stale_results!r} {stale_workers!r}")
 
         blocked, workers = {}, {}
-        started = central_daemon.dispatch_exec(False, blocked, workers)
+        # dispatch_exec 返回 (results, workers)：results 是本轮「已收口结果」，
+        # 首次派发时还没有任何 worker 完成，所以必须为空；新起的 worker 在
+        # workers["exec_jobs"] 里，由下面几行断言。断言意图没变，只是跟上签名。
+        started, workers = central_daemon.dispatch_exec(False, blocked, workers)
         assert started == [], started
         jobs = workers["exec_jobs"]
         assert list(jobs) == ["resolve:light"], jobs
@@ -1670,7 +1681,7 @@ def test_resolve_exec_parallel():
         deadline = _time.time() + 15
         landed = []
         while _time.time() < deadline and not landed:
-            results = central_daemon.dispatch_exec(False, blocked, workers)
+            results, workers = central_daemon.dispatch_exec(False, blocked, workers)
             landed.extend(r for r in results if r.get("outcome") == "landed")
             _time.sleep(0.1)
         assert landed, (results, blocked, workers)
@@ -1765,7 +1776,7 @@ def test_resolve_gate_fail_auto_retry():
             "branch": "codex/resolve-light", "worktree": str(wt),
             "commit": commit, "ts": "2026-10-20T00:00:00+08:00"}}
         workers = {}
-        results = central_daemon.dispatch_exec(False, blocked, workers)
+        results, workers = central_daemon.dispatch_exec(False, blocked, workers)
         landed = [r for r in results if r.get("outcome") == "landed"]
         if not landed:
             raise AssertionError(f"gate_fail 没有下轮直接收口: {results} {blocked} {workers}")
@@ -1869,7 +1880,7 @@ def test_resolve_gate_fail_not_retried_same_cycle():
             "branch": "codex/resolve-light", "worktree": str(wt),
             "commit": commit}]
         try:
-            results = central_daemon.dispatch_exec(False, blocked, workers)
+            results, workers = central_daemon.dispatch_exec(False, blocked, workers)
         finally:
             central_daemon._collect_exec = original_collect
         retried = [r for r in results if r.get("outcome") == "landed"]
