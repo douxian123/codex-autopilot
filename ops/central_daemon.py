@@ -1222,7 +1222,12 @@ def classify_exec_infra_failure(log_path) -> bool:
 
 def classify_exec_model_fallback(log_path) -> bool:
     """日志尾部是否命中预扣费 / 额度失败文案。"""
-    return bool(EXEC_MODEL_FALLBACK_PATTERN.search(_exec_log_tail(log_path)))
+    text = _exec_log_tail(log_path)
+    marker = "===== auto_exec 模型通道额度失败"
+    marker_at = text.rfind(marker)
+    if marker_at >= 0:
+        text = text[marker_at + len(marker):]
+    return bool(EXEC_MODEL_FALLBACK_PATTERN.search(text))
 
 
 def _should_fallback_to_slow_model(job: dict, cfg: dict, log_path: Path) -> bool:
@@ -1591,7 +1596,27 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
             detail_tail = _exec_log_tail(log_path, limit=400).strip()
             log(f"[exec] {rid} 判定为模型通道额度失败，切到 slow_model="
                 f"{job['model']} 重跑；日志尾部: {detail_tail[-120:]}")
-            continue
+            # Relaunch and return immediately. Waiting here would stop the
+            # daemon loop from filling the remaining configured slots.
+            try:
+                fh = log_path.open("a", encoding="utf-8")
+                fh.write(
+                    "\n===== auto_exec 模型通道额度失败，切换到 slow_model 重试"
+                    f"（{_now()}，model={job.get('model') or 'default'}）=====\n")
+                fh.flush()
+                proc = subprocess.Popen(
+                    _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
+                    stderr=subprocess.STDOUT, cwd=str(wt), start_new_session=True)
+            except OSError as exc:
+                job["start_error"] = str(exc)
+                code = 125
+                break
+            job["proc"], job["fh"], job["pid"] = proc, fh, proc.pid
+            job["detached"] = False
+            job["relaunched_at"] = _now()
+            result.update({"attempts": attempt, "outcome": "relaunched",
+                           "model": job.get("model")})
+            return result
         if code == 0:
             if (job.get("model_fallback_used")
                     and classify_exec_model_fallback(log_path)):
@@ -2236,6 +2261,9 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
         elif proc.poll() is None:
             continue
         result = _reap_exec(job, blocked)
+        if result.get("outcome") == "relaunched":
+            results.append(result)
+            continue
         jobs.pop(rid, None)
         if result.get("outcome") == "worker_done":
             item = job["item"]

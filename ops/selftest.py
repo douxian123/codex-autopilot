@@ -1380,6 +1380,15 @@ def test_exec_model_balance_fallback():
             "http://127.0.0.1:15721/v1/responses\n", encoding="utf-8")
         if not central_daemon.classify_exec_model_fallback(probe):
             raise AssertionError("403 insufficient balance 没有被识别为模型通道额度失败")
+        probe.write_text(
+            "ERROR: unexpected status 403 Forbidden: insufficient balance\n"
+            "===== auto_exec 模型通道额度失败，切换到 slow_model 重试 =====\n"
+            "验证通过\n", encoding="utf-8")
+        if central_daemon.classify_exec_model_fallback(probe):
+            raise AssertionError("slow_model 重试后的旧 403 仍被误判为当前失败")
+        probe.write_text(
+            "ERROR: unexpected status 403 Forbidden: insufficient balance, url: "
+            "http://127.0.0.1:15721/v1/responses\n", encoding="utf-8")
         job = {"model": "aibvv@deepseek-v4.1-flash"}
         cfg = {"fast_model": "aibvv@deepseek-v4.1-flash",
                "slow_model": "ok8888@deepseek-v4.1-flash"}
@@ -1403,6 +1412,75 @@ def test_exec_model_balance_fallback():
         if central_daemon._exec_model(arch_item, cfg) != cfg["slow_model"]:
             raise AssertionError("arch/其它泳道没有走 slow_model")
     print("selftest ok: 403 欠费即使退出码为 0 也切到 slow_model，且不会循环回退。")
+
+
+def test_exec_model_fallback_relaunch_is_async():
+    """A balance fallback must relaunch without blocking the daemon loop."""
+    import importlib
+    from unittest import mock
+    import sys
+    from pathlib import Path
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-async-fallback-") as tmp:
+        base = Path(tmp)
+        repo, wt = base / "repo", base / "worktree"
+        repo.mkdir(); wt.mkdir()
+        log_path = base / "worker.log"
+        log_path.write_text(
+            "ERROR: 403 Forbidden insufficient balance\n", encoding="utf-8")
+
+        class FinishedProc:
+            pid = 111
+            returncode = 0
+
+            @staticmethod
+            def poll():
+                return 0
+
+            @staticmethod
+            def wait(timeout=None):
+                return 0
+
+        class RunningProc:
+            pid = 222
+            returncode = None
+
+            @staticmethod
+            def poll():
+                return None
+
+            @staticmethod
+            def wait(timeout=None):
+                return 0
+
+        rid = "L-9001"
+        job = {
+            "id": rid, "item": {"id": rid, "kind": "bug", "title": "test"},
+            "cfg": {"timeout": 10, "retries": 0,
+                    "fast_model": "aibvv@deepseek-v4.1-flash",
+                    "slow_model": "ok8888@deepseek-v4.1-flash"},
+            "repo": str(repo), "worktree": str(wt), "branch": "codex/test",
+            "log": str(log_path), "model": "aibvv@deepseek-v4.1-flash",
+            "proc": FinishedProc(), "pid": 111, "detached": True,
+            "result": {"id": rid},
+        }
+        workers = {"exec_jobs": {rid: job}}
+        with mock.patch.object(central_daemon, "_exec_command",
+                               return_value=["fake-codex"]), \
+             mock.patch.object(central_daemon.subprocess, "Popen",
+                               return_value=RunningProc()):
+            results = central_daemon._collect_exec(workers, {})
+
+        assert results and results[0].get("outcome") == "relaunched", results
+        assert rid in workers["exec_jobs"], workers
+        assert job["pid"] == 222 and job["model"].startswith("ok8888@"), job
+    print("selftest ok: 额度 fallback 异步重挂 worker，不阻塞其余并发槽位派发。")
 
 
 def test_parallel_exec_slots():
@@ -2187,6 +2265,7 @@ if __name__ == "__main__":
     test_prune_exec_blocked_landed_commit()
     test_auto_exec()
     test_exec_model_balance_fallback()
+    test_exec_model_fallback_relaunch_is_async()
     test_parallel_exec_slots()
     test_exec_prompt_includes_patch_recovery()
     test_worker_alive_treats_zombie_as_dead()
