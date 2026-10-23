@@ -2609,8 +2609,11 @@ def _reap_dead_worktrees() -> int:
         # （无未提交改动、分支无未落提交、无活着的会话）一条都没放松。
         idle_h = REAP_IDLE_PRESSURE_H if _pressure_reap else REAP_MIN_IDLE_H
         cutoff = time.time() - idle_h * 3600
+        # 压力模式每轮多回收一些：一轮只放 5 个时，磁盘下滑速度可能比回收
+        # 速度快（每轮 45s，每个现场 ~200MB），追不上。
+        max_round = REAP_MAX_PER_ROUND * 4 if _pressure_reap else REAP_MAX_PER_ROUND
         for d in sorted(root.iterdir()):
-            if reaped >= REAP_MAX_PER_ROUND:
+            if reaped >= max_round:
                 break
             if not d.is_dir():
                 continue
