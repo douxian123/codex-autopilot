@@ -2358,7 +2358,7 @@ def release_attempt_slot(rid: str) -> bool:
 #   2) 「需要人裁决」的信号不许进自动重试队列（同一组冲突反复撞就停手）；
 #   3) 一切自动清理/限流 fail-open 且可一键关闭：safety.json 或 KG_* 环境变量。
 # 关闭方式：~/.codex-autopilot/safety.json 写 {"reap_worktrees": false} 等，
-# 或 export KG_REAP_WORKTREES=0 / KG_REAP_BACKENDS=0 / KG_RESOURCE_GATE=0。
+# 或 export KG_REAP_WORKTREES=0 / KG_REAP_BACKENDS=0。
 
 RESOLVE_CONFLICT_CAP = 2       # 同一组冲突文件连续撞 N 次 → 停手等人裁决
 RESOLVE_CONFLICT_BLOCK_H = 6   # 停手时长（小时），到期自动允许再试一次
@@ -2368,15 +2368,6 @@ REAP_IDLE_PRESSURE_H = float(os.environ.get("KG_REAP_IDLE_PRESSURE_H", "0.25"))
 REAP_TIME_BUDGET_S = float(os.environ.get("KG_REAP_TIME_BUDGET_S", "25"))
                                # worktree 至少闲置这么久才回收（按目录 mtime 与分支最后提交取较新者）
 REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "5"))
-# 可用磁盘低于这个值就不派新 exec。
-#
-# 取舍过程：6GB 踩过坑——APFS 自身在 5.6~6.3GB 之间持续波动回收，阈值卡在
-# 波动带上会让守护反复停派、看起来像「又不动了」；4GB 仍然偶发误伤（2026-10-23
-# 实测 3.8GB 可用时被闸住，worker 从 10 掉到 7 且整轮没补派）。
-# 现在取 1.5GB：这是「系统真要被撑死」的线，不是「空间不宽裕」的线。
-# 空间不宽裕由回收 + git gc 处理，不是靠不派活处理。
-# 可用 KG_MIN_FREE_GB 覆盖。
-MIN_FREE_GB = float(os.environ.get("KG_MIN_FREE_GB", "1.5"))
 # 空间自救阈值：可用低于它就回收零损失现场 + git gc（**不降低并发**）。
 REAP_PRESSURE_FREE_GB = float(os.environ.get("KG_REAP_PRESSURE_FREE_GB", "12"))
 
@@ -2478,41 +2469,12 @@ def _clear_conflict_note(branch: str) -> None:
         pass
 
 
-def _resource_gate() -> str | None:
-    """磁盘吃紧就暂停派新 exec（只跳过，不崩）。返回原因或 None。
-
-    用 `df` 的可用值而不是 statvfs：APFS 容器会把别的卷的余量算进来，
-    statvfs 会报告比 df 大很多的数字（实测 df 2.9Gi / statvfs 10.4GB），
-    以用户 `df` 看到的为准才不会漏报。
-    """
-    if not _knob("resource_gate", True):
-        return None
-    free_gb = None
-    try:
-        out = subprocess.run(["df", "-k", "/System/Volumes/Data"],
-                             capture_output=True, text=True, timeout=8).stdout
-        line = out.strip().splitlines()[-1].split()
-        free_gb = int(line[3]) / 1024 / 1024
-    except Exception:
-        try:
-            st = os.statvfs("/System/Volumes/Data")
-            free_gb = st.f_bavail * st.f_frsize / 1e9
-        except Exception:
-            return None
-    if free_gb is not None:
-        log(f"[safety] 磁盘可用 {free_gb:.2f}GB（派活下限 {MIN_FREE_GB}GB）")
-    if free_gb is not None and free_gb < MIN_FREE_GB:
-        return f"磁盘可用 {free_gb:.1f}GB < {MIN_FREE_GB}GB"
-    return None
-
-
 def _disk_pressure() -> int:
     """磁盘偏紧信号。永远返回 0：**不限制并发**。
 
-    历史：这里曾经返回 1，把并发压到 1 个会话。但降速带（MIN_FREE_GB+2GB）
-    正好压住 APFS 自身在 5.6~6.3GB 之间的正常回收波动，结果是磁盘明明还有
-    5GB+、守护却把并发砍到 1，机器看起来「完全跑不动」。并发上限只由
-    auto_exec.max_workers 决定，磁盘不再参与限流。
+    历史：这里曾经返回 1，把并发压到 1 个会话。磁盘余量后来又以资源闸形式
+    留在派活路径上，仍会在空间偏紧时把配置的并发槽位挡成 0。并发上限只由
+    auto_exec.max_workers 决定，磁盘不再参与派活限流。
 
     磁盘偏紧时要做的不是少干活，而是把空间找回来：压力回收 + git gc
     仍然照常由 `_reap_dead_worktrees()` / `_git_gc_maintenance()` 执行。
@@ -2760,12 +2722,7 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
     # 只差落盘的 recover 槽位不耗模型，先把它们收口可以立刻腾出「需要会话」
     # 的名额，也不会和正在跑的 worker 争资源。
     results = _collect_exec(workers, blocked)
-    _gate = _resource_gate()
-    if _gate:
-        log(f"[safety] {_gate}，本轮不派新 exec（只收尾已跑的；关闭：KG_RESOURCE_GATE=0）")
-        return results, workers
-    # 并发上限只看配置，不看磁盘：磁盘偏紧时去回收空间，而不是砍并发
-    # （实测降速带正好卡在 APFS 回收波动带，会把机器压成「一次只跑一个」）。
+    # 并发槽位只看配置，不看磁盘：空间偏紧时在派活后台回收，不挡派活。
     limit = max(1, int(cfg.get("max_workers", EXEC_DEFAULT_MAX_WORKERS)))
     # A completed worker frees one slot immediately. Keep filling in the same
     # cycle instead of idling until the next 10-minute heartbeat.

@@ -1461,6 +1461,9 @@ def test_parallel_exec_slots():
         import control_state, central_config, central_daemon
         importlib.reload(control_state); importlib.reload(central_config)
         importlib.reload(central_daemon)
+        # 并发只由 max_workers 决定。即使磁盘远低于历史资源闸阈值，配置的
+        # 3 个槽位也必须一次填满，不能被任何预检挡成 0。
+        central_daemon._disk_free_gb = lambda: 0.01
         blocked, workers = {}, {}
         # dispatch_exec 返回 (results, workers)：results 是本轮「已收口结果」，
         # 首次派发时还没有任何 worker 完成，所以必须为空；新起的 worker 在
@@ -1479,7 +1482,7 @@ def test_parallel_exec_slots():
             _time.sleep(0.1)
         assert len(landed) == 3, (landed, blocked, workers)
         assert not workers["exec_jobs"], workers
-    print("selftest ok: 3 个 worker 槽并行启动、隔离 worktree，完成项仍逐条串行落盘。")
+    print("selftest ok: 磁盘仅 0.01GB 时，3 个 worker 槽仍并行启动；完成项逐条串行落盘。")
 
 
 def test_exec_prompt_includes_patch_recovery():
