@@ -2335,6 +2335,7 @@ def release_attempt_slot(rid: str) -> bool:
 RESOLVE_CONFLICT_CAP = 2       # 同一组冲突文件连续撞 N 次 → 停手等人裁决
 RESOLVE_CONFLICT_BLOCK_H = 6   # 停手时长（小时），到期自动允许再试一次
 REAP_MIN_IDLE_H = float(os.environ.get("KG_REAP_MIN_IDLE_H", "3"))
+REAP_IDLE_PRESSURE_H = float(os.environ.get("KG_REAP_IDLE_PRESSURE_H", "0.5"))
                                # worktree 至少闲置这么久才回收（按目录 mtime 与分支最后提交取较新者）
 REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "5"))
 # 可用磁盘低于这个值就不派新 exec。
@@ -2602,7 +2603,12 @@ def _reap_dead_worktrees() -> int:
         if not root.exists():
             return 0
         live = _live_exec_slugs()
-        cutoff = time.time() - REAP_MIN_IDLE_H * 3600
+        # 磁盘偏紧时放宽「闲置多久算可回收」：默认 3 小时是为了不打扰正在
+        # 进行的活；但今天刚收口完的现场只闲置 2 小时，卡在门槛上就一个都
+        # 回收不了，磁盘照样往下走。压力模式下用 30 分钟 —— 安全判据
+        # （无未提交改动、分支无未落提交、无活着的会话）一条都没放松。
+        idle_h = REAP_IDLE_PRESSURE_H if _pressure_reap else REAP_MIN_IDLE_H
+        cutoff = time.time() - idle_h * 3600
         for d in sorted(root.iterdir()):
             if reaped >= REAP_MAX_PER_ROUND:
                 break
