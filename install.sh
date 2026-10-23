@@ -269,7 +269,22 @@ else:
     data = {"name": "personal", "interface": {"displayName": "Personal"}, "plugins": []}
 plugins = data.setdefault("plugins", [])
 existing = next((p for p in plugins if p.get("name") == name), None)
-previous = ((existing or {}).get("source") or {}).get("path")
+existing_path = ((existing or {}).get("source") or {}).get("path")
+try:
+    with open(state_path, encoding="utf-8") as fh:
+        install_state = json.load(fh)
+except (OSError, ValueError):
+    install_state = {}
+# 同版本目录被移除后重装时，marketplace 已经指向当前 source。此时若把它
+# 直接写成 previous_source，回滚会原地回到同一版本，真正的上一版就丢了。
+if (install_state.get("version") == version
+        and install_state.get("source") == source_path
+        and "previous_source" in install_state):
+    previous = install_state.get("previous_source")
+else:
+    previous = existing_path
+if previous == source_path:
+    previous = None
 if existing:
     existing.update(entry)
 else:

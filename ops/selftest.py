@@ -938,6 +938,22 @@ def test_installer():
             p for p in data_after_duplicate["plugins"] if p["name"] == "codex-autopilot")
         assert entry_after_duplicate["source"]["path"] == entry["source"]["path"]
 
+        # 故障回归：版本目录被手工移除后，用户会用同一版本重装恢复。
+        # 这时 marketplace 已指向当前版本，不能把回滚指针也覆盖成当前版本。
+        import shutil
+        shutil.rmtree(release)
+        reinstalled = run(command, env=env, check=False)
+        if reinstalled.returncode:
+            raise AssertionError(
+                f"同版本恢复安装失败:\n{reinstalled.stdout}\n{reinstalled.stderr}")
+        assert (release / "ops" / "central_mcp.py").is_file()
+        state = _json.loads(
+            (home / "plugins" / "codex-autopilot" / "install-state.json")
+            .read_text(encoding="utf-8"))
+        assert state["source"] == release_path
+        assert state["previous_source"] == "./plugins/codex-autopilot", \
+            "同版本恢复安装把回滚指针覆盖成了当前版本"
+
         rolled_back = run(["bash", str(install), "--rollback"], env=env, check=False)
         if rolled_back.returncode:
             raise AssertionError(f"回滚失败:\n{rolled_back.stdout}\n{rolled_back.stderr}")
@@ -948,7 +964,8 @@ def test_installer():
         assert sentinel.read_text(encoding="utf-8") == "keep\n"
         assert (release / "ops" / "central_mcp.py").is_file()
 
-    print("selftest ok: 安装器使用不可变版本目录、拒绝覆盖同版本、保留旧安装并可回滚入口。")
+    print("selftest ok: 安装器使用不可变版本目录、拒绝覆盖同版本、"
+          "同版本目录恢复重装仍保留上一版回滚指针。")
 
 
 def test_installer_shell_portability():
