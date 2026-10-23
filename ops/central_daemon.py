@@ -2361,12 +2361,13 @@ REAP_TIME_BUDGET_S = float(os.environ.get("KG_REAP_TIME_BUDGET_S", "25"))
 REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "5"))
 # 可用磁盘低于这个值就不派新 exec。
 #
-# 取舍过程：2GB 对无人值守太薄（一个 worktree ~220MB，worker 还要写
-# npm/prisma 构建产物，实测一天吃掉十几 GB）；但一开始设 6GB 又踩到另一个坑——
-# APFS 自身在 5.6~6.3GB 之间持续波动回收，阈值卡在波动带上会让守护反复停派、
-# 看起来像「又不动了」。所以取 4GB：低于它才是真的接近撑死，高于它一律正常
-# 干活。可用 KG_MIN_FREE_GB 覆盖。
-MIN_FREE_GB = float(os.environ.get("KG_MIN_FREE_GB", "4.0"))
+# 取舍过程：6GB 踩过坑——APFS 自身在 5.6~6.3GB 之间持续波动回收，阈值卡在
+# 波动带上会让守护反复停派、看起来像「又不动了」；4GB 仍然偶发误伤（2026-10-23
+# 实测 3.8GB 可用时被闸住，worker 从 10 掉到 7 且整轮没补派）。
+# 现在取 1.5GB：这是「系统真要被撑死」的线，不是「空间不宽裕」的线。
+# 空间不宽裕由回收 + git gc 处理，不是靠不派活处理。
+# 可用 KG_MIN_FREE_GB 覆盖。
+MIN_FREE_GB = float(os.environ.get("KG_MIN_FREE_GB", "1.5"))
 # 空间自救阈值：可用低于它就回收零损失现场 + git gc（**不降低并发**）。
 REAP_PRESSURE_FREE_GB = float(os.environ.get("KG_REAP_PRESSURE_FREE_GB", "12"))
 
@@ -2930,16 +2931,8 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
         log("[pause] 周期开始前被暂停：只刷新状态，不做路由/落盘")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
                 "paused": True, "summary": {}, "landed": [], "failures": []}
-    # 安全闸：先回收孤儿后端 + 闲置 worktree。两者都 fail-open、可一键关
-    # （safety.json 或 KG_REAP_BACKENDS=0 / KG_REAP_WORKTREES=0）。
-    try:
-        _reap_backend_orphans()
-        _reap_dead_worktrees()
-        _free = _disk_free_gb()
-        if _free is None or _free < REAP_PRESSURE_FREE_GB:
-            _git_gc_maintenance()
-    except Exception as exc:
-        log(f"[safety] 回收阶段异常（忽略，继续本轮）：{exc}")
+    # 安全回收放到派活之后（见下方 dispatch 后的同名块）：回收要扫几百个现场、
+    # 每个还跑几次 git，曾把派活饿死一整个周期。
     # Route new intake before filling worker slots. dispatch_exec only sees
     # rows that already exist in the ledger; routing after dispatch makes a
     # freshly captured task wait a full cycle while all slots sit idle.
@@ -2958,6 +2951,17 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
         exec_landed = [r for r in exec_results if r.get("outcome") == "landed"]
     else:
         log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
+
+    # 空间自救：清孤儿后端 + 零损失 worktree + git gc（全部 fail-open，可一键关）。
+    # 放在派活之后是硬要求：这一步要扫几百个现场，跑在派活前面时会挤掉一整轮派发。
+    try:
+        _reap_backend_orphans()
+        _reap_dead_worktrees()
+        _free = _disk_free_gb()
+        if _free is None or _free < REAP_PRESSURE_FREE_GB:
+            _git_gc_maintenance()
+    except Exception as exc:
+        log(f"[safety] 回收阶段异常（忽略，继续本轮）：{exc}")
 
     # Persist the pruned blocked set before the first network refresh. The later
     # save only refreshes worker metadata; otherwise a closed item can be
