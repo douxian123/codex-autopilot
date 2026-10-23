@@ -2472,6 +2472,28 @@ def _resource_gate() -> str | None:
     return None
 
 
+def _disk_pressure() -> int:
+    """磁盘逼近下限时返回建议的并发上限（0 表示不额外收紧）。
+
+    只会在「快没地方了」时降速，不会误停：
+      * 高于 MIN_FREE_GB + 2GB：不限（返回 0）
+      * 介于 MIN_FREE_GB ~ +2GB：压到 1 个会话，把空间留给正在跑的收尾
+      * 低于 MIN_FREE_GB：由 _resource_gate 完全停派
+    这样磁盘曲线是慢慢靠过去，而不是一脚踩到硬闸。
+    """
+    if not _knob("resource_gate", True):
+        return 0
+    try:
+        out = subprocess.run(["df", "-k", "/System/Volumes/Data"],
+                             capture_output=True, text=True, timeout=8).stdout
+        free_gb = int(out.strip().splitlines()[-1].split()[3]) / 1024 / 1024
+    except Exception:
+        return 0
+    if free_gb < MIN_FREE_GB + 2.0:
+        return 1
+    return 0
+
+
 def _reap_backend_orphans() -> int:
     """杀掉挂在「已无 codex exec 的 exec worktree」上的 node 后端。
 
@@ -2631,6 +2653,12 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
         log(f"[safety] {_gate}，本轮不派新 exec（只收尾已跑的；关闭：KG_RESOURCE_GATE=0）")
         return results, workers
     limit = max(1, int(cfg.get("max_workers", EXEC_DEFAULT_MAX_WORKERS)))
+    # 磁盘逼近下限时先降速（不是硬停）：把并发压到 1，让正在跑的收尾，
+    # 空间不会在几个大任务同时写构建产物时被一脚踩穿。
+    _dpressure = _disk_pressure()
+    if _dpressure:
+        log(f"[safety] 磁盘偏紧，本轮并发压到 {_dpressure}")
+        limit = min(limit, _dpressure)
     # A completed worker frees one slot immediately. Keep filling in the same
     # cycle instead of idling until the next 10-minute heartbeat.
     active_ids = {rid for rid, job in jobs.items() if not job.get("recover")}
