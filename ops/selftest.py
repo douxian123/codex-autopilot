@@ -2942,90 +2942,112 @@ def test_exec_model_fallback_relaunch_is_async():
 
 
 def test_parallel_exec_slots():
-    """Three worker slots must start concurrently; completion is reaped serially.
+    """Configured worker slots must start concurrently; completion is serial.
 
     This locks the structural property the old synchronous dispatcher lacked:
     ``dispatch_exec`` starts up to max_workers independent worktrees without
     waiting for the first Codex process to exit. The landing lock remains a
-    separate serial critical section.
+    separate serial critical section. Exercise both the historical three-slot
+    path and the current production ten-slot configuration so reintroducing a
+    hidden concurrency cap fails this gate.
     """
     import importlib
     import json as _json
     import time as _time
-    with tempfile.TemporaryDirectory(prefix="codex-autopilot-parallel-") as tmp:
-        base = Path(tmp)
-        repo, trunk, home = base / "state", base / "state-trunk", base / "home"
-        repo.mkdir(); home.mkdir()
-        (repo / "ops" / "tasks").mkdir(parents=True)
-        (repo / "ops" / "truth").mkdir(parents=True)
-        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
-        for name in ("progress", "decisions", "acceptance"):
-            (repo / "ops" / "truth" / f"{name}.jsonl").write_text("", encoding="utf-8")
-        ledger = []
-        for i in range(1, 4):
-            ledger.append({"id": f"L-{i:04d}", "type": "ledger", "kind": "bug",
-                           "title": f"并行槽位 {i}", "status": "open",
-                           "ts": f"2026-01-01T00:00:0{i}+08:00"})
-        (repo / "ops" / "truth" / "ledger.jsonl").write_text(
-            "".join(_json.dumps(x, ensure_ascii=False) + "\n" for x in ledger),
-            encoding="utf-8")
-        (repo / "ops" / "central.config.json").write_text(_json.dumps({
-            "build": {"cmd": "", "cwd": "."}, "verify": [],
-            "auto_exec": {"enabled": True, "max_workers": 3,
-                          "fast_model": "aibvv@deepseek-v4.1-flash",
-                          "slow_model": "ok8888@deepseek-v4.1-flash"}}), encoding="utf-8")
-        run(["git", "init", "-q", "-b", "main", str(repo)])
-        git(repo, "config", "user.email", "selftest@example.invalid")
-        git(repo, "config", "user.name", "Autopilot Selftest")
-        (repo / "app.txt").write_text("main\n", encoding="utf-8")
-        git(repo, "add", "app.txt", "ops/central.config.json", "ops/truth/ledger.jsonl",
-            "ops/truth/progress.jsonl", "ops/truth/decisions.jsonl",
-            "ops/truth/acceptance.jsonl", "ops/tasks/inbox.jsonl")
-        git(repo, "commit", "-q", "-m", "init")
-        origin = base / "origin.git"
-        run(["git", "init", "-q", "--bare", str(origin)])
-        git(repo, "remote", "add", "origin", str(origin))
-        git(repo, "push", "-q", "origin", "main")
-        (home / "control.json").write_text(_json.dumps({
-            "auto_exec": True, "paused": False}), encoding="utf-8")
-        fake = base / "fake-parallel.sh"
-        fake.write_text(
-            "#!/bin/sh\n"
-            "wt=\"\"\n"
-            "while [ \"$#\" -gt 0 ]; do\n"
-            "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
-            "done\n"
-            "sleep 0.4\n"
-            "printf 'parallel\\n' > \"$wt/done.txt\"\n",
-            encoding="utf-8")
-        fake.chmod(0o755)
-        os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
-                          KG_DAEMON_HOME=str(home), KG_EXEC_CMD=str(fake))
-        import control_state, central_config, central_daemon
-        importlib.reload(control_state); importlib.reload(central_config)
-        importlib.reload(central_daemon)
-        # 并发只由 max_workers 决定。即使磁盘远低于历史资源闸阈值，配置的
-        # 3 个槽位也必须一次填满，不能被任何预检挡成 0。
-        central_daemon._disk_free_gb = lambda: 0.01
-        blocked, workers = {}, {}
-        # dispatch_exec 返回 (results, workers)：results 是本轮「已收口结果」，
-        # 首次派发时还没有任何 worker 完成，所以必须为空；新起的 worker 在
-        # workers["exec_jobs"] 里，由下面几行断言。断言意图没变，只是跟上签名。
-        started, workers = central_daemon.dispatch_exec(False, blocked, workers)
-        assert started == [], started
-        jobs = workers["exec_jobs"]
-        assert len(jobs) == 3, jobs
-        assert len({j["worktree"] for j in jobs.values()}) == 3, jobs
-        assert all(j["proc"].poll() is None for j in jobs.values()), jobs
-        deadline = _time.time() + 10
-        landed = []
-        while _time.time() < deadline and len(landed) < 3:
-            results, workers = central_daemon.dispatch_exec(False, blocked, workers)
-            landed.extend(r for r in results if r.get("outcome") == "landed")
-            _time.sleep(0.1)
-        assert len(landed) == 3, (landed, blocked, workers)
-        assert not workers["exec_jobs"], workers
-    print("selftest ok: 磁盘仅 0.01GB 时，3 个 worker 槽仍并行启动；完成项逐条串行落盘。")
+
+    def exercise(slots):
+        with tempfile.TemporaryDirectory(prefix=f"codex-autopilot-parallel-{slots}-") as tmp:
+            base = Path(tmp)
+            repo, trunk, home = base / "state", base / "state-trunk", base / "home"
+            repo.mkdir(); home.mkdir()
+            (repo / "ops" / "tasks").mkdir(parents=True)
+            (repo / "ops" / "truth").mkdir(parents=True)
+            (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+            for name in ("progress", "decisions", "acceptance"):
+                (repo / "ops" / "truth" / f"{name}.jsonl").write_text("", encoding="utf-8")
+            ledger = []
+            for i in range(1, slots + 1):
+                ledger.append({"id": f"L-{i:04d}", "type": "ledger", "kind": "bug",
+                               "title": f"并行槽位 {i}", "status": "open",
+                               "ts": f"2026-01-01T00:00:{i:02d}+08:00"})
+            (repo / "ops" / "truth" / "ledger.jsonl").write_text(
+                "".join(_json.dumps(x, ensure_ascii=False) + "\n" for x in ledger),
+                encoding="utf-8")
+            (repo / "ops" / "central.config.json").write_text(_json.dumps({
+                "build": {"cmd": "", "cwd": "."}, "verify": [],
+                "auto_exec": {"enabled": True, "max_workers": slots,
+                              "max_per_cycle": slots,
+                              "fast_model": "aibvv@deepseek-v4.1-flash",
+                              "slow_model": "ok8888@deepseek-v4.1-flash"}}), encoding="utf-8")
+            run(["git", "init", "-q", "-b", "main", str(repo)])
+            git(repo, "config", "user.email", "selftest@example.invalid")
+            git(repo, "config", "user.name", "Autopilot Selftest")
+            (repo / "app.txt").write_text("main\n", encoding="utf-8")
+            git(repo, "add", "app.txt", "ops/central.config.json", "ops/truth/ledger.jsonl",
+                "ops/truth/progress.jsonl", "ops/truth/decisions.jsonl",
+                "ops/truth/acceptance.jsonl", "ops/tasks/inbox.jsonl")
+            git(repo, "commit", "-q", "-m", "init")
+            origin = base / "origin.git"
+            run(["git", "init", "-q", "--bare", str(origin)])
+            git(repo, "remote", "add", "origin", str(origin))
+            git(repo, "push", "-q", "origin", "main")
+            (home / "control.json").write_text(_json.dumps({
+                "auto_exec": True, "paused": False}), encoding="utf-8")
+            fake = base / "fake-parallel.sh"
+            release = base / "parallel-release"
+            fake.write_text(
+                "#!/bin/sh\n"
+                "wt=\"\"\n"
+                "while [ \"$#\" -gt 0 ]; do\n"
+                "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
+                "done\n"
+                "printf 'started\n' > \"$wt/started.txt\"\n"
+                f"while [ ! -f '{release}' ]; do sleep 0.02; done\n"
+                "printf 'parallel\\n' > \"$wt/done.txt\"\n",
+                encoding="utf-8")
+            fake.chmod(0o755)
+            os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
+                              KG_DAEMON_HOME=str(home), KG_EXEC_CMD=str(fake))
+            import control_state, central_config, central_daemon
+            importlib.reload(control_state); importlib.reload(central_config)
+            importlib.reload(central_daemon)
+            # 并发只由 max_workers 决定。即使磁盘远低于历史资源闸阈值，配置的
+            # 槽位也必须一次填满，不能被任何预检挡成 0。
+            central_daemon._disk_free_gb = lambda: 0.01
+            blocked, workers = {}, {}
+            started, workers = central_daemon.dispatch_exec(False, blocked, workers)
+            assert started == [], started
+            jobs = workers["exec_jobs"]
+            assert len(jobs) == slots, jobs
+            assert len({j["worktree"] for j in jobs.values()}) == slots, jobs
+            try:
+                deadline = _time.time() + 10
+                while (_time.time() < deadline and not all(
+                        (Path(j["worktree"]) / "started.txt").exists()
+                        for j in jobs.values())):
+                    _time.sleep(0.02)
+                assert all((Path(j["worktree"]) / "started.txt").exists()
+                           for j in jobs.values()), jobs
+                assert all(j["proc"].poll() is None for j in jobs.values()), jobs
+                release.touch()
+                deadline = _time.time() + 15
+                landed = []
+                while _time.time() < deadline and len(landed) < slots:
+                    results, workers = central_daemon.dispatch_exec(False, blocked, workers)
+                    landed.extend(r for r in results if r.get("outcome") == "landed")
+                    _time.sleep(0.1)
+                assert len(landed) == slots, (slots, landed, blocked, workers)
+                assert not workers["exec_jobs"], workers
+            finally:
+                release.touch()
+                for job in jobs.values():
+                    proc = job.get("proc")
+                    if proc is not None and proc.poll() is None:
+                        proc.kill()
+
+    exercise(3)
+    exercise(10)
+    print("selftest ok: 磁盘仅 0.01GB 时，3/10 个 worker 槽均能一次填满并逐条串行落盘。")
 
 
 def test_exec_prompt_includes_patch_recovery():
