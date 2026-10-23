@@ -1,6 +1,6 @@
 {
   "name": "codex-autopilot",
-  "version": "0.6.0-preview.12",
+  "version": "0.6.0-preview.13",
   "description": "给 Codex 装一个总输入框：零散需求统一收口、归类、实现、验证、合并；面板分清机器验收和人工验收。",
   "author": {
     "name": "douxian",

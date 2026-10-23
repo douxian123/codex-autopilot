@@ -3,7 +3,7 @@
 > 这份文件是**这个项目 + 相关对话**的唯一事实来源。opencode 和 codex 都改它，以它为准。
 > 任何 agent 开工前先读它；改动产品行为、决策、进度、卡点后，**回写对应小节**，不要另起文档。
 > 生成/核对时间：2026-10-15（当日现场核对，非转述）。
-> 2026-10-17 复核：仓库/远程/本机已安装 `0.6.0-preview.12`（含 WebSocket 原生直连桥）；上一版 `0.6.0-preview.10` 保留可回滚。原生直连已取得新突破：**本地 app-server 控制 socket 是 WebSocket 协议，新增纯 stdlib 桥后已真机直连真实桌面宿主，`can_dispatch=true`**。此前「必须 ChatGPT 登录/配对」是 stdio/远端 remote-control 路径的旧结论，不能再覆盖当前事实。
+> 2026-10-24 复核：仓库/远程/本机当前安装 `0.6.0-preview.13`（含自动 port 冲突缓存）；上一版 `0.6.0-preview.12` 保留可回滚。原生直连已取得新突破：**本地 app-server 控制 socket 是 WebSocket 协议，新增纯 stdlib 桥后已真机直连真实桌面宿主，`can_dispatch=true`**。此前「必须 ChatGPT 登录/配对」是 stdio/远端 remote-control 路径的旧结论，不能再覆盖当前事实。
 > 2026-10-18 复核：源码 main 与 preview.11 运行时已修复状态根解析（无 KG_REPO 时 main 优先于 -trunk），真实桌面证据 A-0044/P-0041 已落盘 origin/main；A-0005 仍保留真人桌面验收。
 > 2026-10-15 深夜 opencode 现场复核（见 12.7）：本机**不是沙箱**，已真跑安装并通过 5/6 验收；原「三条卡点」里的安装/网络两条已在本机解除，原生直连失败的根因当时**重新定位为 socket 选错（不是权限）**——第四节事实 4 已被推翻并更正。
 > 仓库：`/Users/danta/Documents/Codex/codex-autopilot-native-autopilot`（分支 `main`）
@@ -15,10 +15,10 @@
 **Codex 自动挡**是给 Codex 加的一层「工程控制面」：你平时打字的那个 Codex 输入框就是总输入框，零散需求进去，归类、落账、隔离工作区、跑验证、能合的自动合、收口、回写主线，全由它串起来。
 
 - 形态：Codex 插件（原生风格面板） + macOS 菜单栏 Companion（状态锚点，不是第二套产品）
-- 版本：仓库/远程/本机已安装 `0.6.0-preview.12`；上一版 `0.6.0-preview.10` 保留可回滚，阶段：内部可用
+- 版本：仓库/远程/本机已安装 `0.6.0-preview.13`；上一版 `0.6.0-preview.12` 保留可回滚，阶段：内部可用
 - 13 步产品路线：**7 步已完成、6 步进行中、0 步未开始**
 - 验收：机器已自证项持续增加；当前 A-0005/A-0006/A-0007/A-0008 仍需真人/桌面操作
-- 本机实测（2026-10-17）：仓库/远程/本机已安装 **`0.6.0-preview.12`**（上一版 `0.6.0-preview.10` 保留可回滚）；原生直连已真机直连真实桌面宿主：`python3 ops/codex_native.py probe` → `transport=codex-app-server-websocket`、`connected=true`、`can_dispatch=true`、`sample=1`
+- 本机实测（2026-10-24）：仓库/远程/本机当前安装 **`0.6.0-preview.13`**（上一版 `0.6.0-preview.12` 保留可回滚）；原生直连已真机直连真实桌面宿主：`python3 ops/codex_native.py probe` → `transport=codex-app-server-websocket`、`connected=true`、`can_dispatch=true`、`sample=1`
 - 自检：`python3 ops/selftest.py` → **24 组全过、退出码 0、约 58 秒**；再开真编译 + 真二进制两个开关 → **26 组全过**
 - 自动实现（2026-10-17 补充）：`ops/central_daemon.py` 强制首步落盘并对“退出 0 但无改动”在同一 worktree 自动重试；真实 `codex exec` 已在隔离 fixture 完成 `L-0001` → `verify.txt` 内容 `hello-e2e` → 过门禁 → land → 收口。
 
@@ -507,7 +507,7 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 - 已确认控制 socket 存在并用 WebSocket 桥直连真实桌面宿主：`probe can_dispatch=true`。下一步是真实需求端到端与人工验收，具体见第六/九节。
 - 独立 app-server 链路已补 `thread/resume` 续轮并真机通过；本地控制 socket 的 WebSocket 桥已把“原生派活闭环”从独立实例推进到真实桌面宿主：`probe can_dispatch=true`。
 - 人工验收结果回来后，逐条关闭 A-0005 / A-0006 / A-0007（改台账，不改生成物）。
-- 收口预览发布（`0.6.0-preview.12` → 正式预览包）。
+- 收口预览发布（`0.6.0-preview.13` → 正式预览包）。
 - `main` 已推平；有新提交继续保持推平。
 
 ---

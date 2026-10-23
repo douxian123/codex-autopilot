@@ -154,6 +154,16 @@ def main():
         if leftover:
             raise AssertionError(f"already 判定未清理 port worktree: {leftover}")
 
+        # 合法缓存被 skip 全部过滤后仍是缓存命中；这里若退回 scan()，真实项目会再次
+        # 在自动派活前卡满 90 秒。
+        port_cached_skip = kgctl(
+            repo, trunk, "port", "--auto", "--go", "--max-unlanded", "1",
+            extra_env={"KG_PORT_SKIP": "codex/dup"})
+        if "冲突缓存命中 0 条" not in port_cached_skip.stdout:
+            raise AssertionError(
+                f"合法空缓存错误回退全量扫描:\n{port_cached_skip.stdout}\n"
+                f"{port_cached_skip.stderr}")
+
 
         # 回归：冲突路径落在被 ignore 的目录里。目录整体被 .gitignore 命中、但文件是
         # tracked，此时 `git add -- <全部未合并>` 会因该路径返回非零。旧实现把它当致命

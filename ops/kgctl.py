@@ -397,17 +397,21 @@ def already_superseded():
 
 
 def cached_conflict_branches():
-    """最近一次冲突负担扫描留下的候选分支；缓存缺失时返回空列表。"""
+    """最近一次冲突负担扫描留下的候选分支。
+
+    None 表示缓存不存在或不可读；合法缓存即使筛完为空也返回空列表。调用方必须
+    区分这两种情况，否则缓存里的候选全被跳过时会重新触发昂贵的全量 scan()。
+    """
     path = OPS / "conflict_burden.json"
     if not path.exists():
-        return []
+        return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return []
+        return None
     branches = data.get("branches")
     if not isinstance(branches, list):
-        return []
+        return None
     return [b for b in branches
             if isinstance(b, str) and b.startswith(BRANCH_PREFIX)]
 
@@ -700,9 +704,12 @@ def cmd_port(args):
         done = already_superseded()
         cands = []
         oversize = 0
-        cached = [b for b in cached_conflict_branches() if b not in done and b not in skip]
-        rows = [{"branch": b, "kind": "CONFLICT"} for b in cached] if cached else scan()
-        if cached:
+        cached_raw = cached_conflict_branches()
+        use_cache = cached_raw is not None
+        cached = [b for b in (cached_raw or []) if b not in done and b not in skip]
+        rows = ([{"branch": b, "kind": "CONFLICT"} for b in cached]
+                if use_cache else scan())
+        if use_cache:
             print(f"auto-port：冲突缓存命中 {len(cached)} 条，跳过全量 merge-tree 扫描")
         for r in rows:
             if r["kind"] != "CONFLICT" or r["branch"] in done or r["branch"] in skip:
