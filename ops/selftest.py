@@ -12,6 +12,9 @@ import os
 import subprocess
 import sys
 import tempfile
+from contextlib import redirect_stdout
+from importlib.util import module_from_spec, spec_from_file_location
+from io import StringIO
 from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
@@ -516,6 +519,47 @@ def test_resolve():
     print("selftest ok: resolve 拆冲突为单任务、保留 marker、走门禁落盘并回收；容器不被当源分支。")
     print("selftest ok: resolve --abandon 清容器且源分支不动；append-only JSONL 确定性并集落盘。")
     print("selftest ok: KG_RESOLVE_SKIP 让守护进程跳过已判定的冲突分支，不重复拆。")
+
+
+def test_resolve_gate_failure_surfaces_stderr():
+    """land 把真实失败写在 stderr 时，resolve 任务不能再留下空门禁结果。"""
+    spec = spec_from_file_location("kgctl_under_test", KGCTL)
+    kgctl_module = module_from_spec(spec)
+    spec.loader.exec_module(kgctl_module)
+    rec = {
+        "slug": "stderr-surface",
+        "branch": "codex/stderr-surface",
+        "resolve_branch": "codex/resolve-stderr-surface",
+        "worktree": "/tmp/codex-autopilot-resolve-stderr-surface",
+    }
+    real_run = kgctl_module.subprocess.run
+    real_write_record = kgctl_module._write_resolve_record
+    real_write_task_md = kgctl_module._write_resolve_task_md
+    stdout = StringIO()
+    try:
+        kgctl_module.subprocess.run = lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0],
+            returncode=1,
+            stdout="partial land output\n",
+            stderr="fatal: another land operation owns the lock\n",
+        )
+        kgctl_module._write_resolve_record = lambda record: None
+        kgctl_module._write_resolve_task_md = lambda record: None
+        with redirect_stdout(stdout):
+            kgctl_module._resolve_land(rec, Path(rec["worktree"]))
+    finally:
+        kgctl_module.subprocess.run = real_run
+        kgctl_module._write_resolve_record = real_write_record
+        kgctl_module._write_resolve_task_md = real_write_task_md
+
+    combined = stdout.getvalue() + rec.get("gate_output", "")
+    if rec.get("status") != "gate_fail":
+        raise AssertionError(f"模拟失败后状态不对: {rec.get('status')}")
+    for expected in ("partial land output", "fatal: another land operation owns the lock"):
+        if expected not in combined:
+            raise AssertionError(f"resolve 门禁结果漏掉 {expected!r}: {combined!r}")
+
+    print("selftest ok: resolve 落盘失败会同时保留 stdout/stderr，不再留下空门禁原因。")
 
 
 def test_reset_trunk_truth_conflict():
@@ -2331,6 +2375,7 @@ if __name__ == "__main__":
     main()
     test_replan()
     test_resolve()
+    test_resolve_gate_failure_surfaces_stderr()
     test_resolve_exec_parallel()
     test_resolve_gate_fail_auto_retry()
     test_resolve_gate_fail_not_retried_same_cycle()

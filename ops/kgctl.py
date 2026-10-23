@@ -2916,7 +2916,11 @@ def _resolve_land(rec: dict, wt: Path) -> None:
     resolve_branch = rec["resolve_branch"]
     res = subprocess.run([sys.executable, str(Path(__file__).resolve()), "land", resolve_branch],
                          capture_output=True, text=True)
-    out = (res.stdout or "").rstrip()
+    out = "\n".join(
+        part.rstrip()
+        for part in (res.stdout or "", res.stderr or "")
+        if part.strip()
+    )
     print(out)
     rec["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
     # land 在写门禁之前可能因分支已被合入而短路（"已完全合并，无需 land"）。那同样是
