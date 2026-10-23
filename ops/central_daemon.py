@@ -2348,7 +2348,7 @@ def release_attempt_slot(rid: str) -> bool:
 RESOLVE_CONFLICT_CAP = 2       # 同一组冲突文件连续撞 N 次 → 停手等人裁决
 RESOLVE_CONFLICT_BLOCK_H = 6   # 停手时长（小时），到期自动允许再试一次
 REAP_MIN_IDLE_H = float(os.environ.get("KG_REAP_MIN_IDLE_H", "3"))
-REAP_IDLE_PRESSURE_H = float(os.environ.get("KG_REAP_IDLE_PRESSURE_H", "0.5"))
+REAP_IDLE_PRESSURE_H = float(os.environ.get("KG_REAP_IDLE_PRESSURE_H", "0.25"))
                                # worktree 至少闲置这么久才回收（按目录 mtime 与分支最后提交取较新者）
 REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "5"))
 # 可用磁盘低于这个值就不派新 exec。
@@ -2360,7 +2360,7 @@ REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "5"))
 # 干活。可用 KG_MIN_FREE_GB 覆盖。
 MIN_FREE_GB = float(os.environ.get("KG_MIN_FREE_GB", "4.0"))
 # 空间自救阈值：可用低于它就回收零损失现场 + git gc（**不降低并发**）。
-REAP_PRESSURE_FREE_GB = float(os.environ.get("KG_REAP_PRESSURE_FREE_GB", "8"))
+REAP_PRESSURE_FREE_GB = float(os.environ.get("KG_REAP_PRESSURE_FREE_GB", "12"))
 
 
 def _safety_path() -> Path:
@@ -2660,7 +2660,7 @@ def _reap_dead_worktrees() -> int:
         cutoff = time.time() - idle_h * 3600
         # 压力模式每轮多回收一些：一轮只放 5 个时，磁盘下滑速度可能比回收
         # 速度快（每轮 45s，每个现场 ~200MB），追不上。
-        max_round = REAP_MAX_PER_ROUND * 4 if _pressure_reap else REAP_MAX_PER_ROUND
+        max_round = REAP_MAX_PER_ROUND * 8 if _pressure_reap else REAP_MAX_PER_ROUND
         for d in sorted(root.iterdir()):
             if reaped >= max_round:
                 break
