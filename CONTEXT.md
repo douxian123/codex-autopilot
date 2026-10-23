@@ -481,6 +481,20 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 
 ---
 
+### 12.10 自动 port 复用冲突缓存（2026-10-24）
+
+- 现象：守护进程每轮执行 `kgctl port --auto --go`，旧实现会对全部历史分支重跑
+  `merge-tree`，在真实状态根连续 90 秒无输出后被强制终止，冲突里“只差一两个提交”的
+  分支因此无法进入自动移植。
+- 修复：`kgctl port --auto` 优先读取 tick 已维护的
+  `ops/tasks/conflict_burden.json` 冲突清单；命中时只对候选做 `git cherry` 和改动体量
+  检查，缓存缺失才回退完整 `scan()`。cherry-pick、land 门禁、失败整体回滚均不变。
+- 证据：`python3 -u ops/selftest.py` 退出码 0，并新增断言锁定“冲突缓存命中且选中
+  缓存分支”；真实 ThoughLoom 状态根只读预演命中 45 条冲突分支，`41.9s` 选出
+  `codex/ci-red-registration-and-identity-lead-predicate`，不再超时。
+
+---
+
 ## 十三、下一步（谁该做什么）
 
 **用户（只有这几件，别的不用管）**：

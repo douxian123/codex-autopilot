@@ -396,6 +396,22 @@ def already_superseded():
     return done
 
 
+def cached_conflict_branches():
+    """最近一次冲突负担扫描留下的候选分支；缓存缺失时返回空列表。"""
+    path = OPS / "conflict_burden.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    branches = data.get("branches")
+    if not isinstance(branches, list):
+        return []
+    return [b for b in branches
+            if isinstance(b, str) and b.startswith(BRANCH_PREFIX)]
+
+
 def branch_net_zero(branch):
     """这个分支相对它自己的 merge-base 的**独有内容**，是不是已经全部存在于 main。
 
@@ -684,7 +700,11 @@ def cmd_port(args):
         done = already_superseded()
         cands = []
         oversize = 0
-        for r in scan():
+        cached = [b for b in cached_conflict_branches() if b not in done and b not in skip]
+        rows = [{"branch": b, "kind": "CONFLICT"} for b in cached] if cached else scan()
+        if cached:
+            print(f"auto-port：冲突缓存命中 {len(cached)} 条，跳过全量 merge-tree 扫描")
+        for r in rows:
             if r["kind"] != "CONFLICT" or r["branch"] in done or r["branch"] in skip:
                 continue
             n = len(unlanded_commits(r["branch"]))

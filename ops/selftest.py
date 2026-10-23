@@ -130,7 +130,19 @@ def main():
         git(repo, "commit", "-q", "-m", "backup: doc subset already on main")
         git(repo, "checkout", "-q", "main")
         git(repo, "push", "-q", "origin", "main")
-        port_dup = kgctl(repo, trunk, "port", "codex/dup", "--go")
+        (repo / "ops" / "tasks" / "conflict_burden.json").write_text(
+            json.dumps({
+                "main": git(repo, "rev-parse", "main").stdout.strip(),
+                "branches": ["codex/dup"],
+                "burden": {"codex/dup": 1},
+            }, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        port_dup = kgctl(repo, trunk, "port", "--auto", "--go", "--max-unlanded", "1")
+        if "冲突缓存命中 1 条" not in port_dup.stdout:
+            raise AssertionError(f"auto-port 没有复用冲突缓存:\n{port_dup.stdout}\n{port_dup.stderr}")
+        if "选中 codex/dup" not in port_dup.stdout:
+            raise AssertionError(f"auto-port 没选中缓存候选:\n{port_dup.stdout}\n{port_dup.stderr}")
         if "未落提交 1 条" not in port_dup.stdout:
             raise AssertionError(f"fixture 没造出 patch-id 不匹配的未落提交:\n{port_dup.stdout}")
         if "PORT_RESULT" not in (port_dup.stdout + port_dup.stderr):
