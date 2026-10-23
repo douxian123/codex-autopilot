@@ -2583,8 +2583,19 @@ def _reap_dead_worktrees() -> int:
     排除：主仓本身、resolver 登记的现场、名字带 resolve 的树。
     fail-open + 每轮上限，宁可少回收不可误删。
     """
+    # 默认关闭（用户明确要求「不清理」）。但磁盘逼近硬闸时，守护要能自己活下来：
+    # 只回收「零损失」的现场 —— 分支无未落提交、工作区无未提交改动、无活着的会话、
+    # 闲置够久，且**只删工作目录、保留分支**。任何一条不满足就不动。
+    # 用 KG_REAP_ON_DISK_PRESSURE=0 / safety.json 关掉这一层。
+    _pressure_reap = False
     if not _knob("reap_worktrees", True):
-        return 0
+        if not _knob("reap_on_disk_pressure", True):
+            return 0
+        _d = _disk_pressure()
+        if not _d:
+            return 0          # 只有磁盘偏紧时才启用「零损失回收」这一层
+        _pressure_reap = True
+        log("[safety] 磁盘偏紧：对零损失现场做回收（只删目录，分支保留）")
     reaped = 0
     try:
         root = _workspace_root()
@@ -2616,7 +2627,11 @@ def _reap_dead_worktrees() -> int:
             ok, detail = workspace_guard.remove_worktree(repo, d)
             if ok:
                 reaped += 1
-                log(f"[safety] 回收闲置 worktree {d.name}（分支 {branch} 无未落提交）")
+                log(f"[safety] 回收闲置 worktree {d.name}"
+                    f"（分支 {branch} 无未落提交；分支本身保留）")
+                if _pressure_reap:
+                    # 只回收目录，分支一律保留：重装/回溯时仍能从分支找回全部内容。
+                    log(f"[safety] 保留分支 {branch}（压力回收不删分支）")
             else:
                 log(f"[safety] 回收 worktree 跳过 {d.name}：{detail}")
     except Exception as exc:  # fail-open
