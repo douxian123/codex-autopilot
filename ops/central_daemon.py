@@ -2575,6 +2575,37 @@ def _worktree_repo(wt: Path) -> Path | None:
         return None
 
 
+def _git_gc_maintenance() -> None:
+    """磁盘偏紧时清掉 git 的松散对象与垃圾（不改任何工作区、不删分支）。
+
+    主仓长期高频合并，松散对象会越积越多（实测一次 244MB loose + 266MB
+    garbage）。这些都只是 git 自己的中间产物，`gc --prune=now` 之后仍可从
+    pack 里还原全部历史。只在压力模式下跑，且每 30 分钟最多一次。
+    """
+    if not _knob("git_gc", True):
+        return
+    try:
+        st = load_state()
+        last = float(st.get("last_git_gc_ts") or 0)
+        if time.time() - last < 1800:
+            return
+        repo = _state_repo()
+        if not repo:
+            return
+        before = subprocess.run(["git", "-C", str(repo), "count-objects", "-v"],
+                                capture_output=True, text=True, timeout=60).stdout
+        rc, out, err = _git(repo, "gc", "--prune=now", "--quiet", timeout=600)
+        after = subprocess.run(["git", "-C", str(repo), "count-objects", "-v"],
+                               capture_output=True, text=True, timeout=60).stdout
+        st = load_state()
+        st["last_git_gc_ts"] = str(int(time.time()))
+        save_state(st)
+        log(f"[safety] git gc rc={rc}（松散对象/垃圾已清；历史与分支不受影响）"
+            + (f" err={err[:120]}" if rc else ""))
+    except Exception as exc:  # fail-open
+        log(f"[safety] git gc 跳过（忽略）：{exc}")
+
+
 def _reap_dead_worktrees() -> int:
     """回收闲置且安全的 worktree（无改动、分支无未落提交、没人在用）。
 
@@ -2861,6 +2892,8 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     try:
         _reap_backend_orphans()
         _reap_dead_worktrees()
+        if _disk_pressure():
+            _git_gc_maintenance()
     except Exception as exc:
         log(f"[safety] 回收阶段异常（忽略，继续本轮）：{exc}")
     # Route new intake before filling worker slots. dispatch_exec only sees
