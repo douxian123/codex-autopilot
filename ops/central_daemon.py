@@ -2355,6 +2355,8 @@ RESOLVE_CONFLICT_CAP = 2       # 同一组冲突文件连续撞 N 次 → 停手
 RESOLVE_CONFLICT_BLOCK_H = 6   # 停手时长（小时），到期自动允许再试一次
 REAP_MIN_IDLE_H = float(os.environ.get("KG_REAP_MIN_IDLE_H", "3"))
 REAP_IDLE_PRESSURE_H = float(os.environ.get("KG_REAP_IDLE_PRESSURE_H", "0.25"))
+# 每轮 worktree 回收的时间预算：回收不能把派活饿死。
+REAP_TIME_BUDGET_S = float(os.environ.get("KG_REAP_TIME_BUDGET_S", "25"))
                                # worktree 至少闲置这么久才回收（按目录 mtime 与分支最后提交取较新者）
 REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "5"))
 # 可用磁盘低于这个值就不派新 exec。
@@ -2679,8 +2681,17 @@ def _reap_dead_worktrees() -> int:
         # 压力模式每轮多回收一些：一轮只放 5 个时，磁盘下滑速度可能比回收
         # 速度快（每轮 45s，每个现场 ~200MB），追不上。
         max_round = REAP_MAX_PER_ROUND * 8 if _pressure_reap else REAP_MAX_PER_ROUND
+        # 时间预算：回收本身要扫 282 个现场、每个还跑几次 git，压力模式下
+        # 一轮能占掉一分多钟（实测 19:53:47 单个回收就花 78s）。它排在派活
+        # 之前同步执行，于是 worker 掉下去后整轮都在等它，补派被拖住。
+        # 超过预算就收工，剩下的留给下一轮 —— 回收是渐进目标，派活不能被它饿死。
+        deadline = time.time() + REAP_TIME_BUDGET_S
         for d in sorted(root.iterdir()):
             if reaped >= max_round:
+                break
+            if time.time() > deadline:
+                log(f"[safety] worktree 回收达时间预算 {REAP_TIME_BUDGET_S:.0f}s"
+                    f"（已回收 {reaped} 个），余下留给下一轮，先回去派活")
                 break
             if not d.is_dir():
                 continue
