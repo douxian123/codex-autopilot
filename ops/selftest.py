@@ -3497,6 +3497,44 @@ def test_conflict_decision_hold_survives_existing_markers():
     print("selftest ok: 同一冲突标记不会绕过人工裁决停手，6h 内不再空转重试。")
 
 
+def test_resolve_candidate_scan_skips_marker_grep():
+    """Finding conflict candidates must not run marker greps on unrelated CLEAN branches."""
+    import importlib
+    from pathlib import Path
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    with tempfile.TemporaryDirectory(prefix="kgctl-marker-scan-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        trunk = root / "state-trunk"
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        with mock.patch.dict(os.environ, {
+            "KG_REPO": str(repo),
+            "KG_TRUNK": str(trunk),
+        }):
+            spec = importlib.util.spec_from_file_location(
+                "kgctl_marker_scan_selftest", ops / "kgctl.py")
+            kgctl = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(kgctl)
+
+            with mock.patch.object(kgctl, "codex_branches",
+                                   return_value=["codex/exec-busy"]), \
+                 mock.patch.object(kgctl, "counts", return_value=(2, 1)), \
+                 mock.patch.object(kgctl, "git", return_value="1790000000"), \
+                 mock.patch.object(kgctl, "changed_files", return_value=["backend/a.ts"]), \
+                 mock.patch.object(kgctl, "conflict_files", return_value=["backend/a.ts"]), \
+                 mock.patch.object(kgctl, "unresolved_marker_files",
+                                   side_effect=AssertionError(
+                                       "resolve 候选扫描不应做全树 marker grep")):
+                rows = kgctl.scan(light=True, check_markers=False)
+
+    assert len(rows) == 1 and rows[0]["kind"] == "CONFLICT", rows
+    assert rows[0]["markers"] == [], rows
+    print("selftest ok: resolve 候选扫描跳过无关的全树 marker grep，真落盘仍保留 marker 门禁。")
+
+
 def test_prune_keeps_open_resolve_hold():
     """Restart cleanup must not erase a hold for a gate_fail resolve task."""
     import importlib
@@ -3880,6 +3918,7 @@ if __name__ == "__main__":
     test_collect_exec_keeps_reaping_after_nonlanding_failure()
     test_resolve_gate_fail_auto_retry()
     test_resolve_gate_fail_not_retried_same_cycle()
+    test_resolve_candidate_scan_skips_marker_grep()
     test_conflict_decision_hold_survives_existing_markers()
     test_prune_keeps_open_resolve_hold()
     test_reset_trunk_truth_conflict()

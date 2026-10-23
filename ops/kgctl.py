@@ -991,7 +991,7 @@ def cmd_suggest(args):
 
 # ---------------------------------------------------------------- 分诊
 
-def scan(light=False):
+def scan(light=False, check_markers=True):
     rows = []
     # 已裁决的源分支不再算「待裁决冲突」。resolve.json 里 landed/abandoned 的、
     # progress.jsonl 里 superseded 的，git 层还可能显示 ahead+conflict（它们本来就是
@@ -1003,11 +1003,11 @@ def scan(light=False):
     for b in codex_branches():
         if light and not b.startswith("codex/exec-"):
             continue
+        if _is_generated_branch(b):
+            continue
         # 收拢分支是自动挡生成的任务容器，不是待裁决的用户分支。把它排除在一屏 /
         # matrix / queue 之外，否则它自己带 conflict markers 时会被当成“残留冲突
         # 标记”反复报出来，用户会误以为还有一条工作没收拾。
-        if _is_generated_branch(b):
-            continue
         ahead, behind = counts(b)
         ts = int(git("log", "-1", "--format=%ct", b) or 0)
         files = changed_files(b)
@@ -1016,7 +1016,7 @@ def scan(light=False):
             kind, conf = "MERGED", []
         else:
             conf = conflict_files(b)
-            markers = unresolved_marker_files(b) if not conf else []
+            markers = unresolved_marker_files(b) if check_markers and not conf else []
             kind = "CONFLICT" if conf else ("UNRESOLVED" if markers else "CLEAN")
             if kind == "CONFLICT" and b in settled:
                 kind = "SETTLED"
@@ -3080,7 +3080,10 @@ def _resolve_branch_name(slug: str) -> str:
 
 def _pick_resolve_candidate(max_files: int, max_lines: int):
     """挑一条「冲突文件少、未落改动也小」的冲突分支。返回 (候选, 超体量的)。"""
-    rows = scan()
+    # 候选只来自 CONFLICT 行。带 markers 的全量 scan 会为每个 CLEAN 分支跑两次
+    # 全树 git grep，实际让 resolve --auto 在第一个候选前就超时；这里跳过与
+    # 候选无关的 markers 检查，真正的 land/finish 仍由 unresolved_marker_files 把门。
+    rows = scan(check_markers=False)
     open_src = _open_resolve_sources()
     decided_src = _decided_resolve_branches()
     # 守护进程把「拆不动 / 门禁没过」的分支名放进 KG_RESOLVE_SKIP，避免每个周期
