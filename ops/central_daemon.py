@@ -2617,14 +2617,26 @@ def _git_gc_maintenance() -> None:
             return
         before = subprocess.run(["git", "-C", str(repo), "count-objects", "-v"],
                                 capture_output=True, text=True, timeout=60).stdout
-        rc, out, err = _git(repo, "gc", "--prune=now", "--quiet", timeout=600)
-        after = subprocess.run(["git", "-C", str(repo), "count-objects", "-v"],
-                               capture_output=True, text=True, timeout=60).stdout
+        # 必须放到后台跑：282 个 worktree 的主仓 `gc --prune=now` 实测能跑好几分钟，
+        # 同步跑会把整轮 cycle 卡死。2026-10-23 现场就是守护卡在 gc 上，
+        # worker 从 10 掉到 7 却一整个周期都没补派，看起来又「跑不动」了。
+        # gc 只清理 git 自己的松散对象，不碰工作区与分支，晚几分钟完成毫无影响。
         st = load_state()
         st["last_git_gc_ts"] = str(int(time.time()))
         save_state(st)
-        log(f"[safety] git gc rc={rc}（松散对象/垃圾已清；历史与分支不受影响）"
-            + (f" err={err[:120]}" if rc else ""))
+        _gc_log = _exec_dir() / "git-gc.log"
+        try:
+            with open(_gc_log, "a") as _fh:
+                subprocess.Popen(
+                    ["git", "-C", str(repo), "gc", "--prune=now", "--quiet"],
+                    stdout=_fh, stderr=_fh, start_new_session=True,
+                )
+            log("[safety] git gc 已转入后台（不阻塞派活；日志 "
+                f"{_gc_log}）")
+        except Exception as exc:
+            log(f"[safety] git gc 启动失败（忽略）：{exc}")
+            return
+        return
     except Exception as exc:  # fail-open
         log(f"[safety] git gc 跳过（忽略）：{exc}")
 
