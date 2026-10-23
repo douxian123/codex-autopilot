@@ -962,7 +962,14 @@ def _prune_exec_blocked(blocked: dict) -> list:
             for rid, rec in list(blocked.items()):
                 if not isinstance(rec, dict):
                     continue
-                if str(rec.get("reason") or "") not in ("land_locked", "land_error"):
+                if str(rec.get("reason") or "") not in ("land_locked", "land_error",
+                                                        "no_changes", "channel_unavailable"):
+                    continue
+                _reason = str(rec.get("reason") or "")
+                if _reason in ("no_changes", "channel_unavailable"):
+                    blocked.pop(rid, None)
+                    stale.append(rid)
+                    log(f"[exec] {rid} 上一拍没有产出（{_reason}），放行重试")
                     continue
                 _b = str(rec.get("branch") or "")
                 if _b and _branch_pending_commits(_repo2, _b, "main"):
@@ -1644,6 +1651,18 @@ def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
                             "worktree": str(wt), "nested": nested, "ts": _now()}
             result["outcome"] = "nested_clone_preserved"
             return result
+        # 「没有改动」有两种完全不同的成因：真的做完了不需要改，和会话被
+        # 额度耗尽/限流中途掐断（日志里有 403 insufficient balance、429），
+        # 后者是通道问题、不是需求做不出来。把它记成 no_changes 会永久封死
+        # 这条任务；这里先认通道失败，并按「不是这条任务的错」处理。
+        if (classify_exec_model_fallback(log_path)
+                or classify_exec_throttled(log_path)):
+            log(f"[exec] {rid} 无改动但日志是额度/限流失败 -> 归还派发名额，"
+                f"换通道重试，不算 no_changes")
+            release_attempt_slot(rid)
+            blocked.pop(rid, None)
+            result["outcome"] = "channel_unavailable"
+            return result
         log(f"[exec] {rid} 没有产生改动，记为无变化")
         # A worker may have no pending changes because its target commit was
         # already landed by an earlier pass. Keep the ledger accurate in that
@@ -1655,7 +1674,9 @@ def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
             if ancestor_rc == 0:
                 _run_truthctl(["close", rid, "auto-close: commit already in main"],
                               extra_env={"KG_TRUTH_COMMIT": commit})
-        blocked[rid] = {"reason": "no_changes", "ts": _now()}
+        # 不写进 blocked：no_changes 只是「这一拍没做出东西」，不是「这活做不成」。
+        # 永久阻塞会让额度抖动/超时中断过的任务再也不被重派。
+        blocked.pop(rid, None)
         _cleanup_exec(repo, wt, branch)
         result["outcome"] = "no_changes"
         return result
@@ -1798,8 +1819,8 @@ def _finish_resolve_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> d
             log(f"[resolve-exec] {rid} worktree 干净且分支已有未落提交/已进 main "
                 f"-> 直接收口 {(commit or '')[:12]}")
         else:
-            log(f"[resolve-exec] {rid} 没有产生改动，记为无变化")
-            blocked[rid] = {"reason": "no_changes", "ts": _now()}
+            log(f"[resolve-exec] {rid} 没有产生改动，不记永久阻塞（下一拍可重试）")
+            blocked.pop(rid, None)
             result["outcome"] = "no_changes"
             return result
 
