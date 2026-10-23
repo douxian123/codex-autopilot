@@ -1743,13 +1743,13 @@ def test_resolve_exec_parallel():
         importlib.reload(central_daemon)
 
         original = (wt / "doc.txt").read_text(encoding="utf-8")
-        (wt / "doc.txt").write_text(original + "external-worker\n", encoding="utf-8")
+        (wt / "doc.txt").write_text("manual external edit\n", encoding="utf-8")
         if central_daemon._resolve_open_items():
-            raise AssertionError("worktree 已有外部未提交改动时仍被当作可派任务")
+            raise AssertionError("worktree 已有无冲突标记的外部改动时仍被当作可派任务")
         (wt / "doc.txt").write_text(original, encoding="utf-8")
         open_ids = [i["id"] for i in central_daemon._resolve_open_items()]
         if open_ids != ["resolve:light"]:
-            raise AssertionError(f"恢复干净后 resolve 任务没有重新进入可派队列: {open_ids!r}")
+            raise AssertionError(f"仍有冲突标记且无 worker 时没有重新进入可派队列: {open_ids!r}")
 
         stale_workers = {"exec_jobs": {"resolve:light": {
             "id": "resolve:light",

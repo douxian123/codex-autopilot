@@ -779,7 +779,15 @@ def _resolve_open_items(limit=10):
         wt = Path(rec.get("worktree") or "")
         if not wt.exists():
             continue
-        if _resolve_worktree_dirty(wt) or _resolve_worktree_owned(wt):
+        if _resolve_worktree_owned(wt):
+            continue
+        # A merge conflict leaves the resolve worktree dirty by definition.
+        # If the previous worker died, treating every dirty worktree as owned
+        # strands the task forever even though its conflict markers are still
+        # present. Re-dispatch marker-bearing work, but leave dirty tasks whose
+        # markers are gone to the finish gate so we do not overwrite a solved
+        # worktree with another model run.
+        if _resolve_worktree_dirty(wt) and not _resolve_worktree_has_markers(rec):
             continue
         if rec.get("slug") in settled or rec.get("branch") in settled:
             continue
@@ -1539,7 +1547,8 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
                 item, cfg, repo, wt, branch, rid,
                 {"id": rid, "branch": branch, "worktree": str(wt)}, blocked)
         return _finish_exec(item, cfg, repo, wt, branch, rid,
-                            {"id": rid, "branch": branch, "worktree": str(wt)}, blocked)
+                            {"id": rid, "branch": branch, "worktree": str(wt)}, blocked,
+                            log_path)
     retries = max(0, int(cfg.get("retries", EXEC_INFRA_RETRIES)))
     total, attempt, code, infra = retries + 1, 0, 0, False
     result = job["result"]
@@ -1686,7 +1695,8 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
     return result
 
 
-def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked) -> dict:
+def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked,
+                 log_path) -> dict:
     """codex 已实现（或从在途现场恢复）之后的公共收尾：add -> commit -> land -> close。"""
     conf = central_config.load(repo)
     main_branch = conf.get("main_branch", "main")
@@ -2285,7 +2295,8 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
             else:
                 result = _finish_exec(item, job["cfg"],
                                       Path(job["repo"]), Path(job["worktree"]),
-                                      job["branch"], rid, result, blocked)
+                                      job["branch"], rid, result, blocked,
+                                      Path(job["log"]))
         results.append(result)
         # One land per cycle; another completed worker is collected next
         # cycle. This keeps the critical section serial and auditable.
