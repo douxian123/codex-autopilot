@@ -1275,7 +1275,12 @@ def _exec_model(item: dict, cfg: dict) -> str | None:
     )
     if any(m in hay for m in offline_markers) and cfg.get("slow_model"):
         return str(cfg["slow_model"])
-    if (item.get("kind") or "") in ("bug", "gate", "resolve") and cfg.get("fast_model"):
+    # visual 也是「要跟用户来回几轮」的活：界面改一版就被退回重改一次，
+    # 卡在慢通道上时每一轮都要重新排队，比 bug 类更吃交互延迟。
+    # 2026-10-23 实测 L-0030 / L-0031 两条移动端视觉任务被分到慢卡，
+    # 用户当场看到的现象就是「UI 改动半天没反应」。
+    fast_kinds = ("bug", "gate", "resolve", "visual")
+    if (item.get("kind") or "") in fast_kinds and cfg.get("fast_model"):
         return str(cfg["fast_model"])
     return str(cfg.get("slow_model") or cfg.get("fast_model") or "") or None
 
