@@ -1380,12 +1380,19 @@ def test_exec_model_balance_fallback():
             "http://127.0.0.1:15721/v1/responses\n", encoding="utf-8")
         if not central_daemon.classify_exec_model_fallback(probe):
             raise AssertionError("403 insufficient balance 没有被识别为模型通道额度失败")
+        job = {"model": "aibvv@deepseek-v4.1-flash"}
+        cfg = {"fast_model": "aibvv@deepseek-v4.1-flash",
+               "slow_model": "ok8888@deepseek-v4.1-flash"}
+        if not central_daemon._should_fallback_to_slow_model(job, cfg, probe):
+            raise AssertionError("fast 通道欠费后没有切到 slow_model")
+        job["model"] = cfg["slow_model"]
+        job["model_fallback_used"] = True
+        if central_daemon._should_fallback_to_slow_model(job, cfg, probe):
+            raise AssertionError("同一任务不应在 slow_model 上循环 fallback")
         quiet = Path(tmp) / "quiet.log"
         quiet.write_text("验证通过\n", encoding="utf-8")
         if central_daemon.classify_exec_model_fallback(quiet):
             raise AssertionError("普通日志被误判成模型通道额度失败")
-        cfg = {"fast_model": "aibvv@deepseek-v4.1-flash",
-               "slow_model": "ok8888@deepseek-v4.1-flash"}
         bug_item = {"kind": "bug"}
         gate_item = {"kind": "gate"}
         arch_item = {"kind": "arch"}
@@ -1395,7 +1402,7 @@ def test_exec_model_balance_fallback():
             raise AssertionError("gate 泳道没有优先走 fast_model")
         if central_daemon._exec_model(arch_item, cfg) != cfg["slow_model"]:
             raise AssertionError("arch/其它泳道没有走 slow_model")
-    print("selftest ok: 403 欠费识别为模型通道额度失败，fast/slow 模型路由可预测。")
+    print("selftest ok: 403 欠费即使退出码为 0 也切到 slow_model，且不会循环回退。")
 
 
 def test_parallel_exec_slots():

@@ -1225,6 +1225,16 @@ def classify_exec_model_fallback(log_path) -> bool:
     return bool(EXEC_MODEL_FALLBACK_PATTERN.search(_exec_log_tail(log_path)))
 
 
+def _should_fallback_to_slow_model(job: dict, cfg: dict, log_path: Path) -> bool:
+    """Return whether a provider-balance failure should retry on slow_model."""
+    return bool(
+        not job.get("model_fallback_used")
+        and cfg.get("slow_model")
+        and job.get("model") != cfg["slow_model"]
+        and classify_exec_model_fallback(log_path)
+    )
+
+
 def classify_exec_throttled(log_path) -> bool:
     """日志尾部是否命中网关限流（429）。
 
@@ -1573,18 +1583,21 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
             job.pop("fh", None)
         result["exit"] = code
         log(f"[exec] {rid} codex 退出码={code}（第 {attempt}/{total} 次，日志 {log_path}）")
-        if code == 0:
-            break
-        if (not job.get("model_fallback_used")
-                and cfg.get("slow_model")
-                and job.get("model") != cfg["slow_model"]
-                and classify_exec_model_fallback(log_path)):
+        # Some CLI/provider combinations print a 403 balance error and still
+        # exit 0. Provider failure must win over the process exit code.
+        if _should_fallback_to_slow_model(job, cfg, log_path):
             job["model"] = str(cfg["slow_model"])
             job["model_fallback_used"] = True
             detail_tail = _exec_log_tail(log_path, limit=400).strip()
             log(f"[exec] {rid} 判定为模型通道额度失败，切到 slow_model="
                 f"{job['model']} 重跑；日志尾部: {detail_tail[-120:]}")
             continue
+        if code == 0:
+            if (job.get("model_fallback_used")
+                    and classify_exec_model_fallback(log_path)):
+                code = 1
+                infra = True
+            break
         # Timeouts and startup failures are not retried. Only a transport
         # failure with a matching log tail gets another attempt.
         infra = code not in (124, 125) and classify_exec_infra_failure(log_path)
