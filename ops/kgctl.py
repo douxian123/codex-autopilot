@@ -46,6 +46,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 MAIN = os.environ.get("KG_MAIN", "main")
@@ -230,6 +231,45 @@ def codex_branches():
     return [b for b in out.split("\n") if b.startswith(BRANCH_PREFIX)]
 
 
+def branch_index():
+    """One native Git read for branch age, subject, and ahead/behind counts.
+
+    The long-lived Knowledge Graph checkout currently has 461 codex branches.
+    The old scan launched two `rev-list` subprocesses plus `git log` for every
+    branch before it even checked merge conflicts. `for-each-ref` computes the
+    same ahead/behind pair in one process, so status stays a read-only snapshot
+    without weakening any conflict or marker checks.
+
+    Return None when the installed Git lacks the atom or the read fails. Callers
+    then use the old per-branch path, keeping compatibility with older hosts.
+    """
+    fmt = (f"%(refname:short)%00%(ahead-behind:{MAIN})%00"
+           "%(committerdate:unix)%00%(subject)")
+    p = subprocess.run(
+        ["git", "-C", str(REPO), "for-each-ref", f"--format={fmt}", "refs/heads"],
+        capture_output=True, text=True, errors="replace")
+    if p.returncode != 0:
+        return None
+    out = {}
+    for line in p.stdout.splitlines():
+        parts = line.split("\0", 3)
+        if len(parts) != 4:
+            continue
+        ab = parts[1].split()
+        if len(ab) != 2:
+            continue
+        try:
+            out[parts[0]] = {
+                "ahead": int(ab[0]),
+                "behind": int(ab[1]),
+                "ts": int(parts[2] or 0),
+                "subject": parts[3][:70],
+            }
+        except ValueError:
+            continue
+    return out
+
+
 def counts(branch):
     return (int(git("rev-list", "--count", f"{MAIN}..{branch}") or 0),
             int(git("rev-list", "--count", f"{branch}..{MAIN}") or 0))
@@ -280,17 +320,29 @@ def unresolved_marker_files(branch):
     如果不单独拦，它会被当成 CLEAN，守护进程就能把一个满是冲突标记的树推上 main。
     两个行首标记同时出现才算，避免把文档里的单侧示例误判为坏树。
     """
-    def grep(pattern):
-        p = subprocess.run(
-            ["git", "-C", str(REPO), "grep", "-l", "-I", "-E", pattern, branch, "--", "."],
-            capture_output=True, text=True, errors="replace")
-        if p.returncode not in (0, 1):
-            return set()
-        return {line.strip() for line in p.stdout.splitlines() if line.strip()}
-
-    starts = grep(r"^<<<<<<< ")
-    ends = grep(r"^>>>>>>> ")
-    return sorted(starts & ends)
+    # First find the union with one read-only git grep. On a 461-branch checkout
+    # the old two-grep-per-branch implementation spent most of `status` here.
+    p = subprocess.run(
+        ["git", "-C", str(REPO), "grep", "-l", "-I", "-E",
+         r"^(<<<<<<< |>>>>>>> )", branch, "--", "."],
+        capture_output=True, text=True, errors="replace")
+    if p.returncode not in (0, 1):
+        return []
+    candidates = {line.strip() for line in p.stdout.splitlines() if line.strip()}
+    broken = []
+    for path in candidates:
+        blob = subprocess.run(
+            ["git", "-C", str(REPO), "cat-file", "blob", f"{branch}:{path}"],
+            capture_output=True)
+        if blob.returncode != 0:
+            # A candidate we cannot inspect is not evidence of a clean tree.
+            broken.append(path)
+            continue
+        lines = blob.stdout.splitlines()
+        if any(line.startswith(b"<<<<<<< ") for line in lines) and \
+                any(line.startswith(b">>>>>>> ") for line in lines):
+            broken.append(path)
+    return sorted(broken)
 
 
 def branch_meta(branch: str) -> dict:
@@ -992,7 +1044,6 @@ def cmd_suggest(args):
 # ---------------------------------------------------------------- 分诊
 
 def scan(light=False, check_markers=True):
-    rows = []
     # 已裁决的源分支不再算「待裁决冲突」。resolve.json 里 landed/abandoned 的、
     # progress.jsonl 里 superseded 的，git 层还可能显示 ahead+conflict（它们本来就是
     # 没合进 main 的历史分支），只按 ahead/conflict 判定就会把它们反复捞回 C 组：
@@ -1000,32 +1051,60 @@ def scan(light=False, check_markers=True):
     settled = set()
     if not light:
         settled = _decided_resolve_branches() | already_superseded()
-    for b in codex_branches():
-        if light and not b.startswith("codex/exec-"):
-            continue
-        if _is_generated_branch(b):
-            continue
+    index = branch_index()
+    branches = list(index) if index is not None else codex_branches()
+    branches = [
+        b for b in branches
+        if b.startswith(BRANCH_PREFIX)
+        and (not light or b.startswith("codex/exec-"))
+        and not _is_generated_branch(b)
+    ]
+
+    def branch_row(b):
         # 收拢分支是自动挡生成的任务容器，不是待裁决的用户分支。把它排除在一屏 /
         # matrix / queue 之外，否则它自己带 conflict markers 时会被当成“残留冲突
         # 标记”反复报出来，用户会误以为还有一条工作没收拾。
-        ahead, behind = counts(b)
-        ts = int(git("log", "-1", "--format=%ct", b) or 0)
-        files = changed_files(b)
+        meta = index.get(b) if index is not None else None
+        if meta:
+            ahead, behind = meta["ahead"], meta["behind"]
+            ts, subject = meta["ts"], meta["subject"]
+        else:
+            ahead, behind = counts(b)
+            ts = int(git("log", "-1", "--format=%ct", b) or 0)
+            subject = git("log", "-1", "--format=%s", b)[:70]
         markers = []
         if ahead == 0:
             kind, conf = "MERGED", []
+            files = []
         else:
+            files = changed_files(b)
             conf = conflict_files(b)
             markers = unresolved_marker_files(b) if check_markers and not conf else []
             kind = "CONFLICT" if conf else ("UNRESOLVED" if markers else "CLEAN")
             if kind == "CONFLICT" and b in settled:
                 kind = "SETTLED"
-        rows.append(dict(branch=b, ahead=ahead, behind=behind,
-                         age=round((time.time() - ts) / 86400, 1) if ts else -1,
-                         subject=git("log", "-1", "--format=%s", b)[:70],
-                         nfiles=len(files), files=files, kind=kind, conflicts=conf,
-                         markers=markers))
-    return rows
+        return dict(branch=b, ahead=ahead, behind=behind,
+                    age=round((time.time() - ts) / 86400, 1) if ts else -1,
+                    subject=subject,
+                    nfiles=len(files), files=files, kind=kind, conflicts=conf,
+                    markers=markers)
+
+    # The 461-branch checkout spends most of its time in independent, read-only
+    # Git subprocesses. Run one branch per available core so full status remains
+    # an exact snapshot without serializing hundreds of merge/grep checks.
+    try:
+        workers = int(os.environ.get("KG_SCAN_WORKERS", "0") or 0)
+    except ValueError:
+        workers = 0
+    if workers <= 0:
+        # These workers only launch read-only Git subprocesses. Two per core
+        # fills the I/O queue without changing the daemon's execution slots.
+        workers = max(4, (os.cpu_count() or 1) * 2)
+    workers = max(1, min(len(branches), workers))
+    if workers == 1:
+        return [branch_row(b) for b in branches]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(branch_row, branches))
 
 
 def cmd_matrix(args):
@@ -3594,7 +3673,12 @@ def cmd_status(args):
     if open_tasks:
         print(f"冲突执行任务   {len(open_tasks)} 个待解（kgctl resolve --list）")
     wts = worktree_map()
-    behind50 = [b for b in codex_branches() if counts(b)[1] > 50]
+    branch_stats = branch_index()
+    if branch_stats is None:
+        behind50 = [b for b in codex_branches() if counts(b)[1] > 50]
+    else:
+        behind50 = [b for b, meta in branch_stats.items()
+                    if b.startswith(BRANCH_PREFIX) and meta.get('behind', 0) > 50]
     print(f"worktree       {len(wts)} 个（其中落后 main >50 的分支 {len(behind50)} 条）")
     shared_dirty = [l for l in subprocess.run(
         ["git", "-C", str(SHARED), "status", "--porcelain", "--untracked-files=no"],

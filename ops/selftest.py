@@ -3535,6 +3535,58 @@ def test_resolve_candidate_scan_skips_marker_grep():
     print("selftest ok: resolve 候选扫描跳过无关的全树 marker grep，真落盘仍保留 marker 门禁。")
 
 
+def test_scan_batches_branch_metadata():
+    """The long-lived 461-branch checkout must not spawn per-branch count/log calls."""
+    import importlib
+    from pathlib import Path
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    with tempfile.TemporaryDirectory(prefix="kgctl-batch-scan-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        trunk = root / "state-trunk"
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        with mock.patch.dict(os.environ, {
+            "KG_REPO": str(repo),
+            "KG_TRUNK": str(trunk),
+        }):
+            spec = importlib.util.spec_from_file_location(
+                "kgctl_batch_scan_selftest", ops / "kgctl.py")
+            kgctl = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(kgctl)
+
+            index = {
+                "codex/merged": {
+                    "ahead": 0, "behind": 12, "ts": 1790000000,
+                    "subject": "already landed",
+                },
+                "codex/pending": {
+                    "ahead": 2, "behind": 3, "ts": 1790000100,
+                    "subject": "pending work",
+                },
+            }
+            with mock.patch.object(kgctl, "branch_index", return_value=index), \
+                 mock.patch.object(
+                     kgctl, "counts",
+                     side_effect=AssertionError("batched metadata must not call counts")), \
+                 mock.patch.object(
+                     kgctl, "git",
+                     side_effect=AssertionError("batched metadata must not call git log")), \
+                 mock.patch.object(kgctl, "changed_files", return_value=["backend/a.ts"]), \
+                 mock.patch.object(kgctl, "conflict_files", return_value=[]), \
+                 mock.patch.object(kgctl, "unresolved_marker_files", return_value=[]):
+                rows = kgctl.scan(check_markers=False)
+
+    by_branch = {row["branch"]: row for row in rows}
+    assert by_branch["codex/merged"]["kind"] == "MERGED", rows
+    assert by_branch["codex/merged"]["files"] == [], rows
+    assert by_branch["codex/pending"]["kind"] == "CLEAN", rows
+    assert by_branch["codex/pending"]["files"] == ["backend/a.ts"], rows
+    print("selftest ok: 大批量分支快照一次读取 ahead/behind，已合并分支不再白跑 diff。")
+
+
 def test_prune_keeps_open_resolve_hold():
     """Restart cleanup must not erase a hold for a gate_fail resolve task."""
     import importlib
@@ -3962,6 +4014,7 @@ if __name__ == "__main__":
     test_resolve_gate_fail_auto_retry()
     test_resolve_gate_fail_not_retried_same_cycle()
     test_resolve_candidate_scan_skips_marker_grep()
+    test_scan_batches_branch_metadata()
     test_conflict_decision_hold_survives_existing_markers()
     test_prune_keeps_open_resolve_hold()
     test_reset_trunk_truth_conflict()
