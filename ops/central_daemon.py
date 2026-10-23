@@ -2600,11 +2600,24 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
     failed_this_cycle = {r.get("id") for r in results
                          if r.get("outcome") == "resolve_gate_fail"}
     open_items = list(_exec_open_items())
+
+    def _session_slots() -> int:
+        # 只数「真在跑/真要用模型」的槽位；recover 只是等落盘，不占算力名额。
+        return sum(1 for j in jobs.values() if not j.get("recover"))
+
+    # 守护重启会 hydrate 回一批仍在跑的 worker。若上一轮已经跑到上限，
+    # 这里必须直接停手 —— 只在「新派一个之后」才检查上限，会让每次重启
+    # 都多塞一个进池子，实测累积到 7 个 codex 会话同时跑，把机器压死。
+    if _session_slots() >= limit:
+        log(f"[exec] 已有 {_session_slots()} 个会话在跑（上限 {limit}），本轮不派新活")
+        return results, workers
     for item in sorted(open_items,
                        key=lambda it: (it.get("id") in blocked, it.get("ts", ""))):
         rid = item.get("id")
         if rid in jobs or rid in active_ids:
             continue
+        if _session_slots() >= limit:
+            break
         # 防重复派发：同一工作区已经有 codex exec 在跑（多半是重启后遗留的孤儿），
         # 再派一个只会叠加进程把机器拖死。
         try:
@@ -2665,6 +2678,27 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
         # 已经有在途成果的（worktree 里留着改动、或分支上有未落提交）不需要
         # 新会话，只走收口门禁；把它们算进上限等于让旧 bug 留下的
         # exec_retry_cap 伪失败永久锁死已经做完的活。
+        # 分支上的提交如果已经全在 main 里，这条其实已经做完了，只是台账
+        # 没收口。这种情况不该再派会话、也不该被派发上限锁住，直接按
+        # 「已落盘但未收口」关闭即可（幂等：close 只追加台账）。
+        if item.get("kind") != "resolve":
+            try:
+                _r = _state_repo()
+                _b, _wt0, _ = _exec_target(item, cfg, _r)
+                _real = _wt0 if _wt0.exists() else (_worktree_for_branch(_r, _b) or _wt0)
+                _clean = _real.exists() and not _changed_paths(_real)
+                if (_clean and _b and _r
+                        and not _branch_pending_commits(_r, _b, "main")
+                        and _git(_r, "rev-parse", "--verify", _b)[0] == 0):
+                    _rc_c, _out_c = _run_truthctl(
+                        ["close", rid, "auto-close: 分支内容已全部在 main"],
+                        extra_env={"KG_TRUTH_COMMIT": _b})
+                    log(f"[exec] {rid} 分支已全在 main 且工作区干净 -> 自动收口 "
+                        f"rc={_rc_c}")
+                    if _rc_c == 0:
+                        continue
+            except Exception as _exc:
+                log(f"[exec] {rid} 自动收口判断失败（忽略）：{_exc!r}")
         if (item.get("kind") != "resolve"
                 and not _exec_has_inflight_work(item, cfg, _state_repo())):
             _cap = _exec_attempt_gate(rid)
@@ -2685,7 +2719,7 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
         # （只是等落盘门禁按序收口），把它们算进并发上限等于用一条不需要
         # 算力的队列项去挤占真正要跑模型的位置 —— 实测 4 个槽位里 3 个是
         # recover，机器上只剩 1 个 codex 在跑，看起来「没在并行」就是这个原因。
-        if sum(1 for j in jobs.values() if not j.get("recover")) >= limit:
+        if _session_slots() > limit:
             break
     return results, workers
 
