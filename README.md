@@ -284,7 +284,8 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 | 组件 | 作用 |
 |---|---|
 | `ops/cockpit_pulse.py` | **一页体检**。把 7 条命令压成 1 条命令、≤1.5KB 一页：HEAD vs 主干、服务健康、自动挡计数、CI、合并队列、**本窗口预算自检**，外加 automation 漂移与真相层矛盾的体检结论。心跳每拍只读这一页，检查过程不再进上下文。 |
-| `ops/cockpit_rotate.py` | **预算超标即轮换**。默认只预演；`--go` 才执行：生成交接包（身份 + 纪律原文 + 现场 + 第一批任务）→ 起新线程 → 只改 `target_thread_id`（prompt 里的旧线程 id 一并替换，否则新窗口会去监控上一代）→ 备份 + 回读校验 + 原子替换。 |
+| `ops/cockpit_rotate.py` | **预算超标即轮换**。默认只预演；`--go` 才执行：生成交接包（身份 + 纪律原文 + 现场 + 第一批任务）→ 起新线程 → 只改 `target_thread_id`（prompt 里的旧线程 id 一并替换，否则新窗口会去监控上一代）→ 备份 + 回读校验 + 原子替换。`--force` 可以让更早的轮换线（单轮 input 峰值 / 压缩频率）也触发轮换，安全前置一条不放宽。 |
+| `ops/budget_gate.py` | **预算闸门（自动挡每周期自动跑）**。每个 heartbeat 窗口 → 最近若干轮 input **峰值**、**压缩频率**（近 2 小时几次）、累计 token、rollout 体积、空闲时长；越线即记账 + 通知；**严重越线且该窗口空闲**时后台换代（带 cooldown，不打断你正在用的窗口）；近一小时用量越过硬上限则**暂停派活**（只停 `auto_exec`，tick/land/resolve 照跑，不丢在途工作），回落自动恢复。 |
 | `kgctl doctor` | **体检**。① automation 漂移（prompt 写的频次 vs `rrule`）② 真相层矛盾（已 verified 的验收项 vs 方向文件里的「未跑/未验证」表述）③ 每个挂 automation 的窗口预算。有待处理项时退出码为 1，便于 cron/看门狗报警。 |
 
 用法（`<名字>` 是 `~/.codex/automations/<名字>/automation.toml` 的目录名）：
@@ -293,10 +294,21 @@ python3 "$PLUGIN/ops/central_daemon.py" --uninstall  # 停用并删除守护
 python3 ops/cockpit_pulse.py  --automation <名字>   # 一页体检（推荐：按名字解析，轮换后不会过期）
 python3 ops/cockpit_rotate.py --automation <名字>   # 预演：打出交接包与将要改的那一行
 python3 ops/cockpit_rotate.py --automation <名字> --go   # 执行轮换（改前自动备份）
+python3 ops/cockpit_rotate.py --automation <名字> --go --force  # 更早的线（峰值 input / 压缩频率）也换
+python3 ops/budget_gate.py --report                 # 预算闸门一页（只读：各窗口预算 + 近一小时用量）
+python3 ops/budget_gate.py --go                     # 允许动作（默认只预演，不动任何东西）
+python3 ops/budget_gate.py --selftest               # 阈值/越线判定的离线自检
 python3 ops/kgctl.py doctor                          # 三项体检，有问题退出码 1
 ```
 
-一键关（文件即开关）：`~/.codex/cockpit-pulse.OFF` 关体检页、`~/.codex/cockpit-rotate.OFF` 关轮换。
+**为什么闸门要看得比「累计 80MB / 150M token」更早**：上下文是锯齿形的——涨到 ~20 万被自动压缩回 ~4 万，
+所以「最近一轮 input」可能刚好落在谷底（实测捡到 65,926，而它前十轮都在 18~20 万）。真正说明问题的是
+**峰值**和**压缩频率**；而且压缩 / 切模型之后那一轮是把整段上下文按**无缓存**重发的，实测单次 18~22 万
+全价 input。所以闸门的默认轮换线是「近 25 轮峰值 > 165k」或「近 2 小时压缩 ≥ 3 次」。
+
+一键关（文件即开关）：`~/.codex/cockpit-pulse.OFF` 关体检页、`~/.codex/cockpit-rotate.OFF` 关轮换、
+`~/.codex-autopilot/BUDGET_GATE_OFF` 关预算闸门（也可用 `~/.codex/budget-gate.OFF` 或 `KG_BUDGET_GATE=off`）。
+阈值可用 `~/.codex/budget-gate.config.json` 覆盖（只写你想改的键）。
 
 **为什么不能只「换个 id」**：新窗口是空的，不知道自己是司令台、不知道纪律、不知道在途任务。
 所以轮换必须同时交身份与纪律（从 `automation.toml` 原文带过去）、现场（一页体检）和第一批任务。

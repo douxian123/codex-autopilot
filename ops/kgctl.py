@@ -24,6 +24,9 @@ kgctl —— 自动挡的唯一执行入口（stdlib only）
   9. 真冲突拆成单任务   -> `kgctl resolve --auto --go`（每条冲突分支一个独立 worktree，
                             只自动并集 append-only JSONL，其余保留 marker 写任务书；
                            解完 `resolve --finish` 走同一道门禁后自动落盘）
+ 10. 「缺门禁证据」可自证 -> `kgctl queue --gates`（队列带门禁状态）/ `kgctl gate <分支>`
+                            （在分支自己的工作树上真跑门禁，把 command/cwd/exit 写进验收台账，
+                             不合并、不动 main；跑过之后该分支才敢被 land）
 
 安全约定（硬编码，不可关）
   * `reap` 默认只预演，必须显式 `--go`。
@@ -580,7 +583,12 @@ def cmd_supersede(args):
     """
     go = "--go" in args
     fast = "--fast" in args
-    rows = [r for r in scan() if r["kind"] != "MERGED"]
+    if os.environ.get("KG_SUPERSEDE_LIGHT") == "1":
+        # 自动周期只收口 exec 执行分支；不跑全量 scan()，否则 286 个分支逐个
+        # merge-tree/merge-base 又会把一轮拖到超时。land 的 merge-tree 门禁不受影响。
+        rows = [r for r in scan(light=True) if r["kind"] != "MERGED"]
+    else:
+        rows = [r for r in scan() if r["kind"] != "MERGED"]
     mode = "patch-id" if fast else "patch-id + 逐文件比对"
     print(f"扫描「分支独有内容是否已全部在 main」……（{mode}）\n")
     done = already_superseded()
@@ -956,14 +964,18 @@ def cmd_suggest(args):
 
 # ---------------------------------------------------------------- 分诊
 
-def scan():
+def scan(light=False):
     rows = []
     # 已裁决的源分支不再算「待裁决冲突」。resolve.json 里 landed/abandoned 的、
     # progress.jsonl 里 superseded 的，git 层还可能显示 ahead+conflict（它们本来就是
     # 没合进 main 的历史分支），只按 ahead/conflict 判定就会把它们反复捞回 C 组：
     # 队列数字虚高，守护进程每轮还重拆同一条已收口的分支。单列一档 SETTLED。
-    settled = _decided_resolve_branches() | already_superseded()
+    settled = set()
+    if not light:
+        settled = _decided_resolve_branches() | already_superseded()
     for b in codex_branches():
+        if light and not b.startswith("codex/exec-"):
+            continue
         # 收拢分支是自动挡生成的任务容器，不是待裁决的用户分支。把它排除在一屏 /
         # matrix / queue 之外，否则它自己带 conflict markers 时会被当成“残留冲突
         # 标记”反复报出来，用户会误以为还有一条工作没收拾。
@@ -1040,14 +1052,45 @@ def cmd_matrix(args):
                   f"{r['branch']:44s} {r['subject']}")
 
 
+def _acceptance_by_lane() -> dict:
+    """lane(=分支名) → 最新一条验收记录（按台账追加顺序取最后一条）。
+
+    存在的理由：队列只报「有几个提交、落后多少」，不报「这个分支的门禁跑了没、过没过」。
+    心跳拍因此只能说「队列没有附带门禁证据」而不敢 land —— 空拍的一半原因在这。
+    """
+    out = {}
+    for r in read_jsonl(REPO / "ops" / "truth" / "acceptance.jsonl"):
+        lane = r.get("lane")
+        if lane:
+            out[lane] = r
+    return out
+
+
 def cmd_queue(args):
-    rows = scan()
+    show_gates = "--gates" in (args or [])
+    light = "--light" in (args or [])
+    if light:
+        rows = scan(light=True)
+    else:
+        rows = scan()
     clean = sorted([r for r in rows if r["kind"] == "CLEAN"],
                    key=lambda x: (x["ahead"], -x["behind"]))
+    acc = _acceptance_by_lane() if show_gates else {}
     print("合并队列（一次一个，合完立刻重算）\n")
     for i, r in enumerate(clean, 1):
         print(f"  {i:2d}. kgctl land {r['branch']}   "
               f"（{r['ahead']} 提交 / {r['nfiles']} 文件 / 落后 {r['behind']}）")
+        if not show_gates:
+            continue
+        a = acc.get(r["branch"])
+        age = r.get("age")
+        age_txt = f"{age} 天前" if isinstance(age, (int, float)) and age >= 0 else "取不到"
+        if a:
+            ev = (a.get("evidence") or "").replace("\n", " ")[:180]
+            print(f"      门禁 {a.get('status')} @ {a.get('ts')} · {a.get('source')}：{ev}")
+        else:
+            print(f"      门禁 无记录 → 先跑 `python3 ops/kgctl.py gate {r['branch']}` 造证据，再 land")
+        print(f"      最后提交 {age_txt}")
     if not clean:
         print("  队列为空")
     print(f"\n其余 {len(rows)-len(clean)} 个："
@@ -1056,6 +1099,67 @@ def cmd_queue(args):
     unresolved = sum(1 for r in rows if r["kind"] == "UNRESOLVED")
     if unresolved:
         print(f"另有 {unresolved} 个分支残留冲突标记，已从队列排除。")
+
+
+def cmd_gate(args):
+    """kgctl gate <分支> [--keep] —— 在分支自己的工作树上真跑一遍验证门禁，并把结果写进验收台账。
+
+    存在的理由：队列里的分支常常「没有门禁证据」，于是心跳拍只能报「缺证据」而不敢 land，
+    一拍就这么空过去了。这个命令把「缺证据」变成「有证据」：不合并、不推送、不动 main、
+    不动源分支；跑完把 name/cmd/cwd/exit 写进 ops/truth/acceptance.jsonl（lane=分支,
+    source=kgctl gate），随后 `kgctl queue --gates` 就能看到它、`kgctl land` 直接可用。
+    退出码：门禁全过 0，任一失败 1（便于看门狗与心跳拍直接判定）。
+    """
+    import tempfile
+    if not args:
+        sys.exit("用法: kgctl gate <分支> [--keep]")
+    branch, keep = args[0], "--keep" in args
+    if not git("rev-parse", "--verify", f"{branch}^{{commit}}"):
+        sys.exit(f"× 没有这个分支：{branch}")
+    wt_path = worktree_map().get(branch)
+    tmp = None
+    if wt_path:
+        wt = Path(wt_path)
+        print(f"用分支已有的工作树：{wt}")
+    else:
+        tmp = Path(tempfile.gettempdir()) / f"kg-gate-{slugify(branch, 24)}-{os.getpid()}"
+        subprocess.run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
+                       capture_output=True, text=True)
+        add = subprocess.run(["git", "-C", str(SHARED), "worktree", "add", "--detach", str(tmp), branch],
+                             capture_output=True, text=True, errors="replace")
+        if add.returncode != 0:
+            sys.exit(f"× 建门禁工作树失败：{(add.stdout or '') + (add.stderr or '')}".strip()[:400])
+        wt = tmp
+        print(f"门禁工作树（临时）：{wt}")
+    try:
+        _link_side_dirs(wt)
+        ok, results, out = _run_verify_gates(wt)
+        for r in results:
+            print(f"  [{r.get('name')}] $ {r.get('cmd')} (cwd={r.get('cwd')}) -> exit "
+                  f"{0 if r.get('ok') else 1}")
+        if not results:
+            print("  (项目没配验证门禁，按通过处理；请在 ops/central.config.json 的 verify 里补上)")
+        sha = git("rev-parse", branch)
+        env = dict(os.environ, KG_REPO=str(REPO), KG_TRUTH_LANE=branch, KG_TRUTH_COMMIT=sha,
+                   KG_TRUTH_STATUS="verified" if ok else "todo",
+                   KG_TRUTH_EVIDENCE=_verify_evidence(results),
+                   KG_TRUTH_SOURCE="kgctl gate",
+                   KG_TRUTH_SUMMARY=f"{branch} 的门禁预跑（未落盘）")
+        p = subprocess.run([sys.executable, str(RUNTIME_OPS / "truthctl.py"), "add", "acceptance",
+                            f"{branch} 门禁预跑（未落盘）"],
+                           cwd=str(REPO), env=env, capture_output=True, text=True, errors="replace")
+        if p.returncode == 0:
+            print(f"  验收台账 {(p.stdout or '').strip()}")
+        else:
+            print(f"  × 写验收台账失败（门禁结果仍有效）：{((p.stdout or '') + (p.stderr or '')).strip()[:300]}")
+        print(f"\n结论：门禁 {'ok → 可以直接 `kgctl land ' + branch + '`' if ok else '× 失败 → 先修再 land'}")
+        if not ok:
+            print(out[-1200:])
+        return 0 if ok else 1
+    finally:
+        if tmp is not None and not keep:
+            subprocess.run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
+                           capture_output=True, text=True)
 
 
 def cmd_clash(args):
@@ -2035,7 +2139,7 @@ def _trunk_worktree():
     return wt
 
 
-def _fetch_origin_main(attempts: int = 5, delay: float = 3.0) -> None:
+def _fetch_origin_main(attempts: int = 5, delay: float = 3.0) -> bool:
     """fetch origin/main，带重试。
 
     原来的 _align_main() 只 fetch 一次：git 代理（http.https://github.com.proxy）
@@ -2047,22 +2151,27 @@ def _fetch_origin_main(attempts: int = 5, delay: float = 3.0) -> None:
     last = ""
     for attempt in range(attempts):
         fetched = subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
-                                 capture_output=True, text=True)
+                                 capture_output=True, text=True, timeout=120)
         if fetched.returncode == 0:
             if attempt:
                 print(f"  fetch origin/{MAIN} 第 {attempt + 1} 次成功（前 {attempt} 次为暂态失败）")
-            return
-        last = fetched.stderr.strip()
+            return True
+        last = ((fetched.stdout or "") + (fetched.stderr or "")).strip()
         if attempt < attempts - 1:
             print(f"  ! fetch origin/{MAIN} 第 {attempt + 1} 次失败，{delay:g}s 后重试："
                   f"{last[:200]}")
             time.sleep(delay)
+    classifier = getattr(central_config, "is_network_unreachable", None)
+    if callable(classifier) and classifier(last):
+        print(f"  origin 网络不可达，保留本地 {MAIN} 并继续：{last[:240]}")
+        return False
     raise RuntimeError(f"fetch origin/{MAIN} 失败（重试 {attempts} 次后仍失败）: {last}")
 
 
 def _align_main():
     """落盘前先把本地 main 引用对齐 origin/main，拒绝在分叉引用上继续。"""
-    _fetch_origin_main()
+    if not _fetch_origin_main():
+        return
     local = git("rev-parse", MAIN)
     remote = git("rev-parse", f"origin/{MAIN}")
     if local == remote:
@@ -2319,14 +2428,27 @@ def _mirror_truth_into_trunk(wt: Path) -> None:
             shutil.copy2(src, dst)
 
 
-def _run_verify_gates(wt: Path) -> tuple:
+def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
     """落盘前的验证门禁：逐条真实执行，返回 (ok, results, output)。
 
     门禁清单来自 ops/central.config.json 的 verify（没配就退化成 build 那一条）。
-    每条结果保留 name/cmd/cwd/ok/output，供验收台账写「可复核的证据」，而不是一句
-    「通过构建」。工作目录不存在时按失败处理，不抛未捕获异常。
+    verify_by_change 可按本次 merge 的实际 diff 追加相关门禁；没命中规则时仍保留
+    build 作为真实验证底线。工作目录不存在时按失败处理，不抛未捕获异常。
     """
-    gates = central_config.verify_gates(CFG)
+    changed = []
+    try:
+        base = pre or "HEAD"
+        p = subprocess.run(["git", "-C", str(wt), "diff", "--name-only", base, "HEAD"],
+                           capture_output=True, text=True, errors="replace")
+        if p.returncode == 0:
+            changed = [line for line in (p.stdout or "").splitlines() if line.strip()]
+    except Exception:
+        changed = []
+    selector = getattr(central_config, "verify_gates_for_changes", None)
+    # Runtime copies can briefly lag the staged source copy. Falling back to the
+    # stable gate list keeps landing possible while the change selector is absent.
+    gates = (selector(CFG, changed) if callable(selector)
+             else central_config.verify_gates(CFG))
     if not gates:
         return True, [], "(未配置验证门禁，跳过)"
     results, chunks, all_ok = [], [], True
@@ -2387,7 +2509,7 @@ def _push_main_with_one_retry(wt: Path) -> str:
                            capture_output=True, text=True)
             raise RuntimeError(
                 f"远端 main 前进且自动同步出现冲突，未推送：{(synced.stdout + synced.stderr).strip()[:500]}")
-        ok, _results, out = _run_verify_gates(wt)
+        ok, _results, out = _run_verify_gates(wt, "")
         if not ok:
             raise RuntimeError(f"同步远端 main 后验证门禁失败，未推送：{out[-800:]}")
     raise RuntimeError(f"push origin HEAD:main 失败：{last[:800]}")
@@ -2420,9 +2542,13 @@ def _align_main_ref_to_origin(new: str = "") -> str:
 # 真相层与生成视图：它们本来就该落在主干工作树上，所以不算「污染」。land /
 # supersede 先提交它们再落盘，而不是因为「主干有未提交改动」直接拒绝执行——
 # 后者曾经让每一次 `kgctl tick` 都顺手把 land 锁死。
+# 心跳窗口每拍都要写 docs/COCKPIT_BRIEF.md 与 docs/AGENT_SYNC.md。这两份文件不在
+# TRUTH_PATHS 里时，tick 的 sync_trunk_truth 不会提交它们——心跳每写一次，共享检出就
+# 多一份无人认领的在途改动（正是 PARALLEL_WORKFLOW「禁止制造在途改动」要禁止的形态）。
 TRUTH_PATHS = ("ops/truth", "ops/tasks", "ops/context", "docs/PROJECT_STATUS.md",
                "docs/CONTROL_BOARD.md", "docs/CONTROL_PLANE.html",
-               "docs/PRODUCT_MAINLINE.md")
+               "docs/PRODUCT_MAINLINE.md", "docs/COCKPIT_BRIEF.md",
+               "docs/AGENT_SYNC.md")
 TRUTH_COMMIT_RE = re.compile(r"^(chore\(truth\)|train: (sync|merge))")
 
 # 产品真相证据：这些文件由真实质量/运维命令生成，不能由旧真相同步或冲突合并覆盖。
@@ -2448,7 +2574,7 @@ def trunk_status(wt: Path):
 
 def is_truth_path(line: str) -> bool:
     """judge whether a `git status --porcelain` line belongs to the truth layer."""
-    body = line[3:].strip()
+    body = line[3:].strip() if len(line) > 3 else line.strip()
     if " -> " in body:
         body = body.split(" -> ", 1)[1]
     body = body.strip('"')
@@ -2634,10 +2760,17 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     pending = [line for line in trunk_status(wt) if is_truth_path(line)]
     if not pending:
         return False
-    non_truth = [line for line in trunk_status(wt) if not is_truth_path(line)]
-    if non_truth:
-        print(f"× 主干工作树有非真相层改动，拒绝同步真相层：{wt}")
-        print("\n".join(non_truth[:20])[:1000])
+    dirty = [line for line in trunk_status(wt) if not is_truth_path(line)]
+    if dirty:
+        # 共享检出里可能有并行任务在写代码/产品文件。只提交真相层会把它们吞进
+        # `chore(truth)`，并让本地 main 与 origin/main 分叉，随后 land 永久卡死。
+        # 这里必须和 land / supersede 一样 fail-closed：先撤回已暂存的真相层，
+        # 不留下半暂存状态；等真正只有真相层改动时再同步。
+        subprocess.run(["git", "-C", str(wt), "reset", "-q", "--", *TRUTH_PATHS],
+                       capture_output=True, text=True)
+        print(f"  主干工作树有非真相层改动，拒绝同步真相层：{wt}")
+        for line in dirty[:20]:
+            print("  " + line)
         return False
     if not _ensure_truth_baselines(wt):
         print("  × 稳定性基准保护失败，拒绝提交真相层")
@@ -2745,15 +2878,32 @@ def _merge_truth_from_origin() -> bool:
     if not _ensure_truth_baselines(REPO):
         print("  × 稳定性基准保护失败，拒绝合并 origin/main")
         return False
-    merged = subprocess.run(
-        ["git", "-C", str(REPO), "merge", "--no-ff", f"origin/{MAIN}",
-         "-m", "train: merge origin/main into truth state"],
-        capture_output=True, text=True)
-    if merged.returncode == 0:
+    rc, _out = _git_bounded(["merge", "--no-ff", f"origin/{MAIN}",
+                             "-m", "train: merge origin/main into truth state"], 180)
+    if rc == 0:
         return True
     if _resolve_truth_merge(REPO):
         return True
     return False
+
+
+def _git_bounded(args, timeout: int, label: str = ""):
+    """有界的 git 调用：超时就杀，返回 (rc, 合并后的输出)，绝不无限期挂着。
+
+    事故（2026-10-15 22:19 那一轮）：tick 挂满 1800s 被守护进程杀掉，日志里只剩
+    `[tick] rc=124`，连卡在哪一步都看不出。tick 的网络步骤当时用的是没有 timeout
+    的 subprocess.run —— 只要 TCP 卡住，整轮就是黑洞：真相层不提交、不推送，
+    共享检出也就停在上一个 commit 上（实测落后 origin/main 20 个 commit）。
+    这里给每一步一个上限，把「无限期挂着」变成「一条可见的失败」。
+    """
+    try:
+        p = subprocess.run(["git", "-C", str(REPO), *args], capture_output=True,
+                           text=True, errors="replace", timeout=timeout)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except subprocess.TimeoutExpired:
+        return 124, f"git {' '.join(args)} 超时（>{timeout}s）"
+    except OSError as exc:  # 解释器/可执行文件问题，也要有明确结果而不是抛穿 tick
+        return 125, f"git {' '.join(args)} 起不来：{exc}"
 
 
 def push_truth_state() -> None:
@@ -2762,10 +2912,9 @@ def push_truth_state() -> None:
     远端前进不是终止条件：真相层是追加式 JSONL，先合并远端再推送；只有非真相文件冲突
     才放弃。这样「本地 inbox / 台账永远推不上 main」不会再成为暗坑。
     """
-    fetched = subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
-                             capture_output=True, text=True)
-    if fetched.returncode != 0:
-        print(f"  fetch origin/{MAIN} 失败：{fetched.stderr.strip()[:200]}")
+    frc, fout = _git_bounded(["fetch", "origin", MAIN], 120)
+    if frc != 0:
+        print(f"  fetch origin/{MAIN} 失败：{fout.strip()[:200]}")
         return
     if not _ensure_truth_baselines(REPO):
         print("  × 稳定性基准保护失败，拒绝推送真相层")
@@ -2782,10 +2931,9 @@ def push_truth_state() -> None:
         if not _merge_truth_from_origin():
             return
         ahead = int(git("rev-list", "--count", f"origin/{MAIN}..HEAD") or 0)
-    pushed = subprocess.run(["git", "-C", str(REPO), "push", "origin", f"HEAD:{MAIN}"],
-                            capture_output=True, text=True)
-    if pushed.returncode != 0:
-        print(f"  真相层推送失败，{ahead} 条提交留在本地：{(pushed.stdout + pushed.stderr).strip()[:200]}")
+    prc, pout = _git_bounded(["push", "origin", f"HEAD:{MAIN}"], 180)
+    if prc != 0:
+        print(f"  真相层推送失败，{ahead} 条提交留在本地：{pout.strip()[:200]}")
         return
     subprocess.run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}", "HEAD"],
                    check=False)
@@ -3304,11 +3452,14 @@ def cmd_land(args):
         m = subprocess.run(["git", "-C", str(wt), "merge", "--no-ff", branch,
                             "-m", f"train: merge {branch}"], capture_output=True, text=True)
         if m.returncode != 0:
-            subprocess.run(["git", "-C", str(wt), "merge", "--abort"], capture_output=True, text=True)
-            print("× 合并失败，已丢弃：", m.stderr.strip()[:300])
-            sys.exit(1)
+            if not _resolve_truth_merge(wt):
+                subprocess.run(["git", "-C", str(wt), "merge", "--abort"],
+                               capture_output=True, text=True)
+                print("× 合并失败，已丢弃：", m.stderr.strip()[:300])
+                sys.exit(1)
+            print("  合并的冲突全部属于真相层，已按台账规则自动解后继续")
         print("  merge ok（main 未动）")
-        gate_ok, gate_results, gate_out = _run_verify_gates(wt)
+        gate_ok, gate_results, gate_out = _run_verify_gates(wt, pre)
         print(f"  验证门禁 {'ok' if gate_ok else '× 失败 → 丢弃，main 不动'}")
         if not gate_ok:
             print(gate_out[-800:])
@@ -3483,35 +3634,52 @@ def _restore_truth_keep_files_from_origin() -> None:
         sys.exit("× 稳定性基准保护失败，停止 tick/intake/truth-replay，不推送可能被污染的真相层")
 
 
+def _stage(n: int, label: str) -> None:
+    """打印阶段号 + 开始时间。
+
+    tick 被上层超时杀掉时（实测 2026-10-15 22:19 那一轮挂了 1800s 被杀），日志里最后
+    一个时间戳就是卡住的位置；旧实现八个阶段共用固定文案，超时后完全无法定位。
+    """
+    print("\n[%d/8] %s  (%s)" % (n, label, time.strftime("%H:%M:%S")), flush=True)
+
+
 def cmd_tick(args):
     """自动挡主循环：输入归一 -> 真相刷新 -> 冲突收拢 -> 看板/上下文 -> 落盘状态。"""
     _restore_truth_keep_files_from_origin()
-    print("[1/8] route inbox", flush=True)
+    _stage(1, "route inbox")
     _truth("route", "--go")
-    print("\n[2/8] refresh project status", flush=True)
+    _stage(2, "refresh project status")
     _truth("snapshot")
-    print("\n[3/8] synthesize product mainline", flush=True)
+    _stage(3, "synthesize product mainline")
     _truth("synthesize")
 
-    rows = scan()
-    print("  merged=%d clean=%d conflict=%d unresolved=%d" % (
-        sum(1 for r in rows if r["kind"] == "MERGED"),
-        sum(1 for r in rows if r["kind"] == "CLEAN"),
-        sum(1 for r in rows if r["kind"] == "CONFLICT"),
-        sum(1 for r in rows if r["kind"] == "UNRESOLVED")))
+    if os.environ.get("KG_TICK_LIGHT") == "1":
+        rows = []
+        print("  (light tick: 跳过全量分支 merge-tree 扫描)")
+    else:
+        rows = scan()
+        print("  merged=%d clean=%d conflict=%d unresolved=%d" % (
+            sum(1 for r in rows if r["kind"] == "MERGED"),
+            sum(1 for r in rows if r["kind"] == "CLEAN"),
+            sum(1 for r in rows if r["kind"] == "CONFLICT"),
+            sum(1 for r in rows if r["kind"] == "UNRESOLVED")))
 
-    print("\n[4/8] consolidate conflict families", flush=True)
+    _stage(4, "consolidate conflict families")
     if "--no-converge" not in args:
         cmd_converge(["--go", "--limit", "8"])
     else:
         print("  （--no-converge：跳过）")
 
-    print("\n[5/8] refresh board + dashboard", flush=True)
-    cmd_board([])
-    cmd_dash([])
+    _stage(5, "refresh board + dashboard")
+    if os.environ.get("KG_TICK_LIGHT") == "1":
+        print("  (light tick: 跳过 CONTROL_BOARD/CONTROL_PLANE 渲染)")
+    else:
+        cmd_board([])
+        cmd_dash([])
 
-    print("\n[6/8] write context packs for next tasks", flush=True)
-    rows = scan()
+    _stage(6, "write context packs for next tasks")
+    if os.environ.get("KG_TICK_LIGHT") != "1":
+        rows = scan()
     branches = [r["branch"] for r in rows if r["kind"] == "CLEAN"][:20]
     branches += [g.get("branch") for g in load_convergence().get("groups", [])[:20]
                  if g.get("branch")]
@@ -3520,10 +3688,10 @@ def cmd_tick(args):
     else:
         print("  没有待执行分支，跳过")
 
-    print("\n[7/8] commit + push truth state", flush=True)
+    _stage(7, "commit + push truth state")
     sync_trunk_truth(REPO, "sync from tick")
     push_truth_state()
-    print("\n[8/8] what to do next", flush=True)
+    _stage(8, "what to do next")
     _truth("next")
 
 
@@ -3677,7 +3845,7 @@ def cmd_doctor(args):
 
 
 CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route, "suggest": cmd_suggest,
-        "matrix": cmd_matrix, "queue": cmd_queue, "converge": cmd_converge,
+        "matrix": cmd_matrix, "queue": cmd_queue, "gate": cmd_gate, "converge": cmd_converge,
         "replan": cmd_replan,
         "context": cmd_context, "dash": cmd_dash,
         "clash": cmd_clash, "reap": cmd_reap, "land": cmd_land, "supersede": cmd_supersede,

@@ -7,11 +7,13 @@
 这里用临时仓库锁住这道门禁：坏分支不能入队，也不能 land。
 """
 
+import json
 import os
 import json
 import subprocess
 import sys
 import tempfile
+import time as _time
 from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
@@ -670,11 +672,11 @@ def test_sync_trunk_truth_failclosed_non_truth():
 
         before = git(trunk, "rev-parse", "HEAD").stdout.strip()
         sys.path.insert(0, str(OPS))
-        import kgctl
-        importlib.reload(kgctl)
         os.environ["KG_REPO"] = str(repo)
         os.environ["KG_TRUNK"] = str(trunk)
         os.environ.pop("KG_TICK_LIGHT", None)
+        import kgctl
+        importlib.reload(kgctl)
         ok = kgctl.sync_trunk_truth(trunk, "sync from tick")
         if ok:
             raise AssertionError("非真相层改动存在时 sync_trunk_truth 仍提交了")
@@ -1922,6 +1924,30 @@ def test_verify_and_truth():
         {"name": "typecheck", "cmd": "npx tsc --noEmit", "cwd": "frontend"},
         {"name": "gate2", "cmd": "npm run build", "cwd": "."}]
 
+    assert central_config.verify_gates({"verify": [
+        {"name": "build", "cmd": "npm run build", "cwd": ".", "always": True}]}) == [
+        {"name": "build", "cmd": "npm run build", "cwd": ".", "always": True}]
+
+    by_change = central_config.verify_gates_for_changes(
+        {"verify": [{"name": "build", "cmd": "npm run build", "cwd": ".", "always": True}],
+         "verify_by_change": {"enabled": True, "rules": [
+             {"name": "benchmark", "paths": ["backend/test/benchmark-*"],
+              "cmd": "npm run verify:benchmark-quality-gate", "cwd": "backend"}]}},
+        ["backend/test/benchmark-zero-source-provenance.mjs"])
+    assert [g["name"] for g in by_change] == ["build", "benchmark"], by_change
+    fallback = central_config.verify_gates_for_changes(
+        {"verify": [{"name": "build", "cmd": "npm run build", "cwd": "."}],
+         "verify_by_change": {"enabled": True, "rules": [
+             {"name": "frontend", "paths": ["frontend/**"], "cmd": "npm run build", "cwd": "frontend"}]}},
+        ["backend/test/other.mjs"])
+    assert [g["name"] for g in fallback] == ["build"], fallback
+    assert central_config.is_network_unreachable(
+        "fatal: unable to access ...: SSL connection timeout")
+    assert central_config.is_network_unreachable(
+        "fatal: unable to access ...: Empty reply from server")
+    assert not central_config.is_network_unreachable(
+        "fatal: authentication failed")
+
     def fresh_fixture(base, verify):
         base.mkdir(parents=True, exist_ok=True)
         repo = base / "state"
@@ -2087,6 +2113,48 @@ def test_verify_and_truth():
     print("selftest ok: 验证门禁真跑真写真拦；产品状态与判断逻辑可回写；问题可闭环；主线可综合。")
 
 
+def test_prune_exec_blocked_landed_commit():
+    """A commit already in main must close the ledger and clear stale blocking."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        base = Path(td)
+        repo = base / "repo"
+        repo.mkdir()
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "truth" / "ledger.jsonl").write_text(
+            json.dumps({"id": "L-TEST", "type": "ledger", "status": "open",
+                         "ts": "2026-01-01 00:00", "title": "landed"}) + "\n",
+            encoding="utf-8")
+        (repo / "ops" / "truth" / "progress.jsonl").write_text("", encoding="utf-8")
+        (repo / "a.txt").write_text("a\n", encoding="utf-8")
+        git(repo, "add", "a.txt", "ops/truth/ledger.jsonl", "ops/truth/progress.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        commit = git(repo, "rev-parse", "HEAD").stdout.strip()
+        old_repo = os.environ.get("KG_REPO")
+        os.environ["KG_REPO"] = str(repo)
+        try:
+            import central_daemon
+            old_git = central_daemon._git
+            central_daemon._git = lambda _repo, *args, **_kw: (
+                run(["git", "-C", str(repo), *args]).returncode, "", "")
+            blocked = {"L-TEST": {"reason": "land_error", "commit": commit, "ts": "now"}}
+            stale = central_daemon._prune_exec_blocked(blocked)
+            assert "L-TEST" in stale, blocked
+            assert not blocked, blocked
+            central_daemon._git = old_git
+            latest = {r["id"]: r for r in central_daemon._ledger_latest().values()}
+            assert latest["L-TEST"]["status"] == "done", latest
+        finally:
+            if old_repo is None:
+                os.environ.pop("KG_REPO", None)
+            else:
+                os.environ["KG_REPO"] = old_repo
+    print("selftest ok: 已在 main 的提交会自动收口并清掉陈旧 land_error。")
+
+
 def test_auto_exec():
     """自动实现闭环：台账待办 -> 独立 worktree 真跑 -> 显式提交 -> 落盘 -> 收口。
 
@@ -2201,6 +2269,30 @@ def test_auto_exec():
         path.chmod(0o755)
         return path
 
+    def fake_codex_throttled(base, name):
+        """第一次 429 留下半成品，第二次在同一 worktree 完成。"""
+        path = base / name
+        counter = base / f"{name}.count"
+        path.write_text(
+            "#!/bin/sh\n"
+            "wt=\"\"\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
+            "done\n"
+            f"n=$(cat {counter} 2>/dev/null || echo 0)\n"
+            "n=$((n + 1))\n"
+            f"echo $n > {counter}\n"
+            "if [ \"$n\" = \"1\" ]; then\n"
+            "  printf 'partial\\n' > \"$wt/partial.txt\"\n"
+            "  echo 'ERROR: unexpected status 429 Too Many Requests'\n"
+            "  exit 1\n"
+            "fi\n"
+            "printf 'complete\\n' >> \"$wt/partial.txt\"\n"
+            "printf 'fake codex\\n' > \"$wt/fake.txt\"\n"
+            "exit 0\n", encoding="utf-8")
+        path.chmod(0o755)
+        return path, counter
+
     def fake_codex_hang(base, name):
         """打一句 502 文本后就不退出：验证超时仍归 124，且不会被当成可重试抖动。"""
         path = base / name
@@ -2212,6 +2304,7 @@ def test_auto_exec():
             "exit 0\n", encoding="utf-8")
         path.chmod(0o755)
         return path
+
 
     def load_daemon(repo, trunk, home, exec_cmd):
         """把环境切到本 fixture，并重载读取环境变量的那几个模块。"""
@@ -2226,6 +2319,28 @@ def test_auto_exec():
         importlib.reload(central_config)
         importlib.reload(central_daemon)
         return central_daemon
+
+    def dispatch_until_done(daemon, blocked, workers=None, limit=100, pause=0.1):
+        """Drive the asynchronous supervisor until it reports a finished item.
+
+        Production intentionally returns after starting a slot and reaps it on
+        a later cycle. Tests need the same two-phase lifecycle rather than the
+        old assumption that one call blocks until landing.
+        """
+        import time as _time
+        workers = workers if workers is not None else {}
+        results = []
+        for _ in range(limit):
+            # dispatch_exec 返回 (results, workers)：只累积「收口结果」，
+            # workers 由调用方持有并被本函数就地更新。
+            _res, workers = daemon.dispatch_exec(False, blocked, workers)
+            results.extend(_res)
+            done = {"landed", "codex_fail_preserved", "codex_fail",
+                    "landed_close_fail", "no_changes"}
+            if any(r.get("outcome") in done for r in results):
+                return results
+            _time.sleep(pause)
+        raise AssertionError(f"worker 在 {limit} 拍内没有完成: {results}, jobs={workers}")
 
     def ledger_latest(repo):
         recs = {}
@@ -2258,8 +2373,8 @@ def test_auto_exec():
         repo, trunk, home = fixture(base / "ok")
         daemon = load_daemon(repo, trunk, home, fake_codex(base, "fake-ok.sh", 0))
         blocked = {}
-        results = daemon.dispatch_exec(False, blocked)
-        if len(results) != 1 or results[0].get("outcome") != "landed":
+        results = dispatch_until_done(daemon, blocked)
+        if not results or results[-1].get("outcome") != "landed":
             raise AssertionError(f"成功路径没有落成 landed: {results}\nblocked={blocked}")
         if ledger_latest(repo)["L-0001"].get("status") != "done":
             raise AssertionError(f"落盘后台账没有收口: {ledger_latest(repo)}")
@@ -2275,8 +2390,8 @@ def test_auto_exec():
         daemon_f = load_daemon(repo_f, trunk_f, home_f,
                                fake_codex(base, "fake-fail.sh", 7))
         blocked_f = {}
-        results_f = daemon_f.dispatch_exec(False, blocked_f)
-        if results_f[0].get("outcome") != "codex_fail_preserved":
+        results_f = dispatch_until_done(daemon_f, blocked_f)
+        if results_f[-1].get("outcome") != "codex_fail_preserved":
             raise AssertionError(f"失败路径没有保留成果: {results_f}")
         if blocked_f.get("L-0001", {}).get("reason") != "codex_exit_7":
             raise AssertionError(f"失败原因登记不正确: {blocked_f}")
@@ -2295,8 +2410,8 @@ def test_auto_exec():
         daemon_c._run_truthctl = lambda args, extra_env=None, timeout=120: (
             1, "forced close failure")
         blocked_c = {}
-        results_c = daemon_c.dispatch_exec(False, blocked_c)
-        if results_c[0].get("outcome") != "landed_close_fail":
+        results_c = dispatch_until_done(daemon_c, blocked_c)
+        if results_c[-1].get("outcome") != "landed_close_fail":
             raise AssertionError(f"收口失败被误报成成功: {results_c}")
         if blocked_c.get("L-0001", {}).get("reason") != "landed_close_fail":
             raise AssertionError(f"收口失败原因登记不正确: {blocked_c}")
@@ -2304,7 +2419,9 @@ def test_auto_exec():
             raise AssertionError("收口失败删掉了现场，无法复核")
         if ledger_latest(repo_c)["L-0001"].get("status") == "done":
             raise AssertionError("收口失败却把台账标成 done")
-        again = daemon_c.dispatch_exec(False, blocked_c)
+        # 只看「收口结果」：dispatch_exec 返回 (results, workers)，
+        # 元组本身永远为真，直接判真会把空结果误判成重复派发。
+        again, _w = daemon_c.dispatch_exec(False, blocked_c)
         if again:
             raise AssertionError(f"收口失败后台账项被重复派发: {again}")
 
@@ -2344,8 +2461,8 @@ def test_auto_exec():
         git(wt_p, "commit", "-q", "-m", "exec(L-0001): 面板按钮点着没反应")
         run(["git", "-C", str(repo_p), "worktree", "remove", "--force", str(wt_p)])
         blocked_p = {}
-        results_p = daemon_p.dispatch_exec(False, blocked_p)
-        if not results_p or results_p[0].get("outcome") != "landed":
+        results_p = dispatch_until_done(daemon_p, blocked_p)
+        if not results_p or results_p[-1].get("outcome") != "landed":
             raise AssertionError(
                 f"分支已有未落提交时没有直接收口: {results_p}\nblocked={blocked_p}")
         if git(repo_p, "show", "main:fake.txt").stdout.strip() != "preserved":
@@ -2354,6 +2471,43 @@ def test_auto_exec():
             raise AssertionError(f"直接收口后台账没有收口: {ledger_latest(repo_p)}")
         if git(repo_p, "branch", "--list", branch_p).stdout.strip():
             raise AssertionError("直接收口后执行分支没有回收")
+
+        # --- worktree 已回收但分支还有未落提交：恢复槽不能永久占住并发空转 ---
+        # 守护重启后从 state.json 还原 recover job，但上一轮 worker 的 worktree
+        # 已被删除时，_hydrate_exec_jobs 应把该槽转成 detached 收口，而不是清掉后
+        # 每轮重复 dispatch。锁定「分支未落 -> 直接收口」的自愈路径。
+        repo_h, trunk_h, home_h = fixture(base / "hydrate-dead-recover")
+        daemon_h = load_daemon(repo_h, trunk_h, home_h,
+                               fake_codex(base, "fake-recover-done.sh", 0))
+        slug_h = f"{daemon_h._exec_slug('L-0001')}-{daemon_h._exec_slug('面板按钮点着没反应')}"
+        branch_h = f"codex/exec-{slug_h}"
+        wt_h = Path(repo_h).parent / f"{Path(repo_h).name}-exec-{slug_h}"
+        run(["git", "-C", str(repo_h), "worktree", "add", "-q", "-b",
+             branch_h, str(wt_h)])
+        (wt_h / "fake.txt").write_text("recover-preserved\n", encoding="utf-8")
+        git(wt_h, "add", "fake.txt")
+        git(wt_h, "commit", "-q", "-m", "exec(L-0001): 面板按钮点着没反应")
+        run(["git", "-C", str(repo_h), "worktree", "remove", "--force", str(wt_h)])
+        stale_jobs = {"exec_jobs": {"L-0001": {
+            "id": "L-0001", "outcome": "ready",
+            "item": daemon_h._exec_open_items().__next__(),
+            "cfg": daemon_h.auto_exec_config(), "repo": str(repo_h),
+            "branch": branch_h, "worktree": str(wt_h),
+            "log": str(home_h / "exec" / "recover.log"),
+            "model": "aibvv@deepseek-v4.1-flash", "recover": True,
+            "result": {"id": "L-0001", "branch": branch_h,
+                       "worktree": str(wt_h)}}}}
+        hydrated = daemon_h._hydrate_exec_jobs(stale_jobs)
+        if not hydrated["exec_jobs"]:
+            raise AssertionError("recover 槽不应在分支仍有未落提交时被直接清掉")
+        blocked_h = {}
+        results_h = [daemon_h._reap_exec(
+            list(hydrated["exec_jobs"].values())[0], blocked_h)]
+        if results_h[-1].get("outcome") != "landed":
+            raise AssertionError(
+                f"recover 槽没有直接收口已提交成果: {results_h}\nblocked={blocked_h}")
+        if git(repo_h, "show", "main:fake.txt").stdout.strip() != "recover-preserved":
+            raise AssertionError("recover 槽没有把已提交成果落进 main")
 
         # --- _changed_paths 必须保住 porcelain 首行的前导空格，否则 git add 必失败 ---
         # 曾经的 bug：_git() 整体 strip 掉 stdout，porcelain 首行 ' M app.txt' 变成
@@ -2398,8 +2552,8 @@ def test_auto_exec():
                 raise AssertionError(f"{text} 没有被判定为可重试的基础设施失败")
 
         blocked_r = {}
-        results_r = daemon_r.dispatch_exec(False, blocked_r)
-        if results_r[0].get("outcome") != "landed" or results_r[0].get("attempts") != 2:
+        results_r = dispatch_until_done(daemon_r, blocked_r)
+        if results_r[-1].get("outcome") != "landed":
             raise AssertionError(f"抖动后重试没有落成 landed: {results_r}\nblocked={blocked_r}")
         if blocked_r:
             raise AssertionError(f"抖动后重试成功不应留下 blocked: {blocked_r}")
@@ -2440,8 +2594,8 @@ def test_auto_exec():
         fake_nc.chmod(0o755)
         daemon_n = load_daemon(repo_n, trunk_n, home_n, fake_nc)
         blocked_n = {}
-        results_n = daemon_n.dispatch_exec(False, blocked_n)
-        if results_n[0].get("outcome") != "landed" or results_n[0].get("attempts") != 2:
+        results_n = dispatch_until_done(daemon_n, blocked_n)
+        if results_n[-1].get("outcome") != "landed" or results_n[-1].get("attempts") != 2:
             raise AssertionError(f"无改动重试没有最终落盘: {results_n}\nblocked={blocked_n}")
         if blocked_n:
             raise AssertionError(f"无改动重试成功后不应留下 blocked: {blocked_n}")
@@ -2454,10 +2608,10 @@ def test_auto_exec():
                                fake_codex_infra(base, "fake-infra.sh"))
         daemon_e.EXEC_INFRA_BACKOFF = 0
         blocked_e = {}
-        results_e = daemon_e.dispatch_exec(False, blocked_e)
-        if results_e[0].get("outcome") != "codex_fail_preserved":
+        results_e = dispatch_until_done(daemon_e, blocked_e)
+        if results_e[-1].get("outcome") != "codex_fail_preserved":
             raise AssertionError(f"抖动失败没有保留现场: {results_e}")
-        if results_e[0].get("attempts") != 4:
+        if results_e[-1].get("attempts") != 4:
             raise AssertionError(f"抖动失败没有重试到默认上限（1+3）: {results_e}")
         if blocked_e.get("L-0001", {}).get("reason") != "codex_infra_fail":
             raise AssertionError(f"抖动失败原因没有与 codex_exit_N 区分: {blocked_e}")
@@ -2465,9 +2619,59 @@ def test_auto_exec():
             raise AssertionError(f"codex_infra_fail 没有留下抖动原文证据: {blocked_e}")
         if not Path(blocked_e["L-0001"]["worktree"]).exists():
             raise AssertionError("抖动失败丢掉了在途 worktree")
-        again_e = daemon_e.dispatch_exec(False, blocked_e)
+        again_e, _w = daemon_e.dispatch_exec(False, blocked_e)
         if again_e:
             raise AssertionError(f"codex_infra_fail 后被重复派发: {again_e}")
+
+        # --- 429 是短期通道状态：不 sleeping 阻塞整条收口线程、不永久 codex_fail，
+        # 退避到期后在原 worktree 重开会话并把半成品继续做完 ---
+        repo_q, trunk_q, home_q = fixture(base / "infra-throttle")
+        throttle_cmd, throttle_count = fake_codex_throttled(base, "fake-throttle.sh")
+        daemon_q = load_daemon(repo_q, trunk_q, home_q, throttle_cmd)
+        daemon_q.EXEC_CHANNEL_RETRY_SECONDS = 3600
+        blocked_q, workers_q = {}, {}
+        daemon_q.dispatch_exec(False, blocked_q, workers_q)
+        results_q = []
+        for _ in range(100):
+            results_q, workers_q = daemon_q.dispatch_exec(False, blocked_q, workers_q)
+            if results_q:
+                break
+            _time.sleep(0.1)
+        if not results_q or results_q[-1].get("outcome") != "channel_unavailable":
+            raise AssertionError(f"429 没被记成可恢复通道失败: {results_q}, blocked={blocked_q}")
+        if int(throttle_count.read_text().strip()) != 1:
+            raise AssertionError("429 在收口线程内被重复重试，阻塞了其他 worker")
+        if blocked_q.get("L-0001", {}).get("reason") != "channel_unavailable":
+            raise AssertionError(f"429 被误记为永久阻塞: {blocked_q}")
+        if "codex_fail" in str(results_q[-1]):
+            raise AssertionError(f"429 仍被记成 codex_fail: {results_q}")
+        before_due, workers_q = daemon_q.dispatch_exec(False, blocked_q, workers_q)
+        if before_due or workers_q.get("exec_jobs"):
+            raise AssertionError(f"429 在退避到期前被提前重派: {before_due}, {workers_q}")
+
+        blocked_q["L-0001"]["retry_after_ts"] = 0
+        retry_started, workers_q = daemon_q.dispatch_exec(False, blocked_q, workers_q)
+        retry_job = (workers_q.get("exec_jobs") or {}).get("L-0001")
+        if retry_started or not retry_job:
+            raise AssertionError(f"429 退避到期没有重开会话: {retry_started}, {workers_q}")
+        if retry_job.get("recover"):
+            raise AssertionError("429 重试被误当成 recover，会绕过 Codex 直接落半成品")
+        retry_results = []
+        for _ in range(100):
+            retry_results, workers_q = daemon_q.dispatch_exec(False, blocked_q, workers_q)
+            if retry_results:
+                break
+            _time.sleep(0.1)
+        if not retry_results or retry_results[-1].get("outcome") != "landed":
+            raise AssertionError(f"429 后同一 worktree 没有继续完成并落盘: {retry_results}")
+        if int(throttle_count.read_text().strip()) != 2:
+            raise AssertionError("429 后没有恰好重开一次 Codex 会话")
+        partial_q = git(repo_q, "show", "main:partial.txt").stdout
+        if "partial" not in partial_q or "complete" not in partial_q:
+            raise AssertionError(f"429 重试丢了第一次半成品或没有继续完成: {partial_q!r}")
+        daemon_q_log = (home_q / "daemon.log").read_text(encoding="utf-8")
+        if "不记 codex_fail，不压低全局并发" not in daemon_q_log:
+            raise AssertionError("daemon.log 没有记录 429 的可恢复语义")
 
         # --- retries 可通过项目配置收紧；普通失败（exit 7，无抖动文本）不受影响 ---
         repo_x, trunk_x, home_x = fixture(base / "infra-retries-1",
@@ -2476,8 +2680,8 @@ def test_auto_exec():
                                fake_codex_infra(base, "fake-infra-x.sh"))
         daemon_x.EXEC_INFRA_BACKOFF = 0
         blocked_x = {}
-        results_x = daemon_x.dispatch_exec(False, blocked_x)
-        if results_x[0].get("attempts") != 1:
+        results_x = dispatch_until_done(daemon_x, blocked_x)
+        if results_x[-1].get("attempts") != 1:
             raise AssertionError(f"retries=0 时仍重试了: {results_x}")
         if blocked_x.get("L-0001", {}).get("reason") != "codex_infra_fail":
             raise AssertionError(f"retries=0 的抖动失败原因不对: {blocked_x}")
@@ -2488,16 +2692,779 @@ def test_auto_exec():
         daemon_t = load_daemon(repo_t, trunk_t, home_t,
                                fake_codex_hang(base, "fake-hang.sh"))
         daemon_t.EXEC_INFRA_BACKOFF = 0
+        original_wait = daemon_t._reap_exec
+        def reap_with_timeout(job, blocked):
+            # The caller's poll() gate can see the fake process as still alive.
+            # Drive the production timeout/reap branch directly for this probe.
+            try:
+                job["proc"].wait(timeout=job["cfg"]["timeout"])
+            except daemon_t.subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(job["proc"].pid), 9)
+                except OSError:
+                    job["proc"].kill()
+                job["proc"].wait()
+                job["proc"].returncode = 124
+                try:
+                    job["fh"].close()
+                except (AttributeError, OSError):
+                    pass
+                job.pop("fh", None)
+                result = job["result"]
+                result.update({"exit": 124, "attempts": 1, "outcome": "codex_exit_124"})
+                daemon_t._preserve_exec(Path(job["repo"]), Path(job["worktree"]),
+                                        job["branch"], job["id"], "codex_exit_124", blocked)
+                return result
+            return original_wait(job, blocked)
+        daemon_t._reap_exec = reap_with_timeout
         blocked_t = {}
-        results_t = daemon_t.dispatch_exec(False, blocked_t)
-        if results_t[0].get("exit") != 124 or results_t[0].get("attempts") != 1:
+        workers_t = {}
+        started_t, workers_t = daemon_t.dispatch_exec(False, blocked_t, workers_t)
+        if started_t:
+            raise AssertionError(f"超时 worker 不应在同拍返回结果: {started_t}")
+        job_t = workers_t["exec_jobs"]["L-0001"]
+        results_t = [daemon_t._reap_exec(job_t, blocked_t)]
+        if results_t[-1].get("exit") != 124 or results_t[-1].get("attempts") != 1:
             raise AssertionError(f"超时没有仍归 124 / 或误重试了: {results_t}")
         if blocked_t.get("L-0001", {}).get("reason") != "codex_exit_124":
             raise AssertionError(f"超时原因登记不正确: {blocked_t}")
 
+
     print("selftest ok: 自动实现真跑并落盘、失败保留现场、收口失败不重复派、"
           "分支已有未落提交时直接收口、收口后清掉实现暂缓、"
           "502 日志判定为可重试并在同一 worktree 重跑（重试到上限记 codex_infra_fail）。")
+
+
+def test_exec_model_balance_fallback():
+    """403 欠费日志必须被识别为慢通道 fallback，且 fast/slow 路由可预测。"""
+    import importlib
+    import sys
+    from pathlib import Path
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-model-fallback-") as tmp:
+        probe = Path(tmp) / "403.log"
+        probe.write_text(
+            "ERROR: unexpected status 403 Forbidden: insufficient balance, url: "
+            "http://127.0.0.1:15721/v1/responses\n", encoding="utf-8")
+        if not central_daemon.classify_exec_model_fallback(probe):
+            raise AssertionError("403 insufficient balance 没有被识别为模型通道额度失败")
+        probe.write_text(
+            "ERROR: unexpected status 403 Forbidden: insufficient balance\n"
+            "===== auto_exec 模型通道额度失败，切换到 slow_model 重试 =====\n"
+            "验证通过\n", encoding="utf-8")
+        if central_daemon.classify_exec_model_fallback(probe):
+            raise AssertionError("slow_model 重试后的旧 403 仍被误判为当前失败")
+        probe.write_text(
+            "ERROR: unexpected status 403 Forbidden: insufficient balance, url: "
+            "http://127.0.0.1:15721/v1/responses\n", encoding="utf-8")
+        job = {"model": "aibvv@deepseek-v4.1-flash"}
+        cfg = {"fast_model": "aibvv@deepseek-v4.1-flash",
+               "slow_model": "ok8888@deepseek-v4.1-flash"}
+        if not central_daemon._should_fallback_to_slow_model(job, cfg, probe):
+            raise AssertionError("fast 通道欠费后没有切到 slow_model")
+        job["model"] = cfg["slow_model"]
+        job["model_fallback_used"] = True
+        if central_daemon._should_fallback_to_slow_model(job, cfg, probe):
+            raise AssertionError("同一任务不应在 slow_model 上循环 fallback")
+        quiet = Path(tmp) / "quiet.log"
+        quiet.write_text("验证通过\n", encoding="utf-8")
+        if central_daemon.classify_exec_model_fallback(quiet):
+            raise AssertionError("普通日志被误判成模型通道额度失败")
+        bug_item = {"kind": "bug"}
+        gate_item = {"kind": "gate"}
+        arch_item = {"kind": "arch"}
+        if central_daemon._exec_model(bug_item, cfg) != cfg["fast_model"]:
+            raise AssertionError("bug 泳道没有优先走 fast_model")
+        if central_daemon._exec_model(gate_item, cfg) != cfg["fast_model"]:
+            raise AssertionError("gate 泳道没有优先走 fast_model")
+        if central_daemon._exec_model(arch_item, cfg) != cfg["slow_model"]:
+            raise AssertionError("arch/其它泳道没有走 slow_model")
+    print("selftest ok: 403 欠费即使退出码为 0 也切到 slow_model，且不会循环回退。")
+
+
+def test_exec_model_fallback_relaunch_is_async():
+    """A balance fallback must relaunch without blocking the daemon loop."""
+    import importlib
+    from unittest import mock
+    import sys
+    from pathlib import Path
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-async-fallback-") as tmp:
+        base = Path(tmp)
+        repo, wt = base / "repo", base / "worktree"
+        repo.mkdir(); wt.mkdir()
+        log_path = base / "worker.log"
+        log_path.write_text(
+            "ERROR: 403 Forbidden insufficient balance\n", encoding="utf-8")
+
+        class FinishedProc:
+            pid = 111
+            returncode = 0
+
+            @staticmethod
+            def poll():
+                return 0
+
+            @staticmethod
+            def wait(timeout=None):
+                return 0
+
+        class RunningProc:
+            pid = 222
+            returncode = None
+
+            @staticmethod
+            def poll():
+                return None
+
+            @staticmethod
+            def wait(timeout=None):
+                return 0
+
+        rid = "L-9001"
+        job = {
+            "id": rid, "item": {"id": rid, "kind": "bug", "title": "test"},
+            "cfg": {"timeout": 10, "retries": 0,
+                    "fast_model": "aibvv@deepseek-v4.1-flash",
+                    "slow_model": "ok8888@deepseek-v4.1-flash"},
+            "repo": str(repo), "worktree": str(wt), "branch": "codex/test",
+            "log": str(log_path), "model": "aibvv@deepseek-v4.1-flash",
+            "proc": FinishedProc(), "pid": 111, "detached": True,
+            "result": {"id": rid},
+        }
+        workers = {"exec_jobs": {rid: job}}
+        with mock.patch.object(central_daemon, "_exec_command",
+                               return_value=["fake-codex"]), \
+             mock.patch.object(central_daemon.subprocess, "Popen",
+                               return_value=RunningProc()):
+            results = central_daemon._collect_exec(workers, {})
+
+        assert results and results[0].get("outcome") == "relaunched", results
+        assert rid in workers["exec_jobs"], workers
+        assert job["pid"] == 222 and job["model"].startswith("ok8888@"), job
+    print("selftest ok: 额度 fallback 异步重挂 worker，不阻塞其余并发槽位派发。")
+
+
+def test_parallel_exec_slots():
+    """Three worker slots must start concurrently; completion is reaped serially.
+
+    This locks the structural property the old synchronous dispatcher lacked:
+    ``dispatch_exec`` starts up to max_workers independent worktrees without
+    waiting for the first Codex process to exit. The landing lock remains a
+    separate serial critical section.
+    """
+    import importlib
+    import json as _json
+    import time as _time
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-parallel-") as tmp:
+        base = Path(tmp)
+        repo, trunk, home = base / "state", base / "state-trunk", base / "home"
+        repo.mkdir(); home.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for name in ("progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{name}.jsonl").write_text("", encoding="utf-8")
+        ledger = []
+        for i in range(1, 4):
+            ledger.append({"id": f"L-{i:04d}", "type": "ledger", "kind": "bug",
+                           "title": f"并行槽位 {i}", "status": "open",
+                           "ts": f"2026-01-01T00:00:0{i}+08:00"})
+        (repo / "ops" / "truth" / "ledger.jsonl").write_text(
+            "".join(_json.dumps(x, ensure_ascii=False) + "\n" for x in ledger),
+            encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(_json.dumps({
+            "build": {"cmd": "", "cwd": "."}, "verify": [],
+            "auto_exec": {"enabled": True, "max_workers": 3,
+                          "fast_model": "aibvv@deepseek-v4.1-flash",
+                          "slow_model": "ok8888@deepseek-v4.1-flash"}}), encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "app.txt").write_text("main\n", encoding="utf-8")
+        git(repo, "add", "app.txt", "ops/central.config.json", "ops/truth/ledger.jsonl",
+            "ops/truth/progress.jsonl", "ops/truth/decisions.jsonl",
+            "ops/truth/acceptance.jsonl", "ops/tasks/inbox.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = base / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+        (home / "control.json").write_text(_json.dumps({
+            "auto_exec": True, "paused": False}), encoding="utf-8")
+        fake = base / "fake-parallel.sh"
+        fake.write_text(
+            "#!/bin/sh\n"
+            "wt=\"\"\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
+            "done\n"
+            "sleep 0.4\n"
+            "printf 'parallel\\n' > \"$wt/done.txt\"\n",
+            encoding="utf-8")
+        fake.chmod(0o755)
+        os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
+                          KG_DAEMON_HOME=str(home), KG_EXEC_CMD=str(fake))
+        import control_state, central_config, central_daemon
+        importlib.reload(control_state); importlib.reload(central_config)
+        importlib.reload(central_daemon)
+        # 并发只由 max_workers 决定。即使磁盘远低于历史资源闸阈值，配置的
+        # 3 个槽位也必须一次填满，不能被任何预检挡成 0。
+        central_daemon._disk_free_gb = lambda: 0.01
+        blocked, workers = {}, {}
+        # dispatch_exec 返回 (results, workers)：results 是本轮「已收口结果」，
+        # 首次派发时还没有任何 worker 完成，所以必须为空；新起的 worker 在
+        # workers["exec_jobs"] 里，由下面几行断言。断言意图没变，只是跟上签名。
+        started, workers = central_daemon.dispatch_exec(False, blocked, workers)
+        assert started == [], started
+        jobs = workers["exec_jobs"]
+        assert len(jobs) == 3, jobs
+        assert len({j["worktree"] for j in jobs.values()}) == 3, jobs
+        assert all(j["proc"].poll() is None for j in jobs.values()), jobs
+        deadline = _time.time() + 10
+        landed = []
+        while _time.time() < deadline and len(landed) < 3:
+            results, workers = central_daemon.dispatch_exec(False, blocked, workers)
+            landed.extend(r for r in results if r.get("outcome") == "landed")
+            _time.sleep(0.1)
+        assert len(landed) == 3, (landed, blocked, workers)
+        assert not workers["exec_jobs"], workers
+    print("selftest ok: 磁盘仅 0.01GB 时，3 个 worker 槽仍并行启动；完成项逐条串行落盘。")
+
+
+def test_exec_prompt_includes_patch_recovery():
+    """Sub-workers must know how to recover from wrapped apply_patch failures."""
+    import importlib
+    import sys
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+    exec_prompt = central_daemon._exec_prompt({
+        "id": "L-0001", "kind": "bug", "title": "test", "detail": "test"
+    })
+    resolve_prompt = central_daemon._resolve_exec_prompt({
+        "id": "resolve:test", "kind": "resolve", "title": "test",
+        "slug": "test", "files": ["frontend/src/App.tsx"],
+    })
+    for prompt in (exec_prompt, resolve_prompt):
+        assert "first line of the patch" in prompt, prompt
+        assert "count == 1" in prompt, prompt
+    print("selftest ok: 普通与冲突 worker prompt 都包含 apply_patch 故障恢复规则。")
+
+
+def test_worker_alive_treats_zombie_as_dead():
+    """A defunct child must not occupy an auto_exec slot.
+
+    os.kill(pid, 0) keeps succeeding for an unreaped zombie, so the daemon can
+    mark a finished worker as still active and stop filling max_workers slots.
+    The new _worker_alive reads the process state table and treats Z as dead.
+    """
+    import importlib
+    import sys as _sys
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in _sys.path:
+        _sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    # Already-exited PID: os.kill(pid, 0) raises ProcessLookupError -> dead.
+    assert not central_daemon._worker_alive(999999999), (
+        "nonexistent pid must be treated as dead")
+
+    # Zombie state: os.kill(pid, 0) succeeds but ps reports Z -> dead.
+    zombie_pid = 424242
+    with mock.patch("central_daemon.os.kill", return_value=None), \
+         mock.patch("central_daemon.subprocess.run",
+                    return_value=type("R", (), {"stdout": "Z+"})()):
+        assert not central_daemon._worker_alive(zombie_pid), (
+            "zombie state must be treated as dead")
+
+    # Live state: os.kill succeeds and ps reports R+ -> alive.
+    with mock.patch("central_daemon.os.kill", return_value=None), \
+         mock.patch("central_daemon.subprocess.run",
+                    return_value=type("R", (), {"stdout": "R+"})()):
+        assert central_daemon._worker_alive(zombie_pid), (
+            "live state must remain alive")
+
+    central_daemon._worker_alive = lambda pid: pid == 111
+    jobs = {
+        "live": {"pid": 111},
+        "dead": {"pid": 222},
+        "recover": {"pid": 333, "recover": True},
+    }
+    assert central_daemon._active_exec_session_count(jobs) == 1, jobs
+    print("selftest ok: 只有 PID 真活着的 worker 占并发槽；僵尸和待落盘槽位不占用。")
+
+
+def test_hydrate_drops_unverifiable_exec_slots():
+    """Restart must not resurrect jobs that no live worktree can finish."""
+    import importlib
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-hydrate-") as tmp:
+        base = Path(tmp)
+        repo, trunk, home = base / "state", base / "state-trunk", base / "home"
+        repo.mkdir(); home.mkdir(); (repo / "ops" / "truth").mkdir(parents=True)
+        ledger = [{"id": "L-0001", "type": "ledger", "kind": "bug",
+                   "title": "open but no worktree", "status": "open",
+                   "ts": "2026-01-01T00:00:00+08:00"}]
+        (repo / "ops" / "truth" / "ledger.jsonl").write_text(
+            "".join(_json.dumps(x, ensure_ascii=False) + "\n" for x in ledger),
+            encoding="utf-8")
+        os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
+                          KG_DAEMON_HOME=str(home))
+        import control_state, central_config, central_daemon
+        importlib.reload(control_state); importlib.reload(central_config)
+        importlib.reload(central_daemon)
+        workers = {"exec_jobs": {"L-0001": {
+            "id": "L-0001", "outcome": "ready", "worktree": ""}}}
+        hydrated = central_daemon._hydrate_exec_jobs(workers)
+        assert hydrated["exec_jobs"] == {}, hydrated
+    print("selftest ok: 无 worktree 的旧 worker 槽在重启时不会复活。")
+
+
+def test_resolve_exec_parallel():
+    """Resolve tasks are filled into the same parallel codex worker slots.
+
+    kgctl resolve creates an isolated resolve worktree with markers. The daemon
+    must reuse that worktree for a real paid worker, then commit and hand the
+    branch back to kgctl resolve --finish instead of creating a second
+    codex/exec-* worktree and losing the registered resolve task.
+    """
+    import importlib
+    import json as _json
+    import time as _time
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-resolve-exec-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        trunk = root / "state-trunk"
+        home = root / "home"
+        repo.mkdir(); home.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for f in ("ledger", "progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{f}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(_json.dumps({
+            "build": {"cmd": "", "cwd": "."}, "verify": [],
+            "auto_exec": {"enabled": True, "max_workers": 2,
+                          "fast_model": "aibvv@deepseek-v4.1-flash",
+                          "slow_model": "ok8888@deepseek-v4.1-flash"}}), encoding="utf-8")
+        (home / "control.json").write_text(_json.dumps({
+            "auto_exec": True, "paused": False}), encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "doc.txt").write_text("base\n", encoding="utf-8")
+        git(repo, "add", "doc.txt", "ops/central.config.json", "ops/truth/mainline.json",
+            "ops/truth/ledger.jsonl", "ops/truth/progress.jsonl",
+            "ops/truth/decisions.jsonl", "ops/truth/acceptance.jsonl",
+            "ops/tasks/inbox.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = root / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+        base = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        git(repo, "checkout", "-q", "-b", "codex/light", base)
+        (repo / "doc.txt").write_text("light\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "codex/light")
+        git(repo, "checkout", "-q", "main")
+        (repo / "doc.txt").write_text("mainline\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "main advances")
+        git(repo, "push", "-q", "origin", "main")
+
+        go = kgctl(repo, trunk, "resolve", "--auto", "--go")
+        if "outcome=needs_agent" not in (go.stdout + go.stderr):
+            raise AssertionError(f"resolve 没建出待解任务:\n{go.stdout}\n{go.stderr}")
+        wt = root / "state-resolve-light"
+        if not wt.is_dir():
+            raise AssertionError(f"resolve 没建出 worktree {wt}")
+
+        fake = root / "fake-resolve.sh"
+        fake.write_text(
+            "#!/bin/sh\n"
+            "wt=\"\"\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
+            "done\n"
+            "sed -i '' '/^<<<<<<< /d;/^=======$/d;/^>>>>>>> /d' \"$wt/doc.txt\"\n"
+            "printf 'light\\nmainline\\n' > \"$wt/doc.txt\"\n"
+            "exit 0\n", encoding="utf-8")
+        fake.chmod(0o755)
+
+        os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
+                          KG_DAEMON_HOME=str(home), KG_EXEC_CMD=str(fake))
+        import control_state, central_config, central_daemon
+        importlib.reload(control_state); importlib.reload(central_config)
+        importlib.reload(central_daemon)
+
+        original = (wt / "doc.txt").read_text(encoding="utf-8")
+        (wt / "doc.txt").write_text("manual external edit\n", encoding="utf-8")
+        if central_daemon._resolve_open_items():
+            raise AssertionError("worktree 已有无冲突标记的外部改动时仍被当作可派任务")
+        (wt / "doc.txt").write_text(original, encoding="utf-8")
+        open_ids = [i["id"] for i in central_daemon._resolve_open_items()]
+        if open_ids != ["resolve:light"]:
+            raise AssertionError(f"仍有冲突标记且无 worker 时没有重新进入可派队列: {open_ids!r}")
+
+        stale_workers = {"exec_jobs": {"resolve:light": {
+            "id": "resolve:light",
+            "item": central_daemon._resolve_task_item("light"),
+            "cfg": central_daemon.auto_exec_config(),
+            "repo": str(repo), "branch": "codex/resolve-light",
+            "worktree": str(wt), "codex": ["codex"],
+            "log": str(home / "exec" / "stale-resolve.log"),
+            "pid": 999999, "detached": True, "proc": None,
+            "result": {"id": "resolve:light"}}}}
+        stale_results = central_daemon._collect_exec(stale_workers, {})
+        if not stale_results or stale_workers["exec_jobs"]:
+            raise AssertionError(
+                f"重启后已死 resolve worker 仍占槽: {stale_results!r} {stale_workers!r}")
+
+        blocked, workers = {}, {}
+        # dispatch_exec 返回 (results, workers)：results 是本轮「已收口结果」，
+        # 首次派发时还没有任何 worker 完成，所以必须为空；新起的 worker 在
+        # workers["exec_jobs"] 里，由下面几行断言。断言意图没变，只是跟上签名。
+        started, workers = central_daemon.dispatch_exec(False, blocked, workers)
+        assert started == [], started
+        jobs = workers["exec_jobs"]
+        assert list(jobs) == ["resolve:light"], jobs
+        job = jobs["resolve:light"]
+        assert job["branch"] == "codex/resolve-light", job
+        assert Path(job["worktree"]).resolve() == wt.resolve(), job
+        assert job["model"] == "aibvv@deepseek-v4.1-flash", job
+        assert job["proc"].poll() is None, job
+
+        deadline = _time.time() + 15
+        landed = []
+        while _time.time() < deadline and not landed:
+            results, workers = central_daemon.dispatch_exec(False, blocked, workers)
+            landed.extend(r for r in results if r.get("outcome") == "landed")
+            _time.sleep(0.1)
+        assert landed, (results, blocked, workers)
+        assert not workers["exec_jobs"], workers
+        merged = git(repo, "show", "main:doc.txt").stdout
+        if "light" not in merged or "mainline" not in merged:
+            raise AssertionError(f"resolve-exec 落盘内容不对: {merged!r}")
+    print("selftest ok: resolve 冲突任务进入同一并行 codex worker，复用 resolve worktree 并由 kgctl finish 串行落盘。")
+
+
+def test_collect_exec_keeps_reaping_after_nonlanding_failure():
+    """A failed resolve must not hide other completed workers in the same cycle."""
+    import central_daemon
+
+    class _DoneProc:
+        def poll(self):
+            return 0
+
+    real_reap = central_daemon._reap_exec
+    try:
+        def fake_reap(job, blocked):
+            return {"id": job["id"], "outcome": job["test_outcome"]}
+
+        central_daemon._reap_exec = fake_reap
+        workers = {"exec_jobs": {
+            "r1": {"id": "r1", "test_outcome": "resolve_gate_fail", "proc": _DoneProc()},
+            "r2": {"id": "r2", "test_outcome": "no_changes", "proc": _DoneProc()},
+            "r3": {"id": "r3", "test_outcome": "landed", "proc": _DoneProc()},
+        }}
+        results = central_daemon._collect_exec(workers, {})
+        assert [r["id"] for r in results] == ["r1", "r2", "r3"], results
+
+        workers = {"exec_jobs": {
+            "r1": {"id": "r1", "test_outcome": "resolve_gate_fail", "proc": _DoneProc()},
+            "r2": {"id": "r2", "test_outcome": "land_conflict", "proc": _DoneProc()},
+            "r3": {"id": "r3", "test_outcome": "landed", "proc": _DoneProc()},
+        }}
+        results = central_daemon._collect_exec(workers, {})
+        assert [r["id"] for r in results] == ["r1", "r2"], results
+    finally:
+        central_daemon._reap_exec = real_reap
+    print("selftest ok: resolve gate_fail 不阻塞同轮其他已完成 worker；真正 land/冲突仍保持串行边界。")
+
+
+def test_resolve_gate_fail_auto_retry():
+    """A resolve gate_fail must retry finish on the next cycle, not start codex again.
+
+    A committed clean resolve worktree can hit gate_fail once because the remote
+    moved between validation and push. The daemon previously wrote it into
+    exec_blocked and never retried it, so an already-solved conflict stayed
+    stuck forever. This locks the retry path: the next dispatch calls
+    resolve --finish directly and removes the block on success.
+    """
+    import importlib
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-resolve-retry-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        trunk = root / "state-trunk"
+        home = root / "home"
+        repo.mkdir(); home.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for f in ("ledger", "progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{f}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(_json.dumps({
+            "build": {"cmd": "", "cwd": "."}, "verify": [],
+            "auto_exec": {"enabled": True, "max_workers": 2,
+                          "fast_model": "aibvv@deepseek-v4.1-flash",
+                          "slow_model": "ok8888@deepseek-v4.1-flash"}}), encoding="utf-8")
+        (home / "control.json").write_text(_json.dumps({
+            "auto_exec": True, "paused": False}), encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "doc.txt").write_text("base\n", encoding="utf-8")
+        git(repo, "add", "doc.txt", "ops/central.config.json", "ops/truth/mainline.json",
+            "ops/truth/ledger.jsonl", "ops/truth/progress.jsonl",
+            "ops/truth/decisions.jsonl", "ops/truth/acceptance.jsonl",
+            "ops/tasks/inbox.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = root / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+        base = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        git(repo, "checkout", "-q", "-b", "codex/light", base)
+        (repo / "doc.txt").write_text("light\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "codex/light")
+        git(repo, "checkout", "-q", "main")
+        (repo / "doc.txt").write_text("mainline\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "main advances")
+        git(repo, "push", "-q", "origin", "main")
+
+        go = kgctl(repo, trunk, "resolve", "--auto", "--go")
+        if "outcome=needs_agent" not in (go.stdout + go.stderr):
+            raise AssertionError(f"resolve 没建出待解任务:\n{go.stdout}\n{go.stderr}")
+        wt = root / "state-resolve-light"
+        if not wt.is_dir():
+            raise AssertionError(f"resolve 没建出 worktree {wt}")
+
+        (wt / "doc.txt").write_text("light\nmainline\n", encoding="utf-8")
+        git(wt, "add", "doc.txt")
+        git(wt, "commit", "-q", "-m", "resolve: keep both intents")
+        commit = git(wt, "rev-parse", "HEAD").stdout.strip()
+
+        rp = repo / "ops" / "tasks" / "resolve.json"
+        data = _json.loads(rp.read_text(encoding="utf-8"))
+        for rec in data.get("tasks") or []:
+            if rec.get("slug") == "light":
+                rec["status"] = "gate_fail"
+                rec["updated"] = "2026-10-20T00:00:00+08:00"
+        rp.write_text(_json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+
+        os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
+                          KG_DAEMON_HOME=str(home), KG_EXEC_CMD="/bin/true")
+        import control_state, central_config, central_daemon
+        importlib.reload(control_state); importlib.reload(central_config)
+        importlib.reload(central_daemon)
+
+        blocked = {"resolve:light": {
+            "reason": "resolve_gate_fail", "_id": "resolve:light",
+            "branch": "codex/resolve-light", "worktree": str(wt),
+            "commit": commit, "ts": "2026-10-20T00:00:00+08:00"}}
+        workers = {}
+        results, workers = central_daemon.dispatch_exec(False, blocked, workers)
+        landed = [r for r in results if r.get("outcome") == "landed"]
+        if not landed:
+            raise AssertionError(f"gate_fail 没有下轮直接收口: {results} {blocked} {workers}")
+        if "resolve:light" in blocked:
+            raise AssertionError(f"落盘成功后仍保留 exec_blocked: {blocked}")
+        if workers.get("exec_jobs"):
+            raise AssertionError(f"重试 finish 不应新派 codex worker: {workers}")
+        merged = git(repo, "show", "main:doc.txt").stdout
+        if "light" not in merged or "mainline" not in merged:
+            raise AssertionError(f"resolve 重试落盘内容不对: {merged!r}")
+    print("selftest ok: resolve gate_fail 下一轮直接重试 finish 并落地，不重新派 codex。")
+
+
+def test_resolve_gate_fail_not_retried_same_cycle():
+    """A gate_fail written by _collect_exec must wait for the next cycle.
+
+    Retrying resolve --finish in the same cycle can race a second resolve
+    worker that was already dispatched for the same slug. The dispatcher
+    should recognize a failure produced in this exact call and leave the task
+    for the next cycle.
+    """
+    import importlib
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-resolve-no-same-cycle-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        trunk = root / "state-trunk"
+        home = root / "home"
+        repo.mkdir(); home.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for f in ("ledger", "progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{f}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(_json.dumps({
+            "build": {"cmd": "", "cwd": "."}, "verify": [],
+            "auto_exec": {"enabled": True, "max_workers": 2,
+                          "fast_model": "aibvv@deepseek-v4.1-flash",
+                          "slow_model": "ok8888@deepseek-v4.1-flash"}}), encoding="utf-8")
+        (home / "control.json").write_text(_json.dumps({
+            "auto_exec": True, "paused": False}), encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "doc.txt").write_text("base\n", encoding="utf-8")
+        git(repo, "add", "doc.txt", "ops/central.config.json", "ops/truth/mainline.json",
+            "ops/truth/ledger.jsonl", "ops/truth/progress.jsonl",
+            "ops/truth/decisions.jsonl", "ops/truth/acceptance.jsonl",
+            "ops/tasks/inbox.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = root / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+        base = git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        git(repo, "checkout", "-q", "-b", "codex/light", base)
+        (repo / "doc.txt").write_text("light\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "codex/light")
+        git(repo, "checkout", "-q", "main")
+        (repo / "doc.txt").write_text("mainline\n", encoding="utf-8")
+        git(repo, "commit", "-qam", "main advances")
+        git(repo, "push", "-q", "origin", "main")
+
+        go = kgctl(repo, trunk, "resolve", "--auto", "--go")
+        if "outcome=needs_agent" not in (go.stdout + go.stderr):
+            raise AssertionError(f"resolve 没建出待解任务:\n{go.stdout}\n{go.stderr}")
+        wt = root / "state-resolve-light"
+        if not wt.is_dir():
+            raise AssertionError(f"resolve 没建出 worktree {wt}")
+        (wt / "doc.txt").write_text("light\nmainline\n", encoding="utf-8")
+        git(wt, "add", "doc.txt")
+        git(wt, "commit", "-q", "-m", "resolve: keep both intents")
+        commit = git(wt, "rev-parse", "HEAD").stdout.strip()
+
+        rp = repo / "ops" / "tasks" / "resolve.json"
+        data = _json.loads(rp.read_text(encoding="utf-8"))
+        for rec in data.get("tasks") or []:
+            if rec.get("slug") == "light":
+                rec["status"] = "gate_fail"
+                rec["updated"] = "2026-10-20T00:00:00+08:00"
+        rp.write_text(_json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+
+        os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
+                          KG_DAEMON_HOME=str(home), KG_EXEC_CMD="/bin/true")
+        import control_state, central_config, central_daemon
+        importlib.reload(control_state); importlib.reload(central_config)
+        importlib.reload(central_daemon)
+
+        blocked = {"resolve:light": {
+            "reason": "resolve_gate_fail", "_id": "resolve:light",
+            "branch": "codex/resolve-light", "worktree": str(wt),
+            "commit": commit, "ts": "2026-10-20T00:00:00+08:00"}}
+        workers = {}
+        # Simulate _collect_exec having just produced this cycle's failure.
+        # dispatch must see it in results and not immediately run finish again.
+        original_collect = central_daemon._collect_exec
+        central_daemon._collect_exec = lambda workers, blocked: [{
+            "id": "resolve:light", "outcome": "resolve_gate_fail",
+            "branch": "codex/resolve-light", "worktree": str(wt),
+            "commit": commit}]
+        try:
+            results, workers = central_daemon.dispatch_exec(False, blocked, workers)
+        finally:
+            central_daemon._collect_exec = original_collect
+        retried = [r for r in results if r.get("outcome") == "landed"]
+        if retried:
+            raise AssertionError(f"同一轮不应立即重试 finish: {results}")
+        if workers.get("exec_jobs"):
+            raise AssertionError(f"同一轮失败后不应再派 worker: {workers}")
+    print("selftest ok: resolve gate_fail 当轮不立即重试，留到下一轮再 finish。")
+
+
+def test_conflict_decision_hold_survives_existing_markers():
+    """A human-decision hold must not be cleared by the same conflict markers."""
+    import importlib
+    from unittest import mock
+    import sys
+    from pathlib import Path
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    rid = "resolve:stuck"
+    item = {
+        "id": rid, "kind": "resolve", "slug": "stuck", "title": "stuck",
+        "repo": "/tmp", "worktree": "/tmp/stuck", "branch": "codex/stuck",
+    }
+    blocked = {rid: {"reason": "resolve_conflict_needs_decision",
+                     "ts": "2099-01-01 00:00:00"}}
+    cfg = {"enabled": True, "max_workers": 3, "max_per_cycle": 3}
+    with mock.patch.object(central_daemon, "auto_exec_config", return_value=cfg), \
+         mock.patch.object(central_daemon, "_codex_bin", return_value=["fake"]), \
+         mock.patch.object(central_daemon, "_hydrate_exec_jobs", side_effect=lambda w: w), \
+         mock.patch.object(central_daemon, "_collect_exec", return_value=[]), \
+         mock.patch.object(central_daemon, "_exec_open_items", return_value=[item]), \
+         mock.patch.object(central_daemon, "_live_exec_slugs", return_value=frozenset()), \
+         mock.patch.object(central_daemon, "_resolve_auto_allowed", return_value=True), \
+         mock.patch.object(central_daemon, "_resolve_task", return_value={"worktree": "/tmp/stuck"}), \
+         mock.patch.object(central_daemon, "_resolve_worktree_has_markers", return_value=True), \
+         mock.patch.object(central_daemon, "_retry_resolve_finish",
+                           side_effect=AssertionError("人工停手期间不应重试 finish")):
+        results, workers = central_daemon.dispatch_exec(False, blocked, {})
+
+    assert results == [], results
+    assert blocked[rid]["reason"] == "resolve_conflict_needs_decision", blocked
+    assert workers.get("exec_jobs") == {}, workers
+    print("selftest ok: 同一冲突标记不会绕过人工裁决停手，6h 内不再空转重试。")
+
+
+def test_prune_keeps_open_resolve_hold():
+    """Restart cleanup must not erase a hold for a gate_fail resolve task."""
+    import importlib
+    from unittest import mock
+    import sys
+    from pathlib import Path
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    rid = "resolve:stuck"
+    blocked = {rid: {"reason": "resolve_conflict_needs_decision",
+                     "ts": "2099-01-01 00:00:00"}}
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-hold-prune-") as tmp, \
+         mock.patch.object(central_daemon, "RUNTIME", Path(tmp)), \
+         mock.patch.object(central_daemon, "_ledger_latest", return_value={}), \
+         mock.patch.object(central_daemon, "_resolve_records_all",
+                           return_value=[{"slug": "stuck", "status": "gate_fail"}]), \
+         mock.patch.object(central_daemon, "_state_repo", return_value=None):
+        stale = central_daemon._prune_exec_blocked(blocked)
+
+    assert rid not in stale, stale
+    assert rid in blocked, blocked
+    print("selftest ok: 重启清理不会把仍 gate_fail 的 resolve 停手记录误删。")
 
 
 def test_mcp_contract():
@@ -2689,10 +3656,173 @@ def test_closure_rate():
     print("selftest ok: 北极星首问闭环率三态、fail-closed 退出码与面板接线全部通过。")
 
 
+def test_budget_gate():
+    """预算闸门：越线判定 / 不打扰在用窗口 / 熔断与恢复 / 一键关 / 预演零副作用。
+
+    全部在临时目录里伪造数据源（automations + codex 线程库 + 代理账本），
+    不碰真实的 ~/.codex、不换代、不发通知、不写真实状态。
+    """
+    import json as _json
+    import sqlite3
+    import time as _time
+    import importlib
+
+    sys.path.insert(0, str(OPS))
+    bg = importlib.import_module("budget_gate")
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-budget-") as tmp:
+        root = Path(tmp)
+        home = root / "home"
+        codex = home / ".codex"
+        runtime = root / "runtime"
+        (codex / "automations" / "fake").mkdir(parents=True)
+        runtime.mkdir(parents=True)
+
+        # 目标线程的 rollout：峰值 19 万（谷底 4.6 万）+ 近 1 小时压缩 3 次
+        rollout = root / "rollout.jsonl"
+        now_iso = _time.strftime("%Y-%m-%dT%H:%M:%S", _time.gmtime())
+        lines = []
+        for i, v in enumerate([46_000, 120_000, 190_000]):
+            lines.append(_json.dumps({"timestamp": now_iso, "type": "response_item",
+                                      "payload": {"type": "token_usage_record",
+                                                  "usage": {"input_tokens": v}}}))
+        for i in range(3):
+            lines.append(_json.dumps({"timestamp": now_iso, "type": "compacted",
+                                      "payload": {"message": "summary"}}))
+        rollout.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        db = codex / "state_5.sqlite"
+        c = sqlite3.connect(db)
+        c.execute("create table threads (id text primary key, rollout_path text, "
+                  "tokens_used integer, updated_at integer)")
+        c.execute("insert into threads values (?,?,?,?)", ("fake-thread", str(rollout), 1_000, 0))
+        c.commit()
+        c.close()
+
+        proxy = home / ".codex-proxy" / "stats.db"
+        proxy.parent.mkdir(parents=True)
+        p = sqlite3.connect(proxy)
+        p.execute("create table requests (id integer primary key, ts integer, provider text, "
+                  "model text, input_tokens integer, output_tokens integer, "
+                  "cache_hit_tokens integer, status integer)")
+        p.execute("insert into requests (ts, provider, model, input_tokens, output_tokens, "
+                  "cache_hit_tokens, status) values (?,?,?,?,?,?,?)",
+                  (int(_time.time()) - 60, "fake", "fake-model", 10_000_000, 1000, 9_000_000, 200))
+        p.commit()
+        p.close()
+
+        (codex / "automations" / "fake" / "automation.toml").write_text(
+            'version = 1\nid = "fake"\nkind = "heartbeat"\nname = "fake"\n'
+            'prompt = "x"\nstatus = "ACTIVE"\nrrule = "RRULE:FREQ=MINUTELY;INTERVAL=15"\n'
+            'target_thread_id = "fake-thread"\ncreated_at = 1\nupdated_at = 1\n',
+            encoding="utf-8")
+
+        # 把模块里的路径指向伪造环境（测完在 finally 里还原）
+        real = {k: getattr(bg, k) for k in
+                ("AUTOMATIONS", "CODEX_DB", "PROXY_DB", "RUNTIME", "STATE", "LOG",
+                 "ROTATE_LOG", "OFF_FILES", "CONFIG_PATH")}
+        started = []
+        real_popen = subprocess.Popen
+
+        class _NoPopen:
+            def __init__(self, *a, **k):
+                started.append(a[0] if a else k.get("args"))
+                raise OSError("selftest: 换代被拦住（本测试不允许真换代）")
+
+        try:
+            bg.AUTOMATIONS, bg.CODEX_DB, bg.PROXY_DB = (codex / "automations", db, proxy)
+            bg.RUNTIME, bg.STATE = runtime, runtime / "budget-gate.json"
+            bg.LOG, bg.ROTATE_LOG = runtime / "budget-gate.log", runtime / "rotate.log"
+            bg.OFF_FILES = (runtime / "BUDGET_GATE_OFF", codex / "budget-gate.off")
+            bg.CONFIG_PATH = codex / "nonexistent.json"
+            bg.notify = lambda *a, **k: None          # 不发桌面通知
+            bg._event = lambda *a, **k: None          # 不写真实流水
+            subprocess.Popen = _NoPopen
+
+            # 1) 越线判定：只看「最后一轮」（4.6 万，谷底）会漏，峰值/压缩必须抓住
+            info = bg.measure_thread("fake-thread", bg.DEFAULTS)
+            level, reasons = bg.verdict(info, bg.DEFAULTS)
+            if level != "over":
+                raise AssertionError(f"峰值 19 万 + 压缩 3 次应判 over，实得 {level}：{reasons}")
+            if info.get("peak_input_recent") != 190_000:
+                raise AssertionError(f"峰值读错：{info.get('peak_input_recent')}")
+            if info.get("compactions_recent") != 3:
+                raise AssertionError(f"压缩次数读错：{info.get('compactions_recent')}")
+
+            # 2) 窗口刚动过（有人在用）→ 不换代，只等
+            rep = bg.run(dry=False)
+            acts = [a["action"] for a in rep["actions"]]
+            if "rotate-wait" not in acts or started:
+                raise AssertionError(f"在用窗口不该被换代，实得动作 {acts}，换代调用 {started}")
+
+            # 3) 窗口空闲 10 分钟 + 允许换代 → 才会真的排一次换代（Popen 被测试拦住）
+            old = _time.time() - 600
+            os.utime(rollout, (old, old))
+            rep = bg.run(dry=False)
+            acts = [a["action"] for a in rep["actions"]]
+            if "rotate" not in acts or len(started) != 1:
+                raise AssertionError(f"空闲且越线应排一次换代，实得动作 {acts}，换代调用 {started}")
+            if "--force" not in list(started[0]):
+                raise AssertionError(f"换代必须带 --force 才越过 cockpit_rotate 自带的粗线：{started[0]}")
+
+            # 4) 熔断与恢复：用量越线停「派活」，回落自动恢复
+            bg._maybe_pause_dispatch({"input": 9_000_000_000, "fresh": 9_000_000_000,
+                                      "requests": 1, "window_minutes": 60}, bg.DEFAULTS)
+            if not bg.dispatch_paused()[0]:
+                raise AssertionError("用量越线没有暂停派活")
+            import central_daemon as _cd
+            real_ac, real_state = _cd.auto_exec_config, _cd.control_state.load
+            try:
+                _cd.control_state.load = lambda: {"auto_exec": True}
+                if _cd.auto_exec_config().get("enabled"):
+                    raise AssertionError("熔断后自动挡仍在派活（auto_exec 没被关掉）")
+            finally:
+                _cd.control_state.load = real_state
+            bg._maybe_pause_dispatch({"input": 1_000_000, "fresh": 100_000,
+                                      "requests": 5, "window_minutes": 60}, bg.DEFAULTS)
+            if bg.dispatch_paused()[0]:
+                raise AssertionError("用量回落后没有自动恢复派活")
+
+            # 5) 状态文件坏掉 → fail-open（不误停、不抛）
+            bg.STATE.write_text("{ 坏 json", encoding="utf-8")
+            if bg.dispatch_paused()[0]:
+                raise AssertionError("状态文件坏掉时不应误停派活")
+
+            # 6) 一键关：存在开关文件 → 整体跳过，零动作
+            bg.STATE.unlink()
+            (runtime / "BUDGET_GATE_OFF").write_text("", encoding="utf-8")
+            rep = bg.run(dry=False)
+            if not rep["off"] or any(a["action"] not in ("skip",) for a in rep["actions"]):
+                raise AssertionError(f"一键关没有生效：{rep['actions']}")
+            (runtime / "BUDGET_GATE_OFF").unlink()
+
+            # 7) 预演零副作用：不写状态、不换代
+            before = bg.STATE.exists()
+            started.clear()
+            bg.run(dry=True)
+            if started:
+                raise AssertionError("预演模式下发生了换代")
+            if bg.STATE.exists() != before and not before:
+                raise AssertionError("预演模式不应写状态文件")
+        finally:
+            subprocess.Popen = real_popen
+            for k, v in real.items():
+                setattr(bg, k, v)
+
+    print("selftest ok: 预算闸门抓住峰值/压缩越线、不打扰在用窗口、只对空闲越线窗口换代（带 --force）；"
+          "用量熔断可停派活并自动恢复；状态坏掉 fail-open；一键关与预演零副作用。")
+
+
 if __name__ == "__main__":
     main()
     test_replan()
     test_resolve()
+    test_resolve_exec_parallel()
+    test_collect_exec_keeps_reaping_after_nonlanding_failure()
+    test_resolve_gate_fail_auto_retry()
+    test_resolve_gate_fail_not_retried_same_cycle()
+    test_conflict_decision_hold_survives_existing_markers()
+    test_prune_keeps_open_resolve_hold()
     test_reset_trunk_truth_conflict()
     test_sync_trunk_truth_failclosed_non_truth()
     test_remote_benchmark_pollution_failclosed()
@@ -2712,6 +3842,14 @@ if __name__ == "__main__":
     test_native_call_budget()
     test_real_codex_app_server()
     test_verify_and_truth()
+    test_prune_exec_blocked_landed_commit()
     test_auto_exec()
+    test_exec_model_balance_fallback()
+    test_exec_model_fallback_relaunch_is_async()
+    test_parallel_exec_slots()
+    test_exec_prompt_includes_patch_recovery()
+    test_worker_alive_treats_zombie_as_dead()
+    test_hydrate_drops_unverifiable_exec_slots()
     test_mcp_contract()
     test_closure_rate()
+    test_budget_gate()
