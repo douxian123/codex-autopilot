@@ -691,6 +691,65 @@ def test_sync_trunk_truth_failclosed_non_truth():
     print("selftest ok: 工作树夹带代码改动时，真相同步 fail-closed 不吞文件、不产生 chore(truth) 提交。")
 
 
+def test_publish_lock_and_origin_containment():
+    """锁住并发发布故障：land 与真相推送不能同时持有发布权，成功必须由远端祖先证明。"""
+    import importlib
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-publish-lock-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        repo.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "app.txt").write_text("base\n", encoding="utf-8")
+        git(repo, "add", "app.txt")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = root / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+        git(repo, "fetch", "-q", "origin", "main")
+
+        sys.path.insert(0, str(OPS))
+        os.environ["KG_REPO"] = str(repo)
+        os.environ["KG_TRUNK"] = str(root / "unused-trunk")
+        import kgctl
+        importlib.reload(kgctl)
+        real_lock = kgctl.LOCK
+        real_push = kgctl._push_truth_state_locked
+        kgctl.LOCK = root / "publish.lock"
+        calls = []
+        kgctl._push_truth_state_locked = lambda: calls.append("truth")
+        try:
+            assert kgctl._acquire_lock("land")
+            kgctl.push_truth_state()
+            if calls:
+                raise AssertionError("land 持锁时真相推送仍进入了发布临界区")
+            kgctl._release_lock()
+            kgctl.push_truth_state()
+            if calls != ["truth"]:
+                raise AssertionError(f"无锁时真相推送没有执行: {calls}")
+            if kgctl.LOCK.exists():
+                raise AssertionError("真相推送结束后没有释放发布锁")
+
+            (repo / "app.txt").write_text("landed\n", encoding="utf-8")
+            git(repo, "commit", "-qam", "landed")
+            landed = git(repo, "rev-parse", "HEAD").stdout.strip()
+            if kgctl._origin_contains(landed):
+                raise AssertionError("未推送的本地提交被误判为已在 origin/main")
+            git(repo, "push", "-q", "origin", "main")
+            git(repo, "fetch", "-q", "origin", "main")
+            if not kgctl._origin_contains(landed):
+                raise AssertionError("已推送提交没有被 origin/main 祖先检查确认")
+        finally:
+            kgctl._push_truth_state_locked = real_push
+            kgctl.LOCK = real_lock
+
+    print("selftest ok: land/真相推送发布锁互斥，且只有 origin/main 祖先校验通过才算落盘。")
+
+
 def test_remote_benchmark_pollution_failclosed():
     """锁住稳定基线保护的运行入口：远端 origin/main 的 36 题报告被伪快照覆盖时，
     tick/intake 必须 fail-closed，不能把伪快照写回本地真实基线，也不能继续推送。
@@ -3825,6 +3884,7 @@ if __name__ == "__main__":
     test_prune_keeps_open_resolve_hold()
     test_reset_trunk_truth_conflict()
     test_sync_trunk_truth_failclosed_non_truth()
+    test_publish_lock_and_origin_containment()
     test_remote_benchmark_pollution_failclosed()
     test_control_state()
     test_installer()

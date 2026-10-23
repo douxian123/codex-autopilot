@@ -132,6 +132,33 @@ def _lock_blocked() -> bool:
     return False
 
 
+def _acquire_lock(reason: str) -> bool:
+    """原子取得共享发布锁；land 与真相推送只能有一个进入。"""
+    if _lock_blocked():
+        return False
+    try:
+        fd = os.open(LOCK, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except FileExistsError:
+        return False
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(f"{os.getpid()} {reason}\n")
+    return True
+
+
+def _release_lock() -> None:
+    """只释放当前进程持有的锁，避免误删随后接手的另一把锁。"""
+    try:
+        pid = int(LOCK.read_text(encoding="utf-8").split()[0])
+    except (OSError, ValueError, IndexError):
+        return
+    if pid != os.getpid():
+        return
+    try:
+        LOCK.unlink()
+    except FileNotFoundError:
+        pass
+
+
 BOARD = REPO / "docs" / "CONTROL_BOARD.md"
 DASHBOARD = REPO / "docs" / "CONTROL_PLANE.html"
 CONTEXT_DIR = REPO / "ops" / "context"
@@ -2539,6 +2566,15 @@ def _align_main_ref_to_origin(new: str = "") -> str:
     return local
 
 
+def _origin_contains(commit: str) -> bool:
+    """确认发布提交已经进入 origin/main，而不是只存在于本地发布工作树。"""
+    contained = subprocess.run(
+        ["git", "-C", str(REPO), "merge-base", "--is-ancestor", commit,
+         f"origin/{MAIN}"],
+        capture_output=True, text=True)
+    return contained.returncode == 0
+
+
 # 真相层与生成视图：它们本来就该落在主干工作树上，所以不算「污染」。land /
 # supersede 先提交它们再落盘，而不是因为「主干有未提交改动」直接拒绝执行——
 # 后者曾经让每一次 `kgctl tick` 都顺手把 land 锁死。
@@ -2906,7 +2942,7 @@ def _git_bounded(args, timeout: int, label: str = ""):
         return 125, f"git {' '.join(args)} 起不来：{exc}"
 
 
-def push_truth_state() -> None:
+def _push_truth_state_locked() -> None:
     """把主干工作树上「只有真相层提交」的提交推回 origin/main。
 
     远端前进不是终止条件：真相层是追加式 JSONL，先合并远端再推送；只有非真相文件冲突
@@ -2938,6 +2974,17 @@ def push_truth_state() -> None:
     subprocess.run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}", "HEAD"],
                    check=False)
     print(f"  真相层 {ahead} 条提交已推送 origin/{MAIN}")
+
+
+def push_truth_state() -> None:
+    """真相推送与 land 共用发布锁，模型 worker 并发不受影响。"""
+    if not _acquire_lock("truth-push"):
+        print("  已有 land/发布在推进，真相层推送推迟到下一拍")
+        return
+    try:
+        _push_truth_state_locked()
+    finally:
+        _release_lock()
 
 
 def load_resolve() -> dict:
@@ -3407,8 +3454,6 @@ def cmd_land(args):
     branch, dry = args[0], "--dry" in args
     if not branch.startswith(BRANCH_PREFIX):
         sys.exit(f"只允许 land {BRANCH_PREFIX}* 分支")
-    if _lock_blocked():
-        sys.exit(f"已有 land 在进行（{LOCK}）")
 
     ahead, behind = counts(branch)
     if ahead == 0:
@@ -3435,8 +3480,9 @@ def cmd_land(args):
         print("  （--dry：到此为止）")
         return
 
+    if not _acquire_lock("land"):
+        sys.exit(f"已有 land 在进行（{LOCK}）")
     OPS.mkdir(parents=True, exist_ok=True)
-    LOCK.write_text(f"{os.getpid()} {branch}\n")
     try:
         _align_main()
         pre = git("rev-parse", MAIN)
@@ -3476,11 +3522,15 @@ def cmd_land(args):
                              capture_output=True, text=True).stdout.strip()
         # 并发下不用 CAS 从旧 pre 推进（会撞 cannot lock ref）；push 已成功，以
         # origin/main 为准对齐本地引用，避免把已落盘误判成失败。
-        _align_main_ref_to_origin(new)
-        print(f"  main 推进 {pre[:8]} → {new[:8]}（{branch} 已落盘并推送 origin）")
+        aligned = _align_main_ref_to_origin(new)
+        if not _origin_contains(new):
+            raise RuntimeError(
+                f"push 返回成功，但 origin/{MAIN} 不包含落盘提交 {new[:10]}；"
+                "拒绝输出已落盘，请检查是否有并发强推")
+        print(f"  main 推进 {pre[:8]} → {aligned[:8]}"
+              f"（{branch} 已落盘并推送 origin，且已确认包含于 origin/{MAIN}）")
     finally:
-        if LOCK.exists():
-            LOCK.unlink()
+        _release_lock()
 
 
 def cmd_sync(args):
