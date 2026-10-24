@@ -36,6 +36,7 @@ add 的环境变量：
 """
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -43,6 +44,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 try:
     import fcntl
@@ -55,12 +57,16 @@ except ImportError:  # 非 POSIX 平台没有 flock：退回无锁，行为与�
 # KG_REPO 仍然是最高的显式覆盖。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plugin_binding import apply_plugin_env  # noqa: E402
-from state_root import resolve_state_root  # noqa: E402
+from state_root import main_worktree, resolve_state_root  # noqa: E402
 import central_config  # noqa: E402
 
 # 自包含安装下，绑定的项目写在插件 .mcp.json 里；显式 KG_REPO 优先。
 apply_plugin_env()
 REPO = resolve_state_root()
+REFERENCE_REPO = Path(
+    os.environ.get('KG_TRUTH_REFERENCE_REPO')
+    or (REPO if os.environ.get('KG_REPO') else main_worktree())
+).expanduser().resolve()
 CFG = central_config.load(REPO)
 TRUTH = REPO / 'ops' / 'truth'
 INBOX = REPO / 'ops' / 'tasks' / 'inbox.jsonl'
@@ -177,17 +183,106 @@ def _max_num(t: str) -> int:
     return max(nums) if nums else 0
 
 
+def _normalize_project_identity(value: str) -> str:
+    """把常见 Git remote 写法规整成跨 clone 一致的项目身份。"""
+    text = (value or '').strip()
+    scp_like = re.match(r'^(?:[^@/]+@)?([^:/]+):(.+)$', text)
+    if scp_like and '://' not in text and not Path(text).is_absolute():
+        host, remote_path = scp_like.groups()
+        text = f'https://{host}/{remote_path}'
+    if '://' in text:
+        parsed = urlsplit(text)
+        host = (parsed.hostname or '').lower()
+        port = f':{parsed.port}' if parsed.port else ''
+        remote_path = unquote(parsed.path).strip('/')
+        identity = f'{host}{port}/{remote_path}' if host else remote_path
+    else:
+        identity = text
+    return identity.rstrip('/').removesuffix('.git')
+
+
+def _truth_project_identity() -> str:
+    """返回跨 clone / worktree 稳定的项目身份。"""
+    explicit = os.environ.get('KG_TRUTH_PROJECT_ID', '').strip()
+    if explicit:
+        return f'explicit:{explicit}'
+    remote = subprocess.run(
+        ['git', 'remote', 'get-url', 'origin'],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+    )
+    if remote.returncode == 0 and remote.stdout.strip():
+        normalized = _normalize_project_identity(remote.stdout)
+        if normalized:
+            return f'remote:{normalized}'
+    return f'root:{REPO.resolve()}'
+
+
+def _truth_id_state_dir() -> Path:
+    """返回按项目隔离的跨 worktree 编号状态目录。"""
+    explicit = os.environ.get('KG_TRUTH_ID_STATE_DIR')
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    state_root = Path(
+        os.environ.get(
+            'KG_TRUTH_ID_STATE_ROOT',
+            str(Path.home() / '.codex-autopilot' / 'truth-id-sequences'),
+        )
+    ).expanduser().resolve()
+    digest = hashlib.sha256(
+        _truth_project_identity().encode('utf-8')
+    ).hexdigest()[:24]
+    return state_root / digest
+
+
+@contextlib.contextmanager
+def _truth_id_lock():
+    """跨 worktree 串行分配编号；同项目共用一个高水位。"""
+    state_dir = _truth_id_state_dir()
+    if fcntl is None:
+        yield state_dir
+        return
+    state_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = state_dir / '.truth-id-sequences.lock'
+    with lock_path.open('a+') as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        try:
+            yield state_dir
+        finally:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
 def _next_id(t: str) -> str:
     """下一个空闲 id。必须在 _truth_lock() 临界区里调用，否则并发会撞号。
 
     旧实现是 len(rows)+1：同 id 的状态覆盖行会让行数虚高、编号跳号，并发时两个
-    进程还会算出同一个号（L-0056）。改成「现有最大编号 +1」。
+    进程还会算出同一个号（L-0056）。跨 worktree 时，各自台账的最大编号也可能
+    相同，因此再叠一层按项目共享的高水位。
     """
-    taken = _taken_ids(t)
-    n = _max_num(t) + 1
-    while f'{PREFIX[t]}-{n:04d}' in taken:
-        n += 1
-    return f'{PREFIX[t]}-{n:04d}'
+    with _truth_id_lock() as state_dir:
+        sequence_path = state_dir / 'truth-id-sequences.json'
+        try:
+            state = json.loads(sequence_path.read_text())
+        except (FileNotFoundError, json.JSONDecodeError):
+            state = {}
+        if not isinstance(state, dict):
+            state = {}
+        try:
+            reserved = int(state.get(t, 0))
+        except (TypeError, ValueError):
+            reserved = 0
+        taken = _taken_ids(t)
+        n = max(_max_num(t), reserved) + 1
+        while f'{PREFIX[t]}-{n:04d}' in taken:
+            n += 1
+        state[t] = n
+        temp_path = sequence_path.with_name(
+            f'{sequence_path.name}.{os.getpid()}.tmp')
+        temp_path.write_text(
+            json.dumps(state, ensure_ascii=False, sort_keys=True) + '\n')
+        os.replace(temp_path, sequence_path)
+        return f'{PREFIX[t]}-{n:04d}'
 
 
 def _append_new(t: str, **fields) -> dict:
@@ -200,7 +295,46 @@ def _append_new(t: str, **fields) -> dict:
 
 
 def _taken_ids(t: str) -> set:
-    return {r.get('id') for r in _read(TRUTH / FILES[t])}
+    return {r.get('id') for r in _all_truth_rows(t)}
+
+
+def _origin_main_rows(t: str) -> list:
+    relative = Path('ops') / 'truth' / FILES[t]
+    if REFERENCE_REPO == REPO:
+        return []
+    result = subprocess.run(
+        ['git', 'show', f'origin/main:{relative.as_posix()}'],
+        cwd=REFERENCE_REPO,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return []
+    rows = []
+    for line in result.stdout.splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _truth_sources(t: str) -> list:
+    """每个真相根单独返回，保留各自的 append-only 顺序。"""
+    relative = Path('ops') / 'truth' / FILES[t]
+    sources = [_read(TRUTH / FILES[t])]
+    if REFERENCE_REPO != REPO:
+        sources.append(_read(REFERENCE_REPO / relative))
+        origin_rows = _origin_main_rows(t)
+        if origin_rows:
+            sources.append(origin_rows)
+    return sources
+
+
+def _all_truth_rows(t: str) -> list:
+    return [row for source in _truth_sources(t) for row in source]
 
 
 def next_free_id(t: str, start: int) -> str:
