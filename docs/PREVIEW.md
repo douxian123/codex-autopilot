@@ -1,9 +1,9 @@
 # Codex 自动挡 · 预览包说明
 
-版本：`0.6.0-preview.26`
+版本：`0.6.0-preview.27`
 形态：Codex 插件 + macOS 菜单栏 Companion（一个状态锚点，不是第二套产品）
 
-本版修复“只有构建通过”的落盘验收会把真实落盘卡在提交后、推送前：现在 build-only 证据会如实保留为 todo，真实行为门禁仍记 verified。同时保留 preview.25 的已关闭问题防复活：问题台账按事件时间收敛，`open -> done -> 旧 open` 的乱序追加不会再让 `done` 条目复活；带更新时间的显式 reopen 仍会重新打开。daemon、MCP、`kgctl context/dash` 与 `truthctl next/snapshot/close` 共用同一读取口径，新增回归同时验证“不重复派发”和“新 reopen 生效”。preview.24 的项目版 `truthctl` 优先、preview.23 的跨 worktree 编号高水位、preview.22 的自动收口证据门禁均保留。
+本版沿用 preview.26 的 build-only 落盘修复：只有构建证据时，验收台账如实保留为 todo，真实行为门禁仍记 verified，不再在提交后、推送前把真实落盘卡死。同时保留 preview.25 的已关闭问题防复活：问题台账按事件时间收敛，`open -> done -> 旧 open` 的乱序追加不会再让 `done` 条目复活；带更新时间的显式 reopen 仍会重新打开。daemon、MCP、`kgctl context/dash` 与 `truthctl next/snapshot/close` 共用同一读取口径，新增回归同时验证“不重复派发”和“新 reopen 生效”。preview.24 的项目版 `truthctl` 优先、preview.23 的跨 worktree 编号高水位、preview.22 的自动收口证据门禁均保留。
 
 ## 一条命令验收
 
@@ -55,7 +55,7 @@ bash install.sh
 
 它会做四件事，全部可回退：
 
-1. 把这一版装进一个不可变版本目录：`~/plugins/codex-autopilot/releases/0.6.0-preview.26/`
+1. 把这一版装进一个不可变版本目录：`~/plugins/codex-autopilot/releases/0.6.0-preview.27/`
 2. 把插件市场清单里的一行指向这个版本目录（原子替换，只动自动挡这一条）
 3. 编译菜单栏 Companion 到 `~/Applications/CodexAutopilotCompanion.app`
 4. 写一份 Companion 配置到 `~/Library/Application Support/CodexAutopilot/companion.json`
