@@ -6,7 +6,7 @@
 本版把两处已合并的修复一起装出来，并补上可追溯的发布口径：
 
 1. 不可变安装的来源可追溯：正式安装前拒绝 dirty 源码工作区，并在版本目录与安装记录中写入唯一 commit，避免把已提交代码和未发布本地改动混进同一版本。新增回归验证干净发布记录准确 commit、dirty 工作区拒绝且不留版本目录。
-2. “只有构建通过”的落盘验收不再把真实落盘卡在提交后、推送前：build-only 证据如实保留为 todo，真实行为门禁仍记 verified。
+2. 沿用 preview.26 的 build-only 落盘修复：只有构建证据时，验收台账如实保留为 todo，真实行为门禁仍记 verified，不再在提交后、推送前把真实落盘卡死。
 
 preview.25 的已关闭问题防复活、preview.24 的项目版 `truthctl` 优先、preview.23 的跨 worktree 编号高水位、preview.22 的自动收口证据门禁均保留。问题台账按事件时间收敛，`open -> done -> 旧 open` 的乱序追加不会再让 `done` 条目复活；带更新时间的显式 reopen 仍会重新打开。daemon、MCP、`kgctl context/dash` 与 `truthctl next/snapshot/close` 共用同一读取口径，新增回归同时验证“不重复派发”和“新 reopen 生效”。
 
