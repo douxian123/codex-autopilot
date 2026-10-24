@@ -3,6 +3,7 @@
 > 这份文件是**这个项目 + 相关对话**的唯一事实来源。opencode 和 codex 都改它，以它为准。
 > 任何 agent 开工前先读它；改动产品行为、决策、进度、卡点后，**回写对应小节**，不要另起文档。
 > 生成/核对时间：2026-10-15（当日现场核对，非转述）。
+> 2026-10-24 收口修复：自动收口不再把“准备分支没有独有提交”当成需求已完成；只有台账记录的 commit 确实在 main 时才免会话关闭。新增回归 fixture，防止 provider 失败或无改动 worker 再次批量误关真实 open 项。
 > 2026-10-24 复核：仓库升级到 `0.6.0-preview.18`，修复同版本目录被移除后重装会覆盖回滚指针的问题；`0.6.0-preview.17` 与更早版本保留可回滚。preview.17 含 10 路异步 worker 池、司令窗流式轮换，以及大仓库状态批量读取与按核并发扫描；461 条分支的状态根从 60 秒超时降到 15.182 秒退出 0。本地 app-server 控制 socket 通过纯 stdlib WebSocket 桥真机直连真实桌面宿主，`can_dispatch=true`。
 > 2026-10-18 复核：源码 main 与 preview.11 运行时已修复状态根解析（无 KG_REPO 时 main 优先于 -trunk），真实桌面证据 A-0044/P-0041 已落盘 origin/main；A-0005 仍保留真人桌面验收。
 > 2026-10-15 深夜 opencode 现场复核（见 12.7）：本机**不是沙箱**，已真跑安装并通过 5/6 验收；原「三条卡点」里的安装/网络两条已在本机解除，原生直连失败的根因当时**重新定位为 socket 选错（不是权限）**——第四节事实 4 已被推翻并更正。
@@ -519,6 +520,18 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
   `python3 ops/selftest.py` 首次命中已知 `test_auto_exec` 抖动，单测复跑 exit 0，
   完整复跑 exit 0；`panel_logic_check.py` 与 `panel_render_check.py --no-shot` 均 exit 0。
   真实状态根 `kgctl queue --light` 不再列出 0 文件分支，并单独报告 1 个待归档空壳。
+
+### 12.13 自动收口必须有真实落盘证据（2026-10-24）
+
+- 现象：运行态同步权威台账后，`L-0012/L-0029/L-0033/L-0057/L-0058/L-0142/L-0149/L-0151/L-0152`
+  仍为 open，却因同名准备分支只指向旧 main、没有独有提交，被守护进程批量标成 done。
+- 根因：派发前的“分支无未落提交”判断只能证明基线已合并，不能证明这条需求被实现；
+  provider 403/429 或 worker 零改动时也会满足该条件。
+- 修复：删除该免会话收口路径；仅当台账明确记录 commit、且该 commit 已是 main 祖先时，
+  才允许自动收口。无证据的 open 项继续重新派发，真实产物仍只能经门禁和串行 land 关闭。
+- 证据：新增“陈旧空分支不得自动收口、必须重新启动 worker”回归 fixture；
+  `python3 -m py_compile ops/central_daemon.py ops/selftest.py` exit 0；
+  `python3 ops/selftest.py` exit 0，全量自检通过。
 
 ---
 
