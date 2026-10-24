@@ -729,7 +729,7 @@ def cmd_supersede(args):
                     "属重复分支，不产生空合并提交。"),
             })
             added = subprocess.run(
-                [sys.executable, str(RUNTIME_OPS / "truthctl.py"), "add", "progress",
+                [sys.executable, str(_truthctl_path()), "add", "progress",
                  f'{r["branch"]} 已被 main 完全覆盖（重复分支）'],
                 cwd=str(wt), env=env, capture_output=True, text=True)
             if added.returncode != 0:
@@ -1280,7 +1280,7 @@ def cmd_gate(args):
                    KG_TRUTH_EVIDENCE=_verify_evidence(results),
                    KG_TRUTH_SOURCE="kgctl gate",
                    KG_TRUTH_SUMMARY=f"{branch} 的门禁预跑（未落盘）")
-        p = subprocess.run([sys.executable, str(RUNTIME_OPS / "truthctl.py"), "add", "acceptance",
+        p = subprocess.run([sys.executable, str(_truthctl_path()), "add", "acceptance",
                             f"{branch} 门禁预跑（未落盘）"],
                            cwd=str(REPO), env=env, capture_output=True, text=True, errors="replace")
         if p.returncode == 0:
@@ -2454,7 +2454,7 @@ def _record_land_progress(wt: Path, branch: str, commit: str, verify_results: li
     })
 
     added = subprocess.run(
-        [sys.executable, str(RUNTIME_OPS / "truthctl.py"), "add", "progress",
+        [sys.executable, str(_truthctl_path()), "add", "progress",
          f"落盘 {branch}"],
         cwd=str(wt), env=env, capture_output=True, text=True)
     if added.returncode != 0:
@@ -2471,7 +2471,7 @@ def _record_land_progress(wt: Path, branch: str, commit: str, verify_results: li
         "KG_TRUTH_SUMMARY": f"{branch} 的验证门禁结果",
     })
     accepted = subprocess.run(
-        [sys.executable, str(RUNTIME_OPS / "truthctl.py"), "add", "acceptance",
+        [sys.executable, str(_truthctl_path()), "add", "acceptance",
          f"{branch} 落盘验收"],
         cwd=str(wt), env=acc_env, capture_output=True, text=True)
     if accepted.returncode != 0:
@@ -3732,19 +3732,26 @@ def cmd_board(args):
     print(f"已写出 {BOARD.relative_to(REPO)}（{len(rows)} 行）")
 
 
-def _truthctl_path() -> Path:
-    """找到可执行的 truthctl.py。
+def _truthctl_path(root: Path | None = None) -> Path:
+    """Find the project truthctl first, then fall back to the bundled runtime.
 
-    自包含安装下，运行时代码只存在于插件目录，目标项目里没有 `ops/truthctl.py`；
-    所以先看本次调用所在的 ops/（即插件自己的运行时），再回退到主干/共享检出。
+    A project ledger may be newer than the immutable plugin release. Calling the
+    bundled copy there can allocate duplicate IDs and miss current repair rules.
     """
-    roots = [RUNTIME_OPS, CODE_ROOT, central_config.trunk_dir(REPO, CFG), REPO]
-    for root in roots:
-        candidate = root / "ops" / "truthctl.py"
-        if candidate.exists():
+    roots = ([root] if root is not None else
+             [REPO, CODE_ROOT, central_config.trunk_dir(REPO, CFG), RUNTIME_OPS])
+    seen = set()
+    for base in roots:
+        if base is None:
+            continue
+        candidate = Path(base) / "ops" / "truthctl.py"
+        key = str(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if candidate.is_file():
             return candidate
     raise FileNotFoundError("找不到 ops/truthctl.py；请先同步 main 或设置 KG_TRUNK")
-
 
 def _truth(sub, *extra):
     """Delegate a truth-layer subcommand through the same entrypoint.
