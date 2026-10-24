@@ -3104,12 +3104,16 @@ def test_parallel_exec_slots():
             # 槽位也必须一次填满，不能被任何预检挡成 0。
             central_daemon._disk_free_gb = lambda: 0.01
             blocked, workers = {}, {}
-            started, workers = central_daemon.dispatch_exec(False, blocked, workers)
-            assert started == [], started
-            jobs = workers["exec_jobs"]
-            assert len(jobs) == slots, jobs
-            assert len({j["worktree"] for j in jobs.values()}) == slots, jobs
+            real_live_slugs = central_daemon._live_exec_slugs
+            # 这个用例只验并发槽位。外部残留的自检进程可能刚好带同名
+            # worktree，不能让它把本 fixture 的派发静默挡掉。
+            central_daemon._live_exec_slugs = lambda: frozenset()
             try:
+                started, workers = central_daemon.dispatch_exec(False, blocked, workers)
+                assert started == [], started
+                jobs = workers["exec_jobs"]
+                assert len(jobs) == slots, jobs
+                assert len({j["worktree"] for j in jobs.values()}) == slots, jobs
                 deadline = _time.time() + 10
                 while (_time.time() < deadline and not all(
                         (Path(j["worktree"]) / "started.txt").exists()
@@ -3128,8 +3132,9 @@ def test_parallel_exec_slots():
                 assert len(landed) == slots, (slots, landed, blocked, workers)
                 assert not workers["exec_jobs"], workers
             finally:
+                central_daemon._live_exec_slugs = real_live_slugs
                 release.touch()
-                for job in jobs.values():
+                for job in workers.get("exec_jobs", {}).values():
                     proc = job.get("proc")
                     if proc is not None and proc.poll() is None:
                         proc.kill()
@@ -3237,6 +3242,59 @@ def test_worker_alive_treats_zombie_as_dead():
     }
     assert central_daemon._active_exec_session_count(jobs) == 1, jobs
     print("selftest ok: 只有 PID 真活着的 worker 占并发槽；僵尸和待落盘槽位不占用。")
+
+
+def test_dead_pid_never_fabricates_worker_success():
+    """PID 已消失但 Popen 尚未返回状态时，不能把失败伪造成 exit 0。"""
+    import importlib
+    import subprocess
+    import sys as _sys
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in _sys.path:
+        _sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    class StillPending:
+        returncode = None
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("codex", timeout)
+
+    class ExitedWithFailure:
+        returncode = None
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            self.returncode = 7
+            return 7
+
+    pending = StillPending()
+    with mock.patch("central_daemon._worker_alive", return_value=False), \
+         mock.patch("central_daemon._reap_exec") as reap:
+        job = {"id": "L-0001", "pid": 424242, "proc": pending}
+        results = central_daemon._collect_exec({"exec_jobs": {"L-0001": job}}, {})
+    assert results == [], results
+    assert job["proc"] is pending, job
+    reap.assert_not_called()
+
+    failed = ExitedWithFailure()
+    with mock.patch("central_daemon._worker_alive", return_value=False), \
+         mock.patch("central_daemon._reap_exec",
+                    return_value={"id": "L-0001", "outcome": "codex_fail_preserved"}) as reap:
+        job = {"id": "L-0001", "pid": 424242, "proc": failed}
+        central_daemon._collect_exec({"exec_jobs": {"L-0001": job}}, {})
+    assert job["proc"].poll() == 7, job
+    assert job["proc"].wait() == 7, job
+    reap.assert_called_once()
+    print("selftest ok: PID 消失时先取真实退出码，取不到就等待，绝不伪造成成功。")
 
 
 def test_hydrate_drops_unverifiable_exec_slots():
@@ -4285,6 +4343,7 @@ if __name__ == "__main__":
     test_git_gc_never_prunes_shared_partial_clone()
     test_exec_prompt_includes_patch_recovery()
     test_worker_alive_treats_zombie_as_dead()
+    test_dead_pid_never_fabricates_worker_success()
     test_hydrate_drops_unverifiable_exec_slots()
     test_mcp_contract()
     test_closure_rate()

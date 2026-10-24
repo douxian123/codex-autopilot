@@ -2087,19 +2087,43 @@ def _looks_like_command(text: str) -> bool:
     return False
 
 
-def _finished_proc() -> "_Finished":
-    """一个 mark-as-finished 的最小 proc 壳：poll 立即返回 0，wait 立即返回 0。
+def _finished_proc(returncode: int = 0) -> "_Finished":
+    """一个已结束进程的最小替身，保留真实退出码。
 
     守护重启后无法 wait() 上一轮的进程；收口路径只需要「进程已结束」这个
     事实，不该让 _reap_exec 对壳对象调用 subprocess.TimeoutExpired 语义再
     等一整轮 timeout（比如 3600s），否则整个 worker 池会空转。
     """
     obj = type("_Finished", (), {
-        "poll": lambda self: 0,
-        "wait": lambda self, timeout=None: 0,
-        "returncode": 0,
+        "poll": lambda self: returncode,
+        "wait": lambda self, timeout=None: returncode,
+        "returncode": returncode,
     })()
     return obj
+
+
+def _reap_exited_child(proc, timeout: float = 0.2):
+    """取回一个已退出子进程的真实退出码；状态还没就绪时返回 None。
+
+    macOS 上进程可能已经从进程表消失，而 Popen.poll() 还没拿到状态。
+    这里短暂 wait 一次，绝不把这种未知状态替换成成功码。
+    """
+    try:
+        code = proc.poll()
+        if code is not None:
+            return int(code)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+    try:
+        code = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return None
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+    try:
+        return None if code is None else int(code)
+    except (TypeError, ValueError):
+        return None
 
 
 def _worker_alive(pid) -> bool:
@@ -2390,7 +2414,12 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
         if proc is not None and job.get("pid"):
             try:
                 if proc.poll() is None and not _worker_alive(job.get("pid")):
-                    job["proc"] = _finished_proc()
+                    code = _reap_exited_child(proc)
+                    if code is None:
+                        # Popen has not returned a status yet. Wait for the
+                        # real exit code instead of fabricating success.
+                        continue
+                    job["proc"] = _finished_proc(code)
                     proc = job["proc"]
             except Exception:
                 pass
