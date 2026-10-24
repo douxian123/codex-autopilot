@@ -3031,6 +3031,17 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
                     log(f"[exec] {rid} 分支已全在 main 且工作区干净 -> 自动收口 "
                         f"rc={_rc_c}")
                     if _rc_c == 0:
+                        # 收口后立刻释放现场，避免每个零改动任务留下约 200MB
+                        # 的 worktree，把磁盘重新推回硬闸。只删目录，分支保留。
+                        try:
+                            _ok_rm, _rm_detail = workspace_guard.remove_worktree(
+                                _r, _real)
+                            if _ok_rm:
+                                log(f"[exec] {rid} 已收口，回收 worktree 目录（分支保留）")
+                            else:
+                                log(f"[exec] {rid} 收口后保留 worktree：{_rm_detail}")
+                        except Exception as _rm_exc:
+                            log(f"[exec] {rid} 收口后回收 worktree 失败（忽略）：{_rm_exc!r}")
                         continue
             except Exception as _exc:
                 log(f"[exec] {rid} 自动收口判断失败（忽略）：{_exc!r}")
