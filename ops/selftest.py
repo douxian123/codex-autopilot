@@ -915,6 +915,9 @@ def test_installer():
 
         env = os.environ.copy()
         env["HOME"] = str(home)
+        # 这些用例在开发中的脏 worktree 里真实跑安装；发布溯源由
+        # test_installer_requires_clean_source 单独锁住默认行为。
+        env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
         # --no-companion：菜单栏 .app 的编译单独测（test_companion_contract），
         # 不让一次安装测试既跑安装又跑 Swift 编译。
         command = ["bash", str(install), "--no-seed", "--no-companion", str(OPS.parent)]
@@ -972,6 +975,56 @@ def test_installer():
           "同版本目录恢复重装仍保留上一版回滚指针。")
 
 
+def test_installer_requires_clean_source():
+    """不可变发布必须能追到唯一提交，不能把 dirty 工作区混进版本目录。"""
+    import json as _json
+    import shutil
+
+    install = OPS.parent / "install.sh"
+    installed_version = _installed_version()
+    with tempfile.TemporaryDirectory(prefix="autopilot-source-proof-") as tmp:
+        root = Path(tmp)
+        source = root / "source"
+        shutil.copytree(OPS.parent, source, ignore=shutil.ignore_patterns(".git"))
+        source_install = source / "install.sh"
+        run(["git", "init", "-q", "-b", "main", str(source)])
+        run(["git", "-C", str(source), "config", "user.email", "selftest@example.invalid"])
+        run(["git", "-C", str(source), "config", "user.name", "Autopilot Selftest"])
+        run(["git", "-C", str(source), "add", "."])
+        run(["git", "-C", str(source), "commit", "-qm", "fixture"])
+        commit = run(["git", "-C", str(source), "rev-parse", "HEAD"],
+                     check=False).stdout.strip()
+
+        home = root / "home"
+        home.mkdir()
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        clean = run(["bash", str(source_install), "--no-seed", "--no-marketplace",
+                     "--no-companion", str(source)], env=env, check=False)
+        if clean.returncode:
+            raise AssertionError(f"干净安装失败:\n{clean.stdout}\n{clean.stderr}")
+        release = home / "plugins" / "codex-autopilot" / "releases" / installed_version
+        meta = _json.loads(
+            (release / ".codex-autopilot-source.json").read_text(encoding="utf-8"))
+        assert meta == {"version": installed_version, "commit": commit, "dirty": False}, \
+            f"不可变版本没有记录准确来源提交：{meta}"
+
+        home2 = root / "home-dirty"
+        home2.mkdir()
+        env["HOME"] = str(home2)
+        (source / "UNPUBLISHED.py").write_text("# dirty\n", encoding="utf-8")
+        dirty = run(["bash", str(source_install), "--no-seed", "--no-marketplace",
+                     "--no-companion", str(source)], env=env, check=False)
+        combined = dirty.stdout + dirty.stderr
+        assert dirty.returncode != 0, f"脏工作区被误发布:\n{combined}"
+        assert "拒绝发布不可变版本" in combined, combined
+        dirty_release = (
+            home2 / "plugins" / "codex-autopilot" / "releases" / installed_version)
+        assert not dirty_release.exists(), "拒绝之后仍留下了不可变版本目录"
+
+    print("selftest ok: 不可变安装记录唯一来源提交，并拒绝把 dirty 工作区混入发布。")
+
+
 def test_installer_shell_portability():
     """安装脚本必须能在 macOS 自带 bash 3.2 + set -u 下跑完整条路径。
 
@@ -1011,6 +1064,7 @@ def test_installer_shell_portability():
         env = os.environ.copy()
         env["HOME"] = str(home)
         env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+        env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
         result = run(["bash", str(install), "--no-seed", "--no-marketplace", str(OPS.parent)],
                      env=env, check=False)
         combined = result.stdout + result.stderr
@@ -1079,6 +1133,7 @@ def test_installed_copy_binding():
 
         env = os.environ.copy()
         env["HOME"] = str(home)
+        env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
         for key in ("KG_REPO", "KG_TRUNK", "KG_DAEMON_HOME"):
             env.pop(key, None)
         result = run(["bash", str(install), "--no-seed", "--no-marketplace",
@@ -4205,6 +4260,7 @@ if __name__ == "__main__":
     test_remote_benchmark_pollution_failclosed()
     test_control_state()
     test_installer()
+    test_installer_requires_clean_source()
     test_installer_shell_portability()
     test_daemon_project_binding()
     test_daemon_control_action()
