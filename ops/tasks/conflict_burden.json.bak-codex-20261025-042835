@@ -1,0 +1,11 @@
+{
+ "main": "4c8745ee1b4571b6789f1210ffd71ded767b4134",
+ "branches": [
+  "codex/auto-close-identity-gate-20261024",
+  "codex/slow-model-routing"
+ ],
+ "burden": {
+  "codex/auto-close-identity-gate-20261024": 1,
+  "codex/slow-model-routing": 3
+ }
+}
