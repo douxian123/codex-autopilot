@@ -15,10 +15,10 @@
 **Codex 自动挡**是给 Codex 加的一层「工程控制面」：你平时打字的那个 Codex 输入框就是总输入框，零散需求进去，归类、落账、隔离工作区、跑验证、能合的自动合、收口、回写主线，全由它串起来。
 
 - 形态：Codex 插件（原生风格面板） + macOS 菜单栏 Companion（状态锚点，不是第二套产品）
-- 版本：源码/候选发布 `0.6.0-preview.20`；本机安装完成后应运行该版本，旧 `preview.19` 保留可回滚，阶段：内部可用
+- 版本：源码/候选发布 `0.6.0-preview.21`；本机安装完成后应运行该版本，旧 `preview.20` 保留可回滚，阶段：内部可用
 - 13 步产品路线：**7 步已完成、6 步进行中、0 步未开始**
 - 验收：机器已自证项持续增加；当前 A-0005/A-0006/A-0007/A-0008 仍需真人/桌面操作
-- 本机实测（2026-10-24）：候选版本 **`0.6.0-preview.20`** 包含 0 文件空壳队列修复；安装后旧 `preview.19` 保留可回滚。launchd 环境已确认带 `KG_SHARED=/Users/danta/.newmax/workspace/knowledge-graph`；原生直连真实桌面宿主 `connected=true`、`can_dispatch=true`。
+- 本机实测（2026-10-24）：候选版本 **`0.6.0-preview.21`** 包含共享 partial clone 禁止自动立即 prune 的保护；安装后旧 `preview.20` 保留可回滚。launchd 环境已确认带 `KG_SHARED=/Users/danta/.newmax/workspace/knowledge-graph`；原生直连真实桌面宿主 `connected=true`、`can_dispatch=true`。
 - 自检：`python3 ops/selftest.py` → **24 组全过、退出码 0、约 58 秒**；再开真编译 + 真二进制两个开关 → **26 组全过**
 - 自动实现（2026-10-17 补充）：`ops/central_daemon.py` 强制首步落盘并对“退出 0 但无改动”在同一 worktree 自动重试；真实 `codex exec` 已在隔离 fixture 完成 `L-0001` → `verify.txt` 内容 `hello-e2e` → 过门禁 → land → 收口。
 
