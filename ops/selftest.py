@@ -65,6 +65,8 @@ def truthctl(repo, *args, extra_env=None):
 def main():
     with tempfile.TemporaryDirectory(prefix="codex-autopilot-selftest-") as tmp:
         root = Path(tmp)
+        run([sys.executable, str(OPS / "test_truthctl_cross_worktree_ids.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()
@@ -2404,6 +2406,10 @@ def test_auto_exec():
         importlib.reload(control_state)
         importlib.reload(central_config)
         importlib.reload(central_daemon)
+        # 每个 fixture 的 worktree 都叫 L-0001-item；上一个 fixture 的 worker
+        # 可能还在退出过程中。模块级进程缓存若不重置，会把旧 worktree 误当成本
+        # fixture 的活进程，跳过派发并直接清掉新分支。
+        central_daemon._LIVE_EXEC_CACHE.update(ts=0.0, slugs=frozenset())
         return central_daemon
 
     def dispatch_until_done(daemon, blocked, workers=None, limit=100, pause=0.1):

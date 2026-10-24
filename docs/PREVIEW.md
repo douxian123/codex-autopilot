@@ -1,9 +1,9 @@
 # Codex 自动挡 · 预览包说明
 
-版本：`0.6.0-preview.19`
+版本：`0.6.0-preview.23`
 形态：Codex 插件 + macOS 菜单栏 Companion（一个状态锚点，不是第二套产品）
 
-本版把共享代码检出显式传给 launchd，修复自包含状态根启动后的门禁找不到 `node_modules`、把可用分支误判成 `tsc: command not found` 的问题。也保留 preview.18 的同版本恢复安装回滚指针修复，以及 preview.17 的大仓库状态扫描优化：批量 Git 元数据读取并按本机核心数并发检查独立分支，只读、完整、不改落盘并发；461 条分支的状态根实测从 60 秒超时降到 15.182 秒退出 0。
+本版修复跨 worktree / clone 的真相编号复用：同一项目的编号分配共用一个持久高水位和文件锁，分配前还会合并本地真相根与 `origin/main` 的已占编号。隔离分支先写进展、主干稍后落盘时，不再从同一个低编号重新起算。新增回归真实创建两个 clone，锁住 `P-0001` / `P-0002` 的顺序；全量自检退出码 0。preview.22 的自动收口证据门禁、preview.18 的同版本恢复安装回滚指针修复均保留。
 
 ## 一条命令验收
 
@@ -55,7 +55,7 @@ bash install.sh
 
 它会做四件事，全部可回退：
 
-1. 把这一版装进一个不可变版本目录：`~/plugins/codex-autopilot/releases/0.6.0-preview.19/`
+1. 把这一版装进一个不可变版本目录：`~/plugins/codex-autopilot/releases/0.6.0-preview.23/`
 2. 把插件市场清单里的一行指向这个版本目录（原子替换，只动自动挡这一条）
 3. 编译菜单栏 Companion 到 `~/Applications/CodexAutopilotCompanion.app`
 4. 写一份 Companion 配置到 `~/Library/Application Support/CodexAutopilot/companion.json`
