@@ -1,9 +1,15 @@
 # Codex 自动挡 · 预览包说明
 
-版本：`0.6.0-preview.27`
+版本：`0.6.0-preview.28`
 形态：Codex 插件 + macOS 菜单栏 Companion（一个状态锚点，不是第二套产品）
 
-本版沿用 preview.26 的 build-only 落盘修复：只有构建证据时，验收台账如实保留为 todo，真实行为门禁仍记 verified，不再在提交后、推送前把真实落盘卡死。同时保留 preview.25 的已关闭问题防复活：问题台账按事件时间收敛，`open -> done -> 旧 open` 的乱序追加不会再让 `done` 条目复活；带更新时间的显式 reopen 仍会重新打开。daemon、MCP、`kgctl context/dash` 与 `truthctl next/snapshot/close` 共用同一读取口径，新增回归同时验证“不重复派发”和“新 reopen 生效”。preview.24 的项目版 `truthctl` 优先、preview.23 的跨 worktree 编号高水位、preview.22 的自动收口证据门禁均保留。
+本版修掉一处会把失败误报成成功的进程收口竞态，并保留前两版的发布修复：
+
+1. 子进程刚退出、PID 已从进程表消失但 `Popen` 尚未返回状态时，自动挡现在先取回真实退出码；取不到就继续等待，不再用固定 `0` 的替身收口。失败任务不会被误标为已落盘，也不会把半成品提交进 main。
+2. preview.27 的不可变安装来源可追溯：正式安装前拒绝 dirty 源码工作区，并在版本目录与安装记录中写入唯一 commit，避免把已提交代码和未发布本地改动混进同一版本。
+3. preview.26 的 build-only 落盘修复：只有构建证据时，验收台账如实保留为 todo，真实行为门禁仍记 verified，不再在提交后、推送前把真实落盘卡死。
+
+preview.25 的已关闭问题防复活、preview.24 的项目版 `truthctl` 优先、preview.23 的跨 worktree 编号高水位、preview.22 的自动收口证据门禁均保留。问题台账按事件时间收敛，`open -> done -> 旧 open` 的乱序追加不会再让 `done` 条目复活；带更新时间的显式 reopen 仍会重新打开。daemon、MCP、`kgctl context/dash` 与 `truthctl next/snapshot/close` 共用同一读取口径，新增回归同时验证“不重复派发”和“新 reopen 生效”。
 
 ## 一条命令验收
 
@@ -55,7 +61,7 @@ bash install.sh
 
 它会做四件事，全部可回退：
 
-1. 把这一版装进一个不可变版本目录：`~/plugins/codex-autopilot/releases/0.6.0-preview.27/`
+1. 把这一版装进一个不可变版本目录：`~/plugins/codex-autopilot/releases/0.6.0-preview.28/`
 2. 把插件市场清单里的一行指向这个版本目录（原子替换，只动自动挡这一条）
 3. 编译菜单栏 Companion 到 `~/Applications/CodexAutopilotCompanion.app`
 4. 写一份 Companion 配置到 `~/Library/Application Support/CodexAutopilot/companion.json`

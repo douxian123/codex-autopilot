@@ -53,6 +53,18 @@ done
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$REPO/plugin"
+SOURCE_COMMIT=""
+if git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  dirty="$(git -C "$REPO" status --porcelain --untracked-files=normal)"
+  if [ -n "$dirty" ] && [ "${CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE:-0}" != "1" ]; then
+    echo "× 源码工作区有未提交改动，拒绝发布不可变版本。" >&2
+    echo "  当前安装器会复制整个工作区，继续会把已提交代码和本地改动混进同一版本。" >&2
+    echo "  先提交要发布的内容；隔离测试可显式设置 CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE=1。" >&2
+    git -C "$REPO" status --short >&2
+    exit 1
+  fi
+  SOURCE_COMMIT="$(git -C "$REPO" rev-parse HEAD)"
+fi
 # 源码仓库里插件本体在 plugin/，已发布的版本目录直接以自身为插件根。
 # 两者都允许，发布目录因此也能完整跑安装/自测，不再依赖源码仓库布局。
 if [ -d "$REPO/plugin/.codex-plugin" ]; then
@@ -207,6 +219,25 @@ cp "$REPO"/ops/*.md "$STAGE/ops/" 2>/dev/null || true
 cp "$REPO"/ops/*.json "$STAGE/ops/" 2>/dev/null || true
 cp "$REPO/preview-check.sh" "$STAGE/preview-check.sh"
 chmod +x "$STAGE/preview-check.sh"
+"$PY" - "$STAGE/.codex-autopilot-source.json" "$VERSION" "$SOURCE_COMMIT" <<'PYEOF'
+import json, os, sys, tempfile
+path, version, commit = sys.argv[1:4]
+data = {"version": version, "commit": commit or None, "dirty": not bool(commit)}
+fd, tmp = tempfile.mkstemp(prefix=".source-meta-", dir=os.path.dirname(path))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise
+PYEOF
 # 自测需要真实基线 fixture；嵌套目录不能靠通配符漏掉。
 if [ -d "$REPO/ops/selftest_fixtures" ]; then
   cp -R "$REPO/ops/selftest_fixtures" "$STAGE/ops/"
@@ -251,9 +282,9 @@ echo "已安装不可变版本 $VERSION 到 $DEST"
 
 # 4) 登记进个人 marketplace
 if [ "$NO_MARKET" -eq 0 ]; then
-  "$PY" - "$MARKET" "$INSTALL_STATE" "$VERSION" <<'PYEOF'
+  "$PY" - "$MARKET" "$INSTALL_STATE" "$VERSION" "$SOURCE_COMMIT" <<'PYEOF'
 import json, os, shutil, sys, tempfile
-path, state_path, version = sys.argv[1:4]
+path, state_path, version, source_commit = sys.argv[1:5]
 name = "codex-autopilot"
 source_path = f"./plugins/codex-autopilot/releases/{version}"
 entry = {
@@ -305,7 +336,8 @@ except BaseException:
     except OSError:
         pass
     raise
-state = {"version": version, "source": source_path, "previous_source": previous}
+state = {"version": version, "source": source_path, "previous_source": previous,
+         "source_commit": source_commit or None}
 fd, tmp = tempfile.mkstemp(prefix=".install-state-", dir=os.path.dirname(state_path))
 try:
     with os.fdopen(fd, "w", encoding="utf-8") as fh:

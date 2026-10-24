@@ -917,6 +917,9 @@ def test_installer():
 
         env = os.environ.copy()
         env["HOME"] = str(home)
+        # 这些用例在开发中的脏 worktree 里真实跑安装；发布溯源由
+        # test_installer_requires_clean_source 单独锁住默认行为。
+        env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
         # --no-companion：菜单栏 .app 的编译单独测（test_companion_contract），
         # 不让一次安装测试既跑安装又跑 Swift 编译。
         command = ["bash", str(install), "--no-seed", "--no-companion", str(OPS.parent)]
@@ -974,6 +977,56 @@ def test_installer():
           "同版本目录恢复重装仍保留上一版回滚指针。")
 
 
+def test_installer_requires_clean_source():
+    """不可变发布必须能追到唯一提交，不能把 dirty 工作区混进版本目录。"""
+    import json as _json
+    import shutil
+
+    install = OPS.parent / "install.sh"
+    installed_version = _installed_version()
+    with tempfile.TemporaryDirectory(prefix="autopilot-source-proof-") as tmp:
+        root = Path(tmp)
+        source = root / "source"
+        shutil.copytree(OPS.parent, source, ignore=shutil.ignore_patterns(".git"))
+        source_install = source / "install.sh"
+        run(["git", "init", "-q", "-b", "main", str(source)])
+        run(["git", "-C", str(source), "config", "user.email", "selftest@example.invalid"])
+        run(["git", "-C", str(source), "config", "user.name", "Autopilot Selftest"])
+        run(["git", "-C", str(source), "add", "."])
+        run(["git", "-C", str(source), "commit", "-qm", "fixture"])
+        commit = run(["git", "-C", str(source), "rev-parse", "HEAD"],
+                     check=False).stdout.strip()
+
+        home = root / "home"
+        home.mkdir()
+        env = os.environ.copy()
+        env["HOME"] = str(home)
+        clean = run(["bash", str(source_install), "--no-seed", "--no-marketplace",
+                     "--no-companion", str(source)], env=env, check=False)
+        if clean.returncode:
+            raise AssertionError(f"干净安装失败:\n{clean.stdout}\n{clean.stderr}")
+        release = home / "plugins" / "codex-autopilot" / "releases" / installed_version
+        meta = _json.loads(
+            (release / ".codex-autopilot-source.json").read_text(encoding="utf-8"))
+        assert meta == {"version": installed_version, "commit": commit, "dirty": False}, \
+            f"不可变版本没有记录准确来源提交：{meta}"
+
+        home2 = root / "home-dirty"
+        home2.mkdir()
+        env["HOME"] = str(home2)
+        (source / "UNPUBLISHED.py").write_text("# dirty\n", encoding="utf-8")
+        dirty = run(["bash", str(source_install), "--no-seed", "--no-marketplace",
+                     "--no-companion", str(source)], env=env, check=False)
+        combined = dirty.stdout + dirty.stderr
+        assert dirty.returncode != 0, f"脏工作区被误发布:\n{combined}"
+        assert "拒绝发布不可变版本" in combined, combined
+        dirty_release = (
+            home2 / "plugins" / "codex-autopilot" / "releases" / installed_version)
+        assert not dirty_release.exists(), "拒绝之后仍留下了不可变版本目录"
+
+    print("selftest ok: 不可变安装记录唯一来源提交，并拒绝把 dirty 工作区混入发布。")
+
+
 def test_installer_shell_portability():
     """安装脚本必须能在 macOS 自带 bash 3.2 + set -u 下跑完整条路径。
 
@@ -1013,6 +1066,7 @@ def test_installer_shell_portability():
         env = os.environ.copy()
         env["HOME"] = str(home)
         env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+        env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
         result = run(["bash", str(install), "--no-seed", "--no-marketplace", str(OPS.parent)],
                      env=env, check=False)
         combined = result.stdout + result.stderr
@@ -1081,6 +1135,7 @@ def test_installed_copy_binding():
 
         env = os.environ.copy()
         env["HOME"] = str(home)
+        env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
         for key in ("KG_REPO", "KG_TRUNK", "KG_DAEMON_HOME"):
             env.pop(key, None)
         result = run(["bash", str(install), "--no-seed", "--no-marketplace",
@@ -3049,12 +3104,16 @@ def test_parallel_exec_slots():
             # 槽位也必须一次填满，不能被任何预检挡成 0。
             central_daemon._disk_free_gb = lambda: 0.01
             blocked, workers = {}, {}
-            started, workers = central_daemon.dispatch_exec(False, blocked, workers)
-            assert started == [], started
-            jobs = workers["exec_jobs"]
-            assert len(jobs) == slots, jobs
-            assert len({j["worktree"] for j in jobs.values()}) == slots, jobs
+            real_live_slugs = central_daemon._live_exec_slugs
+            # 这个用例只验并发槽位。外部残留的自检进程可能刚好带同名
+            # worktree，不能让它把本 fixture 的派发静默挡掉。
+            central_daemon._live_exec_slugs = lambda: frozenset()
             try:
+                started, workers = central_daemon.dispatch_exec(False, blocked, workers)
+                assert started == [], started
+                jobs = workers["exec_jobs"]
+                assert len(jobs) == slots, jobs
+                assert len({j["worktree"] for j in jobs.values()}) == slots, jobs
                 deadline = _time.time() + 10
                 while (_time.time() < deadline and not all(
                         (Path(j["worktree"]) / "started.txt").exists()
@@ -3073,8 +3132,9 @@ def test_parallel_exec_slots():
                 assert len(landed) == slots, (slots, landed, blocked, workers)
                 assert not workers["exec_jobs"], workers
             finally:
+                central_daemon._live_exec_slugs = real_live_slugs
                 release.touch()
-                for job in jobs.values():
+                for job in workers.get("exec_jobs", {}).values():
                     proc = job.get("proc")
                     if proc is not None and proc.poll() is None:
                         proc.kill()
@@ -3182,6 +3242,59 @@ def test_worker_alive_treats_zombie_as_dead():
     }
     assert central_daemon._active_exec_session_count(jobs) == 1, jobs
     print("selftest ok: 只有 PID 真活着的 worker 占并发槽；僵尸和待落盘槽位不占用。")
+
+
+def test_dead_pid_never_fabricates_worker_success():
+    """PID 已消失但 Popen 尚未返回状态时，不能把失败伪造成 exit 0。"""
+    import importlib
+    import subprocess
+    import sys as _sys
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in _sys.path:
+        _sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    class StillPending:
+        returncode = None
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("codex", timeout)
+
+    class ExitedWithFailure:
+        returncode = None
+
+        def poll(self):
+            return None
+
+        def wait(self, timeout=None):
+            self.returncode = 7
+            return 7
+
+    pending = StillPending()
+    with mock.patch("central_daemon._worker_alive", return_value=False), \
+         mock.patch("central_daemon._reap_exec") as reap:
+        job = {"id": "L-0001", "pid": 424242, "proc": pending}
+        results = central_daemon._collect_exec({"exec_jobs": {"L-0001": job}}, {})
+    assert results == [], results
+    assert job["proc"] is pending, job
+    reap.assert_not_called()
+
+    failed = ExitedWithFailure()
+    with mock.patch("central_daemon._worker_alive", return_value=False), \
+         mock.patch("central_daemon._reap_exec",
+                    return_value={"id": "L-0001", "outcome": "codex_fail_preserved"}) as reap:
+        job = {"id": "L-0001", "pid": 424242, "proc": failed}
+        central_daemon._collect_exec({"exec_jobs": {"L-0001": job}}, {})
+    assert job["proc"].poll() == 7, job
+    assert job["proc"].wait() == 7, job
+    reap.assert_called_once()
+    print("selftest ok: PID 消失时先取真实退出码，取不到就等待，绝不伪造成成功。")
 
 
 def test_hydrate_drops_unverifiable_exec_slots():
@@ -4207,6 +4320,7 @@ if __name__ == "__main__":
     test_remote_benchmark_pollution_failclosed()
     test_control_state()
     test_installer()
+    test_installer_requires_clean_source()
     test_installer_shell_portability()
     test_daemon_project_binding()
     test_daemon_control_action()
@@ -4229,6 +4343,7 @@ if __name__ == "__main__":
     test_git_gc_never_prunes_shared_partial_clone()
     test_exec_prompt_includes_patch_recovery()
     test_worker_alive_treats_zombie_as_dead()
+    test_dead_pid_never_fabricates_worker_success()
     test_hydrate_drops_unverifiable_exec_slots()
     test_mcp_contract()
     test_closure_rate()
