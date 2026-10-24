@@ -56,6 +56,7 @@ MAIN = os.environ.get("KG_MAIN", "main")
 # 同一个项目能同时存在两份互不相认的账本。现在两个脚本共用同一个解析器。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plugin_binding import apply_plugin_env  # noqa: E402
+from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, looks_like_state_root, resolve_state_root  # noqa: E402
 import central_config  # noqa: E402
 
@@ -1741,7 +1742,8 @@ def _context_payload(branch: str) -> dict:
     files = changed_files(branch)
     conf = conflict_files(branch)
     markers = unresolved_marker_files(branch) if not conf else []
-    rows = latest_by_id(read_jsonl(REPO / "ops" / "truth" / "ledger.jsonl")).values()
+    rows = latest_ledger_by_id(
+        read_jsonl(REPO / "ops" / "truth" / "ledger.jsonl")).values()
     open_rows = [r for r in rows if r.get("status") in ("open", "doing", "todo")]
     overlap = []
     for r in open_rows:
@@ -1846,7 +1848,8 @@ def cmd_dash(args):
 
     rows = scan()
     groups = conflict_groups(rows)
-    led = latest_by_id(read_jsonl(REPO / "ops" / "truth" / "ledger.jsonl")).values()
+    led = latest_ledger_by_id(
+        read_jsonl(REPO / "ops" / "truth" / "ledger.jsonl")).values()
     open_led = [r for r in led if r.get("status") in ("open", "doing", "todo")]
     open_led.sort(key=lambda r: ({"bug": 0, "arch": 1, "ux": 2, "visual": 3}.get(r.get("kind"), 9),
                                  r.get("ts", "")))

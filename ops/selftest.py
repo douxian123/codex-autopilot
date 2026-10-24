@@ -67,6 +67,8 @@ def main():
         root = Path(tmp)
         run([sys.executable, str(OPS / "test_truthctl_cross_worktree_ids.py")],
             cwd=str(OPS.parent), check=True)
+        run([sys.executable, str(OPS / "test-ledger-terminal-state.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()

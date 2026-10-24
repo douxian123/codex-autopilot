@@ -66,6 +66,7 @@ from plugin_binding import apply_plugin_env  # noqa: E402
 
 import central_config  # noqa: E402
 import control_state  # noqa: E402
+from ledger_state import latest_ledger_by_id  # noqa: E402
 import workspace_guard  # noqa: E402
 
 # KG_REPO（账本）/ KG_TRUNK（落盘主干）优先取显式环境变量，其次读插件 .mcp.json。
@@ -600,7 +601,7 @@ def _truth_dir():
 
 
 def _ledger_latest():
-    """台账里每个 id 的最后一条记录。目录/文件不可读时返回 None。
+    """台账里每个 id 按时间收敛后的当前记录。目录/文件不可读时返回 None。
 
     返回 None 与返回 {} 语义不同：None 表示「读不到真相」，调用方不应据此清理
     任何暂缓记录；{} 表示「台账确实为空」。
@@ -612,7 +613,7 @@ def _ledger_latest():
         raw = (tdir / "ledger.jsonl").read_text(encoding="utf-8")
     except OSError:
         return None
-    latest = {}
+    rows = []
     for line in raw.splitlines():
         line = line.strip()
         if not line:
@@ -621,9 +622,9 @@ def _ledger_latest():
             rec = json.loads(line)
         except ValueError:
             continue
-        if rec.get("id"):
-            latest[rec["id"]] = rec
-    return latest
+        if isinstance(rec, dict):
+            rows.append(rec)
+    return latest_ledger_by_id(rows)
 
 
 def _ledger_open_items(limit=20):

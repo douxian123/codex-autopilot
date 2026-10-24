@@ -57,6 +57,7 @@ except ImportError:  # 非 POSIX 平台没有 flock：退回无锁，行为与�
 # KG_REPO 仍然是最高的显式覆盖。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plugin_binding import apply_plugin_env  # noqa: E402
+from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, resolve_state_root  # noqa: E402
 import central_config  # noqa: E402
 
@@ -477,8 +478,13 @@ def _latest_by_id(rows: list) -> dict:
     return out
 
 
+def _latest_ledger(rows: list) -> dict:
+    """问题台账按事件时间收敛；其它 JSONL 仍按物理追加顺序取最新。"""
+    return latest_ledger_by_id(rows)
+
+
 def _find_ledger(rid: str) -> dict:
-    return _latest_by_id(_read(TRUTH / FILES['ledger'])).get(rid)
+    return _latest_ledger(_read(TRUTH / FILES['ledger'])).get(rid)
 
 
 def _rewrite_jsonl(path: Path, rows: list) -> None:
@@ -715,7 +721,7 @@ def cmd_route(args):
 
 def cmd_next(args):
     """只回答一个问题：现在最该动的是哪几条，用户不用自己翻台账。"""
-    led = [r for r in _latest_by_id(_read(TRUTH / 'ledger.jsonl')).values()
+    led = [r for r in _latest_ledger(_read(TRUTH / 'ledger.jsonl')).values()
            if r.get('status') in ('open', 'doing')]
     led.sort(key=lambda r: (PRIORITY.get(r.get('kind'), 9), r.get('ts', '')))
     acc = [r for r in _latest_by_id(_read(TRUTH / 'acceptance.jsonl')).values()
@@ -858,7 +864,7 @@ def cmd_distill(args):
 def _set_ledger_status(rid, status, note, evidence=''):
     # JSONL 只追加：同 id 的新记录覆盖旧记录，得到当前状态
     with _truth_lock():
-        rec = _latest_by_id(_read(TRUTH / FILES['ledger'])).get(rid)
+        rec = _latest_ledger(_read(TRUTH / FILES['ledger'])).get(rid)
         if rec is None:
             sys.exit('问题台账里没有 %s（先 truthctl ls ledger 看现有条目）' % rid)
         merged = dict(rec)
@@ -930,7 +936,7 @@ def cmd_synthesize(args):
     ml = _read_json(TRUTH / 'mainline.json')
     dec = [r for r in _latest_by_id(_read(TRUTH / 'decisions.jsonl')).values()
            if r.get('status') == 'active']
-    led = list(_latest_by_id(_read(TRUTH / 'ledger.jsonl')).values())
+    led = list(_latest_ledger(_read(TRUTH / 'ledger.jsonl')).values())
     prg = sorted(_latest_by_id(_read(TRUTH / 'progress.jsonl')).values(),
                  key=lambda r: r.get('ts', ''))
     acc = list(_latest_by_id(_read(TRUTH / 'acceptance.jsonl')).values())
@@ -1077,7 +1083,7 @@ def cmd_synthesize(args):
 def cmd_snapshot(args):
     ml = json.loads((TRUTH / 'mainline.json').read_text()) if (TRUTH / 'mainline.json').exists() else {}
     dec = list(_latest_by_id(_read(TRUTH / 'decisions.jsonl')).values())
-    led = list(_latest_by_id(_read(TRUTH / 'ledger.jsonl')).values())
+    led = list(_latest_ledger(_read(TRUTH / 'ledger.jsonl')).values())
     prg = sorted(_latest_by_id(_read(TRUTH / 'progress.jsonl')).values(),
                  key=lambda r: r.get('ts', ''))
     acc = list(_latest_by_id(_read(TRUTH / 'acceptance.jsonl')).values())

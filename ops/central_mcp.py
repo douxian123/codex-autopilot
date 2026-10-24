@@ -76,6 +76,7 @@ from plugin_binding import apply_plugin_env  # noqa: E402
 
 import control_state  # noqa: E402
 import codex_native  # noqa: E402
+from ledger_state import latest_ledger_by_id  # noqa: E402
 
 try:
     import exec_status  # noqa: E402
@@ -640,12 +641,12 @@ def _ledger_count():
 
 
 def _open_ledger_count():
-    """还没关闭的问题数（bug/视觉/体验/架构），按 id 取最新状态。"""
+    """还没关闭的问题数（bug/视觉/体验/架构），按事件时间取当前状态。"""
     repo = os.environ.get("KG_REPO")
     if not repo:
         return 0
     ledger = Path(repo) / "ops" / "truth" / "ledger.jsonl"
-    latest = {}
+    rows = []
     try:
         lines = ledger.read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -658,8 +659,9 @@ def _open_ledger_count():
             rec = json.loads(line)
         except ValueError:
             continue
-        if rec.get("id"):
-            latest[rec["id"]] = rec
+        if isinstance(rec, dict):
+            rows.append(rec)
+    latest = latest_ledger_by_id(rows)
     return sum(1 for r in latest.values() if r.get("status") in ("open", "doing"))
 
 

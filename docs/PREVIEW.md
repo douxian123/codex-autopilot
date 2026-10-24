@@ -1,9 +1,9 @@
 # Codex 自动挡 · 预览包说明
 
-版本：`0.6.0-preview.23`
+版本：`0.6.0-preview.25`
 形态：Codex 插件 + macOS 菜单栏 Companion（一个状态锚点，不是第二套产品）
 
-本版修复跨 worktree / clone 的真相编号复用：同一项目的编号分配共用一个持久高水位和文件锁，分配前还会合并本地真相根与 `origin/main` 的已占编号。隔离分支先写进展、主干稍后落盘时，不再从同一个低编号重新起算。新增回归真实创建两个 clone，锁住 `P-0001` / `P-0002` 的顺序；全量自检退出码 0。preview.22 的自动收口证据门禁、preview.18 的同版本恢复安装回滚指针修复均保留。
+本版修复已关闭问题被旧快照重新派发：问题台账按事件时间收敛，`open -> done -> 旧 open` 的乱序追加不会再让 `done` 条目复活；带更新时间的显式 reopen 仍会重新打开。daemon、MCP、`kgctl context/dash` 与 `truthctl next/snapshot/close` 共用同一读取口径，新增回归同时验证“不重复派发”和“新 reopen 生效”。preview.24 的项目版 `truthctl` 优先、preview.23 的跨 worktree 编号高水位、preview.22 的自动收口证据门禁均保留。
 
 ## 一条命令验收
 
@@ -55,7 +55,7 @@ bash install.sh
 
 它会做四件事，全部可回退：
 
-1. 把这一版装进一个不可变版本目录：`~/plugins/codex-autopilot/releases/0.6.0-preview.23/`
+1. 把这一版装进一个不可变版本目录：`~/plugins/codex-autopilot/releases/0.6.0-preview.25/`
 2. 把插件市场清单里的一行指向这个版本目录（原子替换，只动自动挡这一条）
 3. 编译菜单栏 Companion 到 `~/Applications/CodexAutopilotCompanion.app`
 4. 写一份 Companion 配置到 `~/Library/Application Support/CodexAutopilot/companion.json`
