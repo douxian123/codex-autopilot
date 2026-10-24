@@ -69,6 +69,8 @@ def main():
             cwd=str(OPS.parent), check=True)
         run([sys.executable, str(OPS / "test-ledger-terminal-state.py")],
             cwd=str(OPS.parent), check=True)
+        run([sys.executable, str(OPS / "test-land-build-only-todo.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()

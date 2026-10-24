@@ -2339,6 +2339,23 @@ def _verify_evidence(verify_results: list) -> str:
         lines.append(f"{r.get('name')}: {r.get('cmd')} (cwd={r.get('cwd')}) -> exit {code}")
     return "\n".join(lines)
 
+def _build_only_evidence(verify_results: list) -> bool:
+    """Return true when every recorded gate is only a compile/build check."""
+    if not verify_results:
+        return False
+    build_cmd = re.compile(
+        r'\b(?:npm(?:\s+--prefix\s+\S+)?\s+run\s+build|npm\s+run\s+build|'
+        r'npx\s+tsc|tsc\s+--noEmit|npm\s+run\s+typecheck)\b',
+        re.IGNORECASE,
+    )
+    behavior_cmd = re.compile(
+        r'\b(?:node|verify:|test/|assert|python\d?)\b', re.IGNORECASE)
+    for result in verify_results:
+        cmd = str(result.get("cmd") or "")
+        if not build_cmd.search(cmd) or behavior_cmd.search(cmd):
+            return False
+    return True
+
 
 def _land_manifest(wt: Path, branch: str, merge_commit: str, pre_main: str) -> dict:
     """落盘清单：这次 land 到底把什么带进了 main。
@@ -2438,7 +2455,11 @@ def _record_land_progress(wt: Path, branch: str, commit: str, verify_results: li
       · 变更文件清单 —— 写进 progress 的 files 字段，供面板与 synthesize 直接引用
     """
     manifest = manifest or {}
-    verified = bool(verify_results) and all(r.get("ok") for r in verify_results)
+    # 落盘本身仍要求所有门禁通过；但验收台账是否可记 verified 由 truthctl
+    # 按证据内容判定。只有 build 时它应当记 todo，而不是让整次 land 在已经
+    # 合并、门禁通过后抛错并留下半提交状态。
+    gates_ok = bool(verify_results) and all(r.get("ok") for r in verify_results)
+    verified = gates_ok
     gate_note = "验证门禁通过" if verified else "未通过验证门禁"
     human = _manifest_text(manifest, verify_results)
     changed = [f.get("path") for f in (manifest.get("changed_files") or []) if f.get("path")]
@@ -2473,6 +2494,10 @@ def _record_land_progress(wt: Path, branch: str, commit: str, verify_results: li
         "KG_TRUTH_SOURCE": "kgctl land",
         "KG_TRUTH_SUMMARY": f"{branch} 的验证门禁结果",
     })
+    # build-only 结果必须保留为 todo，不能因为 land 内部先标 verified 而
+    # 在真实落盘已经成功后，被更严格的 truthctl 拒绝并留下半提交状态。
+    if _build_only_evidence(verify_results):
+        acc_env["KG_TRUTH_STATUS"] = "todo"
     accepted = subprocess.run(
         [sys.executable, str(_truthctl_path()), "add", "acceptance",
          f"{branch} 落盘验收"],
