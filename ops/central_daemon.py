@@ -2781,46 +2781,16 @@ def _worktree_repo(wt: Path) -> Path | None:
 
 
 def _git_gc_maintenance() -> None:
-    """磁盘偏紧时清掉 git 的松散对象与垃圾（不改任何工作区、不删分支）。
+    """Retire the automatic ``gc --prune=now`` maintenance path.
 
-    主仓长期高频合并，松散对象会越积越多（实测一次 244MB loose + 266MB
-    garbage）。这些都只是 git 自己的中间产物，`gc --prune=now` 之后仍可从
-    pack 里还原全部历史。只在压力模式下跑，且每 30 分钟最多一次。
+    This repository is a partial clone shared by hundreds of worktrees. Pruning
+    unreachable objects while other processes lazily fetch can delete freshly
+    written commits or the blobs they need, and the next command misreads the
+    damaged ref as "already merged". Git's ordinary auto-gc policy (without an
+    explicit immediate prune) remains available to the user, but autopilot must
+    not destructively prune objects on its own.
     """
-    if not _knob("git_gc", True):
-        return
-    try:
-        st = load_state()
-        last = float(st.get("last_git_gc_ts") or 0)
-        if time.time() - last < 1800:
-            return
-        repo = _state_repo()
-        if not repo:
-            return
-        before = subprocess.run(["git", "-C", str(repo), "count-objects", "-v"],
-                                capture_output=True, text=True, timeout=60).stdout
-        # 必须放到后台跑：282 个 worktree 的主仓 `gc --prune=now` 实测能跑好几分钟，
-        # 同步跑会把整轮 cycle 卡死。2026-10-23 现场就是守护卡在 gc 上，
-        # worker 从 10 掉到 7 却一整个周期都没补派，看起来又「跑不动」了。
-        # gc 只清理 git 自己的松散对象，不碰工作区与分支，晚几分钟完成毫无影响。
-        st = load_state()
-        st["last_git_gc_ts"] = str(int(time.time()))
-        save_state(st)
-        _gc_log = _exec_dir() / "git-gc.log"
-        try:
-            with open(_gc_log, "a") as _fh:
-                subprocess.Popen(
-                    ["git", "-C", str(repo), "gc", "--prune=now", "--quiet"],
-                    stdout=_fh, stderr=_fh, start_new_session=True,
-                )
-            log("[safety] git gc 已转入后台（不阻塞派活；日志 "
-                f"{_gc_log}）")
-        except Exception as exc:
-            log(f"[safety] git gc 启动失败（忽略）：{exc}")
-            return
-        return
-    except Exception as exc:  # fail-open
-        log(f"[safety] git gc 跳过（忽略）：{exc}")
+    log("[safety] automatic git gc --prune=now is disabled; no objects were pruned")
 
 
 def _reap_dead_worktrees() -> int:

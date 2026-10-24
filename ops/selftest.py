@@ -3050,6 +3050,38 @@ def test_parallel_exec_slots():
     print("selftest ok: 磁盘仅 0.01GB 时，3/10 个 worker 槽均能一次填满并逐条串行落盘。")
 
 
+def test_git_gc_never_prunes_shared_partial_clone():
+    """Autopilot must never launch an immediate object prune.
+
+    This repo is a partial clone shared by hundreds of worktrees. A successful
+    ``git gc --prune=now`` can delete an object that another process has just
+    written but not yet made reachable, and a concurrent lazy fetch can make the
+    next command misreport a missing local commit as "already merged". Lock the
+    safety property at the process boundary so a later cleanup refactor cannot
+    silently reintroduce the destructive call.
+    """
+    import importlib
+    import sys
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-no-gc-") as tmp:
+        home = Path(tmp)
+        with mock.patch.dict(os.environ, {"KG_DAEMON_HOME": str(home)}, clear=False):
+            importlib.reload(central_daemon)
+            with mock.patch.object(central_daemon.subprocess, "Popen") as popen:
+                with mock.patch.object(central_daemon, "load_state", return_value={}):
+                    with mock.patch.object(central_daemon, "save_state"):
+                        central_daemon._git_gc_maintenance()
+                popen.assert_not_called()
+
+    print("selftest ok: 自动挡不会对共享 partial clone 执行 gc --prune=now。")
+
+
 def test_exec_prompt_includes_patch_recovery():
     """Sub-workers must know how to recover from wrapped apply_patch failures."""
     import importlib
@@ -4160,6 +4192,7 @@ if __name__ == "__main__":
     test_exec_model_balance_fallback()
     test_exec_model_fallback_relaunch_is_async()
     test_parallel_exec_slots()
+    test_git_gc_never_prunes_shared_partial_clone()
     test_exec_prompt_includes_patch_recovery()
     test_worker_alive_treats_zombie_as_dead()
     test_hydrate_drops_unverifiable_exec_slots()
