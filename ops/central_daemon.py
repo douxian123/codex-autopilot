@@ -3013,35 +3013,20 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
         # 已经有在途成果的（worktree 里留着改动、或分支上有未落提交）不需要
         # 新会话，只走收口门禁；把它们算进上限等于让旧 bug 留下的
         # exec_retry_cap 伪失败永久锁死已经做完的活。
-        # 分支上的提交如果已经全在 main 里，这条其实已经做完了，只是台账
-        # 没收口。这种情况不该再派会话、也不该被派发上限锁住，直接按
-        # 「已落盘但未收口」关闭即可（幂等：close 只追加台账）。
         if item.get("kind") != "resolve":
             try:
-                _r = _state_repo()
-                _b, _wt0, _ = _exec_target(item, cfg, _r)
-                _real = _wt0 if _wt0.exists() else (_worktree_for_branch(_r, _b) or _wt0)
-                _clean = _real.exists() and not _changed_paths(_real)
-                if (_clean and _b and _r
-                        and not _branch_pending_commits(_r, _b, "main")
-                        and _git(_r, "rev-parse", "--verify", _b)[0] == 0):
+                # “分支已无独有提交”只能证明准备的基线已在 main，不能证明这条
+                # 需求被修过。若分支只是从旧 main 创建且 worker 没留下提交，
+                # 直接 close 会把真实 open 项永久误关。只有台账明确记录了某个
+                # commit、且该 commit 已在 main 时，才允许免会话自动收口。
+                _commit = str(item.get("commit") or "").strip()
+                if _commit and _main_contains(_commit):
                     _rc_c, _out_c = _run_truthctl(
-                        ["close", rid, "auto-close: 分支内容已全部在 main"],
-                        extra_env={"KG_TRUTH_COMMIT": _b})
-                    log(f"[exec] {rid} 分支已全在 main 且工作区干净 -> 自动收口 "
+                        ["close", rid, "auto-close: commit already in main"],
+                        extra_env={"KG_TRUTH_COMMIT": _commit})
+                    log(f"[exec] {rid} 台账 commit 已在 main -> 自动收口 "
                         f"rc={_rc_c}")
                     if _rc_c == 0:
-                        # 收口后立刻释放现场，避免每个零改动任务留下约 200MB
-                        # 的 worktree，把磁盘重新推回硬闸。只删目录，分支保留。
-                        try:
-                            _ok_rm, _rm_detail = workspace_guard.remove_worktree(
-                                _r, _real)
-                            if _ok_rm:
-                                log(f"[exec] {rid} 已收口，回收 worktree 目录（分支保留）")
-                            else:
-                                log(f"[exec] {rid} 收口后保留 worktree：{_rm_detail}")
-                        except Exception as _rm_exc:
-                            log(f"[exec] {rid} 收口后回收 worktree 失败（忽略）：{_rm_exc!r}")
                         continue
             except Exception as _exc:
                 log(f"[exec] {rid} 自动收口判断失败（忽略）：{_exc!r}")

@@ -2440,6 +2440,30 @@ def test_auto_exec():
     with tempfile.TemporaryDirectory(prefix="codex-autopilot-exec-") as tmp:
         base = Path(tmp)
 
+        # --- 空分支等于 main 不等于需求已完成：必须重新派 worker，不能自动收口 ---
+        # 真实事故：L-0012/L-0029 等九条仍 open 的需求，被“没有独有提交”的
+        # 陈旧分支误判为已落盘。这里预造一条指向 main 的同名分支，断言派发后
+        # 台账仍是 open，且真的启动了执行会话。
+        repo_s, trunk_s, home_s = fixture(base / "stale-branch")
+        daemon_s = load_daemon(
+            repo_s, trunk_s, home_s, fake_codex(base, "fake-codex-stale-branch", 0))
+        stale_item = {"id": "L-0001", "kind": "bug",
+                      "title": "面板按钮点着没反应"}
+        stale_cfg = daemon_s.auto_exec_config()
+        stale_branch, _, _ = daemon_s._exec_target(stale_item, stale_cfg, repo_s)
+        git(repo_s, "branch", stale_branch, "main")
+        stale_blocked = {}
+        stale_started, stale_workers = daemon_s.dispatch_exec(
+            False, stale_blocked, {})
+        stale_latest = ledger_latest(repo_s)
+        if stale_latest["L-0001"]["status"] != "open":
+            raise AssertionError(
+                f"陈旧空分支被误收口: {stale_latest['L-0001']}")
+        if "L-0001" not in stale_workers.get("exec_jobs", {}):
+            raise AssertionError(
+                f"陈旧空分支没有重派真实 worker: {stale_started} {stale_workers}")
+        dispatch_until_done(daemon_s, stale_blocked, stale_workers)
+
         # --- 派发提示必须把“小任务第一步先落盘”写进硬规则，防止只读检查冒充完成 ---
         # L-0006 真机现场：codex 退出码 0、只跑 ls/find/git status 后停手，自动挡如实记
         # no_changes。只有提示词有这条约束还不够，但提示词缺了它，模型连被要求落盘都没有。
