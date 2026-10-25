@@ -223,6 +223,7 @@ TOOLS = [
                 "note": {"type": "string", "description": "结论/证据，一句话"},
                 "commit": {"type": "string", "description": "落盘 commit sha，可选"},
                 "evidence": {"type": "string", "description": "可复核的验证证据，可选"},
+                "confirm_human": {"type": "boolean", "description": "仅当用户亲口说过「看过/可以了」时传 true。视觉、体验类条目默认停在「等你确认」，不要自己替用户签收。"},
             },
             "required": ["id"],
             "additionalProperties": False,
@@ -1747,6 +1748,8 @@ def call_tool(name, args):
             return "close_item 需要 id（如 L-0003）", 2
         env = {"KG_TRUTH_COMMIT": args.get("commit") or None,
                "KG_TRUTH_EVIDENCE": args.get("evidence") or None}
+        if args.get("confirm_human"):
+            env["KG_TRUTH_HUMAN_CONFIRMED"] = "1"
         return truthctl("close", rid, args.get("note") or "", extra_env=env)
     if name in ("register_acceptance", "accept_item"):
         title = (args.get("title") or "").strip()

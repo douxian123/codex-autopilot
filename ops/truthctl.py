@@ -88,6 +88,12 @@ def _kgctl_cmd() -> str:
 PREFIX = {'decision': 'D', 'ledger': 'L', 'progress': 'P', 'acceptance': 'A',
           'judgment': 'J'}
 LEDGER_KINDS = {'visual', 'ux', 'bug', 'arch', 'gate'}
+# 只能由人翻的「完成」：审美、手感、真实产品里点一下才算。机器再怎么跑命令也判不了
+# 「这样够不够好看 / 顺不顺手」，所以这类条目关闭时停在 awaiting_human，不直接 done。
+# 依据：agent 循环里执行层（磨距离）归机器，判断层（目标本身对不对）归人；把最后一票
+# 交给机器，等于删掉了高层反馈 —— 它会又快又狠地冲向一个没人质疑过的错误目标。
+HUMAN_JUDGMENT_KINDS = {'visual', 'ux'}
+AWAITING_HUMAN = 'awaiting_human'
 LANES = REPO / 'ops' / 'tasks' / 'lanes.json'
 # 从具体到泛化：第一条命中的规则就是归类结果。可用 central.config.json 的
 # lane_rules 覆盖；不配就用这套通用默认。
@@ -358,6 +364,10 @@ def cmd_add(args):
         fields.update(kind=os.environ.get('KG_TRUTH_KIND', 'bug'),
                       detail=os.environ.get('KG_TRUTH_DETAIL', ''),
                       status=os.environ.get('KG_TRUTH_STATUS', 'open'))
+        # 登记时就能声明「这条的完成只能人判」：比如门禁类条目里含一步「上线前手动点一遍」。
+        # 只有 acceptance 支持这个字段是不够的 —— 收口门禁看的是 ledger。
+        if os.environ.get('KG_TRUTH_NEEDS_HUMAN', '') == '1':
+            fields['needs_human'] = True
     elif t == 'decision':
         fields.update(decision=os.environ.get('KG_TRUTH_DECISION', ''),
                       why=os.environ.get('KG_TRUTH_WHY', ''),
@@ -721,17 +731,24 @@ def cmd_route(args):
 
 def cmd_next(args):
     """只回答一个问题：现在最该动的是哪几条，用户不用自己翻台账。"""
-    led = [r for r in _latest_ledger(_read(TRUTH / 'ledger.jsonl')).values()
-           if r.get('status') in ('open', 'doing')]
+    all_led = list(_latest_ledger(_read(TRUTH / 'ledger.jsonl')).values())
+    led = [r for r in all_led if r.get('status') in ('open', 'doing')]
     led.sort(key=lambda r: (PRIORITY.get(r.get('kind'), 9), r.get('ts', '')))
+    waiting = [r for r in all_led if r.get('status') == AWAITING_HUMAN]
     acc = [r for r in _latest_by_id(_read(TRUTH / 'acceptance.jsonl')).values()
            if r.get('status') == 'blocked']
     print('=== 自动挡 · 现在做什么 ===')
+    if waiting:
+        # 单列：这些活机器已经做完了，「完成」这一票在你手上。混进「优先处理」
+        # 会让 agent 以为还有活要干，反复重做同一件事。
+        print('等你确认（做完了，但要你看过才算完）：')
+        for r in waiting:
+            print(f"  {r['id']} [{r.get('kind','')}] {r.get('title','')}")
     if acc:
         print('被卡住的验收项（需要用户拍板或外部条件）：')
         for r in acc:
             print(f"  {r['id']} [{r.get('level','')}] {r.get('title','')}")
-    if not led and not acc:
+    if not led and not acc and not waiting:
         print('没有未决项：可以跑 kgctl reap --go 回收已合并分支，或接收新输入。')
         return
     print('优先处理：')
@@ -876,16 +893,36 @@ def _set_ledger_status(rid, status, note, evidence=''):
             merged['evidence'] = evidence
         if status == 'done':
             merged['closed'] = merged['ts']
+        else:
+            # 停在 awaiting_human / 重新 open 时不能留着上一次的关闭时间：
+            # 留着就等于对外宣称「这条已经完成过」，面板会把它当已完成渲染。
+            merged.pop('closed', None)
         _append(merged)
         return merged
 
 
 def cmd_close(args):
-    """把一条问题台账标成 done，并追加一条进展：从「收到」走到「已关闭」。"""
+    """把一条问题台账标成 done，并追加一条进展：从「收到」走到「已关闭」。
+
+    但「done」这一格只能由人翻：视觉/体验（以及登记时标了 needs_human 的）条目，
+    agent 跑再多命令也判不了「这样够不够好看 / 顺不顺手」。这类条目 close 时停在
+    awaiting_human，把最后一步交回人；机器能自证的（bug/gate/arch）照旧直接 done，
+    不打断自动派发的闭环。
+
+    用法：
+      truthctl close <L-id> "<结论/证据>"              机器可证的收口；人判类停在 awaiting_human
+      truthctl close <L-id> "<结论>" --confirm-human  人已看过并认可，直接 done
+    """
     if not args:
         sys.exit('用法: truthctl close <L-id> "<结论/证据>"（KG_TRUTH_COMMIT 可选）')
     rid = args[0]
-    note = ' '.join(args[1:]) if len(args) > 1 else ''
+    rest = [a for a in args[1:] if a != '--confirm-human']
+    confirmed = ('--confirm-human' in args
+                 or os.environ.get('KG_TRUTH_HUMAN_CONFIRMED', '') == '1')
+    note = ' '.join(rest) if rest else ''
+    prev = _latest_ledger(_read(TRUTH / FILES['ledger'])).get(rid) or {}
+    if _needs_human_verdict(prev) and not confirmed:
+        return _park_for_human(rid, prev, note)
     rec = _set_ledger_status(rid, 'done', note, os.environ.get('KG_TRUTH_EVIDENCE', ''))
     commit = os.environ.get('KG_TRUTH_COMMIT') or None
     prog = _append_new('progress', title='关闭 %s：%s' % (rid, rec.get('title', '')),
@@ -894,6 +931,47 @@ def cmd_close(args):
                        source=os.environ.get('KG_TRUTH_SOURCE', 'agent'),
                        status='done')
     print('已关闭 [%s] %s（同时记入进展 %s）' % (rid, rec.get('title', ''), prog['id']))
+
+
+def _needs_human_verdict(rec: dict) -> bool:
+    """这条的「完成」是不是只能由人判。
+
+    两类：登记时就标了 needs_human 的，和天然属于审美/手感的 kind（视觉、体验）。
+    bug/gate/arch 有客观判据（命令退出码、断言、diff），机器自证即可。
+    """
+    if rec.get('needs_human'):
+        return True
+    return rec.get('kind') in HUMAN_JUDGMENT_KINDS
+
+
+def _park_for_human(rid: str, prev: dict, note: str) -> None:
+    """把条目停在 awaiting_human：活干完了，但「完成」这一票留给用户。
+
+    不写 closed 时间戳——写了就等于宣称它完成了。同时落一条进展，说明技术上到哪一步，
+    这样面板和主线里都能看到「这条在等你，不在等机器」。
+    """
+    detail = note or '实现已完成，等用户确认视觉/手感'
+    rec = _set_ledger_status(rid, AWAITING_HUMAN, detail,
+                             os.environ.get('KG_TRUTH_EVIDENCE', ''))
+    commit = os.environ.get('KG_TRUTH_COMMIT') or None
+    _append_new('progress', title='待你确认 %s：%s' % (rid, rec.get('title', '')),
+                summary=detail, commit=commit, landed=bool(commit),
+                lane=rec.get('lane'), files=rec.get('files') or [],
+                source=os.environ.get('KG_TRUTH_SOURCE', 'agent'),
+                status=AWAITING_HUMAN)
+    print('已停在「等你确认」[%s] %s' % (rid, rec.get('title', '')))
+    print('  原因：这条属于 %s，好不好只能你看过再说，机器不替你签收。'
+          % (prev.get('kind') or 'needs_human'))
+    print('  你看过认为可以，再让它翻成 done：')
+    print('    %s close %s "看过，可以" --confirm-human' % (_cmd_hint(), rid))
+
+
+def _cmd_hint() -> str:
+    """给用户抄的命令前缀（自包含安装下运行时不在项目目录里）。"""
+    ops_dir = Path(__file__).resolve().parent
+    if (ops_dir.parent / '.mcp.json').exists():
+        return 'python3 %s' % (ops_dir / 'truthctl.py')
+    return 'python3 ops/truthctl.py'
 
 
 def cmd_open(args):
@@ -1089,6 +1167,7 @@ def cmd_snapshot(args):
     acc = list(_latest_by_id(_read(TRUTH / 'acceptance.jsonl')).values())
 
     open_led = [r for r in led if r.get('status') in ('open', 'doing')]
+    waiting_human = [r for r in led if r.get('status') == AWAITING_HUMAN]
     blocked_acc = [r for r in acc if r.get('status') == 'blocked']
     p0_open = [r for r in led if r.get('status') in ('open', 'doing') and r.get('kind') in ('bug', 'arch', 'gate')]
 
@@ -1128,7 +1207,12 @@ def cmd_snapshot(args):
         for r in blocked_acc:
             L.append(f"- `{r['id']}` {r.get('title','')}")
         L.append('')
-    if not p0_open and not blocked_acc:
+    if waiting_human:
+        L.append('**等你确认（机器已做完，好不好只有你能判）**')
+        for r in waiting_human:
+            L.append(f"- `{r['id']}` {r.get('title','')}")
+        L.append('')
+    if not p0_open and not blocked_acc and not waiting_human:
         L += ['（当前没有需要你拍板的事项）', '']
 
     L += ['## 三、问题台账', '']
