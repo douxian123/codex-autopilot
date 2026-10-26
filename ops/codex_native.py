@@ -13,6 +13,7 @@ import stat
 import struct
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -232,13 +233,13 @@ def _rpc(method, params, host_only=False, timeout=30):
     timeout 是这一步的总预算：握手与发请求共享同一个 deadline，
     否则「连得上但不回话」会变成两段各自等满。
     """
-    deadline = time.monotonic() + max(1.0, float(timeout))
-    proc, error = _session(host_only=host_only, timeout=timeout)
+    deadline = time.monotonic() + max(MIN_SLICE, float(timeout))
+    proc, error = _session(host_only=host_only, timeout=_remaining(deadline))
     if error:
         return None, error
     try:
         return _session_request(proc, method, params,
-                                timeout=max(1.0, deadline - time.monotonic()))
+                                timeout=_remaining(deadline))
     finally:
         _close_session(proc)
 
@@ -258,7 +259,9 @@ def _read_response(proc, response_id, timeout=8):
             if not line:
                 # 子进程断了。它写过的 stderr 才是「为什么没通」的原文，
                 # 拿回来贴进原因里，免得把「连不上」误报成「协议超时」。
-                detail = _drain_stderr(proc)
+                # 但 drain 也必须吃掉自己的预算：它原来固定 1.0s，一段 RPC 就多等
+                # 1 秒，snapshot 的 1 秒预算实际变成 2~3 秒。
+                detail = _drain_stderr(proc, timeout=_remaining(deadline, 0.0))
                 if detail:
                     return None, messages, f"app-server 连接中断：{detail}"
                 break
@@ -369,13 +372,26 @@ def _open_session(command, timeout=30):
         return None, str(exc)
 
 
+MIN_SLICE = 0.05
+
+
+def _remaining(deadline: float, floor: float = MIN_SLICE) -> float:
+    """距 deadline 还剩多少秒（下限 floor，而不是抬回 1 秒整）。
+
+    旧写法 `max(1.0, deadline - now)` 有个隐蔽后果：剩余预算变成负数时它把每一段
+    重新抬回 1.0 秒，于是「总预算 1 秒」的 snapshot 会被拆成 N 段各等 1 秒 ——
+    2026-10-27 selftest 实测 1 秒预算等了 4.9s，把面板快路拖成慢路。
+    """
+    return max(floor, deadline - time.monotonic())
+
+
 def _session(host_only=False, timeout=30):
     """在同一个预算内逐个试候选服务，不按候选数把等待翻倍。"""
-    deadline = time.monotonic() + max(1.0, float(timeout))
+    deadline = time.monotonic() + max(MIN_SLICE, float(timeout))
     last_error = None
     if _socket_present():
         remaining = deadline - time.monotonic()
-        ws, error = _open_ws_session(SOCKET, timeout=max(1.0, remaining))
+        ws, error = _open_ws_session(SOCKET, timeout=_remaining(deadline))
         if ws is not None:
             return ws, None
         last_error = error
@@ -571,13 +587,46 @@ _HISTORY_CACHE = {"ts": 0.0, "rows": []}
 _HISTORY_CACHE_TTL = float(os.environ.get("CODEX_AUTOPILOT_HISTORY_CACHE_TTL", "2"))
 
 
-def _history_snapshot():
-    """只读历史快照，短 TTL 缓存让慢路降级不反复扫整个 SQLite。"""
+def _history_snapshot(budget=None):
+    """只读历史快照，短 TTL 缓存让慢路降级不反复扫整个 SQLite。
+
+    budget 是这个兜底查询的**硬预算**（秒）。必须给：实测这台机器的
+    ~/.codex/thread_history_1.sqlite 是 5.0GB / 3.2 万 turn / 111 万 item，
+    一条 GROUP BY 全表要 3.2 秒。旧实现不设预算，于是「snapshot(timeout=1)」
+    里真正的 4 秒全花在这条兜底 SQL 上，面板快路被拖成慢路
+    （2026-10-27 selftest：1 秒预算等了 4.9s）。
+    超预算就如实返回上一次的缓存（或空），绝不把调用方按住。
+    """
     now = time.monotonic()
     if now - _HISTORY_CACHE["ts"] < _HISTORY_CACHE_TTL:
         return _HISTORY_CACHE["rows"]
     if not HISTORY_DB.is_file():
         return []
+    if budget is not None and float(budget) <= 0:
+        return _HISTORY_CACHE["rows"]
+    if budget is not None:
+        # 放到独立线程里跑，到点立刻走人。查询本身没法中途取消（SQLite 不支持），
+        # 但调用方不用陪它跑完；线程是 daemon，进程退出不会被它拖住。
+        box = {}
+        def _work():
+            try:
+                box["rows"] = _history_snapshot_uncached()
+            except BaseException as exc:  # noqa: BLE001 - 兜底查询失败一律降级
+                box["error"] = exc
+        th = threading.Thread(target=_work, daemon=True)
+        th.start()
+        th.join(max(MIN_SLICE, float(budget)))
+        if th.is_alive() or "rows" not in box:
+            # 没在预算内跑完：把 ts 也推进，避免下一个调用立刻再来一次同样的等待。
+            _HISTORY_CACHE.update(ts=time.monotonic(), rows=_HISTORY_CACHE["rows"])
+            return _HISTORY_CACHE["rows"]
+        _HISTORY_CACHE.update(ts=time.monotonic(), rows=box["rows"])
+        return box["rows"]
+    return _history_snapshot_uncached()
+
+
+def _history_snapshot_uncached():
+    """真正扫 SQLite 的那一段（无预算，只能由带预算的壳调用）。"""
     try:
         uri = HISTORY_DB.resolve().as_uri() + "?mode=ro"
         with sqlite3.connect(uri, uri=True, timeout=0.5) as db:
@@ -609,7 +658,6 @@ def _history_snapshot():
             result.append({"id": thread_id, "name": title or "Codex 对话",
                            "updatedAt": updated, "status": {"type": status or "idle"},
                            "source": "history-read-only"})
-        _HISTORY_CACHE.update(ts=time.monotonic(), rows=result)
         return result
     except (OSError, sqlite3.Error):
         return []
@@ -628,11 +676,11 @@ def snapshot(timeout=None):
     deadline = time.monotonic() + max(
         1.0, float(SNAPSHOT_TIMEOUT if timeout is None else timeout))
     sections, section_error = _rpc("threadSection/list", {"limit": 100},
-                                   timeout=max(1.0, deadline - time.monotonic()))
+                                   timeout=_remaining(deadline))
     threads, thread_error = _rpc(
         "thread/list", {"limit": 100, "sortKey": "updated_at",
                         "sortDirection": "desc", "useStateDbOnly": True},
-        timeout=max(1.0, deadline - time.monotonic()))
+        timeout=_remaining(deadline))
     if sections is not None and threads is not None:
         return {"available": True,
                 "transport": "codex-app-server-websocket" if _socket_present()
@@ -642,7 +690,8 @@ def snapshot(timeout=None):
     reason = section_error or thread_error
     return {"available": False, "transport": "history-read-only" if HISTORY_DB.exists()
             else "unavailable", "reason": reason,
-            "sections": [], "threads": _history_snapshot()}
+            "sections": [],
+            "threads": _history_snapshot(budget=max(MIN_SLICE, deadline - time.monotonic()))}
 
 
 def create_section(name):
