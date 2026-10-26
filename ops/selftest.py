@@ -3283,51 +3283,50 @@ def test_git_scan_timeout_fails_closed_not_open():
     可落盘。proc.run 的默认闸超时后返回 rc=124，如果这两个函数仍按「空」返回，
     一条根本算不完的分支就会被当成干净分支推上 main —— 这是最危险的一种假绿灯。
     这里锁住：rc=124 必须被翻译成「有阻塞」，而不是「没事」。
+
+    在**独立子进程**里跑：selftest 主进程的 KG_REPO / kgctl 模块会被前序用例
+    （test_verify_and_truth、test_publish_lock…）改成临时目录并留在那里，
+    在本进程里 import kgctl 会拿到被污染的实例，断言就测不到真实代码。
     """
-    import importlib
+    import subprocess as _sp
     import sys
-    from unittest import mock
 
     ops = Path(__file__).resolve().parent
-    if str(ops) not in sys.path:
-        sys.path.insert(0, str(ops))
-    # 在干净 env 的子进程里 import kgctl：selftest 进程的 KG_REPO 可能已被
-    # 前序用例改成临时目录，直接 import 会在 import 期 sys.exit。
-    import os as _os
-    import subprocess as _sp
-    clean = {k: v for k, v in _os.environ.items() if not k.startswith("KG_")}
-    probe = _sp.run(
-        [sys.executable, "-c", (
-            "import sys;sys.path.insert(0,%r);"
-            "import kgctl;print('ok')" % str(ops))],
-        capture_output=True, text=True, env=clean, cwd=str(ops.parent))
-    assert "ok" in (probe.stdout or ""), f"kgctl 无法在干净 env 下 import：{probe.stderr[-400:]}"
-    kgctl = importlib.import_module("kgctl")
+    script = r"""
+import sys
+sys.path.insert(0, sys.argv[1])
+from unittest import mock
+import kgctl
 
-    class Timeout124:
-        returncode = 124
-        stdout = ""
-        stderr = "[proc] 命令超时"
+class Timeout124:
+    returncode = 124
+    stdout = ""
+    stderr = "[proc] 命令超时"
 
-    with mock.patch.object(kgctl, "proc_run", return_value=Timeout124()):
-        conf = kgctl.conflict_files("codex/some-branch")
-        assert conf, "超时的 merge-tree 不能被当成『无冲突』"
-        assert any("超时" in c for c in conf), conf
+with mock.patch.object(kgctl, "proc_run", return_value=Timeout124()):
+    conf = kgctl.conflict_files("codex/some-branch")
+    assert conf, "超时的 merge-tree 不能被当成『无冲突』"
+    assert any("超时" in c for c in conf), conf
+    markers = kgctl.unresolved_marker_files("codex/some-branch")
+    assert markers, "超时的 git grep 不能被当成『无残留标记』"
+    assert any("超时" in m for m in markers), markers
 
-        markers = kgctl.unresolved_marker_files("codex/some-branch")
-        assert markers, "超时的 git grep 不能被当成『无残留标记』"
-        assert any("超时" in m for m in markers), markers
+class GrepNoMatch:
+    returncode = 1
+    stdout = ""
+    stderr = ""
 
-    # 对照组：真 rc=1（搜到没匹配）仍然是「干净」，不能被误伤成阻塞。
-    class GrepNoMatch:
-        returncode = 1
-        stdout = ""
-        stderr = ""
-
-    with mock.patch.object(kgctl, "proc_run", return_value=GrepNoMatch()):
-        assert kgctl.unresolved_marker_files("codex/clean-branch") == [], \
-            "rc=1 是『没匹配到』，必须继续视为干净"
-
+with mock.patch.object(kgctl, "proc_run", return_value=GrepNoMatch()):
+    assert kgctl.unresolved_marker_files("codex/clean-branch") == [], \
+        "rc=1 是『没匹配到』，必须继续视为干净"
+print("child-ok")
+"""
+    clean = {k: v for k, v in os.environ.items() if not k.startswith("KG_")}
+    probe = _sp.run([sys.executable, "-c", script, str(ops)],
+                    capture_output=True, text=True, env=clean, cwd=str(ops.parent))
+    assert "child-ok" in (probe.stdout or ""), (
+        "kgctl 超时 fail-closed 断言失败：\n"
+        + (probe.stdout or "")[-500:] + (probe.stderr or "")[-900:])
     print("selftest ok: git 扫描超时 fail-closed（阻塞落盘），rc=1 仍视为干净。")
 
 
