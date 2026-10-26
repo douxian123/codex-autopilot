@@ -632,6 +632,57 @@ RESOLVE_MAX_FILES = int(os.environ.get("KG_RESOLVE_MAX_FILES", "8"))
 RESOLVE_MAX_LINES = int(os.environ.get("KG_RESOLVE_MAX_LINES", "1200"))
 
 
+# 分支规模探测缓存：{branch@head@main: {files, lines}}。
+# 和 Context Pack 的 context_probe_cache 同一套路，理由也同一件事：一支分支
+# 要跑一次 merge-base + diff --numstat，本机实测约 0.4s；84 条冲突分支全量
+# 量一遍 33s，而 `resolve --auto` 在守护里只有 RESOLVE_TIMEOUT 的预算
+# （2026-10-27 07:12 实测 rc=124、整拍空转）。head 与 main 都没变时答案不变。
+DIFF_CACHE = OPS / "diff_probe_cache.json"
+
+
+def _diff_cache_key(branch: str, head: str, main_head: str) -> str:
+    return f"{branch}@{head}@{main_head}"
+
+
+def _diff_cache_load() -> dict:
+    try:
+        data = json.loads(DIFF_CACHE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _diff_cache_save(cache: dict) -> None:
+    # 纯缓存，不承担任何账本职责：只留最近 600 条，避免无限增长。
+    if len(cache) > 600:
+        for stale in list(cache)[:len(cache) - 600]:
+            cache.pop(stale, None)
+    try:
+        write_json(DIFF_CACHE, cache)
+    except OSError:
+        pass
+
+
+def unlanded_diff_size_cached(branch, main_head="", cache=None):
+    """`unlanded_diff_size` 的缓存版：head/main 没动就不重算。
+
+    返回 (files, lines, cached?)。
+    """
+    own = cache is None
+    cache = _diff_cache_load() if own else cache
+    head = git("rev-parse", "--verify", branch) or ""
+    main_head = main_head or git("rev-parse", MAIN)
+    key = _diff_cache_key(branch, head, main_head)
+    hit = cache.get(key)
+    if isinstance(hit, dict) and "lines" in hit and "files" in hit:
+        return int(hit["files"]), int(hit["lines"]), True
+    nf, nl = unlanded_diff_size(branch)
+    cache[key] = {"files": nf, "lines": nl}
+    if own:
+        _diff_cache_save(cache)
+    return nf, nl, False
+
+
 def unlanded_diff_size(branch):
     """分支相对 merge-base(main, branch) 的真实改动规模 (files, changed_lines)。
 
@@ -3343,6 +3394,8 @@ def _pick_resolve_candidate(max_files: int, max_lines: int):
     # 反复拆同一条。手动执行不带该环境变量，行为不变。
     skip = {b for b in os.environ.get("KG_RESOLVE_SKIP", "").split(":") if b}
     bmap = conflict_burden_map(rows)
+    main_head = git("rev-parse", MAIN)
+    diff_cache = _diff_cache_load()
     cands, oversize = [], []
     for r in rows:
         if r["kind"] != "CONFLICT" or _is_generated_branch(r["branch"]):
@@ -3350,11 +3403,17 @@ def _pick_resolve_candidate(max_files: int, max_lines: int):
         if r["branch"] in open_src or r["branch"] in decided_src or r["branch"] in skip:
             continue
         burden = bmap.get(r["branch"], len(r["conflicts"]))
-        nf, nl = unlanded_diff_size(r["branch"])
+        # 先过最便宜的闸门再量 diff：burden 来自缓存的 merge-tree 计数，几乎免费；
+        # unlanded_diff_size 每支要跑 merge-base + diff，本机实测 84 条冲突分支
+        # 全量量一遍 33s，会把 `resolve --auto` 顶到守护的 RESOLVE_TIMEOUT
+        # （2026-10-27 07:12 实测 rc=124、整拍空转）。所以闸门之后量，且带缓存。
         if burden > max_files:
             continue
+        nf, nl, _cached = unlanded_diff_size_cached(
+            r["branch"], main_head=main_head, cache=diff_cache)
         row = (burden, nl, nf, r["branch"])
         (cands if nl <= max_lines else oversize).append(row)
+    _diff_cache_save(diff_cache)
     cands.sort()
     oversize.sort()
     return cands, oversize

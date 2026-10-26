@@ -4319,6 +4319,66 @@ def test_scan_batches_branch_metadata():
     print("selftest ok: 大批量分支快照一次读取 ahead/behind，已合并分支不再白跑 diff。")
 
 
+def test_resolve_candidate_caches_branch_sizes():
+    """`resolve --auto` 不许对每条冲突分支都重跑 merge-base + diff。
+
+    真实故障（2026-10-27 07:12）：守护每拍的 resolve 步骤报 rc=124 超时、整拍空转。
+    根因不是死锁，是体量闸门的顺序——84 条冲突分支，每条先跑一次
+    `merge-base` + `diff --numstat`（本机 0.4s/支，全量 33s），才轮到"冲突文件
+    超闸门就跳过"这种几乎免费的判断。顺序颠倒后同样的候选结论，从 56s 降到 10s。
+    这条门禁把两件事钉住：预算先筛后量，且 head/main 没变时不重算。
+    """
+    import importlib.util
+    from pathlib import Path
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    with tempfile.TemporaryDirectory(prefix="kgctl-resolve-cache-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        with mock.patch.dict(os.environ, {"KG_REPO": str(repo),
+                                          "KG_TRUNK": str(root / "trunk")}):
+            spec = importlib.util.spec_from_file_location(
+                "kgctl_resolve_cache_selftest", ops / "kgctl.py")
+            kgctl = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(kgctl)
+
+            kgctl.DIFF_CACHE = root / "diff_probe_cache.json"
+            rows = [
+                # 冲突文件 20 个 > 闸门 8：必须在量 diff 之前就被筛掉。
+                {"branch": "codex/too-many-files", "kind": "CONFLICT", "conflicts": [f"f{i}" for i in range(20)]},
+                {"branch": "codex/ok", "kind": "CONFLICT", "conflicts": ["a.ts"]},
+                {"branch": "codex/clean", "kind": "CLEAN", "conflicts": []},
+            ]
+            calls = []
+
+            def fake_size(branch):
+                calls.append(branch)
+                return (1, 40)
+
+            with mock.patch.object(kgctl, "scan", return_value=rows),                  mock.patch.object(kgctl, "_open_resolve_sources", return_value=set()),                  mock.patch.object(kgctl, "_decided_resolve_branches", return_value=set()),                  mock.patch.object(kgctl, "_is_generated_branch", return_value=False),                  mock.patch.object(kgctl, "conflict_burden_map",
+                                   return_value={"codex/too-many-files": 20, "codex/ok": 1}),                  mock.patch.object(kgctl, "git",
+                                   side_effect=lambda *a, **k: "deadbeef" if a[:2] == ("rev-parse", "--verify") or a[:2] == ("rev-parse", "main") else ""),                  mock.patch.object(kgctl, "unlanded_diff_size", side_effect=fake_size):
+                cands, oversize = kgctl._pick_resolve_candidate(8, 1200)
+                assert calls == ["codex/ok"], (
+                    f"体量闸门顺序错了：给 {calls} 都量了 diff，超闸门的分支本该先被跳过")
+                assert [c[3] for c in cands] == ["codex/ok"], cands
+                assert oversize == [], oversize
+
+                # 第二次：head/main 未变，必须命中缓存、不再跑 diff。
+                calls.clear()
+                kgctl._pick_resolve_candidate(8, 1200)
+                assert calls == [], f"缓存没生效，又量了一遍：{calls}"
+
+            # 缓存是纯缓存，不许无限长。
+            cache = {f"b{i}@h@m": {"files": 1, "lines": 1} for i in range(900)}
+            kgctl._diff_cache_save(cache)
+            assert len(cache) <= 600, f"diff 缓存没有剪枝，还有 {len(cache)} 条"
+    print("selftest ok: resolve 候选先过体量闸门再量 diff，且分支规模走缓存不重算。")
+
+
 def test_zero_file_branches_do_not_occupy_land_queue():
     """0 文件空壳必须避开 land 队列，并在 supersede --fast 中直接归档。"""
     import contextlib
@@ -4912,6 +4972,7 @@ if __name__ == "__main__":
     test_resolve_gate_fail_not_retried_same_cycle()
     test_resolve_candidate_scan_skips_marker_grep()
     test_scan_batches_branch_metadata()
+    test_resolve_candidate_caches_branch_sizes()
     test_zero_file_branches_do_not_occupy_land_queue()
     test_conflict_decision_hold_survives_existing_markers()
     test_prune_keeps_open_resolve_hold()
