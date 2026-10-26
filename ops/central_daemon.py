@@ -3706,6 +3706,40 @@ def _python_for_plist() -> str:
     return sys.executable or "/usr/bin/python3"
 
 
+def plist_script_path():
+    """读已装 launchd plist 里实际会跑的那个脚本路径；没装/读不了返回 None。"""
+    try:
+        with PLIST_PATH.open("rb") as fh:
+            data = plistlib.load(fh)
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return None
+    for arg in data.get("ProgramArguments") or []:
+        if str(arg).endswith("central_daemon.py"):
+            return str(arg)
+    return None
+
+
+def plist_drift():
+    """守护跑的到底是不是「当前这一份」代码。
+
+    这是「装完新版本、live 还在跑旧代码」的可见化开关。版本目录是不可变的，
+    plist 里写死了某一次安装的绝对路径；只切 marketplace 指针不会改 plist，
+    于是升级之后 launchd 仍按旧路径拉起旧脚本，KeepAlive 还会一直把它拉回来。
+    历史上正是这个静默漂移让人反复「清一轮」却不知道为什么没好。
+
+    返回 (是否漂移, plist 指向的脚本, 当前脚本)。没装守护时不算漂移。
+    """
+    running = plist_script_path()
+    here = str(HERE / "central_daemon.py")
+    if running is None:
+        return False, None, here
+    try:
+        same = Path(running).resolve() == Path(here).resolve()
+    except (OSError, ValueError):
+        same = running == here
+    return (not same), running, here
+
+
 def build_plist(interval_min: int) -> dict:
     # 守护永远跑插件目录里的这份脚本。KG_TRUNK 是落盘用的主干 worktree，它的 ops/
     # 可能是旧副本；如果 plist 指向 `$KG_TRUNK/ops/central_daemon.py`，插件升级后
@@ -3814,9 +3848,13 @@ def install(interval_min: int) -> int:
         return 1
     trunk = Path(os.environ.get("KG_TRUNK", str(CODE_ROOT))).expanduser()
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    before = plist_script_path()
     with PLIST_PATH.open("wb") as fh:
         plistlib.dump(build_plist(interval_min), fh)
     log(f"已写 {PLIST_PATH}")
+    if before and Path(before).resolve() != (HERE / "central_daemon.py").resolve():
+        # 不静默：把「从哪一份切到哪一份」写进日志，事后能核对守护到底加载了谁。
+        log(f"守护代码已改指：{before} -> {HERE / 'central_daemon.py'}")
     uid = os.getuid()
     launchctl("bootout", f"gui/{uid}/{PLIST_LABEL}")
     if not wait_for_job_gone(uid):
@@ -3885,6 +3923,11 @@ def show_status() -> int:
     print("=== 自动挡常驻（KgCentralDaemon）===")
     print(f"守护状态       {'launchd 已加载' if loaded else '未加载'}"
           f"{'' if loaded else '（用 --install 打开）'}")
+    drifted, running_script, this_script = plist_drift()
+    if drifted:
+        print(f"⚠ 版本不一致   守护跑的是 {running_script}")
+        print(f"               当前这份是 {this_script}")
+        print("               修法：用当前版本重跑一次 --install，守护会改指这一份")
     print(f"实例锁         {lock}")
     print(f"运行目录       {RUNTIME}")
     print(f"日志           {LOG}")

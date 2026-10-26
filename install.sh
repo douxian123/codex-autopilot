@@ -423,6 +423,35 @@ if [ "$COMPANION" -eq 1 ]; then
   fi
 fi
 
+# 5.5) 守护改指新版本：这一步不做，装完新版本 live 还在跑旧代码。
+#
+#   版本目录是不可变的，launchd plist 里写死的是**某一次安装时的绝对路径**。
+#   只切 marketplace 指针不会改 plist，于是升级之后守护仍按旧路径拉起旧脚本，
+#   而 KeepAlive=True 会一直把它拉回来 —— 这就是「跑着跑着就得清一轮」的
+#   机械根因：新代码已落盘、进程却从没加载过它。
+#
+#   所以：只要这台机器上已经装了守护，就在装完后用新版本重写 plist 并重启它。
+#   没装守护就什么都不做（不替用户擅自常驻）。
+if [ "${NO_DAEMON_REPOINT:-0}" != "1" ]; then
+  PLIST="$HOME/Library/LaunchAgents/com.codex-autopilot.daemon.plist"
+  if [ -f "$PLIST" ]; then
+    echo
+    echo "守护改指新版本（否则 live 会继续跑上一版代码）…"
+    set +e
+    KG_REPO="$PROJECT" KG_TRUNK="$TRUNK" "$PY" "$DEST/ops/central_daemon.py" --install \
+      >>"$HOME/.codex-autopilot/install-daemon.log" 2>&1
+    daemon_rc=$?
+    set -e
+    if [ "$daemon_rc" -eq 0 ]; then
+      echo "守护已切到 ${VERSION} 并重启。"
+    else
+      echo "× 守护改指失败（rc=${daemon_rc}），日志："
+      echo "  $HOME/.codex-autopilot/install-daemon.log"
+      echo "  手动重试：KG_REPO=\"$PROJECT\" KG_TRUNK=\"$TRUNK\" python3 \"$DEST/ops/central_daemon.py\" --install"
+    fi
+  fi
+fi
+
 # 6) 可选：用官方 CLI 刷新已安装插件，避免桌面端继续用旧缓存。
 #    Codex 会把插件快照到 ~/.codex/plugins/cache/personal/<name>/<version>/；
 #    只改 marketplace 文件和插件目录，缓存不会自动更新。

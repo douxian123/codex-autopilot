@@ -894,6 +894,12 @@ def test_installer():
     import json as _json
 
     install = OPS.parent / "install.sh"
+    # 源码级锁：装完必须尝试把守护改指新版本。少了这一段，用户「装了新版」
+    # 而 live 继续跑旧代码，且没有任何报错 —— 只能靠反复清盘碰运气。
+    _install_src = install.read_text(encoding="utf-8")
+    assert "--install" in _install_src and "NO_DAEMON_REPOINT" in _install_src, \
+        "install.sh 缺少「装完把守护改指新版本」这一步"
+    assert "daemon.plist" in _install_src, "install.sh 没有检查本机是否已装守护"
     installed_version = _installed_version()
     release_path = f"./plugins/codex-autopilot/releases/{installed_version}"
     with tempfile.TemporaryDirectory(prefix="autopilot-install-test-") as tmp:
@@ -1267,6 +1273,67 @@ def test_daemon_project_binding():
             "launchd 丢了共享检出，自包含状态根的门禁找不到 node_modules"
     print("selftest ok: launchd 状态通过 launchctl 查询，跨项目 daemon 不冒充当前项目；"
           "共享检出会传给启动后的门禁。")
+
+
+def test_daemon_plist_repoints_on_upgrade():
+    """升级之后守护必须改指新版本目录，否则 live 永远跑旧代码。
+
+    真实踩到的坑（2026-10-27）：版本目录是不可变的，plist 里写死某一次安装的
+    绝对路径；`install.sh` 只切 marketplace 指针、不重写 plist，于是装完
+    preview.33 之后 launchd 仍按旧路径拉起 preview.32 的脚本，KeepAlive=True
+    还一直把它拉回来。用户看到的是「明明发了新版，问题一点没变」，只能反复清盘。
+    这里锁三件事：plist 指向的脚本可读出来、与当前这份不一致时判为漂移、
+    `--install` 会把它改指当前这一份。
+    """
+    import importlib
+    import plistlib as _plistlib
+
+    sys.path.insert(0, str(OPS))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    tmp = Path(tempfile.mkdtemp(prefix="kg-plist-drift-"))
+    real_plist = central_daemon.PLIST_PATH
+    central_daemon.PLIST_PATH = tmp / "com.codex-autopilot.daemon.plist"
+    try:
+        # 没装守护：不算漂移，不能反过来报警。
+        drifted, running, here = central_daemon.plist_drift()
+        assert drifted is False and running is None, (drifted, running)
+
+        # 模拟一条旧 plist：指向另一个（旧）版本目录里的脚本。
+        old_script = tmp / "releases" / "0.6.0-preview.32" / "ops" / "central_daemon.py"
+        old_script.parent.mkdir(parents=True)
+        old_script.write_text("# old\n", encoding="utf-8")
+        central_daemon.PLIST_PATH.write_bytes(_plistlib.dumps({
+            "Label": central_daemon.PLIST_LABEL,
+            "ProgramArguments": ["/usr/bin/python3", str(old_script), "--loop"],
+        }))
+        assert central_daemon.plist_script_path() == str(old_script)
+        drifted, running, here = central_daemon.plist_drift()
+        assert drifted is True, "plist 指着旧版本却没判成漂移"
+        assert running == str(old_script) and here.endswith("central_daemon.py")
+
+        # --install 必须把 plist 改指当前这一份（这里 mock 掉 launchctl，
+        # 门禁不真的去启停用户的守护）。
+        from unittest import mock
+        calls = []
+        with mock.patch.object(central_daemon, "launchctl",
+                              side_effect=lambda *a, **k: calls.append(a) or 0), \
+             mock.patch.object(central_daemon, "wait_for_job_gone", return_value=True), \
+             mock.patch.object(central_daemon, "log"):
+            rc = central_daemon.install(15)
+        assert rc == 0, "改指新版本的 install 失败"
+        drifted, running, here = central_daemon.plist_drift()
+        assert drifted is False, f"--install 之后 plist 仍指向旧脚本：{running}"
+        assert central_daemon.plist_script_path() == str(
+            central_daemon.HERE / "central_daemon.py")
+        assert any("bootout" in " ".join(str(x) for x in c) for c in calls), \
+            f"--install 没有先停旧实例：{calls}"
+    finally:
+        central_daemon.PLIST_PATH = real_plist
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+    print("selftest ok: 升级后守护改指新版本目录，旧 plist 漂移可被 --status 看出。")
 
 
 def test_daemon_control_action():
@@ -4621,6 +4688,7 @@ if __name__ == "__main__":
     test_installer_requires_clean_source()
     test_installer_shell_portability()
     test_daemon_project_binding()
+    test_daemon_plist_repoints_on_upgrade()
     test_daemon_control_action()
     test_companion_contract()
     test_panel_contract()
