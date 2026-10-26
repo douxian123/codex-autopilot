@@ -2988,13 +2988,13 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
     results = _collect_exec(workers, blocked)
     # 先收口已有的 recover/worker，再检查新派发准入。磁盘不足只挡新 worker，
     # 绝不终止已经在跑的任务。
-    if _disk_pressure():
+    disk_held = bool(_disk_pressure())
+    if disk_held:
         free = _disk_free_gb()
         shown = "读取失败" if free is None else f"{free:.2f}GB"
         log(f"[exec] 磁盘准入关闭（可用 {shown}）：本轮不派新 worker，"
             f"在途 {_active_exec_session_count(jobs)} 个继续运行；"
             f"恢复到 {EXEC_DISK_RESUME_FREE_GB:.2f}GB 后自动放行")
-        return results, workers
     # 并发槽位仍由配置上限决定；磁盘只决定「能不能开始新工作」。
     limit = max(1, int(cfg.get("max_workers", EXEC_DEFAULT_MAX_WORKERS)))
     # A completed worker frees one slot immediately. Keep filling in the same
@@ -3090,6 +3090,10 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
             if retried:
                 results.append(retried)
             continue
+        if disk_held:
+            # 上方「只差落盘」的 finish 重试已经过闸；从这里往下都要开新会话。
+            log(f"[exec] 磁盘准入关闭：{rid} 需开新会话，延后到 {EXEC_DISK_RESUME_FREE_GB:.2f}GB 以上再派")
+            break
         if dry:
             log(f"[dry] 会派发 {rid}（{item.get('kind')}）{item.get('title')}")
             break

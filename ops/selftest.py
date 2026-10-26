@@ -2465,6 +2465,10 @@ def test_auto_exec():
         importlib.reload(control_state)
         importlib.reload(central_config)
         importlib.reload(central_daemon)
+        # 宿主磁盘余量不属于这些用例的断言对象：真实低盘时它们会假失败。
+        # 磁盘闸本身由 test_parallel_exec_slots 用显式 mock 单独锁住，
+        # 这里只把普通派发路径固定在“余量充足”。
+        central_daemon._disk_free_gb = lambda: 20.0
         # 每个 fixture 的 worktree 都叫 L-0001-item；上一个 fixture 的 worker
         # 可能还在退出过程中。模块级进程缓存若不重置，会把旧 worktree 误当成本
         # fixture 的活进程，跳过派发并直接清掉新分支。
@@ -3423,6 +3427,9 @@ def test_resolve_exec_parallel():
         import control_state, central_config, central_daemon
         importlib.reload(control_state); importlib.reload(central_config)
         importlib.reload(central_daemon)
+
+        # 本用例只验证 resolve 派发，不验证磁盘闸；宿主真实低盘会让它假失败。
+        central_daemon._disk_free_gb = lambda: 20.0
 
         original = (wt / "doc.txt").read_text(encoding="utf-8")
         (wt / "doc.txt").write_text("manual external edit\n", encoding="utf-8")
