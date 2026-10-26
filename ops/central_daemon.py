@@ -2980,6 +2980,17 @@ def _reap_dead_worktrees() -> int:
         _pressure_reap = True
         log(f"[safety] 磁盘可用 {(_free if _free is not None else -1):.2f}GB "
             f"< {REAP_PRESSURE_FREE_GB}GB：对零损失现场做回收（只删目录，分支保留）")
+    # 磁盘紧张度必须独立判断，不能只在「常规回收被关掉」时才成立。
+    # 2026-10-27 实测：safety.json 里 reap_worktrees=true 时，上面的分支整个被
+    # 跳过 → _pressure_reap 永远是 False → 一直用常规的 25s 预算 / 600s 间隔，
+    # 日志里反复出现「达时间预算 25s（已回收 0 个）」，回收永远追不上派工写入。
+    # 这里按真实可用空间再判一次：紧张时同样享受更大预算和更短间隔（安全判据不变）。
+    _free_now = _disk_free_gb()
+    _disk_tight = _free_now is not None and _free_now < REAP_PRESSURE_FREE_GB
+    if _disk_tight and not _pressure_reap:
+        _pressure_reap = True
+        log(f"[safety] 磁盘可用 {_free_now:.2f}GB < {REAP_PRESSURE_FREE_GB}GB："
+            f"回收改用紧张节奏（更短间隔/更大时间预算；判据不变，仍只删零损失现场）")
     reaped = 0
     reap_state = _load_reap_state()
     try:
