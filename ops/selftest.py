@@ -2982,6 +2982,9 @@ def test_exec_model_fallback_relaunch_is_async():
         base = Path(tmp)
         repo, wt = base / "repo", base / "worktree"
         repo.mkdir(); wt.mkdir()
+        # 本用例验「fallback 重挂是异步的」，不验磁盘闸；宿主真实低盘会让它假失败。
+        # 磁盘闸对重启的约束由 test_disk_hold_withholds_worker_restart 单独锁住。
+        central_daemon._disk_free_gb = lambda: 20.0
         log_path = base / "worker.log"
         log_path.write_text(
             "ERROR: 403 Forbidden insufficient balance\n", encoding="utf-8")
@@ -3169,6 +3172,54 @@ def test_parallel_exec_slots():
     exercise(3)
     exercise(10)
     print("selftest ok: 低盘阻断新 worker、保留在途任务，恢复到 10GB 后自动放行 3/10 槽位。")
+
+
+def test_disk_hold_withholds_worker_restart():
+    """A retry/relaunch is a new process and must obey the disk gate too.
+
+    低盘时只拦首次派发、放过重试重启，等于让低盘现场自己把磁盘越写越满。
+    这里锁住：重试重启也要过闸，被压住时不留 proc、不启 Popen、不烧重试预算。
+    """
+    import importlib
+    import sys
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-disk-restart-") as tmp:
+        home = Path(tmp)
+        with mock.patch.dict(os.environ, {"KG_DAEMON_HOME": str(home)}, clear=False):
+            importlib.reload(central_daemon)
+            with mock.patch.object(central_daemon, "_disk_pressure", return_value=1), \
+                 mock.patch.object(central_daemon, "_disk_free_gb", return_value=1.0):
+                assert central_daemon._disk_holds_restart("L-1") is True
+            with mock.patch.object(central_daemon, "_disk_pressure", return_value=0):
+                assert central_daemon._disk_holds_restart("L-1") is False
+
+            job = {"id": "L-1", "item": {"id": "L-1", "kind": "bug"},
+                   "cfg": {"timeout": 5, "retries": 1, "no_change_retries": 1},
+                   "repo": str(home), "worktree": str(home),
+                   "branch": "codex/x", "log": str(home / "w.log"),
+                   "model": "m", "attempts": 0,
+                   "proc": central_daemon._finished_proc(1),
+                   "result": {"id": "L-1"}}
+            (home / "w.log").write_text("ERROR: unexpected status 500 boom\n",
+                                        encoding="utf-8")
+            with mock.patch.object(central_daemon, "_disk_pressure", return_value=1), \
+                 mock.patch.object(central_daemon, "_disk_free_gb", return_value=1.0), \
+                 mock.patch.object(central_daemon.subprocess, "Popen") as popen, \
+                 mock.patch.object(central_daemon, "classify_exec_infra_failure",
+                                   return_value=True):
+                out = central_daemon._reap_exec(job, {})
+                popen.assert_not_called()
+                assert out.get("retry_reason") == "disk_held", out
+                assert job.get("disk_held") is True, job
+                assert "proc" not in job, job
+
+    print("selftest ok: 低盘时重试/重派也不重启 worker，保留现场等空间恢复再续跑。")
 
 
 def test_git_gc_never_prunes_shared_partial_clone():
@@ -4467,6 +4518,7 @@ if __name__ == "__main__":
     test_exec_model_balance_fallback()
     test_exec_model_fallback_relaunch_is_async()
     test_parallel_exec_slots()
+    test_disk_hold_withholds_worker_restart()
     test_git_gc_never_prunes_shared_partial_clone()
     test_exec_prompt_includes_patch_recovery()
     test_worker_alive_treats_zombie_as_dead()

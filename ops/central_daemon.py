@@ -1276,6 +1276,23 @@ def classify_exec_model_fallback(log_path) -> bool:
     return bool(EXEC_MODEL_FALLBACK_PATTERN.search(text))
 
 
+def _disk_holds_restart(rid: str, attempt: int = 0) -> bool:
+    """低盘时也不许「重启/重派」worker，不只是不许首次派发。
+
+    重试、无改动重派、通道 fallback 重挂都会新起一个 codex 进程、写同一个
+    worktree，占盘方式和首次派发一模一样。准入关闭时如果只拦新派、不拦重启，
+    低盘现场会自己把磁盘越写越满。这里拦住重启：worktree/分支原样保留，
+    恢复到恢复线后在同一现场续跑；不消耗重试预算。
+    """
+    if not _disk_pressure():
+        return False
+    free = _disk_free_gb()
+    shown = "读取失败" if free is None else f"{free:.2f}GB"
+    log(f"[exec] {rid} 磁盘可用 {shown} 不足，暂不重启 worker；"
+        f"保留 worktree/分支，恢复到 {EXEC_DISK_RESUME_FREE_GB:.2f}GB 后在同一现场续跑")
+    return True
+
+
 def _should_fallback_to_slow_model(job: dict, cfg: dict, log_path: Path) -> bool:
     """Return whether a provider-balance failure should retry on slow_model."""
     return bool(
@@ -1655,6 +1672,13 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
                               f"（model={job.get('model') or 'default'}）")
             else:
                 retry_note = f"第 {attempt}/{total} 次重试"
+            if _disk_holds_restart(rid):
+                job["disk_held"] = True
+                job.pop("proc", None)
+                result.update({"outcome": "relaunched",
+                               "retry_next_cycle": True,
+                               "retry_reason": "disk_held"})
+                return result
             log(f"[exec] {rid} {retry_note}"
                 f"（同一 worktree={wt}，日志 {log_path}）")
             try:
@@ -1716,6 +1740,14 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
                 f"{job['model']} 重跑；日志尾部: {detail_tail[-120:]}")
             # Relaunch and return immediately. Waiting here would stop the
             # daemon loop from filling the remaining configured slots.
+            if _disk_holds_restart(rid):
+                job["disk_held"] = True
+                job.pop("proc", None)
+                result.update({"outcome": "relaunched",
+                               "retry_next_cycle": True,
+                               "retry_reason": "disk_held",
+                               "model": job.get("model")})
+                return result
             try:
                 fh = log_path.open("a", encoding="utf-8")
                 fh.write(
@@ -1744,6 +1776,13 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
             elif not _changed_paths(wt):
                 tries = int(job.get("no_change_tries") or 0)
                 if tries < no_change_retries:
+                    if _disk_holds_restart(rid):
+                        job["disk_held"] = True
+                        job.pop("proc", None)
+                        result.update({"outcome": "relaunched",
+                                       "retry_next_cycle": True,
+                                       "retry_reason": "disk_held"})
+                        return result
                     job["no_change_tries"] = tries + 1
                     job["no_change_retry"] = True
                     job["attempts"] = attempt
@@ -2437,6 +2476,16 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
             # 让同一轮就走 add/commit/land；否则它永远停在「等待」。
             if proc is None:
                 job["proc"] = _finished_proc()
+        elif job.get("disk_held") and proc is None:
+            # 低盘时被压住的重启：保持空转（不启会话、不写盘），等空间恢复后
+            # 在同一现场续跑，且不消耗重试预算。
+            if _disk_pressure():
+                continue
+            job.pop("disk_held", None)
+            log(f"[exec] {rid} 磁盘已恢复到停止线以上，在同一现场续跑 worker")
+            job["proc"] = _finished_proc()
+            job["detached"] = True
+            proc = job["proc"]
         elif proc is None and job.get("detached") and _worker_alive(job.get("pid")):
             continue
         elif proc is None and job.get("detached"):
