@@ -3594,21 +3594,39 @@ def _resolve_prepare(args) -> None:
         # 只在「这条容器分支里除了一次 wip 合并之外什么都没解」时才敢撤掉：
         # 如果树里已经没有冲突标记，说明有 worker 在里面真的解过（只是没走到
         # --finish），那是不可重建的劳动成果，绝不能被自动重拆抹掉。
-        if not unresolved_marker_files(resolve_branch):
+        # 容器分支已经整条在 main 里（ahead=0）时，它只是历史残留：内容没有任何
+        # 风险，删掉它不丢任何东西。这比「树里没 marker 就交回 land」更准——
+        # land 对 ahead=0 的分支会直接说「已完全合并，无需 land」，什么也不会做，
+        # 于是又一次卡回同一个 blocked（2026-10-27 实测 codex/resolve-hover-card-info-restore）。
+        container_ahead, _cb = counts(resolve_branch)
+        if container_ahead == 0:
+            gone0 = proc_run(["git", "-C", str(REPO), "branch", "-D", resolve_branch],
+                             capture_output=True, text=True)
+            if gone0.returncode != 0:
+                print(f"× 已合入 main 的残留容器分支 {resolve_branch} 撤不掉："
+                      f"{(gone0.stdout + gone0.stderr).strip()[:300]}")
+                print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
+                return
+            print(f"  撤掉残留容器分支 {resolve_branch}（ahead=0，内容已全在 {MAIN}），重新拆一条。")
+            resolve_branch_exists = False
+        else:
+            resolve_branch_exists = True
+        if resolve_branch_exists and not unresolved_marker_files(resolve_branch):
             print(f"× 遗留分支 {resolve_branch}（head={orphan_head[:8]}）树里没有冲突标记，"
                   f"说明已经有人解过但没有 --finish 收口。")
             print(f"  先 `python3 ops/kgctl.py land {resolve_branch}` 走门禁落盘，"
                   f"或确认可弃后手动 `git branch -D {resolve_branch}` 再重跑 resolve。")
             print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
             return
-        gone = proc_run(["git", "-C", str(REPO), "branch", "-D", resolve_branch],
-                        capture_output=True, text=True)
-        if gone.returncode != 0:
-            print(f"× 遗留分支 {resolve_branch} 撤不掉：{(gone.stdout + gone.stderr).strip()[:300]}")
-            print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
-            return
-        print(f"  撤掉遗留容器分支 {resolve_branch}（原 head={orphan_head[:8]}，worktree 已不在；"
-              f"源分支 {branch} 未改动），重新拆一条。")
+        if resolve_branch_exists:
+            gone = proc_run(["git", "-C", str(REPO), "branch", "-D", resolve_branch],
+                            capture_output=True, text=True)
+            if gone.returncode != 0:
+                print(f"× 遗留分支 {resolve_branch} 撤不掉：{(gone.stdout + gone.stderr).strip()[:300]}")
+                print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
+                return
+            print(f"  撤掉遗留容器分支 {resolve_branch}（原 head={orphan_head[:8]}，worktree 已不在；"
+                  f"源分支 {branch} 未改动），重新拆一条。")
     if wt.exists():
         print(f"× {wt} 已存在但不是本命令登记的任务，跳过。")
         print(f"RESOLVE_RESULT branch={branch} outcome=blocked")

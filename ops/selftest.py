@@ -4354,7 +4354,7 @@ def test_resolve_orphan_container_is_adopted_not_blocked_forever():
 
     printed = []
 
-    def run_case(*, worktree_exists, markers, existing_record):
+    def run_case(*, worktree_exists, markers, existing_record, container_ahead=1):
         with tempfile.TemporaryDirectory(prefix="kgctl-resolve-orphan-") as tmp:
             root, repo, kgctl = _load(tmp)
             kgctl.RESOLVE = repo / "ops" / "tasks" / "resolve.json"
@@ -4390,6 +4390,7 @@ def test_resolve_orphan_container_is_adopted_not_blocked_forever():
                  mock.patch.object(kgctl, "_align_main", lambda: None), \
                  mock.patch.object(kgctl, "git",
                                    side_effect=lambda *a, **k: "b75c7dd3dc" if "rev-parse" in a else ""), \
+                 mock.patch.object(kgctl, "counts", return_value=(container_ahead, 0)), \
                  mock.patch.object(kgctl, "conflict_files", return_value=["a.ts"]), \
                  mock.patch.object(kgctl, "conflict_burden", return_value=1), \
                  mock.patch.object(kgctl, "unlanded_diff_size", return_value=(1, 10)), \
@@ -4416,6 +4417,12 @@ def test_resolve_orphan_container_is_adopted_not_blocked_forever():
     written, deleted, out = run_case(worktree_exists=False, markers=[], existing_record=None)
     assert deleted == [], f"有人真解过的容器分支被自动删掉了：{deleted}"
     assert any("没有冲突标记" in line for line in out), out
+
+    # 3b) 容器分支已经整条在 main 里（ahead=0）：留下只会堵住队列，撤掉重拆。
+    written, deleted, out = run_case(worktree_exists=False, markers=[], existing_record=None,
+                                     container_ahead=0)
+    assert deleted == ["codex/resolve-hover-power-remove-feedback"], (
+        f"已合入 main 的残留容器分支应当被清掉：{deleted}")
 
     # 4) 已有 open 记录：仍然 blocked（交给 --finish/--abandon，不抢）。
     written, deleted, out = run_case(worktree_exists=True, markers=["a.ts"],
