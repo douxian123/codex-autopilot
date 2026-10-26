@@ -3535,7 +3535,6 @@ def test_context_packs_are_cached_and_budgeted():
     if str(ops) not in _sys.path:
         _sys.path.insert(0, str(ops))
     import kgctl
-    importlib.reload(kgctl)
 
     tmp = Path(tempfile.mkdtemp(prefix="kg-ctx-cache-"))
     real_cache = kgctl.CONTEXT_CACHE
@@ -3593,7 +3592,6 @@ def test_cycle_has_hard_budget():
     if str(ops) not in _sys.path:
         _sys.path.insert(0, str(ops))
     import central_daemon
-    importlib.reload(central_daemon)
     import time as _t
 
     logs = []
