@@ -3463,6 +3463,60 @@ def test_proc_run_never_hangs_on_inherited_pipe():
     print("selftest ok: 子进程执行器有硬超时、超时收整组、禁懒加载，且三模块无裸 subprocess.run。")
 
 
+def test_run_kgctl_streams_progress_live():
+    """kgctl 的输出必须边跑边进日志，不许攒到进程退出才吐。
+
+    真实踩到的坑（2026-10-27 05:48 那一拍）：tick 实测只要 60 秒，但
+    run_kgctl 用 `communicate()` 把 8 个阶段的输出全攒到退出才写日志，
+    daemon.log 因此出现 7 分钟一片空白。用户看到的就是「它卡住了 /
+    又得清一轮」，而实际上它一直在正常干活。这里锁三件事：
+    阶段行在进程还在跑的时候就已经写进日志、超时仍收整组、返回值仍是完整输出。
+    """
+    import importlib
+    import sys as _sys
+    import tempfile
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in _sys.path:
+        _sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    seen_mid_run = []
+
+    with tempfile.TemporaryDirectory(prefix="kg-stream-") as tmp:
+        log_path = Path(tmp) / "daemon.log"
+
+        def fake_log(msg):
+            text = str(msg)
+            # 记录「进程还活着时」日志里出现了什么
+            if fake_proc.poll() is None:
+                seen_mid_run.append(text)
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(text + "\n")
+
+        # 一个慢慢吐三行、每行间隔真实的子进程：攒到最后就一条都看不见。
+        fake_proc = mock.Mock()
+        fake_proc.poll.return_value = None
+        fake_proc.wait.return_value = 0
+        lines = ["[1/8] route inbox", "[2/8] refresh project status", "[3/8] synthesize"]
+        fake_proc.stdout = iter([l + "\n" for l in lines])
+
+        with mock.patch.object(central_daemon, "log", side_effect=fake_log), \
+             mock.patch.object(central_daemon.subprocess, "Popen", return_value=fake_proc):
+            rc, out = central_daemon.run_kgctl(["tick", "--no-converge"],
+                                              env_extra={"KG_TICK_LIGHT": "1"})
+
+        assert rc == 0, rc
+        assert out.count("[") >= 3, f"返回值丢了已产出的输出：{out!r}"
+        joined = "".join(seen_mid_run)
+        assert "[1/8]" in joined, f"阶段行没有在运行中就写进日志：{seen_mid_run}"
+        assert "[3/8]" in joined, f"最后一行也是流式写出的：{seen_mid_run}"
+
+    print("selftest ok: kgctl 阶段输出边跑边进日志（不再攒到退出才吐），返回值仍完整。")
+
+
 def test_worker_alive_treats_zombie_as_dead():
     """A defunct child must not occupy an auto_exec slot.
 
@@ -4709,6 +4763,7 @@ if __name__ == "__main__":
     test_disk_hold_withholds_worker_restart()
     test_git_gc_never_prunes_shared_partial_clone()
     test_proc_run_never_hangs_on_inherited_pipe()
+    test_run_kgctl_streams_progress_live()
     test_git_scan_timeout_fails_closed_not_open()
     test_exec_prompt_includes_patch_recovery()
     test_worker_alive_treats_zombie_as_dead()

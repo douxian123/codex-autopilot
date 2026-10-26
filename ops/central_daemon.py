@@ -191,48 +191,99 @@ def log(msg: str) -> None:
         pass
 
 
-def log_block(title: str, rc: int, out: str) -> None:
+def log_block(title: str, rc: int, out: str, streamed: bool = True) -> None:
+    """补一行表头。
+
+    streamed=True（默认）：run_kgctl 已经把每一行带时间戳实时写进日志了，
+    这里只补表头，不再重复整段输出 —— 否则同一个 tick 的 8 个阶段会被打两遍，
+    日志翻起来更糊。
+    """
     log(f"[{title}] rc={rc}")
+    if streamed:
+        return
     for line in out.splitlines():
         log("    " + line)
 
 
-def run_kgctl(args, timeout=TICK_TIMEOUT, env_extra=None):
+def run_kgctl(args, timeout=TICK_TIMEOUT, env_extra=None, stream=True):
     """调用 kgctl，返回 (rc, 合并后的 stdout+stderr)。
 
     超时不能只说一句「超时」：旧实现在 TimeoutExpired 分支里**把子进程已经产出的输出
     整段丢掉**（subprocess.run 抛异常时不给 output），于是 2026-10-15 22:49 那次 tick
     挂满 1800s 之后，日志里只剩一行 `[tick] rc=124`，卡在哪一步无从判断。
-    现在自己起进程：到点先收下已产出的行，再用 killpg 收掉整个进程组（只 kill 直接
-    子进程会留下 git 孙进程，就是历史上那类「僵尸服务存活几小时」的形态）。
+
+    2026-10-27 又修第二层：输出必须**边跑边进日志**（stream=True），不能攒到最后。
+    实测 tick 本身只要 60 秒，但 `communicate()` 把 8 个阶段的输出全攒到退出才吐，
+    于是 daemon.log 里出现 7 分钟一片空白的「静默挂起」 —— 用户看到的就是
+    「它卡住了 / 又得清一轮」。现在每个阶段行到一条写一条（带时间戳），
+    卡在哪一阶段一眼可见。
+
+    超时一律 killpg 收整个进程组（只 kill 直接子进程会留下 git 孙进程，
+    就是历史上那类「僵尸服务存活几小时」的形态）。
     """
     cmd = [sys.executable, str(KGCTL), *args]
     env = {**os.environ, **env_extra} if env_extra else None
+    started = time.monotonic()
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, errors="replace", cwd=str(CODE_ROOT),
                                 env=env, start_new_session=True)
     except OSError as exc:
         return 125, f"调用 kgctl 失败: {exc}"
-    try:
-        out, _ = proc.communicate(timeout=timeout)
-        return proc.returncode, out or ""
-    except subprocess.TimeoutExpired:
+
+    collected = []
+    deadline = started + float(timeout)
+    timed_out = False
+    if not stream:
+        try:
+            out, _ = proc.communicate(timeout=timeout)
+            return proc.returncode, out or ""
+        except subprocess.TimeoutExpired:
+            timed_out = True
+    else:
+        # 边读边写：读线程结束就代表 stdout 关了（子进程及其所有继承者都退了）。
+        import threading as _threading
+
+        def _pump():
+            try:
+                for line in proc.stdout:
+                    collected.append(line)
+                    text = line.rstrip("\n")
+                    if text:
+                        log("    " + text)
+            except (OSError, ValueError):
+                pass
+
+        reader = _threading.Thread(target=_pump, daemon=True)
+        reader.start()
+        while reader.is_alive():
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            reader.join(timeout=min(5.0, max(0.05, deadline - time.monotonic())))
+
+    if timed_out:
         try:
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except OSError:
             proc.kill()
         try:
-            out, _ = proc.communicate(timeout=30)
+            proc.wait(timeout=30)
         except subprocess.TimeoutExpired:
-            out = ""
-        tail = (out or "").strip()
+            pass
+        tail = "".join(collected).strip()
         msg = f"kgctl {' '.join(args)} 超时（>{timeout}s，进程组已收掉）"
         if tail:
             msg += "\n超时前已产出的输出如下（最后一行即卡住的位置）：\n" + tail
         else:
             msg += "\n（超时前一行输出都没有——卡在第一个阶段之前，见 kgctl tick 的阶段编号）"
         return 124, msg
+
+    try:
+        rc = proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        rc = 124
+    return rc, "".join(collected)
 
 
 def load_state() -> dict:
