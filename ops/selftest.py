@@ -3276,6 +3276,51 @@ def test_exec_prompt_includes_patch_recovery():
     print("selftest ok: 普通与冲突 worker prompt 都包含 apply_patch 故障恢复规则。")
 
 
+def test_git_scan_timeout_fails_closed_not_open():
+    """A timed-out scan must block landing, never look like "no conflict".
+
+    `conflict_files()` / `unresolved_marker_files()` 用「空列表 = 没冲突」表达
+    可落盘。proc.run 的默认闸超时后返回 rc=124，如果这两个函数仍按「空」返回，
+    一条根本算不完的分支就会被当成干净分支推上 main —— 这是最危险的一种假绿灯。
+    这里锁住：rc=124 必须被翻译成「有阻塞」，而不是「没事」。
+    """
+    import importlib
+    import sys
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import kgctl
+    importlib.reload(kgctl)
+
+    class Timeout124:
+        returncode = 124
+        stdout = ""
+        stderr = "[proc] 命令超时"
+
+    with mock.patch.object(kgctl, "proc_run", return_value=Timeout124()):
+        conf = kgctl.conflict_files("codex/some-branch")
+        assert conf, "超时的 merge-tree 不能被当成『无冲突』"
+        assert any("超时" in c for c in conf), conf
+
+        markers = kgctl.unresolved_marker_files("codex/some-branch")
+        assert markers, "超时的 git grep 不能被当成『无残留标记』"
+        assert any("超时" in m for m in markers), markers
+
+    # 对照组：真 rc=1（搜到没匹配）仍然是「干净」，不能被误伤成阻塞。
+    class GrepNoMatch:
+        returncode = 1
+        stdout = ""
+        stderr = ""
+
+    with mock.patch.object(kgctl, "proc_run", return_value=GrepNoMatch()):
+        assert kgctl.unresolved_marker_files("codex/clean-branch") == [], \
+            "rc=1 是『没匹配到』，必须继续视为干净"
+
+    print("selftest ok: git 扫描超时 fail-closed（阻塞落盘），rc=1 仍视为干净。")
+
+
 def test_proc_run_never_hangs_on_inherited_pipe():
     """Lock the 2026-10-27 hang: a grandchild holding the output pipe must not block.
 
@@ -4584,6 +4629,7 @@ if __name__ == "__main__":
     test_disk_hold_withholds_worker_restart()
     test_git_gc_never_prunes_shared_partial_clone()
     test_proc_run_never_hangs_on_inherited_pipe()
+    test_git_scan_timeout_fails_closed_not_open()
     test_exec_prompt_includes_patch_recovery()
     test_worker_alive_treats_zombie_as_dead()
     test_dead_pid_never_fabricates_worker_success()

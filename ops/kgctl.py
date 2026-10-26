@@ -312,6 +312,10 @@ def conflict_files(branch):
                        capture_output=True, text=True)
     if p.returncode == 0:
         return []
+    if p.returncode == 124:
+        # fail-closed：超时无法确认是否冲突，绝不能返回「空 = 无冲突」，
+        # 否则一条算不完的分支会被当成干净分支直接落盘。
+        return [f"<merge-tree 超时，无法确认 {branch} 是否冲突>"]
     names, seen = [], set()
     for line in p.stdout.split("\n")[1:]:          # 跳过 tree oid
         parts = line.split("\t")
@@ -340,6 +344,10 @@ def unresolved_marker_files(branch):
          r"^(<<<<<<< |>>>>>>> )", branch, "--", "."],
         capture_output=True, text=True, errors="replace")
     if p.returncode not in (0, 1):
+        # rc=1 才是「没匹配到」；其它 rc（尤其 124 超时）意味着这次没查成，
+        # 必须当成「可能有残留标记」阻塞落盘，而不是乐观返回空。
+        if p.returncode == 124:
+            return [f"<git grep 超时，无法确认 {branch} 是否残留冲突标记>"]
         return []
     candidates = {line.strip() for line in p.stdout.splitlines() if line.strip()}
     broken = []
@@ -2300,8 +2308,19 @@ def _fetch_origin_main(attempts: int = 5, delay: float = 3.0) -> bool:
     """
     last = ""
     for attempt in range(attempts):
-        fetched = proc_run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
-                                 capture_output=True, text=True, timeout=120)
+        # 超时必须当成一次「可重试的失败」，不能抛出炸掉整条 land/supersede。
+        # 2026-10-27 实录：本机 load 167、swap 9GB，fetch 打满 120s 后被
+        # TimeoutExpired 掀翻，supersede 直接 traceback 退出，连归档都被带崩。
+        try:
+            fetched = proc_run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
+                               capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            last = f"fetch origin/{MAIN} 超时/无法启动：{exc}"
+            if attempt < attempts - 1:
+                print(f"  ! {last}，{delay:g}s 后重试")
+                time.sleep(delay)
+                continue
+            break
         if fetched.returncode == 0:
             if attempt:
                 print(f"  fetch origin/{MAIN} 第 {attempt + 1} 次成功（前 {attempt} 次为暂态失败）")
