@@ -3576,6 +3576,49 @@ def test_context_packs_are_cached_and_budgeted():
     print("selftest ok: Context Pack 探测按 branch@head@main 缓存，且有可调时间预算。")
 
 
+def test_cycle_has_hard_budget():
+    """一整拍必须有硬预算，超了就不再开新步骤，并且留痕。
+
+    单步各有时限不等于整拍有时限：tick 600s + land 600s + port + resolve 叠加，
+    历史上就是「一拍吃掉半小时、日志一片空白」。这里锁三件事：
+    超预算时 `_over_budget` 为真、`_run_cycle` 不再开新的 land 步骤、
+    并且日志里明确写了掐在哪一步（静默是最贵的失败方式）。
+    """
+    import importlib
+    import sys as _sys
+    import tempfile
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in _sys.path:
+        _sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+    import time as _t
+
+    logs = []
+
+    # 预算未到：不拦。
+    future = _t.monotonic() + 600
+    assert central_daemon._over_budget(future, "任意步骤") is False
+    # deadline=None（其它调用方）：表示不限，不能误拦。
+    assert central_daemon._over_budget(None, "任意步骤") is False
+    # 预算已过：拦，并且必须留痕。
+    with mock.patch.object(central_daemon, "log", side_effect=logs.append):
+        past = _t.monotonic() - 1
+        assert central_daemon._over_budget(past, "下一轮 land") is True
+    joined = " ".join(str(x) for x in logs)
+    assert "下一轮 land" in joined, f"超预算没有写明掐在哪一步：{logs}"
+    assert "预算" in joined, logs
+
+    # 源码必须把 deadline 真的传进 _run_cycle，否则预算只是个摆设。
+    src = (ops / "central_daemon.py").read_text(encoding="utf-8")
+    assert "deadline=time.monotonic() + CYCLE_BUDGET" in src, \
+        "_run_cycle 没有被传入整拍 deadline"
+    assert "KG_CYCLE_BUDGET" in src, "整拍预算不可调"
+    print("selftest ok: 整拍有硬预算，超预算不再开新步骤且留痕指明掐在哪。")
+
+
 def test_worker_alive_treats_zombie_as_dead():
     """A defunct child must not occupy an auto_exec slot.
 
@@ -4824,6 +4867,7 @@ if __name__ == "__main__":
     test_proc_run_never_hangs_on_inherited_pipe()
     test_run_kgctl_streams_progress_live()
     test_context_packs_are_cached_and_budgeted()
+    test_cycle_has_hard_budget()
     test_git_scan_timeout_fails_closed_not_open()
     test_exec_prompt_includes_patch_recovery()
     test_worker_alive_treats_zombie_as_dead()

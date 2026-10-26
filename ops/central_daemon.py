@@ -98,8 +98,15 @@ PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{PLIST_LABEL}.plist"
 DEFAULT_INTERVAL_MIN = 15
 DEFAULT_MAX_LAND = 3
 LAND_TIMEOUT = 600
-TICK_TIMEOUT = 1800
-SUPERSEDE_TIMEOUT = 900
+# 单步 git 类调用的上限。tick 实测 38 秒，1800 秒等于「允许它静默卡半小时」——
+# 那正是用户看到「跑着跑着就卡住」的形态。降到 600 秒：超过它就是真的坏，
+# 早失败早暴露，别让一拍吃掉整个心跳周期。
+TICK_TIMEOUT = int(os.environ.get("KG_TICK_TIMEOUT", "600"))
+SUPERSEDE_TIMEOUT = int(os.environ.get("KG_SUPERSEDE_TIMEOUT", "300"))
+# 一整拍的硬预算。它是「跑着跑着又不响了」的最后一道闸：单步都有超时，
+# 但多步叠加仍可能吃掉半小时。超预算就不再开新步骤，把剩余工作留给下一拍，
+# 并如实写一行日志说明掐在哪 —— 静默是最贵的那种失败。
+CYCLE_BUDGET = int(os.environ.get("KG_CYCLE_BUDGET", "900"))
 PORT_TIMEOUT = 90
 # 没有候选的全量 port 扫描结果冷却多久；防止每 5 分钟周期都跑一次慢 git 扫描。
 PORT_SCAN_COOLDOWN = 600
@@ -3340,11 +3347,30 @@ def run_cycle(dry: bool, max_land: int) -> dict:
         log("[pause] 已暂停：本轮不启动任何新工作（面板可恢复）")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
                 "paused": True, "summary": {}, "landed": [], "failures": []}
-    return _run_cycle(dry, max_land)
+    return _run_cycle(dry, max_land, deadline=time.monotonic() + CYCLE_BUDGET)
 
 
-def _run_cycle(dry: bool, max_land: int) -> dict:
-    """一个周期：刷新控制面 -> 串行落盘安全子集 -> 按需通知。返回本轮结果。"""
+def _over_budget(deadline, step: str) -> bool:
+    """整拍预算用完了吗？用完就不再开新步骤，并如实记一行。
+
+    「静默」是最贵的失败方式：用户看到的是卡住，运维看到的是没事发生。
+    所以超预算必须留痕，写清掐在哪一步。
+    """
+    if deadline is None:
+        return False
+    if time.monotonic() < deadline:
+        return False
+    log(f"[budget] 本拍已用满 {CYCLE_BUDGET}s 预算，跳过「{step}」，留给下一拍")
+    return True
+
+
+def _run_cycle(dry: bool, max_land: int, deadline: float = None) -> dict:
+    """一个周期：刷新控制面 -> 串行落盘安全子集 -> 按需通知。返回本轮结果。
+
+    deadline 是这一整拍的硬预算（CYCLE_BUDGET）。每个长步骤前先问
+    `_over_budget()`：超了就不再开新步骤，把剩下的留给下一拍，并写明掐在哪。
+    单步各有时限不等于整拍有时限——历史上就是多步叠加吃掉半小时而日志一片空白。
+    """
     if dry:
         # 真预演：只问队列，不 tick（tick 会提交并推送真相层）、不 land、不通知。
         log("--- dry-run: 只预测本轮会 land 哪些分支 ---")
@@ -3445,6 +3471,8 @@ def _run_cycle(dry: bool, max_land: int) -> dict:
     land_blocked = dict(load_state().get("land_blocked") or {})
     attempts = 0
     while auto_land and attempts < max_land:
+        if _over_budget(deadline, "下一轮 land"):
+            break
         rc, qout = run_kgctl(["queue", "--light"])
         clean, summary, files_by_branch = parse_queue(qout)
         if rc != 0:
