@@ -3291,8 +3291,18 @@ def test_git_scan_timeout_fails_closed_not_open():
     ops = Path(__file__).resolve().parent
     if str(ops) not in sys.path:
         sys.path.insert(0, str(ops))
-    import kgctl
-    importlib.reload(kgctl)
+    # 在干净 env 的子进程里 import kgctl：selftest 进程的 KG_REPO 可能已被
+    # 前序用例改成临时目录，直接 import 会在 import 期 sys.exit。
+    import os as _os
+    import subprocess as _sp
+    clean = {k: v for k, v in _os.environ.items() if not k.startswith("KG_")}
+    probe = _sp.run(
+        [sys.executable, "-c", (
+            "import sys;sys.path.insert(0,%r);"
+            "import kgctl;print('ok')" % str(ops))],
+        capture_output=True, text=True, env=clean, cwd=str(ops.parent))
+    assert "ok" in (probe.stdout or ""), f"kgctl 无法在干净 env 下 import：{probe.stderr[-400:]}"
+    kgctl = importlib.import_module("kgctl")
 
     class Timeout124:
         returncode = 124
@@ -3373,13 +3383,16 @@ def test_proc_run_never_hangs_on_inherited_pipe():
 
     # 4) 三个模块都必须把 subprocess.run 换成受控实现 —— 只要有一处漏掉，
     #    那条路径就仍然可以静默挂死整轮 tick。
+    #    这里只读源码文本、不 import：selftest 进程里的 KG_REPO 会被前序用例改到
+    #    临时目录，真 import kgctl 会在 import 期因找不到状态根 sys.exit。
     for mod_name in ("kgctl", "central_daemon", "truthctl"):
-        mod = importlib.import_module(mod_name)
-        assert getattr(mod, "proc_run", None) is not None, mod_name
         src = (ops / f"{mod_name}.py").read_text(encoding="utf-8")
+        assert "proc_run = _proc.run" in src, f"{mod_name}.py 没有接入受控执行器"
         assert "subprocess.run(" not in src, (
             f"{mod_name}.py 还有裸 subprocess.run（会绕过超时闸）："
             + str(src.count("subprocess.run(")))
+        # 调用点必须真的走 proc_run，而不是只挂了个名字。
+        assert src.count("proc_run(") >= 3, f"{mod_name}.py 的调用点没有改走 proc_run"
 
     print("selftest ok: 子进程执行器有硬超时、超时收整组、禁懒加载，且三模块无裸 subprocess.run。")
 
