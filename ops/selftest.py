@@ -3993,6 +3993,34 @@ def test_prune_keeps_open_resolve_hold():
     print("selftest ok: 重启清理不会把仍 gate_fail 的 resolve 停手记录误删。")
 
 
+def test_pressure_reap_gets_its_own_time_budget():
+    """压力回收必须有自己的时间预算，否则永远追不上派工写入。
+
+    2026-10-27 实测：守护日志连续出现「worktree 回收达时间预算 25s（已回收 0 个）」。
+    切片 40 个现场、每个还要跑 4~6 次 git 子进程，25s 常常连一个都删不掉；而
+    每个 worker 现场 ~200MB，磁盘就这样一路滑到 5GB 告急、反复把人卡死。
+    常规轮必须保留短预算（别把派活拖住），压力轮必须给足。
+    """
+    import sys
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+
+    assert central_daemon.REAP_TIME_BUDGET_PRESSURE_S > (
+        central_daemon.REAP_TIME_BUDGET_S
+    ), (central_daemon.REAP_TIME_BUDGET_PRESSURE_S,
+        central_daemon.REAP_TIME_BUDGET_S)
+    assert central_daemon.REAP_TIME_BUDGET_PRESSURE_S >= 60, (
+        "压力预算必须覆盖一整片现场的实际扫描与删除成本"
+    )
+    import inspect
+    src = inspect.getsource(central_daemon._reap_dead_worktrees)
+    assert "REAP_TIME_BUDGET_PRESSURE_S if _pressure_reap" in src, src[:400]
+    print("selftest ok: 压力回收有独立且更大的时间预算，常规轮仍用短预算。")
+
+
 def test_reap_scan_is_sliced_and_throttled():
     """回收不能再「每拍全扫」：那是它自己制造负载和反复爆盘的根因。
 
@@ -4524,6 +4552,7 @@ if __name__ == "__main__":
     test_worker_alive_treats_zombie_as_dead()
     test_dead_pid_never_fabricates_worker_success()
     test_hydrate_drops_unverifiable_exec_slots()
+    test_pressure_reap_gets_its_own_time_budget()
     test_reap_scan_is_sliced_and_throttled()
     test_mcp_contract()
     test_closure_rate()
