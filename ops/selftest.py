@@ -4319,6 +4319,114 @@ def test_scan_batches_branch_metadata():
     print("selftest ok: 大批量分支快照一次读取 ahead/behind，已合并分支不再白跑 diff。")
 
 
+def test_resolve_orphan_container_is_adopted_not_blocked_forever():
+    """resolve 容器分支的遗留态必须能自愈，不能永远报同一个 blocked。
+
+    真实故障（2026-10-27 07:24 与 07:38 连续两拍）：`resolve --auto --go` 挑中一条
+    冲突分支后打印「codex/resolve-<slug> 已存在（可能上次留下的任务）」并 blocked。
+    可这条路的两个出口（--finish / --abandon）都只认 needs_agent 记录；worktree 被回收
+    或登记丢失之后，两条路都进不去，于是每拍都挑同一条、报同一个 blocked——冲突队列
+    的数字永远不减，守护看着在跑、实际原地踏步。
+
+    这条门禁钉住三条：
+      1) worktree 还在 -> 接管成 needs_agent，不再 blocked；
+      2) worktree 不在、树里还是原始 marker -> 撤掉容器分支重拆；
+      3) worktree 不在、但树里已经没有 marker（有人真解过）-> 绝不自动删，交给 land。
+    """
+    import importlib.util
+    from pathlib import Path
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+
+    def _load(tmp):
+        root = Path(tmp)
+        repo = root / "state"
+        (repo / "ops" / "tasks").mkdir(parents=True, exist_ok=True)
+        (repo / "ops" / "truth").mkdir(parents=True, exist_ok=True)
+        with mock.patch.dict(os.environ, {"KG_REPO": str(repo),
+                                          "KG_TRUNK": str(root / "trunk")}):
+            spec = importlib.util.spec_from_file_location(
+                "kgctl_resolve_orphan_selftest", ops / "kgctl.py")
+            kgctl = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(kgctl)
+        return root, repo, kgctl
+
+    printed = []
+
+    def run_case(*, worktree_exists, markers, existing_record):
+        with tempfile.TemporaryDirectory(prefix="kgctl-resolve-orphan-") as tmp:
+            root, repo, kgctl = _load(tmp)
+            kgctl.RESOLVE = repo / "ops" / "tasks" / "resolve.json"
+            kgctl.RESOLVE_DIR = repo / "ops" / "tasks" / "resolve"
+            wt = root / "state-resolve-hover-power-remove-feedback"
+            if worktree_exists:
+                wt.mkdir()
+            written, deleted = [], []
+
+            def fake_write(rec):
+                written.append(rec)
+
+            def fake_proc(cmd, **kw):
+                class R:
+                    returncode = 0
+                    stdout = ""
+                    stderr = ""
+                if cmd[:2] == ["git", "-C"] and "branch" in cmd and "-D" in cmd:
+                    deleted.append(cmd[-1])
+                if cmd[:2] == ["git", "-C"] and "diff" in cmd and "--diff-filter=U" in cmd:
+                    R.stdout = "frontend/src/components/NodeActionTray.tsx\n"
+                if cmd[0] == "git" and "rev-parse" in cmd and "--verify" in cmd:
+                    R.returncode = 0
+                    R.stdout = "b75c7dd3dc\n"
+                return R()
+
+            printed.clear()
+            with mock.patch.object(kgctl, "PROC_PRINT", lambda *a, **k: printed.append(" ".join(map(str, a))), create=True), \
+                 mock.patch.object(kgctl, "_write_resolve_record", fake_write), \
+                 mock.patch.object(kgctl, "_write_resolve_task_md", lambda rec: written.append(rec)), \
+                 mock.patch.object(kgctl, "_find_resolve_task", side_effect=lambda t: existing_record), \
+                 mock.patch.object(kgctl, "_lock_blocked", return_value=False), \
+                 mock.patch.object(kgctl, "_align_main", lambda: None), \
+                 mock.patch.object(kgctl, "git",
+                                   side_effect=lambda *a, **k: "b75c7dd3dc" if "rev-parse" in a else ""), \
+                 mock.patch.object(kgctl, "conflict_files", return_value=["a.ts"]), \
+                 mock.patch.object(kgctl, "conflict_burden", return_value=1), \
+                 mock.patch.object(kgctl, "unlanded_diff_size", return_value=(1, 10)), \
+                 mock.patch.object(kgctl, "unresolved_marker_files", return_value=markers), \
+                 mock.patch.object(kgctl, "unlanded_commits", return_value=[]), \
+                 mock.patch.object(kgctl, "_resolve_worktree_path", return_value=wt), \
+                 mock.patch.object(kgctl, "proc_run", side_effect=fake_proc), \
+                 mock.patch("builtins.print", lambda *a, **k: printed.append(" ".join(map(str, a)))):
+                kgctl._resolve_prepare(["codex/hover-power-remove-feedback", "--go",
+                                        "--max-files", "8", "--max-lines", "1200"])
+            return written, deleted, list(printed)
+
+    # 1) worktree 还在：接管成 needs_agent。
+    written, deleted, out = run_case(worktree_exists=True, markers=["a.ts"], existing_record=None)
+    assert written and written[0]["status"] == "needs_agent", written
+    assert written[0].get("adopted") is True, written
+    assert deleted == [], f"不该删任何分支：{deleted}"
+
+    # 2) worktree 不在、树里还是 marker：撤掉容器分支重拆。
+    written, deleted, out = run_case(worktree_exists=False, markers=["a.ts"], existing_record=None)
+    assert deleted == ["codex/resolve-hover-power-remove-feedback"], deleted
+
+    # 3) worktree 不在、但已经没有 marker：绝不自动删。
+    written, deleted, out = run_case(worktree_exists=False, markers=[], existing_record=None)
+    assert deleted == [], f"有人真解过的容器分支被自动删掉了：{deleted}"
+    assert any("没有冲突标记" in line for line in out), out
+
+    # 4) 已有 open 记录：仍然 blocked（交给 --finish/--abandon，不抢）。
+    written, deleted, out = run_case(worktree_exists=True, markers=["a.ts"],
+                                     existing_record={"slug": "hover-power-remove-feedback",
+                                                      "status": "needs_agent"})
+    assert not written, f"已有任务时不该重复登记：{written}"
+    assert any("outcome=blocked" in line for line in out), out
+
+    print("selftest ok: resolve 遗留容器分支会被接管/重拆，已解过的绝不自动删，有 open 记录不抢。")
+
+
 def test_resolve_candidate_caches_branch_sizes():
     """`resolve --auto` 不许对每条冲突分支都重跑 merge-base + diff。
 
@@ -5049,6 +5157,7 @@ if __name__ == "__main__":
     test_resolve_candidate_scan_skips_marker_grep()
     test_scan_batches_branch_metadata()
     test_resolve_candidate_caches_branch_sizes()
+    test_resolve_orphan_container_is_adopted_not_blocked_forever()
     test_zero_file_branches_do_not_occupy_land_queue()
     test_conflict_decision_hold_survives_existing_markers()
     test_prune_keeps_open_resolve_hold()

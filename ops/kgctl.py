@@ -3382,6 +3382,34 @@ def _resolve_branch_name(slug: str) -> str:
     return f"{BRANCH_PREFIX}resolve-{slug}"
 
 
+def _adopt_resolve_task(branch: str, resolve_branch: str, wt: Path, conf: list) -> None:
+    """把一条「worktree 还在、登记却丢了」的遗留任务登记回 needs_agent。
+
+    为什么需要接管：resolve 的两条出口（--finish / --abandon）都只认 needs_agent
+    记录。登记一旦丢（写盘中断、状态根切换、旧版本 bug），worktree 里的冲突证据
+    就永远没人接手，而 `resolve --auto` 每拍还会挑中同一条分支再报一次 blocked。
+    接管只读 worktree、重算一次待解文件，不改任何内容。
+    """
+    slug = _resolve_slug(branch)
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    unresolved = proc_run(["git", "-C", str(wt), "diff", "--name-only", "--diff-filter=U"],
+                          capture_output=True, text=True).stdout.splitlines()
+    rec = {
+        "slug": slug, "branch": branch, "resolve_branch": resolve_branch,
+        "worktree": str(wt),
+        "base_main": git("rev-parse", MAIN),
+        "source_head": git("rev-parse", branch),
+        "source_commits": unlanded_commits(branch),
+        "created": stamp, "updated": stamp,
+        "conflict_files": conf, "unresolved_files": unresolved or conf,
+        "auto_resolved_jsonl": [],
+        "status": "needs_agent",
+        "adopted": True,
+    }
+    _write_resolve_record(rec)
+    _write_resolve_task_md(rec)
+
+
 def _pick_resolve_candidate(max_files: int, max_lines: int):
     """挑一条「冲突文件少、未落改动也小」的冲突分支。返回 (候选, 超体量的)。"""
     # 候选只来自 CONFLICT 行。带 markers 的全量 scan 会为每个 CLEAN 分支跑两次
@@ -3544,10 +3572,43 @@ def _resolve_prepare(args) -> None:
     resolve_branch = _resolve_branch_name(slug)
     wt = _resolve_worktree_path(slug)
     if git("rev-parse", "--verify", resolve_branch):
-        print(f"× {resolve_branch} 已存在（可能上次留下的任务）。先 "
-              f"resolve --finish/--abandon 收口再重跑。")
-        print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
-        return
+        # 这里曾经是死胡同：只要 codex/resolve-<slug> 存在就 blocked，
+        # 而这条路只有两个出口（resolve --finish / --abandon），都需要一条
+        # needs_agent 记录。孤儿分支（worktree 被回收、或登记丢了）两条路都进不去，
+        # 于是每拍都挑中同一条分支、报同一个 blocked —— 冲突队列的数字永远不减，
+        # 守护看起来「有在跑」实际原地踏步（2026-10-27 07:24、07:38 连续两拍实测）。
+        # 现在自己接管：有 worktree 就把它登记回 needs_agent；没 worktree 就说明
+        # 那份中间产物已经丢了，把自动挡自己生成的容器分支撤掉重来（源分支不动）。
+        rec_orphan = _find_resolve_task(resolve_branch) or _find_resolve_task(slug)
+        if rec_orphan:
+            print(f"× {resolve_branch} 已在任务 {rec_orphan['slug']} 里"
+                  f"（status={rec_orphan.get('status')}）。先 resolve --finish/--abandon 收口。")
+            print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
+            return
+        if wt.exists():
+            _adopt_resolve_task(branch, resolve_branch, wt, conf)
+            print(f"✓ 接管遗留任务：{resolve_branch} 的 worktree 还在，已登记为待解（needs_agent）。")
+            print(f"RESOLVE_RESULT branch={branch} outcome=needs_agent")
+            return
+        orphan_head = git("rev-parse", "--verify", resolve_branch) or ""
+        # 只在「这条容器分支里除了一次 wip 合并之外什么都没解」时才敢撤掉：
+        # 如果树里已经没有冲突标记，说明有 worker 在里面真的解过（只是没走到
+        # --finish），那是不可重建的劳动成果，绝不能被自动重拆抹掉。
+        if not unresolved_marker_files(resolve_branch):
+            print(f"× 遗留分支 {resolve_branch}（head={orphan_head[:8]}）树里没有冲突标记，"
+                  f"说明已经有人解过但没有 --finish 收口。")
+            print(f"  先 `python3 ops/kgctl.py land {resolve_branch}` 走门禁落盘，"
+                  f"或确认可弃后手动 `git branch -D {resolve_branch}` 再重跑 resolve。")
+            print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
+            return
+        gone = proc_run(["git", "-C", str(REPO), "branch", "-D", resolve_branch],
+                        capture_output=True, text=True)
+        if gone.returncode != 0:
+            print(f"× 遗留分支 {resolve_branch} 撤不掉：{(gone.stdout + gone.stderr).strip()[:300]}")
+            print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
+            return
+        print(f"  撤掉遗留容器分支 {resolve_branch}（原 head={orphan_head[:8]}，worktree 已不在；"
+              f"源分支 {branch} 未改动），重新拆一条。")
     if wt.exists():
         print(f"× {wt} 已存在但不是本命令登记的任务，跳过。")
         print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
