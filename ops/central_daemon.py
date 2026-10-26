@@ -110,6 +110,15 @@ EXEC_DEFAULT_TIMEOUT = 3600
 EXEC_MAX_PER_CYCLE = 1
 EXEC_NO_CHANGE_RETRIES = 2
 EXEC_DEFAULT_MAX_WORKERS = 10
+# 自动派发必须有磁盘准入：停止线以下不启动新 worker，恢复线以上才放行。
+# 双阈值避免磁盘余量在边界附近抖动时反复停开；在途 worker 不会被终止。
+EXEC_DISK_STOP_FREE_GB = float(
+    os.environ.get("KG_EXEC_DISK_STOP_FREE_GB", "6"))
+EXEC_DISK_RESUME_FREE_GB = float(
+    os.environ.get("KG_EXEC_DISK_RESUME_FREE_GB", "10"))
+if EXEC_DISK_RESUME_FREE_GB < EXEC_DISK_STOP_FREE_GB:
+    EXEC_DISK_RESUME_FREE_GB = EXEC_DISK_STOP_FREE_GB
+EXEC_DISK_HOLD_IN_MEMORY = False
 # 基础设施抖动 vs 需求真做不出来：底层模型代理（127.0.0.1:15721）偶发 502 /
 # Transport channel closed，会让 codex 进程以非 0 退出，但需求本身没问题。同一
 # worktree 上指数退避重跑即可，默认 3 次；重试仍失败记 codex_infra_fail，与
@@ -2708,20 +2717,56 @@ def _clear_conflict_note(branch: str) -> None:
 
 
 def _disk_pressure() -> int:
-    """磁盘偏紧信号。永远返回 0：**不限制并发**。
+    """Return the disk-admission state: 0 open, 1 held by low space.
 
-    历史：这里曾经返回 1，把并发压到 1 个会话。磁盘余量后来又以资源闸形式
-    留在派活路径上，仍会在空间偏紧时把配置的并发槽位挡成 0。并发上限只由
-    auto_exec.max_workers 决定，磁盘不再参与派活限流。
-
-    磁盘偏紧时要做的不是少干活，而是把空间找回来：压力回收 + git gc
-    仍然照常由 `_reap_dead_worktrees()` / `_git_gc_maintenance()` 执行。
+    A failed probe is fail-closed. The gate only blocks new workers; live jobs
+    continue to completion.
     """
-    return 0
+    global EXEC_DISK_HOLD_IN_MEMORY
+    free = _disk_free_gb()
+    state = load_state()
+    held = bool(state.get(
+        "exec_disk_held",
+        free is not None and free < EXEC_DISK_RESUME_FREE_GB))
+    held = held or EXEC_DISK_HOLD_IN_MEMORY
+    threshold = (EXEC_DISK_RESUME_FREE_GB if held
+                 else EXEC_DISK_STOP_FREE_GB)
+    if free is None:
+        EXEC_DISK_HOLD_IN_MEMORY = True
+        if not state.get("exec_disk_held"):
+            state["exec_disk_held"] = True
+            state["exec_disk_free_gb"] = None
+            state["exec_disk_threshold_gb"] = EXEC_DISK_STOP_FREE_GB
+            state["exec_disk_state_at"] = _now()
+            try:
+                save_state(state)
+            except OSError as exc:
+                log(f"[exec] 磁盘闸状态暂不能持久化：{exc}")
+            log("[exec] 磁盘余量读取失败，按 fail-closed 暂停派发新 worker")
+        return 1
+    now_held = free < threshold
+    if now_held != held or "exec_disk_held" not in state:
+        EXEC_DISK_HOLD_IN_MEMORY = now_held
+        state["exec_disk_held"] = now_held
+        state["exec_disk_free_gb"] = round(free, 2)
+        state["exec_disk_threshold_gb"] = threshold
+        state["exec_disk_state_at"] = _now()
+        try:
+            save_state(state)
+        except OSError as exc:
+            log(f"[exec] 磁盘闸状态暂不能持久化：{exc}")
+        if now_held:
+            log(f"[exec] 磁盘准入关闭（可用 {free:.2f}GB，"
+                f"恢复线 {EXEC_DISK_RESUME_FREE_GB:.2f}GB），"
+                "暂停派发新 worker；在途任务继续收尾")
+        else:
+            log(f"[exec] 磁盘 {free:.2f}GB >= 恢复线 {threshold:.2f}GB，"
+                "恢复派发新 worker")
+    return 1 if now_held else 0
 
 
 def _disk_free_gb() -> float | None:
-    """当前可用 GB（df 口径）。仅用于日志与空间自救判断，不参与限流。"""
+    """Return available GiB from df; unknown is rejected by disk admission."""
     try:
         out = subprocess.run(["df", "-k", "/System/Volumes/Data"],
                              capture_output=True, text=True, timeout=8).stdout
@@ -2941,7 +2986,16 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
     # 只差落盘的 recover 槽位不耗模型，先把它们收口可以立刻腾出「需要会话」
     # 的名额，也不会和正在跑的 worker 争资源。
     results = _collect_exec(workers, blocked)
-    # 并发槽位只看配置，不看磁盘：空间偏紧时在派活后台回收，不挡派活。
+    # 先收口已有的 recover/worker，再检查新派发准入。磁盘不足只挡新 worker，
+    # 绝不终止已经在跑的任务。
+    if _disk_pressure():
+        free = _disk_free_gb()
+        shown = "读取失败" if free is None else f"{free:.2f}GB"
+        log(f"[exec] 磁盘准入关闭（可用 {shown}）：本轮不派新 worker，"
+            f"在途 {_active_exec_session_count(jobs)} 个继续运行；"
+            f"恢复到 {EXEC_DISK_RESUME_FREE_GB:.2f}GB 后自动放行")
+        return results, workers
+    # 并发槽位仍由配置上限决定；磁盘只决定「能不能开始新工作」。
     limit = max(1, int(cfg.get("max_workers", EXEC_DEFAULT_MAX_WORKERS)))
     # A completed worker frees one slot immediately. Keep filling in the same
     # cycle instead of idling until the next 10-minute heartbeat.

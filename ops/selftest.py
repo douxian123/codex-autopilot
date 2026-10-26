@@ -3031,14 +3031,13 @@ def test_exec_model_fallback_relaunch_is_async():
 
 
 def test_parallel_exec_slots():
-    """Configured worker slots must start concurrently; completion is serial.
+    """Disk admission gates new workers without interrupting running workers.
 
     This locks the structural property the old synchronous dispatcher lacked:
     ``dispatch_exec`` starts up to max_workers independent worktrees without
     waiting for the first Codex process to exit. The landing lock remains a
-    separate serial critical section. Exercise both the historical three-slot
-    path and the current production ten-slot configuration so reintroducing a
-    hidden concurrency cap fails this gate.
+    separate serial critical section. Both the three-slot and ten-slot paths
+    verify probe failure, low-disk hold, hysteresis, and automatic resume.
     """
     import importlib
     import json as _json
@@ -3100,15 +3099,30 @@ def test_parallel_exec_slots():
             import control_state, central_config, central_daemon
             importlib.reload(control_state); importlib.reload(central_config)
             importlib.reload(central_daemon)
-            # 并发只由 max_workers 决定。即使磁盘远低于历史资源闸阈值，配置的
-            # 槽位也必须一次填满，不能被任何预检挡成 0。
-            central_daemon._disk_free_gb = lambda: 0.01
+            central_daemon._disk_free_gb = lambda: None
             blocked, workers = {}, {}
             real_live_slugs = central_daemon._live_exec_slugs
             # 这个用例只验并发槽位。外部残留的自检进程可能刚好带同名
             # worktree，不能让它把本 fixture 的派发静默挡掉。
             central_daemon._live_exec_slugs = lambda: frozenset()
             try:
+                started, workers = central_daemon.dispatch_exec(False, blocked, workers)
+                assert started == [], started
+                assert not workers.get("exec_jobs"), workers
+                state = _json.loads((home / "state.json").read_text(encoding="utf-8"))
+                assert state["exec_disk_held"] is True, state
+                assert state["exec_disk_free_gb"] is None, state
+
+                # The held state persists through the hysteresis band.
+                central_daemon._disk_free_gb = lambda: 0.01
+                _, workers = central_daemon.dispatch_exec(False, blocked, workers)
+                assert not workers.get("exec_jobs"), workers
+                central_daemon._disk_free_gb = lambda: 8.0
+                _, workers = central_daemon.dispatch_exec(False, blocked, workers)
+                assert not workers.get("exec_jobs"), workers
+
+                # Crossing the resume threshold releases the configured slots.
+                central_daemon._disk_free_gb = lambda: 10.01
                 started, workers = central_daemon.dispatch_exec(False, blocked, workers)
                 assert started == [], started
                 jobs = workers["exec_jobs"]
@@ -3122,6 +3136,14 @@ def test_parallel_exec_slots():
                 assert all((Path(j["worktree"]) / "started.txt").exists()
                            for j in jobs.values()), jobs
                 assert all(j["proc"].poll() is None for j in jobs.values()), jobs
+
+                # A renewed low-space condition blocks only new workers and
+                # leaves all currently running processes untouched.
+                central_daemon._disk_free_gb = lambda: 0.01
+                _, workers = central_daemon.dispatch_exec(False, blocked, workers)
+                assert len(workers["exec_jobs"]) == slots, workers
+                assert all(j["proc"].poll() is None
+                           for j in workers["exec_jobs"].values()), workers
                 release.touch()
                 deadline = _time.time() + 15
                 landed = []
@@ -3131,6 +3153,7 @@ def test_parallel_exec_slots():
                     _time.sleep(0.1)
                 assert len(landed) == slots, (slots, landed, blocked, workers)
                 assert not workers["exec_jobs"], workers
+
             finally:
                 central_daemon._live_exec_slugs = real_live_slugs
                 release.touch()
@@ -3141,7 +3164,7 @@ def test_parallel_exec_slots():
 
     exercise(3)
     exercise(10)
-    print("selftest ok: 磁盘仅 0.01GB 时，3/10 个 worker 槽均能一次填满并逐条串行落盘。")
+    print("selftest ok: 低盘阻断新 worker、保留在途任务，恢复到 10GB 后自动放行 3/10 槽位。")
 
 
 def test_git_gc_never_prunes_shared_partial_clone():
