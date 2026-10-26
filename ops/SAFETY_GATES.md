@@ -27,6 +27,29 @@ git 本体退出后孙进程仍攥着管道写端，`communicate()` 永远等不
 实测 1 秒预算等了 4.9 秒（5.0GB 的 `thread_history_1.sqlite`，一条 GROUP BY 3.25 秒）。
 现在 `_history_snapshot(budget=)` 放 daemon 线程跑，超预算返回旧缓存。
 
+## 「跑着跑着就不响了」的三层根因与对应闸门（2026-10-27 全部实锤并修）
+
+用户的原话是「跑着跑着就要清一轮，有没有一种干净的机制能长久稳定地跑」。查下来是三层叠加，
+不是玄学：
+
+| 层 | 机制 | 症状 | 闸门 |
+|---|---|---|---|
+| 1 | `subprocess.run(capture_output=True)` + partial clone 懒加载派网络孙进程攥住管道 | `communicate()` 永不返回，`sample` 停在 `select_poll_poll → read`，13 分钟只烧 0.42s CPU | 全部走 `ops/proc.py`（见上节） |
+| 2 | `run_kgctl` 用 `communicate()` 把所有输出攒到进程退出才写日志 | `daemon.log` 里 5~7 分钟一片空白，最后一行停在 `[route(pre-exec)] rc=0` | `stream=True` 逐行实时入日志；门禁 `test_run_kgctl_streams_progress_live` |
+| 3 | 单步各有时限、整拍没有；上游 load 90+ 时多步叠加吃掉半小时 | 用户以为卡住，运维以为没事发生 | `CYCLE_BUDGET` 整拍硬预算 + `_over_budget()` 留痕；门禁 `test_cycle_has_hard_budget` |
+
+**第 3 层里还藏着一个真瓶颈**：tick 阶段 6 给 20 支分支各做一次 `merge-tree` + 全树
+marker grep，一支 10 秒、整段 4.5 分钟。它一直被第 2 层掩盖着 —— 修了可见性才看见。
+现在按 `branch@head@main` 缓存 + `KG_CONTEXT_BUDGET` 时间预算，实测 270s → 28s，
+tick 总时长 37.6s。门禁 `test_context_packs_are_cached_and_budgeted`。
+
+**交付层还有第四层，最容易被忽略**：`install.sh` 装完新版本只切 marketplace 指针，
+**从不重写 launchd plist**。plist 里写死的是某一次安装的绝对路径，于是升级之后守护
+仍按旧路径拉起旧脚本，`KeepAlive=True` 还一直把它拉回来。用户看到的是「明明发了新版，
+问题一点没变」。实测本轮装完 preview.34 后 `launchctl print` 仍指向 preview.32。
+现在装完会自动改指并重启，`--status` 也会报「版本不一致」。
+门禁 `test_daemon_plist_repoints_on_upgrade`。
+
 ## 并发边界
 
 并发上限由 `ops/central.config.json` 的 `auto_exec.max_workers` 决定；磁盘准入
