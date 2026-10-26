@@ -49,6 +49,18 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+# ---- 受控子进程执行器（说明见 ops/proc.py 顶部）---------------------------
+# 全仓 130+ 处 `proc_run(["git", ...])` 旧实现既没有 timeout，又用 pipe 收输出。
+# 本仓库是 partial clone（remote.origin.promisor=true / filter=blob:none）：git 遇到
+# 本地没落的 blob 会派**网络孙进程**懒加载；git 本体退出后孙进程仍攥着 pipe 写端，
+# 于是 `communicate()` 永远等不到 EOF —— 2026-10-27 实测 tick 就这样静默挂 30+ 分钟、
+# 0.0% CPU、13 分钟只产出 0.42s CPU 时间（sample 栈帧停在 select_poll_poll→read）。
+# `proc.run` 换成「输出落临时文件 + 硬超时 + 超时 killpg 整组 + 禁懒加载」。
+# 直接覆盖 `subprocess.run`：130 个调用点一行不改，且 `mock.patch(...subprocess.run)`
+# 这类既有门禁继续有效（它们 patch 的就是这个属性）。
+import proc as _proc  # noqa: E402
+proc_run = _proc.run
+
 MAIN = os.environ.get("KG_MAIN", "main")
 
 # 编排状态（inbox / 台账 / 泳道 / 看板）只有一处权威目录，见 ops/state_root.py。
@@ -81,7 +93,7 @@ OPS = REPO / "ops" / "tasks"
 INBOX = OPS / "inbox.jsonl"
 LANES = OPS / "lanes.json"
 def _git_common_dir() -> Path:
-    out = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--git-common-dir"],
+    out = proc_run(["git", "-C", str(REPO), "rev-parse", "--git-common-dir"],
                          capture_output=True, text=True)
     p = Path(out.stdout.strip()) if out.returncode == 0 and out.stdout.strip() \
         else (REPO / ".git")
@@ -173,7 +185,7 @@ RESOLVE_DIR = OPS / "resolve"
 
 def git(*args, check=False):
     # errors="replace"：仓库里混着图片等二进制，diff/cat-file 命中时不能抛解码异常
-    p = subprocess.run(["git", "-C", str(REPO), *args], capture_output=True, text=True,
+    p = proc_run(["git", "-C", str(REPO), *args], capture_output=True, text=True,
                        errors="replace")
     if check and p.returncode != 0:
         raise RuntimeError(f"git {' '.join(args)} 失败: {p.stderr.strip()}")
@@ -246,7 +258,7 @@ def branch_index():
     """
     fmt = (f"%(refname:short)%00%(ahead-behind:{MAIN})%00"
            "%(committerdate:unix)%00%(subject)")
-    p = subprocess.run(
+    p = proc_run(
         ["git", "-C", str(REPO), "for-each-ref", f"--format={fmt}", "refs/heads"],
         capture_output=True, text=True, errors="replace")
     if p.returncode != 0:
@@ -296,7 +308,7 @@ def conflict_files(branch):
       * 解析不出任何路径时**不能**返回占位符当真值 —— 那会让"有冲突"的诊断变成假信号
         （实测：53 个分支全被标成抢同一个不存在的文件）。返回空并让调用方按 rc 判断。
     """
-    p = subprocess.run(["git", "-C", str(REPO), "merge-tree", "--write-tree", MAIN, branch],
+    p = proc_run(["git", "-C", str(REPO), "merge-tree", "--write-tree", MAIN, branch],
                        capture_output=True, text=True)
     if p.returncode == 0:
         return []
@@ -323,7 +335,7 @@ def unresolved_marker_files(branch):
     """
     # First find the union with one read-only git grep. On a 461-branch checkout
     # the old two-grep-per-branch implementation spent most of `status` here.
-    p = subprocess.run(
+    p = proc_run(
         ["git", "-C", str(REPO), "grep", "-l", "-I", "-E",
          r"^(<<<<<<< |>>>>>>> )", branch, "--", "."],
         capture_output=True, text=True, errors="replace")
@@ -332,7 +344,7 @@ def unresolved_marker_files(branch):
     candidates = {line.strip() for line in p.stdout.splitlines() if line.strip()}
     broken = []
     for path in candidates:
-        blob = subprocess.run(
+        blob = proc_run(
             ["git", "-C", str(REPO), "cat-file", "blob", f"{branch}:{path}"],
             capture_output=True)
         if blob.returncode != 0:
@@ -444,7 +456,7 @@ _BLOB_LINES_CACHE = {}
 def _blob_sha(ref, path):
     key = (ref, path)
     if key not in _BLOB_SHA_CACHE:
-        p = subprocess.run(["git", "-C", str(REPO), "rev-parse", f"{ref}:{path}"],
+        p = proc_run(["git", "-C", str(REPO), "rev-parse", f"{ref}:{path}"],
                            capture_output=True, text=True)
         _BLOB_SHA_CACHE[key] = p.stdout.strip() if p.returncode == 0 else ""
     return _BLOB_SHA_CACHE[key]
@@ -457,7 +469,7 @@ def _blob_lines(ref, path):
     """
     key = (ref, path)
     if key not in _BLOB_LINES_CACHE:
-        p = subprocess.run(["git", "-C", str(REPO), "show", f"{ref}:{path}"],
+        p = proc_run(["git", "-C", str(REPO), "show", f"{ref}:{path}"],
                            capture_output=True, text=True, errors="replace")
         _BLOB_LINES_CACHE[key] = ({line.strip() for line in p.stdout.split("\n")}
                                   if p.returncode == 0 else set())
@@ -602,7 +614,7 @@ def conflict_burden(branch):
     """这条冲突分支真正要面对多少冲突文件。用 merge-tree 预演一次真实合并得到的
     冲突文件数——比 `scan` 的 nfiles（分支改了多少文件）更接近「要解多少」。
     0 表示其实能干净合并（scan 的 CONFLICT 可能只是索引态误判）。"""
-    p = subprocess.run(["git", "-C", str(REPO), "merge-tree", "--write-tree",
+    p = proc_run(["git", "-C", str(REPO), "merge-tree", "--write-tree",
                         "--name-only", MAIN, branch], capture_output=True, text=True)
     if p.returncode == 0:
         return 0
@@ -729,15 +741,15 @@ def cmd_supersede(args):
                     f'{r["branch"]} 相对自身基线的独有内容已逐文件确认全部存在于 main，'
                     "属重复分支，不产生空合并提交。"),
             })
-            added = subprocess.run(
+            added = proc_run(
                 [sys.executable, str(_truthctl_path()), "add", "progress",
                  f'{r["branch"]} 已被 main 完全覆盖（重复分支）'],
                 cwd=str(wt), env=env, capture_output=True, text=True)
             if added.returncode != 0:
                 raise RuntimeError(f'写进展台账失败: {(added.stdout + added.stderr).strip()[:400]}')
             print(f'  归档 {r["branch"]}: {added.stdout.strip()}')
-        subprocess.run(["git", "-C", str(wt), "add", "ops/truth/progress.jsonl"], check=True)
-        committed = subprocess.run(
+        proc_run(["git", "-C", str(wt), "add", "ops/truth/progress.jsonl"], check=True)
+        committed = proc_run(
             ["git", "-C", str(wt), "commit", "-m",
              f'chore(truth): mark {len(cands)} branches superseded by main'],
             capture_output=True, text=True)
@@ -867,7 +879,7 @@ def cmd_port(args):
         print(f"× {wt} 已存在但不是本命令的产出，跳过。")
         print(f"PORT_RESULT branch={branch} outcome=blocked")
         return
-    add = subprocess.run(["git", "-C", str(REPO), "worktree", "add", "-b", new_branch,
+    add = proc_run(["git", "-C", str(REPO), "worktree", "add", "-b", new_branch,
                           str(wt), base], capture_output=True, text=True)
     if add.returncode != 0:
         sys.exit(f"建 worktree 失败: {(add.stdout + add.stderr).strip()[:400]}")
@@ -875,7 +887,7 @@ def cmd_port(args):
     picked = 0
     already = 0
     for sha in plus:
-        res = subprocess.run(["git", "-C", str(wt), "cherry-pick", "-x", sha],
+        res = proc_run(["git", "-C", str(wt), "cherry-pick", "-x", sha],
                              capture_output=True, text=True)
         if res.returncode != 0:
             blob = res.stdout + res.stderr
@@ -883,12 +895,12 @@ def cmd_port(args):
             # 这类备份提交，cherry-pick 后变成 empty —— 这不是语义冲突，别拿它污染
             # 冲突队列，也不能 abort 掉前面已经 pick 成功的提交。就地 skip 继续。
             if "previous cherry-pick is now empty" in blob or "nothing to commit" in blob:
-                subprocess.run(["git", "-C", str(wt), "cherry-pick", "--skip"],
+                proc_run(["git", "-C", str(wt), "cherry-pick", "--skip"],
                                capture_output=True, text=True)
                 already += 1
                 print(f"  skip  {sha[:10]}（empty，等价改动已在 main）")
                 continue
-            subprocess.run(["git", "-C", str(wt), "cherry-pick", "--abort"],
+            proc_run(["git", "-C", str(wt), "cherry-pick", "--abort"],
                            capture_output=True, text=True)
             print(f"× 移植 {sha[:10]} 时冲突，已 abort："
                   f"{blob.strip()[:400]}")
@@ -897,21 +909,21 @@ def cmd_port(args):
         picked += 1
         print(f"  picked {sha[:10]} {git('log', '-1', '--format=%s', sha)}")
     if picked < 0:
-        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
+        proc_run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
                        capture_output=True, text=True)
-        subprocess.run(["git", "-C", str(REPO), "branch", "-D", new_branch],
+        proc_run(["git", "-C", str(REPO), "branch", "-D", new_branch],
                        capture_output=True, text=True)
         print(f"  已回滚：{new_branch} 与它的 worktree 都不留，{branch} 原样不动。")
         print(f"PORT_RESULT branch={branch} outcome=conflict")
         return
     # 移植后树和 base 一致 = 这些改动其实已经在 main 里（只是 patch-id 不同）。
     # 这时不能交给 land：--no-ff 会产生一个空合并提交，污染历史。直接判重复。
-    tree_diff = subprocess.run(["git", "-C", str(wt), "diff", "--stat", base, new_branch],
+    tree_diff = proc_run(["git", "-C", str(wt), "diff", "--stat", base, new_branch],
                                capture_output=True, text=True).stdout.strip()
     if not tree_diff:
-        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
+        proc_run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
                        capture_output=True, text=True)
-        subprocess.run(["git", "-C", str(REPO), "branch", "-D", new_branch],
+        proc_run(["git", "-C", str(REPO), "branch", "-D", new_branch],
                        capture_output=True, text=True)
         if picked == 0 and already:
             print(f"  分支全部 {already} 条提交 cherry-pick 后为空：内容已在 main。")
@@ -923,13 +935,13 @@ def cmd_port(args):
     print(f"→ 移植完成：{new_branch}（{picked} 提交，基于 {base[:8]}）。交给 land 跑门禁。")
     # 用子进程跑 land：门禁失败时 land 会 sys.exit(1)，必须由本函数接住，
     # 才能把移植分支与它的 worktree 一起回滚——不留无人认领的 codex/port-* 残留。
-    res = subprocess.run([sys.executable, str(Path(__file__).resolve()), "land", new_branch],
+    res = proc_run([sys.executable, str(Path(__file__).resolve()), "land", new_branch],
                          capture_output=True, text=True)
     print((res.stdout or "").rstrip())
     if res.returncode != 0:
-        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
+        proc_run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
                        capture_output=True, text=True)
-        subprocess.run(["git", "-C", str(REPO), "branch", "-D", new_branch],
+        proc_run(["git", "-C", str(REPO), "branch", "-D", new_branch],
                        capture_output=True, text=True)
         print(f"  land 未通过，已回滚 {new_branch} 与它的 worktree；{branch} 原样不动，main 未动。")
         print(f"PORT_RESULT branch={branch} outcome=failed")
@@ -1259,9 +1271,9 @@ def cmd_gate(args):
         print(f"用分支已有的工作树：{wt}")
     else:
         tmp = Path(tempfile.gettempdir()) / f"kg-gate-{slugify(branch, 24)}-{os.getpid()}"
-        subprocess.run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
+        proc_run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
                        capture_output=True, text=True)
-        add = subprocess.run(["git", "-C", str(SHARED), "worktree", "add", "--detach", str(tmp), branch],
+        add = proc_run(["git", "-C", str(SHARED), "worktree", "add", "--detach", str(tmp), branch],
                              capture_output=True, text=True, errors="replace")
         if add.returncode != 0:
             sys.exit(f"× 建门禁工作树失败：{(add.stdout or '') + (add.stderr or '')}".strip()[:400])
@@ -1281,7 +1293,7 @@ def cmd_gate(args):
                    KG_TRUTH_EVIDENCE=_verify_evidence(results),
                    KG_TRUTH_SOURCE="kgctl gate",
                    KG_TRUTH_SUMMARY=f"{branch} 的门禁预跑（未落盘）")
-        p = subprocess.run([sys.executable, str(_truthctl_path()), "add", "acceptance",
+        p = proc_run([sys.executable, str(_truthctl_path()), "add", "acceptance",
                             f"{branch} 门禁预跑（未落盘）"],
                            cwd=str(REPO), env=env, capture_output=True, text=True, errors="replace")
         if p.returncode == 0:
@@ -1294,7 +1306,7 @@ def cmd_gate(args):
         return 0 if ok else 1
     finally:
         if tmp is not None and not keep:
-            subprocess.run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
+            proc_run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
                            capture_output=True, text=True)
 
 
@@ -1357,7 +1369,7 @@ def _write_convergence_record(record: dict) -> None:
 def _merge_jsonl_conflict(wt: Path, rel: str) -> None:
     """冲突 JSONL 用行级并集保住两边记录，顺序保持 ours -> theirs。"""
     def stage(n):
-        p = subprocess.run(["git", "-C", str(wt), "show", f":{n}:{rel}"],
+        p = proc_run(["git", "-C", str(wt), "show", f":{n}:{rel}"],
                            capture_output=True, text=True, errors="replace")
         return p.stdout if p.returncode == 0 else ""
     seen, lines = set(), []
@@ -1379,10 +1391,10 @@ def _stage_unmerged(wt: Path, paths) -> None:
     """
     for rel in paths:
         if (wt / rel).exists():
-            r = subprocess.run(["git", "-C", str(wt), "add", "--force", "--", rel],
+            r = proc_run(["git", "-C", str(wt), "add", "--force", "--", rel],
                                capture_output=True, text=True)
         else:
-            r = subprocess.run(["git", "-C", str(wt), "rm", "--force", "--", rel],
+            r = proc_run(["git", "-C", str(wt), "rm", "--force", "--", rel],
                                capture_output=True, text=True)
         if r.returncode != 0:
             raise RuntimeError(
@@ -1390,7 +1402,7 @@ def _stage_unmerged(wt: Path, paths) -> None:
 
 
 def _commit_conflicted_merge(wt: Path, branch: str, group_id: str) -> dict:
-    unresolved = subprocess.run(
+    unresolved = proc_run(
         ["git", "-C", str(wt), "diff", "--name-only", "--diff-filter=U"],
         capture_output=True, text=True).stdout.splitlines()
     if not unresolved:
@@ -1401,7 +1413,7 @@ def _commit_conflicted_merge(wt: Path, branch: str, group_id: str) -> dict:
             _merge_jsonl_conflict(wt, rel)
             auto.append(rel)
     _stage_unmerged(wt, unresolved)
-    commit = subprocess.run(
+    commit = proc_run(
         ["git", "-C", str(wt), "commit", "-m",
          f"wip(converge): merge {branch} into {group_id} with conflict markers"],
         capture_output=True, text=True)
@@ -1416,7 +1428,7 @@ def _convergence_branch(group: dict) -> str:
 
 def _branch_contained(wt: Path, src: str) -> bool:
     """src 是否已在 wt 当前 HEAD 的历史里（已合入，或 base 本来就有）。"""
-    return subprocess.run(
+    return proc_run(
         ["git", "-C", str(wt), "merge-base", "--is-ancestor", src, "HEAD"],
         capture_output=True, text=True).returncode == 0
 
@@ -1427,7 +1439,7 @@ def _abort_stale_merge(wt: Path) -> bool:
     已完成并提交的 merge 都在提交历史里，abort 只丢未提交的中间索引。不清掉的话，
     下一次 converge 会因为“分支已存在”而跳过，这个 worktree 就永久半合并。
     """
-    out = subprocess.run(["git", "-C", str(wt), "rev-parse", "--git-dir"],
+    out = proc_run(["git", "-C", str(wt), "rev-parse", "--git-dir"],
                          capture_output=True, text=True)
     gd = out.stdout.strip()
     if out.returncode != 0 or not gd:
@@ -1435,7 +1447,7 @@ def _abort_stale_merge(wt: Path) -> bool:
     gd_path = Path(gd) if os.path.isabs(gd) else (wt / gd)
     if not (gd_path / "MERGE_HEAD").exists():
         return False
-    r = subprocess.run(["git", "-C", str(wt), "merge", "--abort"],
+    r = proc_run(["git", "-C", str(wt), "merge", "--abort"],
                        capture_output=True, text=True)
     return r.returncode == 0
 
@@ -1580,10 +1592,10 @@ def _replan_groups(pending, go):
         wt = rec.get("worktree")
         branch = rec.get("branch")
         if wt and Path(wt).exists():
-            subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", wt],
+            proc_run(["git", "-C", str(REPO), "worktree", "remove", "--force", wt],
                            capture_output=True, text=True)
         if branch and git("rev-parse", "--verify", branch):
-            subprocess.run(["git", "-C", str(REPO), "branch", "-D", branch],
+            proc_run(["git", "-C", str(REPO), "branch", "-D", branch],
                            capture_output=True, text=True)
         print(f"  已解散 {g['id']}：worktree/分支已清理，{len(members)} 个成员回到逐支流水线。")
         changed += 1
@@ -1647,7 +1659,7 @@ def cmd_converge(args):
     LOCK.write_text(f"{os.getpid()} converge\n")
     made = []
     try:
-        fetch = subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
+        fetch = proc_run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
                                capture_output=True, text=True)
         base_ref = f"origin/{MAIN}" if fetch.returncode == 0 else MAIN
         base_sha = git("rev-parse", base_ref)
@@ -1670,7 +1682,7 @@ def cmd_converge(args):
                 print(f"  × {wt} 已存在但不是已登记分支；跳过 {branch}")
                 continue
             else:
-                add = subprocess.run(
+                add = proc_run(
                     ["git", "-C", str(REPO), "worktree", "add", "-b", branch, str(wt), base_ref],
                     capture_output=True, text=True)
                 if add.returncode != 0:
@@ -1682,7 +1694,7 @@ def cmd_converge(args):
             for src in g["branches"]:
                 if _branch_contained(wt, src):
                     continue
-                merged = subprocess.run(
+                merged = proc_run(
                     ["git", "-C", str(wt), "merge", "--no-ff", src,
                      "-m", f"converge: merge {src} into {g['id']}"],
                     capture_output=True, text=True)
@@ -1694,7 +1706,7 @@ def cmd_converge(args):
                 try:
                     note = _commit_conflicted_merge(wt, src, g["id"])
                 except Exception as exc:
-                    subprocess.run(["git", "-C", str(wt), "merge", "--abort"],
+                    proc_run(["git", "-C", str(wt), "merge", "--abort"],
                                    capture_output=True, text=True)
                     print(f"  × {branch} 合并 {src} 失败：{exc}，已 merge --abort 回到干净状态")
                     merge_notes.append({"branch": src, "files": ["(commit failed)"],
@@ -1706,11 +1718,11 @@ def cmd_converge(args):
             # 否则下一次 converge 会误判“已存在，跳过”，worktree 永久半合并。
             if _abort_stale_merge(wt):
                 print(f"  ！{branch} 发现并清掉了残留半合并（未提交的中间索引已丢弃）")
-            grep = subprocess.run(
+            grep = proc_run(
                 ["git", "-C", str(wt), "grep", "-l", "-E", "^(<<<<<<<|>>>>>>>)"],
                 capture_output=True, text=True)
             unresolved_files = [x for x in grep.stdout.splitlines() if x.strip()]
-            head = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
+            head = proc_run(["git", "-C", str(wt), "rev-parse", "HEAD"],
                                   capture_output=True, text=True).stdout.strip()
             record = {
                 "id": g["id"], "branch": branch, "worktree": str(wt),
@@ -2208,7 +2220,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
           f"已合入 {len(merged)}、未决 {len(open_led)}；运维：待路由 {len(pending)}、"
           f"可落盘 {len(clean)}、冲突 {len(conflict)}、收拢族 {len(groups)}）")
     if "--open" in args and sys.platform == "darwin":
-        subprocess.run(["open", str(DASHBOARD)], check=False)
+        proc_run(["open", str(DASHBOARD)], check=False)
 
 def cmd_reap(args):
     go = "--go" in args
@@ -2221,7 +2233,7 @@ def cmd_reap(args):
         own = wt and Path(wt) != REPO
         dirty = ""
         if own:
-            st = subprocess.run(["git", "-C", wt, "status", "--porcelain"],
+            st = proc_run(["git", "-C", wt, "status", "--porcelain"],
                                 capture_output=True, text=True).stdout.strip()
             dirty = f"  脏={len(st.splitlines())} 项，只删分支、不删 worktree" if st else ""
         print(f"  {'分支+worktree' if own else '仅分支'}  {r['branch']:44s} {wt}{dirty}")
@@ -2231,12 +2243,12 @@ def cmd_reap(args):
     for r in merged:
         wt = wts.get(r["branch"], "")
         if wt and Path(wt) != REPO:
-            st = subprocess.run(["git", "-C", wt, "status", "--porcelain"],
+            st = proc_run(["git", "-C", wt, "status", "--porcelain"],
                                 capture_output=True, text=True).stdout.strip()
             if not st:
-                subprocess.run(["git", "-C", str(REPO), "worktree", "remove", wt],
+                proc_run(["git", "-C", str(REPO), "worktree", "remove", wt],
                                capture_output=True, text=True)
-        subprocess.run(["git", "-C", str(REPO), "branch", "-D", r["branch"]],
+        proc_run(["git", "-C", str(REPO), "branch", "-D", r["branch"]],
                        capture_output=True, text=True)
     print("已回收。分支只是指针，成果在 main 里。")
 
@@ -2260,7 +2272,7 @@ def _trunk_worktree():
         wt = fallback
     if not (wt / ".git").exists():
         wt.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["git", "-C", str(REPO), "worktree", "add", "--detach", str(wt), MAIN],
+        proc_run(["git", "-C", str(REPO), "worktree", "add", "--detach", str(wt), MAIN],
                        capture_output=True, text=True)
     shared = central_config.shared_dir(REPO, CFG)
     for side in (CFG.get("link_dirs") or []):
@@ -2288,7 +2300,7 @@ def _fetch_origin_main(attempts: int = 5, delay: float = 3.0) -> bool:
     """
     last = ""
     for attempt in range(attempts):
-        fetched = subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
+        fetched = proc_run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
                                  capture_output=True, text=True, timeout=120)
         if fetched.returncode == 0:
             if attempt:
@@ -2314,13 +2326,13 @@ def _align_main():
     remote = git("rev-parse", f"origin/{MAIN}")
     if local == remote:
         return
-    ff = subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
+    ff = proc_run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
                          local, remote], capture_output=True, text=True)
     if ff.returncode != 0:
         raise RuntimeError(
             f"本地 {MAIN} 与 origin/{MAIN} 已分叉：local={local[:10]} remote={remote[:10]}；"
             "先人工合并/推送本地提交，再执行 land")
-    subprocess.run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
+    proc_run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
                     remote, local], check=True)
     print(f"  {MAIN} 本地引用 {local[:8]} -> {remote[:8]}（同步 origin）")
 
@@ -2379,10 +2391,10 @@ def _land_manifest(wt: Path, branch: str, merge_commit: str, pre_main: str) -> d
     # 例如分支内容已通过别的路径进了主干），取数失败是「不知道」——两者不能同话。
     try:
         base = f"{merge_commit}^1"
-        numstat = subprocess.run(
+        numstat = proc_run(
             ["git", "-C", str(wt), "diff", "--numstat", base, merge_commit],
             capture_output=True, text=True, errors="replace")
-        stat = subprocess.run(
+        stat = proc_run(
             ["git", "-C", str(wt), "diff", "--stat", base, merge_commit],
             capture_output=True, text=True, errors="replace")
         if numstat.returncode != 0 or stat.returncode != 0:
@@ -2477,7 +2489,7 @@ def _record_land_progress(wt: Path, branch: str, commit: str, verify_results: li
         "KG_TRUTH_SOURCE": "kgctl land",
     })
 
-    added = subprocess.run(
+    added = proc_run(
         [sys.executable, str(_truthctl_path()), "add", "progress",
          f"落盘 {branch}"],
         cwd=str(wt), env=env, capture_output=True, text=True)
@@ -2498,20 +2510,20 @@ def _record_land_progress(wt: Path, branch: str, commit: str, verify_results: li
     # 在真实落盘已经成功后，被更严格的 truthctl 拒绝并留下半提交状态。
     if _build_only_evidence(verify_results):
         acc_env["KG_TRUTH_STATUS"] = "todo"
-    accepted = subprocess.run(
+    accepted = proc_run(
         [sys.executable, str(_truthctl_path()), "add", "acceptance",
          f"{branch} 落盘验收"],
         cwd=str(wt), env=acc_env, capture_output=True, text=True)
     if accepted.returncode != 0:
         raise RuntimeError(f"写验收台账失败: {(accepted.stdout + accepted.stderr).strip()[:500]}")
 
-    staged = subprocess.run(
+    staged = proc_run(
         ["git", "-C", str(wt), "add", "ops/truth/progress.jsonl",
          "ops/truth/acceptance.jsonl"],
         capture_output=True, text=True)
     if staged.returncode != 0:
         raise RuntimeError(f"暂存真相信台账失败: {staged.stderr.strip()[:500]}")
-    committed = subprocess.run(
+    committed = proc_run(
         ["git", "-C", str(wt), "commit", "-m", f"chore(truth): record landing {branch}"],
         capture_output=True, text=True)
     if committed.returncode != 0:
@@ -2601,7 +2613,7 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
     changed = []
     try:
         base = pre or "HEAD"
-        p = subprocess.run(["git", "-C", str(wt), "diff", "--name-only", base, "HEAD"],
+        p = proc_run(["git", "-C", str(wt), "diff", "--name-only", base, "HEAD"],
                            capture_output=True, text=True, errors="replace")
         if p.returncode == 0:
             changed = [line for line in (p.stdout or "").splitlines() if line.strip()]
@@ -2624,7 +2636,7 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
             chunks.append(f"[{g.get('name')}] cwd 不存在：{cwd}")
             all_ok = False
             continue
-        p = subprocess.run(g["cmd"], shell=True, cwd=cwd, capture_output=True, text=True)
+        p = proc_run(g["cmd"], shell=True, cwd=cwd, capture_output=True, text=True)
         out = (p.stdout or "") + (p.stderr or "")
         results.append({"name": g.get("name"), "cmd": g.get("cmd"), "cwd": rel,
                         "ok": p.returncode == 0, "output": out[-4000:]})
@@ -2647,7 +2659,7 @@ def _push_main_with_one_retry(wt: Path) -> str:
     """
     last = ""
     for attempt in range(5):
-        pushed = subprocess.run(["git", "-C", str(wt), "push", "origin", "HEAD:main"],
+        pushed = proc_run(["git", "-C", str(wt), "push", "origin", "HEAD:main"],
                                 capture_output=True, text=True)
         if pushed.returncode == 0:
             return (pushed.stdout + pushed.stderr).strip()
@@ -2655,7 +2667,7 @@ def _push_main_with_one_retry(wt: Path) -> str:
         if attempt >= 4:
             break
         print(f"× push 被拒（第 {attempt + 1} 次），远端可能前进；同步 origin/main 后重试")
-        fetched = subprocess.run(["git", "-C", str(wt), "fetch", "origin", MAIN],
+        fetched = proc_run(["git", "-C", str(wt), "fetch", "origin", MAIN],
                                  capture_output=True, text=True)
         if fetched.returncode != 0:
             raise RuntimeError(f"push 后 fetch origin/{MAIN} 失败: {fetched.stderr.strip()[:500]}")
@@ -2663,12 +2675,12 @@ def _push_main_with_one_retry(wt: Path) -> str:
         if remote == git("rev-parse", "HEAD"):
             print("  远端 origin/main 已包含 trunk HEAD；空合并等同已落盘")
             return ("origin/main 已包含 HEAD（空合并，无需重复推送）")
-        synced = subprocess.run(
+        synced = proc_run(
             ["git", "-C", str(wt), "merge", "--no-ff", f"origin/{MAIN}",
              "-m", "train: sync origin/main before landing"],
             capture_output=True, text=True)
         if synced.returncode != 0:
-            subprocess.run(["git", "-C", str(wt), "merge", "--abort"],
+            proc_run(["git", "-C", str(wt), "merge", "--abort"],
                            capture_output=True, text=True)
             raise RuntimeError(
                 f"远端 main 前进且自动同步出现冲突，未推送：{(synced.stdout + synced.stderr).strip()[:500]}")
@@ -2686,16 +2698,16 @@ def _align_main_ref_to_origin(new: str = "") -> str:
     is at X but expected Y」，把一次已经 push 成功的落盘误判成失败（实测在 kg-trunk
     反复出现）。push 成功后 origin/main 才是真相，本地引用只需对齐它。
     """
-    subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
+    proc_run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
                    capture_output=True, text=True)
     remote = git("rev-parse", f"origin/{MAIN}") or new
     local = git("rev-parse", MAIN)
     if local == remote or not remote:
         return local
-    anc = subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
+    anc = proc_run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
                           local, remote], capture_output=True, text=True)
     if anc.returncode == 0:
-        subprocess.run(["git", "-C", str(REPO), "update-ref",
+        proc_run(["git", "-C", str(REPO), "update-ref",
                         f"refs/heads/{MAIN}", remote], check=False)
         return remote
     # 本地领先或分叉：保留本地引用，绝不因为一次引用竞争回退或丢提交。
@@ -2704,7 +2716,7 @@ def _align_main_ref_to_origin(new: str = "") -> str:
 
 def _origin_contains(commit: str) -> bool:
     """确认发布提交已经进入 origin/main，而不是只存在于本地发布工作树。"""
-    contained = subprocess.run(
+    contained = proc_run(
         ["git", "-C", str(REPO), "merge-base", "--is-ancestor", commit,
          f"origin/{MAIN}"],
         capture_output=True, text=True)
@@ -2738,7 +2750,7 @@ TRUTH_BENCHMARK_REAL_HASH = "a9e242bff237e3836484776640ce751e9470948e976bc1f4c79
 def trunk_status(wt: Path):
     # 只看已跟踪改动：未跟踪文件（如 ops/__pycache__/）不影响合并，若真要覆盖它们
     # `git merge` 自己会失败并被 land 安全丢弃，不该在这里当成「污染」挡住落盘。
-    out = subprocess.run(["git", "-C", str(wt), "status", "--porcelain",
+    out = proc_run(["git", "-C", str(wt), "status", "--porcelain",
                           "--untracked-files=no"],
                          capture_output=True, text=True).stdout
     return [line for line in out.splitlines() if line.strip()]
@@ -2779,7 +2791,7 @@ def trunk_head_is_truth_only(wt: Path, base: str = None) -> bool:
 
 def _hash_blob(ref: str, rel: str) -> str:
     """取 ref 下文件的 Git blob SHA-1；文件不存在时返回空串。"""
-    p = subprocess.run(["git", "-C", str(REPO), "rev-parse", "--verify", "--quiet",
+    p = proc_run(["git", "-C", str(REPO), "rev-parse", "--verify", "--quiet",
                         f"{ref}:{rel}"], capture_output=True, text=True)
     return p.stdout.strip() if p.returncode == 0 else ""
 
@@ -2798,7 +2810,7 @@ def _remote_benchmark_sha() -> str:
     rel = "ops/truth/benchmark-contract-report.json"
     if not _hash_blob(f"origin/{MAIN}", rel):
         return ""
-    blob = subprocess.run(
+    blob = proc_run(
         ["git", "-C", str(REPO), "show", f"origin/{MAIN}:{rel}"],
         capture_output=True,
         text=True,
@@ -2838,7 +2850,7 @@ def _ensure_truth_baselines(wt: Path = None) -> bool:
         return False
     if remote_sha == TRUTH_BENCHMARK_REAL_HASH:
         print(f"  基准内容被覆盖（{local_sha[:10]} != {TRUTH_BENCHMARK_REAL_HASH[:10]}），从 origin/{MAIN} 恢复真实 36 题报告")
-        blob = subprocess.run(["git", "-C", str(base), "show", f"origin/{MAIN}:{rel}"],
+        blob = proc_run(["git", "-C", str(base), "show", f"origin/{MAIN}:{rel}"],
                               capture_output=True, text=True)
         if blob.returncode != 0 or not blob.stdout:
             print(f"  × 恢复失败：origin/{MAIN} 的 {rel} 不可读")
@@ -2898,7 +2910,7 @@ def reset_trunk_head(wt: Path) -> None:
         print("  × 稳定性基准保护失败，拒绝重置主干工作树")
         sys.exit(1)
     if trunk_head_is_truth_only(wt):
-        merged = subprocess.run(["git", "-C", str(wt), "merge", "--no-ff", f"origin/{MAIN}",
+        merged = proc_run(["git", "-C", str(wt), "merge", "--no-ff", f"origin/{MAIN}",
                                  "-m", "train: sync origin/main over truth state"],
                                 capture_output=True, text=True)
         if merged.returncode != 0:
@@ -2910,14 +2922,14 @@ def reset_trunk_head(wt: Path) -> None:
                 print(f"  保留主干工作树上 {len(trunk_truth_commits(wt))} 条真相提交"
                       f"并同步 origin/{MAIN}")
                 return
-            subprocess.run(["git", "-C", str(wt), "merge", "--abort"],
+            proc_run(["git", "-C", str(wt), "merge", "--abort"],
                            capture_output=True, text=True)
             print("× 真相层提交与 origin/main 合并冲突，已放弃：", merged.stderr.strip()[:300])
             sys.exit(1)
         print(f"  保留主干工作树上 {len(trunk_truth_commits(wt))} 条真相提交并同步 origin/{MAIN}")
         return
     snap = _snapshot_truth_files(wt)
-    ok = subprocess.run(["git", "-C", str(wt), "checkout", "--detach", MAIN],
+    ok = proc_run(["git", "-C", str(wt), "checkout", "--detach", MAIN],
                         capture_output=True, text=True)
     if ok.returncode != 0:
         print("× 主干工作树切不到 main：", ok.stderr.strip()[:200])
@@ -2938,7 +2950,7 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
         # `chore(truth)`，并让本地 main 与 origin/main 分叉，随后 land 永久卡死。
         # 这里必须和 land / supersede 一样 fail-closed：先撤回已暂存的真相层，
         # 不留下半暂存状态；等真正只有真相层改动时再同步。
-        subprocess.run(["git", "-C", str(wt), "reset", "-q", "--", *TRUTH_PATHS],
+        proc_run(["git", "-C", str(wt), "reset", "-q", "--", *TRUTH_PATHS],
                        capture_output=True, text=True)
         print(f"  主干工作树有非真相层改动，拒绝同步真相层：{wt}")
         for line in dirty[:20]:
@@ -2949,13 +2961,13 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
         return False
     for rel in TRUTH_PATHS:
         if (wt / rel).exists():
-            subprocess.run(["git", "-C", str(wt), "add", "--", rel],
+            proc_run(["git", "-C", str(wt), "add", "--", rel],
                            capture_output=True, text=True)
-    staged = subprocess.run(["git", "-C", str(wt), "diff", "--cached", "--name-only"],
+    staged = proc_run(["git", "-C", str(wt), "diff", "--cached", "--name-only"],
                             capture_output=True, text=True).stdout.strip()
     if not staged:
         return False
-    committed = subprocess.run(["git", "-C", str(wt), "commit", "-m", f"chore(truth): {reason}"],
+    committed = proc_run(["git", "-C", str(wt), "commit", "-m", f"chore(truth): {reason}"],
                                capture_output=True, text=True)
     if committed.returncode != 0:
         print("  " + (committed.stdout + committed.stderr).strip()[:200])
@@ -2965,7 +2977,7 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
 
 
 def _stage_blob(wt: Path, stage: int, rel: str) -> str:
-    p = subprocess.run(["git", "-C", str(wt), "show", f":{stage}:{rel}"],
+    p = proc_run(["git", "-C", str(wt), "show", f":{stage}:{rel}"],
                        capture_output=True, text=True, errors="replace")
     return p.stdout if p.returncode == 0 else ""
 
@@ -3000,14 +3012,14 @@ def _merge_json_value(a, b):
 
 def _resolve_truth_merge(wt: Path) -> bool:
     """只在冲突文件全部属于真相层时自动解；任何代码冲突立即放弃。"""
-    unmerged = subprocess.run(
+    unmerged = proc_run(
         ["git", "-C", str(wt), "diff", "--name-only", "--diff-filter=U"],
         capture_output=True, text=True).stdout.splitlines()
     if not unmerged:
         return False
     non_truth = [rel for rel in unmerged if not is_truth_path(f" M {rel}")]
     if non_truth:
-        subprocess.run(["git", "-C", str(wt), "merge", "--abort"], capture_output=True, text=True)
+        proc_run(["git", "-C", str(wt), "merge", "--abort"], capture_output=True, text=True)
         print(f"  真相层同步遇到非真相文件冲突，已放弃：{', '.join(non_truth[:5])}")
         return False
     for rel in unmerged:
@@ -3024,7 +3036,7 @@ def _resolve_truth_merge(wt: Path) -> bool:
                 target.write_text(theirs or ours, encoding="utf-8")
                 if rel == "ops/truth/benchmark-contract-report.json" and _sha256_file(target) != TRUTH_BENCHMARK_REAL_HASH:
                     print("  × 稳定性基准在真相冲突中被污染，拒绝该次同步")
-                    subprocess.run(["git", "-C", str(wt), "merge", "--abort"],
+                    proc_run(["git", "-C", str(wt), "merge", "--abort"],
                                    capture_output=True, text=True)
                     return False
             else:
@@ -3035,8 +3047,8 @@ def _resolve_truth_merge(wt: Path) -> bool:
                     target.write_text(theirs or ours, encoding="utf-8")
         else:
             target.write_text(theirs or ours, encoding="utf-8")
-        subprocess.run(["git", "-C", str(wt), "add", "--", rel], check=True)
-    committed = subprocess.run(
+        proc_run(["git", "-C", str(wt), "add", "--", rel], check=True)
+    committed = proc_run(
         ["git", "-C", str(wt), "commit", "-m", "chore(truth): merge origin/main into truth state"],
         capture_output=True, text=True)
     if committed.returncode != 0:
@@ -3069,7 +3081,7 @@ def _git_bounded(args, timeout: int, label: str = ""):
     这里给每一步一个上限，把「无限期挂着」变成「一条可见的失败」。
     """
     try:
-        p = subprocess.run(["git", "-C", str(REPO), *args], capture_output=True,
+        p = proc_run(["git", "-C", str(REPO), *args], capture_output=True,
                            text=True, errors="replace", timeout=timeout)
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except subprocess.TimeoutExpired:
@@ -3097,7 +3109,7 @@ def _push_truth_state_locked() -> None:
     if not trunk_head_is_truth_only(REPO, f"origin/{MAIN}"):
         print(f"  主干工作树有 {ahead} 条提交但不是纯真相层提交，跳过自动推送（交给 land）")
         return
-    ff = subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
+    ff = proc_run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
                          f"origin/{MAIN}", "HEAD"], capture_output=True, text=True)
     if ff.returncode != 0:
         if not _merge_truth_from_origin():
@@ -3107,7 +3119,7 @@ def _push_truth_state_locked() -> None:
     if prc != 0:
         print(f"  真相层推送失败，{ahead} 条提交留在本地：{pout.strip()[:200]}")
         return
-    subprocess.run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}", "HEAD"],
+    proc_run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}", "HEAD"],
                    check=False)
     print(f"  真相层 {ahead} 条提交已推送 origin/{MAIN}")
 
@@ -3279,7 +3291,7 @@ def _write_resolve_task_md(rec: dict) -> None:
 def _resolve_land(rec: dict, wt: Path) -> None:
     """把 resolve 分支交给 land 走完整门禁；过了落盘并回收 worktree，不过则留作任务。"""
     resolve_branch = rec["resolve_branch"]
-    res = subprocess.run([sys.executable, str(Path(__file__).resolve()), "land", resolve_branch],
+    res = proc_run([sys.executable, str(Path(__file__).resolve()), "land", resolve_branch],
                          capture_output=True, text=True)
     out = (res.stdout or "").rstrip()
     print(out)
@@ -3290,7 +3302,7 @@ def _resolve_land(rec: dict, wt: Path) -> None:
     if res.returncode == 0 and ("已落盘并推送 origin" in out or already_merged):
         rec["status"] = "landed"
         _write_resolve_record(rec)
-        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
+        proc_run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
                        capture_output=True, text=True)
         if already_merged:
             print(f"✓ {resolve_branch} 内容已全在 {MAIN}（无未落提交）；标记 landed，worktree 已回收。")
@@ -3378,7 +3390,7 @@ def _resolve_prepare(args) -> None:
         return
     _align_main()
     base = git("rev-parse", f"origin/{MAIN}") or git("rev-parse", MAIN)
-    add = subprocess.run(["git", "-C", str(REPO), "worktree", "add", "-b", resolve_branch,
+    add = proc_run(["git", "-C", str(REPO), "worktree", "add", "-b", resolve_branch,
                           str(wt), base], capture_output=True, text=True)
     if add.returncode != 0:
         sys.exit(f"建 worktree 失败：{(add.stdout + add.stderr).strip()[:400]}")
@@ -3392,12 +3404,12 @@ def _resolve_prepare(args) -> None:
         "conflict_files": conf, "unresolved_files": [], "auto_resolved_jsonl": [],
         "status": "preparing",
     }
-    merged = subprocess.run(["git", "-C", str(wt), "merge", "--no-ff", branch,
+    merged = proc_run(["git", "-C", str(wt), "merge", "--no-ff", branch,
                              "-m", f"resolve: merge {branch}"], capture_output=True, text=True)
     if merged.returncode == 0:
         print("  merge ok：源分支能直接合进 main，进入落盘门禁。")
         return _resolve_land(rec, wt)
-    unresolved = subprocess.run(["git", "-C", str(wt), "diff", "--name-only", "--diff-filter=U"],
+    unresolved = proc_run(["git", "-C", str(wt), "diff", "--name-only", "--diff-filter=U"],
                                 capture_output=True, text=True).stdout.splitlines()
     auto = []
     for rel in unresolved:
@@ -3405,13 +3417,13 @@ def _resolve_prepare(args) -> None:
             _merge_jsonl_conflict(wt, rel)
             auto.append(rel)
     _stage_unmerged(wt, unresolved)
-    commit = subprocess.run(["git", "-C", str(wt), "commit", "-m",
+    commit = proc_run(["git", "-C", str(wt), "commit", "-m",
                              f"wip(resolve): merge {branch} into {resolve_branch}"
                              " (conflict markers kept)"], capture_output=True, text=True)
     if commit.returncode != 0:
-        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
+        proc_run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
                        capture_output=True, text=True)
-        subprocess.run(["git", "-C", str(REPO), "branch", "-D", resolve_branch],
+        proc_run(["git", "-C", str(REPO), "branch", "-D", resolve_branch],
                        capture_output=True, text=True)
         print(f"× 提交冲突合并失败，已回滚 {resolve_branch}："
               f"{(commit.stdout + commit.stderr).strip()[:300]}")
@@ -3441,19 +3453,19 @@ def _resolve_finish(target: str, go: bool) -> None:
     resolve_branch = rec["resolve_branch"]
     if not wt.exists():
         sys.exit(f"任务 {rec['slug']} 的 worktree 不存在：{wt}")
-    unresolved = subprocess.run(["git", "-C", str(wt), "diff", "--name-only", "--diff-filter=U"],
+    unresolved = proc_run(["git", "-C", str(wt), "diff", "--name-only", "--diff-filter=U"],
                                 capture_output=True, text=True).stdout.splitlines()
     if unresolved:
         print(f"× {len(unresolved)} 个文件仍是未合并状态，先解干净：{', '.join(unresolved[:6])}")
         return
-    grep = subprocess.run(["git", "-C", str(wt), "grep", "-l", "-E", "^(<<<<<<<|>>>>>>>)"],
+    grep = proc_run(["git", "-C", str(wt), "grep", "-l", "-E", "^(<<<<<<<|>>>>>>>)"],
                           capture_output=True, text=True)
     markers = [x for x in grep.stdout.splitlines() if x.strip()]
     if markers:
         print(f"× 树里仍有 {len(markers)} 个文件带冲突标记，先解干净："
               f"{', '.join(m.strip() for m in markers[:6])}")
         return
-    st = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"],
+    st = proc_run(["git", "-C", str(wt), "status", "--porcelain"],
                         capture_output=True, text=True).stdout.strip()
     if st:
         print(f"× worktree 还有未提交改动，先显式 add + commit：\n{st[:800]}")
@@ -3517,9 +3529,9 @@ def _resolve_abandon(target: str, go: bool, reason: str = "") -> None:
         print("  加 --go 执行。")
         return
     if wt.exists():
-        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
+        proc_run(["git", "-C", str(REPO), "worktree", "remove", "--force", str(wt)],
                        capture_output=True, text=True)
-    subprocess.run(["git", "-C", str(REPO), "branch", "-D", resolve_branch],
+    proc_run(["git", "-C", str(REPO), "branch", "-D", resolve_branch],
                    capture_output=True, text=True)
     rec["status"] = "abandoned"
     rec["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -3634,11 +3646,11 @@ def cmd_land(args):
             print("\n".join(dirty[:20])[:800])
             sys.exit(1)
         sync_trunk_truth(wt, "sync state before landing")
-        m = subprocess.run(["git", "-C", str(wt), "merge", "--no-ff", branch,
+        m = proc_run(["git", "-C", str(wt), "merge", "--no-ff", branch,
                             "-m", f"train: merge {branch}"], capture_output=True, text=True)
         if m.returncode != 0:
             if not _resolve_truth_merge(wt):
-                subprocess.run(["git", "-C", str(wt), "merge", "--abort"],
+                proc_run(["git", "-C", str(wt), "merge", "--abort"],
                                capture_output=True, text=True)
                 print("× 合并失败，已丢弃：", m.stderr.strip()[:300])
                 sys.exit(1)
@@ -3650,14 +3662,14 @@ def cmd_land(args):
             print(gate_out[-800:])
             print(f"  main 仍是 {pre[:10]}，源分支 {branch} 未受影响")
             sys.exit(1)
-        merge_commit = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
+        merge_commit = proc_run(["git", "-C", str(wt), "rev-parse", "HEAD"],
                                       capture_output=True, text=True).stdout.strip()
         manifest = _land_manifest(wt, branch, merge_commit, pre)
         _record_land_progress(wt, branch, merge_commit, gate_results, manifest, pre)
         pushed = _push_main_with_one_retry(wt)
         if pushed:
             print("  " + pushed.replace("\n", "\n  "))
-        new = subprocess.run(["git", "-C", str(wt), "rev-parse", "HEAD"],
+        new = proc_run(["git", "-C", str(wt), "rev-parse", "HEAD"],
                              capture_output=True, text=True).stdout.strip()
         # 并发下不用 CAS 从旧 pre 推进（会撞 cannot lock ref）；push 已成功，以
         # origin/main 为准对齐本地引用，避免把已落盘误判成失败。
@@ -3738,7 +3750,7 @@ def cmd_status(args):
         behind50 = [b for b, meta in branch_stats.items()
                     if b.startswith(BRANCH_PREFIX) and meta.get('behind', 0) > 50]
     print(f"worktree       {len(wts)} 个（其中落后 main >50 的分支 {len(behind50)} 条）")
-    shared_dirty = [l for l in subprocess.run(
+    shared_dirty = [l for l in proc_run(
         ["git", "-C", str(SHARED), "status", "--porcelain", "--untracked-files=no"],
         capture_output=True, text=True).stdout.split("\n") if l.strip()]
     print(f"共享检出脏度   {len(shared_dirty)} 项（已跟踪）")
@@ -3790,7 +3802,7 @@ def _truth(sub, *extra):
     path = _truthctl_path()
     env = os.environ.copy()
     env["KG_REPO"] = str(REPO)
-    rc = subprocess.run([sys.executable, str(path), sub, *extra],
+    rc = proc_run([sys.executable, str(path), sub, *extra],
                         cwd=str(path.parent.parent), env=env)
     return rc.returncode
 
@@ -3805,7 +3817,7 @@ def _restore_truth_keep_files_from_origin() -> None:
     远端确实不存在时不伪造文件；远端如果本身已被污染成伪快照，也不能把它写回
     本地，必须停止并保留真实字节。
     """
-    fetched = subprocess.run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
+    fetched = proc_run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
                              capture_output=True, text=True)
     if fetched.returncode != 0:
         print(f"  保护证据恢复失败：fetch origin/{MAIN} 失败")
@@ -3822,7 +3834,7 @@ def _restore_truth_keep_files_from_origin() -> None:
         sys.exit("× 稳定性基准远端污染，拒绝 tick/intake/truth-replay，不传播伪快照")
     restored = []
     for rel in TRUTH_KEEP_IF_BASELINE_MISSING:
-        blob = subprocess.run(["git", "-C", str(REPO), "show", f"origin/{MAIN}:{rel}"],
+        blob = proc_run(["git", "-C", str(REPO), "show", f"origin/{MAIN}:{rel}"],
                               capture_output=True, text=True)
         if blob.returncode != 0 or not blob.stdout:
             continue

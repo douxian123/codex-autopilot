@@ -44,6 +44,18 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+# ---- 受控子进程执行器（说明见 ops/proc.py 顶部）---------------------------
+# 全仓 130+ 处 `proc_run(["git", ...])` 旧实现既没有 timeout，又用 pipe 收输出。
+# 本仓库是 partial clone（remote.origin.promisor=true / filter=blob:none）：git 遇到
+# 本地没落的 blob 会派**网络孙进程**懒加载；git 本体退出后孙进程仍攥着 pipe 写端，
+# 于是 `communicate()` 永远等不到 EOF —— 2026-10-27 实测 tick 就这样静默挂 30+ 分钟、
+# 0.0% CPU、13 分钟只产出 0.42s CPU 时间（sample 栈帧停在 select_poll_poll→read）。
+# `proc.run` 换成「输出落临时文件 + 硬超时 + 超时 killpg 整组 + 禁懒加载」。
+# 直接覆盖 `subprocess.run`：130 个调用点一行不改，且 `mock.patch(...subprocess.run)`
+# 这类既有门禁继续有效（它们 patch 的就是这个属性）。
+import proc as _proc  # noqa: E402
+proc_run = _proc.run
 from urllib.parse import unquote, urlsplit
 
 try:
@@ -207,7 +219,7 @@ def _truth_project_identity() -> str:
     explicit = os.environ.get('KG_TRUTH_PROJECT_ID', '').strip()
     if explicit:
         return f'explicit:{explicit}'
-    remote = subprocess.run(
+    remote = proc_run(
         ['git', 'remote', 'get-url', 'origin'],
         cwd=REPO,
         capture_output=True,
@@ -303,7 +315,7 @@ def _origin_main_rows(t: str) -> list:
     relative = Path('ops') / 'truth' / FILES[t]
     if REFERENCE_REPO == REPO:
         return []
-    result = subprocess.run(
+    result = proc_run(
         ['git', 'show', f'origin/main:{relative.as_posix()}'],
         cwd=REFERENCE_REPO,
         capture_output=True,
@@ -805,7 +817,7 @@ def _product_diff() -> str:
     """相对主干的产品状态变化。人只需要看这一段，不需要读代码或 PR。"""
     main = CFG.get('main_branch') or 'main'
     rel = str(PRODUCT_STATE.relative_to(REPO))
-    p = subprocess.run(['git', '-C', str(REPO), 'diff', '--unified=1', '--no-color',
+    p = proc_run(['git', '-C', str(REPO), 'diff', '--unified=1', '--no-color',
                         main, '--', rel],
                        capture_output=True, text=True, errors='replace')
     if p.returncode != 0 or not p.stdout.strip():

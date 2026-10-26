@@ -57,6 +57,18 @@ import sys
 import time
 from pathlib import Path
 
+# ---- 受控子进程执行器（说明见 ops/proc.py 顶部）---------------------------
+# 全仓 130+ 处 `proc_run(["git", ...])` 旧实现既没有 timeout，又用 pipe 收输出。
+# 本仓库是 partial clone（remote.origin.promisor=true / filter=blob:none）：git 遇到
+# 本地没落的 blob 会派**网络孙进程**懒加载；git 本体退出后孙进程仍攥着 pipe 写端，
+# 于是 `communicate()` 永远等不到 EOF —— 2026-10-27 实测 tick 就这样静默挂 30+ 分钟、
+# 0.0% CPU、13 分钟只产出 0.42s CPU 时间（sample 栈帧停在 select_poll_poll→read）。
+# `proc.run` 换成「输出落临时文件 + 硬超时 + 超时 killpg 整组 + 禁懒加载」。
+# 直接覆盖 `subprocess.run`：130 个调用点一行不改，且 `mock.patch(...subprocess.run)`
+# 这类既有门禁继续有效（它们 patch 的就是这个属性）。
+import proc as _proc  # noqa: E402
+proc_run = _proc.run
+
 HERE = Path(__file__).resolve().parent
 CODE_ROOT = HERE.parent
 KGCTL = HERE / "kgctl.py"
@@ -372,14 +384,14 @@ def notify(title: str, body: str) -> None:
     custom = os.environ.get("KG_DAEMON_NOTIFY_CMD")
     if custom:
         try:
-            subprocess.run(shlex.split(custom) + [title, body],
+            proc_run(shlex.split(custom) + [title, body],
                            capture_output=True, text=True, timeout=30)
         except (OSError, subprocess.TimeoutExpired):
             pass
         return
     if sys.platform == "darwin" and not os.environ.get("KG_DAEMON_SILENT"):
         try:
-            subprocess.run(["osascript", "-e",
+            proc_run(["osascript", "-e",
                             f"display notification {_osa_string(body)} "
                             f"with title {_osa_string(title)}"],
                            capture_output=True, text=True, timeout=30)
@@ -548,7 +560,7 @@ def auto_exec_config() -> dict:
 def _git(repo, *args, timeout=300):
     """跑一条 git 命令，返回 (rc, stdout, stderr)。"""
     try:
-        r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True,
+        r = proc_run(["git", "-C", str(repo), *args], capture_output=True,
                            text=True, errors="replace", timeout=timeout)
         return r.returncode, (r.stdout or "").strip(), (r.stderr or "").strip()
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -690,7 +702,7 @@ def _resolve_worktree_dirty(wt: Path) -> bool:
     if not wt or not wt.exists():
         return True
     try:
-        out = subprocess.run(
+        out = proc_run(
             ["git", "-C", str(wt), "status", "--porcelain"],
             capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.TimeoutExpired):
@@ -732,7 +744,7 @@ def _resolve_worktree_owned(wt: Path) -> bool:
         return True
     target = str(wt.resolve())
     try:
-        out = subprocess.run(
+        out = proc_run(
             ["ps", "-axo", "pid=,command="],
             capture_output=True, text=True, timeout=15)
     except (OSError, subprocess.TimeoutExpired):
@@ -859,7 +871,7 @@ def _resolve_ready_items(limit=10):
             continue
         if not files:
             continue
-        unresolved = subprocess.run(
+        unresolved = proc_run(
             ["git", "-C", str(wt), "diff", "--name-only", "--diff-filter=U"],
             capture_output=True, text=True, timeout=15)
         if (unresolved.stdout or "").strip():
@@ -919,7 +931,7 @@ def _main_contains(commit: str) -> bool:
     if not repo:
         return False
     try:
-        return subprocess.run(
+        return proc_run(
             ["git", "-C", str(repo), "merge-base", "--is-ancestor", commit, "main"],
             capture_output=True, text=True, timeout=10).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
@@ -1065,7 +1077,7 @@ def _run_truthctl(args, extra_env=None, timeout=120):
     cmd = [sys.executable, str(HERE / "truthctl.py"), *args]
     env = {**os.environ, **extra_env} if extra_env else None
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
+        r = proc_run(cmd, capture_output=True, text=True, errors="replace",
                            cwd=str(CODE_ROOT), timeout=timeout, env=env)
         return r.returncode, (r.stdout or "") + (r.stderr or "")
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -1080,7 +1092,7 @@ def _link_side_dirs(wt: Path, cfg: dict) -> None:
         shared = Path(cfg["shared_dir"]).expanduser()
     elif repo:
         try:
-            main_wt = subprocess.run(["git", "-C", str(repo), "worktree", "list", "--porcelain"],
+            main_wt = proc_run(["git", "-C", str(repo), "worktree", "list", "--porcelain"],
                                      capture_output=True, text=True, timeout=30)
             for line in (main_wt.stdout or "").splitlines():
                 if line.startswith("worktree "):
@@ -1175,7 +1187,7 @@ def _changed_paths(wt: Path) -> list:
     rontend/scripts/… 都是同一个 bug。所以这里保留原始 stdout，只按行切。
     """
     try:
-        r = subprocess.run(["git", "-C", str(wt), "status", "--porcelain"],
+        r = proc_run(["git", "-C", str(wt), "status", "--porcelain"],
                            capture_output=True, text=True, errors="replace", timeout=60)
     except (OSError, subprocess.TimeoutExpired):
         return []
@@ -2191,7 +2203,7 @@ def _worker_alive(pid) -> bool:
     except (OSError, ValueError, IndexError):
         # macOS 没有 /proc：回退到进程表探测，僵尸态由父进程 wait 回收。
         try:
-            out = subprocess.run(
+            out = proc_run(
                 ["ps", "-o", "stat=", "-p", str(pid_int)],
                 capture_output=True, text=True, timeout=5)
             stat = (out.stdout or "").strip()
@@ -2228,7 +2240,7 @@ def _adopt_orphan_resolve_workers(workers: dict) -> dict:
     if not _codex_bin():
         return workers
     try:
-        procs = subprocess.run(
+        procs = proc_run(
             ["ps", "-axo", "pid=,command="], capture_output=True,
             text=True, timeout=15).stdout
     except (OSError, subprocess.TimeoutExpired):
@@ -2274,7 +2286,7 @@ def _adopt_orphan_exec_workers(workers: dict, open_items: dict) -> dict:
     if not _codex_bin():
         return workers
     try:
-        out = subprocess.run(
+        out = proc_run(
             ["ps", "-axo", "pid=,command="],
             capture_output=True, text=True, timeout=10,
         ).stdout
@@ -2565,7 +2577,7 @@ def _live_exec_slugs(max_age: float = 20.0) -> frozenset:
         return _LIVE_EXEC_CACHE["slugs"]
     slugs = set()
     try:
-        out = subprocess.run(["ps", "-axo", "command="], capture_output=True,
+        out = proc_run(["ps", "-axo", "command="], capture_output=True,
                              text=True, timeout=10).stdout
         for line in out.splitlines():
             if "codex" not in line or " exec" not in line:
@@ -2851,7 +2863,7 @@ def _disk_pressure() -> int:
 def _disk_free_gb() -> float | None:
     """Return available GiB from df; unknown is rejected by disk admission."""
     try:
-        out = subprocess.run(["df", "-k", "/System/Volumes/Data"],
+        out = proc_run(["df", "-k", "/System/Volumes/Data"],
                              capture_output=True, text=True, timeout=8).stdout
         return int(out.strip().splitlines()[-1].split()[3]) / 1024 / 1024
     except Exception:
@@ -2871,7 +2883,7 @@ def _reap_backend_orphans() -> int:
     killed = 0
     try:
         live = _live_exec_slugs()
-        out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True,
+        out = proc_run(["ps", "-axo", "pid=,command="], capture_output=True,
                              text=True, timeout=10).stdout
         for line in out.splitlines():
             if "dist/index.js" not in line:
@@ -2881,7 +2893,7 @@ def _reap_backend_orphans() -> int:
                 continue
             cwd = ""
             try:
-                cw = subprocess.run(["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"],
+                cw = proc_run(["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"],
                                     capture_output=True, text=True, timeout=8).stdout
                 cwd = next((l[1:] for l in cw.splitlines() if l.startswith("n")), "")
             except Exception:
@@ -3761,7 +3773,7 @@ def launchctl(*args, capture: bool = False) -> int:
     """
     std = subprocess.PIPE if capture else subprocess.DEVNULL
     try:
-        return subprocess.run(["launchctl", *args], stdin=subprocess.DEVNULL,
+        return proc_run(["launchctl", *args], stdin=subprocess.DEVNULL,
                               stdout=std, stderr=std, text=capture).returncode
     except OSError:
         return 127
@@ -3769,7 +3781,7 @@ def launchctl(*args, capture: bool = False) -> int:
 
 def _launchctl_show(uid: int) -> str:
     try:
-        p = subprocess.run(["launchctl", "print", f"gui/{uid}/{PLIST_LABEL}"],
+        p = proc_run(["launchctl", "print", f"gui/{uid}/{PLIST_LABEL}"],
                            stdin=subprocess.DEVNULL, capture_output=True,
                            text=True, timeout=10)
     except (OSError, subprocess.TimeoutExpired):
@@ -3942,7 +3954,7 @@ def _exec_pool_busy() -> bool:
     except Exception:
         pass
     try:
-        out = subprocess.run(["ps", "-axo", "command="], capture_output=True,
+        out = proc_run(["ps", "-axo", "command="], capture_output=True,
                              text=True, timeout=10).stdout
         for line in out.splitlines():
             if "codex" in line and " exec " in line and "-C" in line:

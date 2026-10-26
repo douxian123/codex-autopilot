@@ -3276,6 +3276,69 @@ def test_exec_prompt_includes_patch_recovery():
     print("selftest ok: 普通与冲突 worker prompt 都包含 apply_patch 故障恢复规则。")
 
 
+def test_proc_run_never_hangs_on_inherited_pipe():
+    """Lock the 2026-10-27 hang: a grandchild holding the output pipe must not block.
+
+    tick 静默挂了 30+ 分钟、0.0% CPU：`subprocess.run(capture_output=True)` 用 pipe
+    收输出，partial clone 下 git 的懒加载孙进程攥着写端不关，`communicate()` 就永远
+    等不到 EOF。修法是「输出落临时文件 + 硬超时 + 超时 killpg 整组」。
+    这里用真实的孙进程复刻病灶，锁住三条性质：
+      1. 子进程秒退、孙进程活着时，proc.run 也必须秒回（不是等 EOF）；
+      2. 超时必须 killpg 收掉整个进程组，不留存活孙进程；
+      3. git 命令默认带 GIT_NO_LAZY_FETCH=1，杜绝懒加载派网络子进程。
+    """
+    import importlib
+    import subprocess as _sp
+    import sys
+    import time
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import proc
+    importlib.reload(proc)
+
+    # 1) 孙进程攥着 stdout 不退出：旧实现会挂满 timeout，新实现必须立刻返回。
+    t0 = time.time()
+    r = proc.run(["sh", "-c", "(sleep 60) & echo child-done"], text=True)
+    elapsed = time.time() - t0
+    assert r.returncode == 0, r
+    assert "child-done" in (r.stdout or ""), r.stdout
+    assert elapsed < 10, f"孙进程攥着输出时 proc.run 不该等 EOF，实测 {elapsed:.1f}s"
+
+    # 2) 超时收整个进程组，不留活着的孙进程。
+    t0 = time.time()
+    try:
+        proc.run(["sh", "-c", "sleep 60 & echo $$; wait"],
+                 text=True, timeout=1)
+        raise AssertionError("显式 timeout 命中时必须抛 TimeoutExpired")
+    except _sp.TimeoutExpired:
+        pass
+    assert time.time() - t0 < 15, "超时回收必须迅速"
+
+    # 3) git 命令默认禁懒加载，并把提示类环境变量钉死。
+    env = proc._git_env(None)
+    assert env["GIT_NO_LAZY_FETCH"] == "1", env
+    assert env["GIT_TERMINAL_PROMPT"] == "0", env
+    assert proc._is_network_cmd(["git", "-C", "x", "fetch", "origin", "main"]) is True
+    assert proc._is_network_cmd(["git", "-C", "x", "status"]) is False
+    # 网络命令拿到更长预算，本地只读拿到 60s 级预算。
+    assert proc.NET_TIMEOUT >= proc.DEFAULT_TIMEOUT
+
+    # 4) 三个模块都必须把 subprocess.run 换成受控实现 —— 只要有一处漏掉，
+    #    那条路径就仍然可以静默挂死整轮 tick。
+    for mod_name in ("kgctl", "central_daemon", "truthctl"):
+        mod = importlib.import_module(mod_name)
+        assert getattr(mod, "proc_run", None) is not None, mod_name
+        src = (ops / f"{mod_name}.py").read_text(encoding="utf-8")
+        assert "subprocess.run(" not in src, (
+            f"{mod_name}.py 还有裸 subprocess.run（会绕过超时闸）："
+            + str(src.count("subprocess.run(")))
+
+    print("selftest ok: 子进程执行器有硬超时、超时收整组、禁懒加载，且三模块无裸 subprocess.run。")
+
+
 def test_worker_alive_treats_zombie_as_dead():
     """A defunct child must not occupy an auto_exec slot.
 
@@ -3300,14 +3363,14 @@ def test_worker_alive_treats_zombie_as_dead():
     # Zombie state: os.kill(pid, 0) succeeds but ps reports Z -> dead.
     zombie_pid = 424242
     with mock.patch("central_daemon.os.kill", return_value=None), \
-         mock.patch("central_daemon.subprocess.run",
+         mock.patch("central_daemon.proc_run",
                     return_value=type("R", (), {"stdout": "Z+"})()):
         assert not central_daemon._worker_alive(zombie_pid), (
             "zombie state must be treated as dead")
 
     # Live state: os.kill succeeds and ps reports R+ -> alive.
     with mock.patch("central_daemon.os.kill", return_value=None), \
-         mock.patch("central_daemon.subprocess.run",
+         mock.patch("central_daemon.proc_run",
                     return_value=type("R", (), {"stdout": "R+"})()):
         assert central_daemon._worker_alive(zombie_pid), (
             "live state must remain alive")
@@ -4520,6 +4583,7 @@ if __name__ == "__main__":
     test_parallel_exec_slots()
     test_disk_hold_withholds_worker_restart()
     test_git_gc_never_prunes_shared_partial_clone()
+    test_proc_run_never_hangs_on_inherited_pipe()
     test_exec_prompt_includes_patch_recovery()
     test_worker_alive_treats_zombie_as_dead()
     test_dead_pid_never_fabricates_worker_success()
