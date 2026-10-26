@@ -4476,6 +4476,82 @@ def test_prune_keeps_open_resolve_hold():
     print("selftest ok: 重启清理不会把仍 gate_fail 的 resolve 停手记录误删。")
 
 
+def test_pressure_reap_engages_even_when_regular_reaping_is_on():
+    """磁盘紧张时必须走压力节奏，哪怕常规回收本来就是开着的。
+
+    2026-10-27 根因：_pressure_reap 只在「常规回收被关掉」的分支里才置 True。
+    safety.json 默认 reap_worktrees=true，于是压力分支整个被跳过 —— 一直用
+    常规 25s 预算 / 600s 间隔，日志反复「达时间预算 25s（已回收 0 个）」，
+    回收永远追不上派工写入，磁盘周期性被写爆。
+    """
+    import importlib
+    import sys
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-pressure-on-") as tmp:
+        home = Path(tmp)
+        ws = home / "ws"
+        ws.mkdir()
+        saved = {}
+
+        def fake_save(book):
+            saved.clear()
+            saved.update(book)
+
+        with mock.patch.object(central_daemon, "RUNTIME", home), \
+             mock.patch.object(central_daemon, "_workspace_root", return_value=ws), \
+             mock.patch.object(central_daemon, "_knob", return_value=True), \
+             mock.patch.object(central_daemon, "_disk_free_gb", return_value=5.0), \
+             mock.patch.object(central_daemon, "_live_exec_slugs", return_value=[]), \
+             mock.patch.object(central_daemon, "_load_reap_state", return_value={}), \
+             mock.patch.object(central_daemon, "_save_reap_state", side_effect=fake_save):
+            central_daemon._reap_dead_worktrees()
+            # 压力模式必须真的进入扫描并写状态（常规节奏在节流后才会走到这里）
+            assert saved.get("last_ts"), saved
+
+        # 低盘 + 常规回收开着 -> 仍走压力节奏与压力预算
+        src = __import__("inspect").getsource(central_daemon._reap_dead_worktrees)
+        assert "_disk_tight" in src, "紧张度必须独立判断，不能只在常规回收关闭时才成立"
+        assert "REAP_INTERVAL_PRESSURE_S if _pressure_reap" in src
+        assert "REAP_TIME_BUDGET_PRESSURE_S if _pressure_reap" in src
+
+    print("selftest ok: 盘紧时即使常规回收开着，也走压力节奏与压力预算。")
+
+
+def test_pressure_reap_gets_its_own_time_budget():
+    """压力回收必须有自己的时间预算，否则永远追不上派工写入。
+
+    2026-10-27 实测：守护日志连续出现「worktree 回收达时间预算 25s（已回收 0 个）」。
+    切片 40 个现场、每个还要跑 4~6 次 git 子进程，25s 常常连一个都删不掉；而
+    每个 worker 现场 ~200MB，磁盘就这样一路滑到 5GB 告急、反复把人卡死。
+    常规轮必须保留短预算（别把派活拖住），压力轮必须给足。
+    """
+    import sys
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+
+    assert central_daemon.REAP_TIME_BUDGET_PRESSURE_S > (
+        central_daemon.REAP_TIME_BUDGET_S
+    ), (central_daemon.REAP_TIME_BUDGET_PRESSURE_S,
+        central_daemon.REAP_TIME_BUDGET_S)
+    assert central_daemon.REAP_TIME_BUDGET_PRESSURE_S >= 60, (
+        "压力预算必须覆盖一整片现场的实际扫描与删除成本"
+    )
+    import inspect
+    src = inspect.getsource(central_daemon._reap_dead_worktrees)
+    assert "REAP_TIME_BUDGET_PRESSURE_S if _pressure_reap" in src, src[:400]
+    print("selftest ok: 压力回收有独立且更大的时间预算，常规轮仍用短预算。")
+
+
 def test_reap_scan_is_sliced_and_throttled():
     """回收不能再「每拍全扫」：那是它自己制造负载和反复爆盘的根因。
 
@@ -5015,6 +5091,8 @@ if __name__ == "__main__":
     test_worker_alive_treats_zombie_as_dead()
     test_dead_pid_never_fabricates_worker_success()
     test_hydrate_drops_unverifiable_exec_slots()
+    test_pressure_reap_gets_its_own_time_budget()
+    test_pressure_reap_engages_even_when_regular_reaping_is_on()
     test_reap_scan_is_sliced_and_throttled()
     test_mcp_contract()
     test_closure_rate()

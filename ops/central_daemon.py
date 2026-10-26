@@ -2740,6 +2740,12 @@ REAP_INTERVAL_PRESSURE_S = float(
     os.environ.get("KG_REAP_INTERVAL_PRESSURE_S", "90"))
 # 每轮 worktree 回收的时间预算：回收不能把派活饿死。
 REAP_TIME_BUDGET_S = float(os.environ.get("KG_REAP_TIME_BUDGET_S", "25"))
+# 压力模式下回收要能真的追平写入速度：切片 40 个现场、每个要跑 4~6 次 git，
+# 25s 常常只够删 1~2 个就撞线（2026-10-27 实测：日志连续出现「达时间预算
+# 25s（已回收 0 个）」）。回收追不上派工写入，可用空间就会一路下滑到告急。
+# 压力模式给足预算；常规轮仍用短预算，不拖慢派活。
+REAP_TIME_BUDGET_PRESSURE_S = float(
+    os.environ.get("KG_REAP_TIME_BUDGET_PRESSURE_S", "120"))
                                # worktree 至少闲置这么久才回收（按目录 mtime 与分支最后提交取较新者）
 REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "5"))
 # 空间自救阈值：可用低于它就回收零损失现场 + git gc（**不降低并发**）。
@@ -3044,6 +3050,17 @@ def _reap_dead_worktrees() -> int:
         _pressure_reap = True
         log(f"[safety] 磁盘可用 {(_free if _free is not None else -1):.2f}GB "
             f"< {REAP_PRESSURE_FREE_GB}GB：对零损失现场做回收（只删目录，分支保留）")
+    # 磁盘紧张度必须独立判断，不能只在「常规回收被关掉」时才成立。
+    # 2026-10-27 实测：safety.json 里 reap_worktrees=true 时，上面的分支整个被
+    # 跳过 → _pressure_reap 永远是 False → 一直用常规的 25s 预算 / 600s 间隔，
+    # 日志里反复出现「达时间预算 25s（已回收 0 个）」，回收永远追不上派工写入。
+    # 这里按真实可用空间再判一次：紧张时同样享受更大预算和更短间隔（安全判据不变）。
+    _free_now = _disk_free_gb()
+    _disk_tight = _free_now is not None and _free_now < REAP_PRESSURE_FREE_GB
+    if _disk_tight and not _pressure_reap:
+        _pressure_reap = True
+        log(f"[safety] 磁盘可用 {_free_now:.2f}GB < {REAP_PRESSURE_FREE_GB}GB："
+            f"回收改用紧张节奏（更短间隔/更大时间预算；判据不变，仍只删零损失现场）")
     reaped = 0
     reap_state = _load_reap_state()
     try:
@@ -3073,7 +3090,9 @@ def _reap_dead_worktrees() -> int:
         # 一轮能占掉一分多钟（实测 19:53:47 单个回收就花 78s）。它排在派活
         # 之前同步执行，于是 worker 掉下去后整轮都在等它，补派被拖住。
         # 超过预算就收工，剩下的留给下一轮 —— 回收是渐进目标，派活不能被它饿死。
-        deadline = time.time() + REAP_TIME_BUDGET_S
+        budget = (REAP_TIME_BUDGET_PRESSURE_S if _pressure_reap
+                  else REAP_TIME_BUDGET_S)
+        deadline = time.time() + budget
         candidates = sorted(root.iterdir())
         # 游标切片：每次只扫一片，扫完从头轮回。242 个现场全扫要 4~6 次 git/个，
         # 放在 15s 循环里就是常驻 CPU 黑洞；切片后单轮成本恒定，且每个现场最终都会被扫到。
@@ -3087,7 +3106,7 @@ def _reap_dead_worktrees() -> int:
             if reaped >= max_round:
                 break
             if time.time() > deadline:
-                log(f"[safety] worktree 回收达时间预算 {REAP_TIME_BUDGET_S:.0f}s"
+                log(f"[safety] worktree 回收达时间预算 {budget:.0f}s"
                     f"（已回收 {reaped} 个），余下留给下一轮，先回去派活")
                 break
             if not d.is_dir():
