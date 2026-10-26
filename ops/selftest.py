@@ -3517,6 +3517,65 @@ def test_run_kgctl_streams_progress_live():
     print("selftest ok: kgctl 阶段输出边跑边进日志（不再攒到退出才吐），返回值仍完整。")
 
 
+def test_context_packs_are_cached_and_budgeted():
+    """Context Pack 的 merge-tree 探测必须缓存 + 有时间预算。
+
+    2026-10-27 实测：tick 阶段 6 给 20 支分支各做一次 merge-tree + 全树 marker
+    grep，在 load 90+ 的机器上一支 10 秒，整段 4.5 分钟 —— 这正是「日志静默
+    7 分钟」背后真正的耗时。缓存键是 branch@head@main，任何一边动了才重算。
+    这里锁三件事：同样的输入不打第二次 merge-tree、head/main 变了会重算、
+    超预算的分支被跳过并如实报告而不是悄悄消失。
+    """
+    import importlib
+    import sys as _sys
+    import tempfile
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in _sys.path:
+        _sys.path.insert(0, str(ops))
+    import kgctl
+    importlib.reload(kgctl)
+
+    tmp = Path(tempfile.mkdtemp(prefix="kg-ctx-cache-"))
+    real_cache = kgctl.CONTEXT_CACHE
+    kgctl.CONTEXT_CACHE = tmp / "ctx-cache.json"
+    calls = []
+    try:
+        def fake_conflict_files(branch):
+            calls.append(branch)
+            return ["a.ts"]
+
+        with mock.patch.object(kgctl, "conflict_files", side_effect=fake_conflict_files), \
+             mock.patch.object(kgctl, "unresolved_marker_files", return_value=[]):
+            first = kgctl._context_probes("codex/x", "h1", "m1")
+            assert first["conflict_files"] == ["a.ts"], first
+            assert calls == ["codex/x"], calls
+
+            # 同样的 branch/head/main：不能再打一次 merge-tree。
+            second = kgctl._context_probes("codex/x", "h1", "m1")
+            assert second == first, (second, first)
+            assert calls == ["codex/x"], f"缓存没命中，又打了一次：{calls}"
+
+            # head 变了（分支有新提交）必须重算，不能拿旧答案糊过去。
+            kgctl._context_probes("codex/x", "h2", "m1")
+            assert calls == ["codex/x", "codex/x"], calls
+
+            # main 前进同样必须重算：旧 main 下的「无冲突」不能当成结论。
+            kgctl._context_probes("codex/x", "h2", "m2")
+            assert len(calls) == 3, calls
+    finally:
+        kgctl.CONTEXT_CACHE = real_cache
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    # 预算参数必须真的存在且可被环境变量调节（守护里靠它兜住一轮）。
+    src = (ops / "kgctl.py").read_text(encoding="utf-8")
+    assert "KG_CONTEXT_BUDGET" in src, "Context Pack 没有时间预算"
+    assert "skipped.append" in src, "超预算的分支没有被如实报告"
+    print("selftest ok: Context Pack 探测按 branch@head@main 缓存，且有可调时间预算。")
+
+
 def test_worker_alive_treats_zombie_as_dead():
     """A defunct child must not occupy an auto_exec slot.
 
@@ -4764,6 +4823,7 @@ if __name__ == "__main__":
     test_git_gc_never_prunes_shared_partial_clone()
     test_proc_run_never_hangs_on_inherited_pipe()
     test_run_kgctl_streams_progress_live()
+    test_context_packs_are_cached_and_budgeted()
     test_git_scan_timeout_fails_closed_not_open()
     test_exec_prompt_includes_patch_recovery()
     test_worker_alive_treats_zombie_as_dead()

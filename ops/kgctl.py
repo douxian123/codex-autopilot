@@ -1757,11 +1757,52 @@ def cmd_converge(args):
             LOCK.unlink()
 
 
-def _context_payload(branch: str) -> dict:
-    ahead, behind = counts(branch)
-    files = changed_files(branch)
+CONTEXT_CACHE = OPS / "context_probe_cache.json"
+
+
+def _context_probe_cache_key(branch: str, head: str, main_head: str) -> str:
+    return f"{branch}@{head}@{main_head}"
+
+
+def _context_probes(branch: str, head: str, main_head: str) -> dict:
+    """拿到 (−−分支相对 main 的冲突文件, 残留 marker)。
+
+    为什么要有这一层：Context Pack 是「给下一个任务看的简报」，每拍给 20 支分支
+    各做一次 `merge-tree` + 全树 marker grep，在 load 90+ 的机器上一支 10 秒，
+    实测把 tick 阶段 6 拖到 4.5 分钟 —— 这是 2026-10-27「日志静默 7 分钟」背后
+    真正的耗时，之前被 communicate() 掩盖了。
+    分支没动、main 没动时，答案不会变，直接读缓存。
+    """
+    key = _context_probe_cache_key(branch, head, main_head)
+    try:
+        cache = json.loads(CONTEXT_CACHE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    hit = cache.get(key)
+    if isinstance(hit, dict) and "conflict_files" in hit:
+        return hit
     conf = conflict_files(branch)
     markers = unresolved_marker_files(branch) if not conf else []
+    entry = {"conflict_files": conf, "unresolved_marker_files": markers}
+    cache[key] = entry
+    # 只留最近 200 条：这是一个纯缓存，不承担任何账本职责。
+    if len(cache) > 200:
+        for stale in list(cache)[:len(cache) - 200]:
+            cache.pop(stale, None)
+    try:
+        write_json(CONTEXT_CACHE, cache)
+    except OSError:
+        pass
+    return entry
+
+
+def _context_payload(branch: str, head: str = "", main_head: str = "") -> dict:
+    ahead, behind = counts(branch)
+    files = changed_files(branch)
+    probe = _context_probes(branch, head or git("rev-parse", branch),
+                            main_head or git("rev-parse", MAIN))
+    conf = probe["conflict_files"]
+    markers = probe["unresolved_marker_files"]
     rows = latest_ledger_by_id(
         read_jsonl(REPO / "ops" / "truth" / "ledger.jsonl")).values()
     open_rows = [r for r in rows if r.get("status") in ("open", "doing", "todo")]
@@ -1812,11 +1853,24 @@ def cmd_context(args):
         branches = [r["branch"] for r in scan() if r["kind"] != "MERGED"]
     else:
         branches = [a for a in args if not a.startswith("--")]
+    # 时间预算：Context Pack 是锦上添花，不能拖住一整轮。
+    try:
+        budget = float(os.environ.get("KG_CONTEXT_BUDGET", "120") or 120)
+    except ValueError:
+        budget = 120.0
+    started = time.monotonic()
+    main_head = git("rev-parse", MAIN)
+    skipped = []
     for branch in branches:
-        if not git("rev-parse", "--verify", branch):
+        spent = time.monotonic() - started
+        if spent >= budget:
+            skipped.append(branch)
+            continue
+        head = git("rev-parse", "--verify", branch)
+        if not head:
             print(f"  × 找不到分支 {branch}")
             continue
-        payload = _context_payload(branch)
+        payload = _context_payload(branch, head=head, main_head=main_head)
         name = slugify(branch.replace("/", "-"), 80)
         write_json(CONTEXT_DIR / f"{name}.json", payload)
         lines = [
@@ -1854,8 +1908,11 @@ def cmd_context(args):
                       f"- 待解冲突文件：{len(payload['convergence'].get('unresolved_files') or [])}"]
         write_text(CONTEXT_DIR / f"{name}.md", "\n".join(lines) + "\n")
         print(f"已写 Context Pack：ops/context/{name}.json")
+    if skipped:
+        print(f"  （超时间预算 {budget:.0f}s，{len(skipped)} 份留到下一拍："
+              f"{', '.join(skipped[:3])}{' …' if len(skipped) > 3 else ''}）")
     if branches:
-        print(f"共 {len(branches)} 份；Markdown 在同目录。")
+        print(f"共 {len(branches) - len(skipped)} 份；Markdown 在同目录。")
 
 
 def cmd_dash(args):

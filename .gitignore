@@ -12,6 +12,9 @@ docs/PROJECT_STATUS.md
 docs/panel-first-screen.png
 ops/context/
 ops/tasks/convergence.json
+# 纯缓存（由 tick 生成，可随时重建；不承担任何账本职责）
+ops/context_probe_cache.json
+ops/conflict_burden.json
 
 # Companion 构建产物（可随时重建：companion/build.sh）
 companion/.build/
