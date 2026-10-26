@@ -756,6 +756,88 @@ def test_publish_lock_and_origin_containment():
     print("selftest ok: land/真相推送发布锁互斥，且只有 origin/main 祖先校验通过才算落盘。")
 
 
+def test_stale_lock_selfheals_and_never_deletes_others():
+    """僵死锁必须自愈；且任何路径都不许删掉别人的锁。
+
+    真实踩到的坑（2026-10-27）：`.git/kgctl-land.lock` 里写着 `71714 supersede`，
+    而 71714 早就死了。僵死隔离机制本身是好的，但 supersede / converge / replan
+    三条路径用的是 `LOCK.write_text(...)` + `finally: LOCK.unlink()`：
+      * 「探活 → 写文件」之间没有原子性，两个进程可以同时通过探活；
+      * `unlink()` 不核对 pid，会把**别人正持有的锁**删掉，落盘开始互相踩。
+    这条门禁把三件事一起锁住：死锁自愈、活锁不被误删、隔离出来的证据不会无限堆。
+    """
+    import importlib
+    import time as _t
+
+    sys.path.insert(0, str(OPS))
+    tmp = Path(tempfile.mkdtemp(prefix="kg-lock-"))
+    # kgctl 导入时就会解析编排状态根并 sys.exit；必须在 reload 之前把 KG_REPO
+    # 指到一个「看起来像状态根」的临时目录，否则本用例会吃上一个用例留下的
+    # 已删除临时路径，报「找不到编排状态根」——那不是锁的问题，却会让门禁红。
+    state = tmp / "state"
+    (state / "ops" / "tasks").mkdir(parents=True)
+    (state / "ops" / "truth").mkdir(parents=True)
+    _saved_repo = os.environ.get("KG_REPO")
+    os.environ["KG_REPO"] = str(state)
+    os.environ.setdefault("KG_TRUNK", str(tmp / "unused-trunk"))
+    import kgctl
+    importlib.reload(kgctl)
+
+    real = kgctl.LOCK
+    kgctl.LOCK = tmp / "kgctl-land.lock"
+    try:
+        # 1) 一个确定已死的 pid：必须被判为不阻塞，并把锁挪成证据。
+        dead_pid = 999999999
+        kgctl.LOCK.write_text(f"{dead_pid} supersede\n", encoding="utf-8")
+        assert kgctl._lock_blocked() is False, "持有者已死却被当成有人在做"
+        assert not kgctl.LOCK.exists(), "僵死锁没有被隔离，仍会挡住整个舰队"
+        assert list(tmp.glob("kgctl-land.lock.stale-*")), "隔离时没有留下证据文件"
+
+        # 2) 自己的进程是活的：必须判为阻塞，且不许被别人顺手删掉。
+        kgctl.LOCK.write_text(f"{os.getpid()} converge\n", encoding="utf-8")
+        assert kgctl._lock_blocked() is True, "活锁必须挡住第二个进程"
+        saved = kgctl.LOCK.read_text(encoding="utf-8")
+        # 模拟「另一个进程」调用释放：把 getpid 换成别的值，它不该删除。
+        import unittest.mock as _mock
+        with _mock.patch.object(kgctl.os, "getpid", return_value=os.getpid() + 1):
+            kgctl._release_lock()
+        assert kgctl.LOCK.exists(), "非持有者把别人的锁删掉了——落盘会开始互相踩"
+        assert kgctl.LOCK.read_text(encoding="utf-8") == saved
+
+        # 3) 隔离证据不许无限堆：超过 keep 条就把旧的清掉。
+        for i in range(12):
+            f = tmp / f"kgctl-land.lock.stale-{1000 + i}"
+            f.write_text("x\n", encoding="utf-8")
+            _t.sleep(0.002)
+        kgctl._prune_stale_locks(keep=5)
+        left = sorted(tmp.glob("kgctl-land.lock.stale-*"))
+        assert len(left) == 5, f"僵死锁证据没有按 keep 剪枝，还剩 {len(left)} 条"
+
+        # 4) 可执行代码里只剩 _release_lock 一处 unlink（且它核对 pid）。
+        #    文档字符串里提到 `finally: LOCK.unlink()` 是解释历史 bug，不算。
+        import ast as _ast
+        tree = _ast.parse((OPS / "kgctl.py").read_text(encoding="utf-8"))
+        unlinks = []
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.Call) and isinstance(node.func, _ast.Attribute) \
+                    and node.func.attr == "unlink" \
+                    and isinstance(node.func.value, _ast.Name) \
+                    and node.func.value.id == "LOCK":
+                unlinks.append(node.lineno)
+        assert len(unlinks) == 1, (
+            f"有 {len(unlinks)} 处不核对 pid 的 LOCK.unlink()（行 {unlinks}），"
+            "应当只剩 _release_lock 里那一处")
+    finally:
+        kgctl.LOCK = real
+        if _saved_repo is None:
+            os.environ.pop("KG_REPO", None)
+        else:
+            os.environ["KG_REPO"] = _saved_repo
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+    print("selftest ok: 僵死锁自愈、活锁不被误删、隔离证据按 keep 剪枝。")
+
+
 def test_remote_benchmark_pollution_failclosed():
     """锁住稳定基线保护的运行入口：远端 origin/main 的 36 题报告被伪快照覆盖时，
     tick/intake 必须 fail-closed，不能把伪快照写回本地真实基线，也不能继续推送。
@@ -4836,6 +4918,7 @@ if __name__ == "__main__":
     test_reset_trunk_truth_conflict()
     test_sync_trunk_truth_failclosed_non_truth()
     test_publish_lock_and_origin_containment()
+    test_stale_lock_selfheals_and_never_deletes_others()
     test_remote_benchmark_pollution_failclosed()
     test_control_state()
     test_installer()

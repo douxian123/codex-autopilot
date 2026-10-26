@@ -143,7 +143,27 @@ def _lock_blocked() -> bool:
     except OSError:
         return True
     print(f"  [lock] 持有者已不在（pid={pid}），隔离僵死锁 -> {stale}")
+    _prune_stale_locks(keep=5)
     return False
+
+
+def _prune_stale_locks(keep: int = 5) -> None:
+    """把隔离出来的僵死锁只留最近几条。
+
+    隔离出来的 `.stale-<pid>` 是证据，不能立刻删；但它们会一直堆：
+    本机实测已经堆了 2026-10-16、2026-10-24 两条，每次 kill -9 再多一条。
+    留最近几条够复盘，其余清掉 —— 这不是账本，只是现场取证。
+    """
+    try:
+        stale = sorted(LOCK.parent.glob(f"{LOCK.name}.stale-*"),
+                       key=lambda f: f.stat().st_mtime, reverse=True)
+    except OSError:
+        return
+    for old in stale[keep:]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
 
 
 def _acquire_lock(reason: str) -> bool:
@@ -157,6 +177,23 @@ def _acquire_lock(reason: str) -> bool:
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         handle.write(f"{os.getpid()} {reason}\n")
     return True
+
+
+def _lock_take(reason: str) -> None:
+    """原子抢锁并把 pid+用途写进去；抢不到就退出。
+
+    为什么不用 `LOCK.write_text(...)`：那样在「探活 → 写文件」之间没有原子性，
+    两个进程可能同时通过探活再互相当成对方是自己的锁；更要紧的是
+    `finally: LOCK.unlink()` 会把**别人的**锁删掉（不核对 pid），
+    于是锁在真的有人持有时凭空消失，落盘开始互相踩。
+    """
+    if not _acquire_lock(reason):
+        sys.exit(f"已有 land/port/converge/supersede/resolve 在进行（{LOCK}）")
+
+
+def _lock_drop() -> None:
+    """只释放本进程持有的锁（内部核对 pid）。"""
+    _release_lock()
 
 
 def _release_lock() -> None:
@@ -722,10 +759,8 @@ def cmd_supersede(args):
     if not go:
         print("\n（预演结束。加 --go 会逐个写进展台账并推送 main；不产生空合并提交。）")
         return
-    if _lock_blocked():
-        sys.exit(f"已有 land 在进行（{LOCK}）")
     OPS.mkdir(parents=True, exist_ok=True)
-    LOCK.write_text(f"{os.getpid()} supersede\n")
+    _lock_take("supersede")
     try:
         _align_main()
         wt = _trunk_worktree()
@@ -770,8 +805,7 @@ def cmd_supersede(args):
         _align_main_ref_to_origin(new)
         print(f'  已归档 {len(cands)} 个重复分支并推送 origin/main @ {new[:8]}')
     finally:
-        if LOCK.exists():
-            LOCK.unlink()
+        _lock_drop()
 
 
 # ---------------------------------------------------------------- 输入：唯一入口
@@ -1554,15 +1588,13 @@ def cmd_replan(args):
     if not pending:
         print("没有可重盘的 convergence 组（都已被接管或已重盘）。")
         return
-    if go and _lock_blocked():
-        sys.exit(f"已有 land/port/converge/replan 在进行（{LOCK}）")
     if go:
-        LOCK.write_text(str(os.getpid()))
+        _lock_take("replan")
     try:
         _replan_groups(pending, go)
     finally:
-        if go and LOCK.exists():
-            LOCK.unlink()
+        if go:
+            _lock_drop()
 
 
 def _replan_groups(pending, go):
@@ -1662,9 +1694,7 @@ def cmd_converge(args):
     if not go:
         print("\n预演结束。加 --go 会新建 convergence 分支（不改 main、不改源分支）。")
         return
-    if _lock_blocked():
-        sys.exit(f"已有 land/supersede/converge 在进行（{LOCK}）")
-    LOCK.write_text(f"{os.getpid()} converge\n")
+    _lock_take("converge")
     made = []
     try:
         fetch = proc_run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
@@ -1753,8 +1783,7 @@ def cmd_converge(args):
         # 否则多族收拢时，尚未轮到的既有记录会被误判成孤儿。
         _clean_orphan_convergences(records, {g["id"] for g in groups}, made)
     finally:
-        if LOCK.exists():
-            LOCK.unlink()
+        _lock_drop()
 
 
 CONTEXT_CACHE = OPS / "context_probe_cache.json"
