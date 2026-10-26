@@ -3062,7 +3062,12 @@ def _reap_dead_worktrees() -> int:
             if brc != 0 or not branch or branch in ("HEAD", "main"):
                 continue
             assessment = workspace_guard.worktree_removable(
-                repo, d, branch, "main", commands="", backup_unique=False)
+                repo, d, branch, "main", commands="", backup_unique=False,
+                # 压力回收路径：一个现场如果唯一「脏」的是 backend/evidence 这类
+                # 已跟踪但可重建的产物（每个 worktree 各存一份 ~131MB，实测
+                # 50+ 现场合计 6.25GB 完全重复），就从 HEAD 还原再判脏。安全判据
+                # 一条没放松：未跟踪的人间产物、未落提交、活进程仍全部保留。
+                restore_regenerable=True)
             if not assessment.get("ok"):
                 continue
             ok, detail = workspace_guard.remove_worktree(repo, d)

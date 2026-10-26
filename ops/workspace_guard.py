@@ -22,6 +22,41 @@ GENERATED_DIRS = (
     "frontend/dist",
     "backend/dist",
 )
+# Tracked-but-regenerable output. These paths are build/test artifacts that the
+# repo nonetheless committed at least once (e.g. backend/evidence, written by
+# probe-*.mjs / build-progress-radar.mjs). Two consequences, both observed
+# 2026-10-27:
+#   1. every worktree checkout materialises its own ~131MB copy, so 50+ live
+#      worktrees duplicate the same bytes (~6.25GB) with zero information gain;
+#   2. because the content is tracked, `git status` reports it, so a worktree
+#      that merely deleted those copies looks "dirty" and can never be reaped.
+# The fix below does NOT delete unique history: before treating such a worktree
+# as dirty it restores the tracked files from HEAD (content always preserved in
+# git), which lets an otherwise-clean worktree be reaped normally.
+REGENERABLE_TRACKED_DIRS = (
+    "backend/evidence",
+    "evidence",
+)
+
+
+def restore_regenerable_tracked(worktree: Path) -> list[str]:
+    """Restore tracked files under regenerable output dirs from HEAD.
+
+    Only ever runs `git checkout -- <dir>`, i.e. it puts files back to their
+    committed state. It never stages, commits, stashes or discards anything a
+    human wrote. Returns the dirs it touched.
+    """
+    touched = []
+    for rel in REGENERABLE_TRACKED_DIRS:
+        path = worktree / rel
+        # Only act when the path actually differs from HEAD.
+        diff = run_git(worktree, "status", "--porcelain", "--", rel)
+        if diff.returncode != 0 or not (diff.stdout or "").strip():
+            continue
+        res = run_git(worktree, "checkout", "--", rel)
+        if res.returncode == 0:
+            touched.append(rel)
+    return touched
 
 
 def run_git(path: Path, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
@@ -130,6 +165,7 @@ def worktree_removable(
     commands: str | None = None,
     backup_unique: bool = False,
     stamp: str = "",
+    restore_regenerable: bool = False,
 ) -> dict:
     """Assess a worktree without deleting source."""
     if not worktree.exists():
@@ -143,6 +179,13 @@ def worktree_removable(
     ahead = branch_ahead(repo, branch, main) if branch else 0
     if status(worktree):
         remove_generated_dirs(worktree)
+        # Opt-in: a worktree whose only "dirt" is a modified/deleted copy of a
+        # tracked-but-regenerable artifact (backend/evidence etc.) is not a
+        # human's work in progress. Restoring it from HEAD makes the assessment
+        # honest instead of permanently "dirty". Off by default so the plain
+        # reaper never rewrites anyone's tree.
+        if restore_regenerable:
+            restore_regenerable_tracked(worktree)
         if status(worktree):
             return {"ok": False, "reason": "dirty", "ahead": ahead, "backup": ""}
 

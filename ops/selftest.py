@@ -4166,6 +4166,72 @@ def test_reap_scan_is_sliced_and_throttled():
     print("selftest ok: 回收按游标切片 + 节流，账本独立，不再每拍全扫拖垮机器。")
 
 
+def test_regenerable_tracked_restore_is_opt_in_and_lossless():
+    """可重建的「已跟踪产物」只在显式 opt-in 时从 HEAD 恢复，且绝不丢内容。
+
+    2026-10-27 根因：backend/evidence 这类目录被门禁脚本写入，但历史上被
+    commit 过，于是每个 worktree 都 checkout 一份（实测 50+ 现场 x 131MB，
+    约 6.25GB 完全重复），而只要删了它 git status 就报 dirty，现场永远
+    回收不了。修复：显式 opt-in 时用 `git checkout -- <dir>` 从 HEAD 还原。
+
+    本测试守住三条不变式：
+      1. 默认（restore_regenerable=False）不碰现场，仍然返回 dirty；
+      2. opt-in 后，唯一脏源是可重建产物时，现场变干净、可回收；
+      3. 恢复只还原「内容」，人间真实改动（未跟踪的新文件）依然算脏，
+         绝不被抹掉 —— 这是「不丢失任何合理进度」的底线。
+    """
+    import sys
+    from pathlib import Path
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import workspace_guard as wg
+
+    def _git(cwd, *a):
+        return subprocess.run(["git", "-C", str(cwd), *a],
+                              capture_output=True, text=True)
+
+    with tempfile.TemporaryDirectory(prefix="wg-regen-") as tmp:
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q", "-b", "main")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "backend" / "evidence").mkdir(parents=True)
+        (repo / "backend" / "evidence" / "a.json").write_text('{"k":1}')
+        (repo / "README.md").write_text("x\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "init")
+
+        wt = Path(tmp) / "wt"
+        _git(repo, "worktree", "add", "-q", "-b", "codex/x", str(wt))
+        (wt / "backend" / "evidence" / "a.json").unlink()
+        assert wg.status(wt), "前置条件失败：删除后应显示 dirty"
+
+        # 1) 默认：不许改写现场，仍然 dirty
+        a = wg.worktree_removable(repo, wt, "codex/x", "main", commands="")
+        assert a["ok"] is False and a["reason"] == "dirty", a
+        assert not (wt / "backend" / "evidence" / "a.json").exists(), \
+            "默认模式下不该恢复现场"
+
+        # 2) opt-in：可重建产物从 HEAD 还原，现场干净、可回收
+        a = wg.worktree_removable(repo, wt, "codex/x", "main", commands="",
+                                  restore_regenerable=True)
+        assert a["ok"] is True, a
+        assert (wt / "backend" / "evidence" / "a.json").read_text() == '{"k":1}', \
+            "恢复必须与 HEAD 一致"
+
+        # 3) 人间真实改动不受影响：未跟踪新文件仍让现场算脏
+        (wt / "backend" / "evidence" / "human-note.md").write_text("人工备注")
+        a = wg.worktree_removable(repo, wt, "codex/x", "main", commands="",
+                                  restore_regenerable=True)
+        assert a["ok"] is False and a["reason"] == "dirty", a
+        assert (wt / "backend" / "evidence" / "human-note.md").exists(), \
+            "未跟踪的人间产物绝不能被抹掉"
+
+    print("selftest ok: 可重建已跟踪产物只在 opt-in 时从 HEAD 恢复，人间改动不受影响。")
+
+
 def test_mcp_contract():
     """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
     import json as _json
@@ -4603,6 +4669,7 @@ if __name__ == "__main__":
     test_pressure_reap_gets_its_own_time_budget()
     test_pressure_reap_engages_even_when_regular_reaping_is_on()
     test_reap_scan_is_sliced_and_throttled()
+    test_regenerable_tracked_restore_is_opt_in_and_lossless()
     test_mcp_contract()
     test_closure_rate()
     test_budget_gate()
