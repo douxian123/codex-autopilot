@@ -3942,6 +3942,103 @@ def test_prune_keeps_open_resolve_hold():
     print("selftest ok: 重启清理不会把仍 gate_fail 的 resolve 停手记录误删。")
 
 
+def test_reap_scan_is_sliced_and_throttled():
+    """回收不能再「每拍全扫」：那是它自己制造负载和反复爆盘的根因。
+
+    实测 2026-10-27：242 个 worktree，每个还要跑 4~6 次 git 子进程；守护每 15 秒
+    全扫一遍，单独就把 load 顶到 191，机器越跑越卡，人只能反复清一轮。
+    这里锁住三条结构属性：
+      1. 一次只扫一片（KG_REAP_SCAN_SLICE），游标逐轮前进，最终全部扫到；
+      2. 两次扫描之间有节流，不会每拍都动；
+      3. 回收账本单独文件，不覆盖 state.json 里派发阶段刚写的磁盘闸状态。
+    """
+    import importlib
+    from unittest import mock
+    import sys
+    from pathlib import Path
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-reap-slice-") as tmp:
+        base = Path(tmp)
+        home = base / "home"
+        workspace = base / "ws"
+        home.mkdir(); workspace.mkdir()
+        # 造 60 个假现场，远多于单次切片；mtime 拨到 5 小时前，
+        # 否则会被「刚动过」的廉价预筛正确跳过。
+        old_ts = _time.time() - 5 * 3600
+        for i in range(60):
+            d = workspace / f"kg-fake-{i:03d}"
+            d.mkdir()
+            os.utime(d, (old_ts, old_ts))
+
+        calls = []
+
+        def fake_worktree_repo(wt):
+            calls.append(wt.name)
+            return None          # 不是 worktree -> 跳过，不实际删除任何东西
+
+        with mock.patch.object(central_daemon, "RUNTIME", home), \
+             mock.patch.object(central_daemon, "REAP_STATE", home / "reap_state.json"), \
+             mock.patch.dict(os.environ, {
+                 "KG_WORKSPACE_ROOT": str(workspace),
+                 "KG_REAP_SCAN_SLICE": "7",
+                 "KG_REAP_MIN_INTERVAL_S": "600",
+                 "KG_REAP_BACKENDS": "0"}, clear=False), \
+             mock.patch.object(central_daemon, "_live_exec_slugs",
+                               return_value=frozenset()), \
+             mock.patch.object(central_daemon, "_disk_free_gb",
+                               return_value=20.0), \
+             mock.patch.object(central_daemon, "_knob",
+                               side_effect=lambda n, d=True: n == "reap_worktrees"), \
+             mock.patch.object(central_daemon.workspace_guard,
+                               "worktree_removable", return_value={"ok": False}), \
+             mock.patch.object(central_daemon, "_worktree_repo",
+                               side_effect=fake_worktree_repo):
+            importlib.reload(central_daemon)
+            central_daemon.REAP_STATE = home / "reap_state.json"
+            central_daemon.REAP_SCAN_SLICE = 7
+            central_daemon.REAP_MIN_INTERVAL_S = 600.0
+            central_daemon._knob = lambda n, d=True: n == "reap_worktrees"
+            central_daemon._worktree_repo = fake_worktree_repo
+            central_daemon._live_exec_slugs = lambda *a, **k: frozenset()
+            central_daemon._disk_free_gb = lambda: 20.0
+
+            first = central_daemon._reap_dead_worktrees()
+            assert first == 0, first
+            first_n = len(calls)
+            assert first_n == 7, f"单次扫描没有按切片限制（扫了 {first_n} 个）"
+
+            # 节流：立刻再跑一次必须直接返回，不再扫
+            calls.clear()
+            central_daemon._reap_dead_worktrees()
+            assert calls == [], f"节流失效，立刻又扫了 {calls}"
+
+            # 把时间戳拨回过去，模拟下一次窗口：游标必须前进到新的一片
+            import json as _json
+            book = _json.loads((home / "reap_state.json").read_text())
+            assert book["last_scan_n"] == 7, book
+            assert book["last_scan_total"] == 60, book
+            book["last_ts"] = 0
+            (home / "reap_state.json").write_text(_json.dumps(book))
+            calls.clear()
+            central_daemon._reap_dead_worktrees()
+            assert len(calls) == 7, f"第二次扫描也没按切片: {calls}"
+
+            # 回收账本不能写进 state.json（否则覆盖磁盘闸状态）
+            state_path = home / "state.json"
+            if state_path.exists():
+                state = _json.loads(state_path.read_text())
+                assert "reap_cursor" not in state, state
+                assert "reap_last_ts" not in state, state
+
+    print("selftest ok: 回收按游标切片 + 节流，账本独立，不再每拍全扫拖垮机器。")
+
+
 def test_mcp_contract():
     """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
     import json as _json
@@ -4375,6 +4472,7 @@ if __name__ == "__main__":
     test_worker_alive_treats_zombie_as_dead()
     test_dead_pid_never_fabricates_worker_success()
     test_hydrate_drops_unverifiable_exec_slots()
+    test_reap_scan_is_sliced_and_throttled()
     test_mcp_contract()
     test_closure_rate()
     test_budget_gate()

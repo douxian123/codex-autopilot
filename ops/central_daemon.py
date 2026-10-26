@@ -2611,6 +2611,14 @@ RESOLVE_CONFLICT_CAP = 2       # 同一组冲突文件连续撞 N 次 → 停手
 RESOLVE_CONFLICT_BLOCK_H = 6   # 停手时长（小时），到期自动允许再试一次
 REAP_MIN_IDLE_H = float(os.environ.get("KG_REAP_MIN_IDLE_H", "3"))
 REAP_IDLE_PRESSURE_H = float(os.environ.get("KG_REAP_IDLE_PRESSURE_H", "0.25"))
+# 回收扫描必须是「切片」而不是「每拍全扫」。实测：242 个现场全扫一遍，
+# 每个还要跑 4~6 次 git 子进程，在 15s 的守护循环里等于常驻一个 CPU 黑洞，
+# load 会被自己顶到上百，机器反而更不稳。改成按游标轮流扫一片。
+REAP_SCAN_SLICE = int(os.environ.get("KG_REAP_SCAN_SLICE", "40"))
+# 常规节奏下一轮回收至少隔这么久再扫（压力模式下缩短）。空闲时不做无用功。
+REAP_MIN_INTERVAL_S = float(os.environ.get("KG_REAP_MIN_INTERVAL_S", "600"))
+REAP_INTERVAL_PRESSURE_S = float(
+    os.environ.get("KG_REAP_INTERVAL_PRESSURE_S", "90"))
 # 每轮 worktree 回收的时间预算：回收不能把派活饿死。
 REAP_TIME_BUDGET_S = float(os.environ.get("KG_REAP_TIME_BUDGET_S", "25"))
                                # worktree 至少闲置这么久才回收（按目录 mtime 与分支最后提交取较新者）
@@ -2642,6 +2650,32 @@ def _knob(name: str, default: bool = True) -> bool:
 def _workspace_root() -> Path:
     return Path(os.environ.get("KG_WORKSPACE_ROOT")
                 or (Path.home() / ".newmax" / "workspace"))
+
+
+REAP_STATE = RUNTIME / "reap_state.json"
+
+
+def _load_reap_state() -> dict:
+    """回收自己的小账本（节流时间戳 + 游标）。
+
+    单独存一个文件，不并进 state.json：回收跑在派发之后，如果拿一份旧快照
+    写回 state.json，会把派发阶段刚落的磁盘闸/工作槽状态覆盖掉。
+    """
+    try:
+        data = json.loads(REAP_STATE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _save_reap_state(data: dict) -> None:
+    try:
+        REAP_STATE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = REAP_STATE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(REAP_STATE)
+    except OSError as exc:
+        log(f"[safety] 回收账本写入失败（忽略）：{exc}")
 
 
 def _conflict_files(out: str) -> list:
@@ -2892,10 +2926,20 @@ def _reap_dead_worktrees() -> int:
         log(f"[safety] 磁盘可用 {(_free if _free is not None else -1):.2f}GB "
             f"< {REAP_PRESSURE_FREE_GB}GB：对零损失现场做回收（只删目录，分支保留）")
     reaped = 0
+    reap_state = _load_reap_state()
     try:
         root = _workspace_root()
         if not root.exists():
             return 0
+        # 节流：常规节奏 10 分钟扫一次就够，压力模式 90 秒。以前每 15 秒全扫一次，
+        # 「没人动」的时候它自己就是负载来源。
+        interval = (REAP_INTERVAL_PRESSURE_S if _pressure_reap
+                    else REAP_MIN_INTERVAL_S)
+        _last = float(reap_state.get("last_ts") or 0.0)
+        if time.time() - _last < interval:
+            return 0
+        reap_state["last_ts"] = time.time()
+        _save_reap_state(reap_state)
         live = _live_exec_slugs()
         # 磁盘偏紧时放宽「闲置多久算可回收」：默认 3 小时是为了不打扰正在
         # 进行的活；但今天刚收口完的现场只闲置 2 小时，卡在门槛上就一个都
@@ -2911,7 +2955,16 @@ def _reap_dead_worktrees() -> int:
         # 之前同步执行，于是 worker 掉下去后整轮都在等它，补派被拖住。
         # 超过预算就收工，剩下的留给下一轮 —— 回收是渐进目标，派活不能被它饿死。
         deadline = time.time() + REAP_TIME_BUDGET_S
-        for d in sorted(root.iterdir()):
+        candidates = sorted(root.iterdir())
+        # 游标切片：每次只扫一片，扫完从头轮回。242 个现场全扫要 4~6 次 git/个，
+        # 放在 15s 循环里就是常驻 CPU 黑洞；切片后单轮成本恒定，且每个现场最终都会被扫到。
+        start = int(reap_state.get("cursor") or 0) % max(1, len(candidates))
+        window = (candidates[start:] + candidates[:start])[:REAP_SCAN_SLICE]
+        reap_state["cursor"] = (start + len(window)) % max(1, len(candidates))
+        reap_state["last_scan_n"] = len(window)
+        reap_state["last_scan_total"] = len(candidates)
+        _save_reap_state(reap_state)
+        for d in window:
             if reaped >= max_round:
                 break
             if time.time() > deadline:
@@ -2923,6 +2976,14 @@ def _reap_dead_worktrees() -> int:
             if "resolve" in d.name:
                 continue
             if any(f"-{d.name}-" in f"-{s}-" for s in live):
+                continue
+            # 廉价预筛：先看目录 mtime。一个 worktree 只要有文件被写过，顶层目录
+            # 或子目录 mtime 就会前进；先按 mtime 砍掉明显「刚动过」的现场，
+            # 能省掉后面 4~6 次 git 子进程。最终判定仍由下面的 git 检查兜底。
+            try:
+                if d.stat().st_mtime > cutoff:
+                    continue
+            except OSError:
                 continue
             repo = _worktree_repo(d)
             if repo is None:
