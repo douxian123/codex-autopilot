@@ -3518,7 +3518,13 @@ def _reap_dead_worktrees() -> int:
             # 打开后只有「全部脏项都是未跟踪机器残留」才放行，已跟踪内容一律不变。
             assessment = workspace_guard.worktree_removable(
                 repo, d, branch, "main", commands="", backup_unique=False,
-                drop_scratch=_pressure_reap)
+                drop_scratch=_pressure_reap,
+                # 压力回收路径：如果一棵树唯一「脏」的是 backend/evidence 这类
+                # 已跟踪但可重建的产物（每个 worktree 各存一份 ~131MB，实测
+                # 50+ 现场合计约 6GB 完全重复），就从 HEAD 还原再判脏。
+                # 安全判据一条没放松：未跟踪的人间产物、未落提交、活进程
+                # 仍全部保留；还原后仍有任何脏项，这棵树照样留下。
+                restore_regenerable=_pressure_reap)
             if not assessment.get("ok"):
                 continue
             ok, detail = workspace_guard.remove_worktree(repo, d)
