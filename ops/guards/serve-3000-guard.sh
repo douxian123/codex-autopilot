@@ -308,11 +308,32 @@ restart_services() {
     return 0
   fi
   say "==> 重启 kg-backend kg-frontend（原因：${reason}）"
-  eval "$RESTART_CMD" >/dev/null 2>&1 || true
+  # 重启命令的失败**不许吞掉**。
+  #
+  # 2026-10-27 实测：这里原来是 `eval "$RESTART_CMD" >/dev/null 2>&1 || true`。
+  # 于是 pm2 restart 真失败（pm2 不在 PATH、EADDRINUSE、被 SIGKILL 打断）时，
+  # 脚本什么都看不到：它照样等 30 秒，然后打印「重启后仍未恢复」，把
+  # 「命令根本没跑起来」和「跑了但服务没起来」混成同一句话。
+  # 巡检日志里 19:2x 那两轮就是这个形态（restarts 46→47→48 一路涨却始终
+  # refused），最后靠人手动 pm2 restart 才恢复——这正是用户说的
+  # 「老是跑着跑着又要清一轮」。
+  local restart_out restart_rc
+  restart_out="$(eval "$RESTART_CMD" 2>&1)"
+  restart_rc=$?
+  if [[ "$restart_rc" -ne 0 ]]; then
+    say "==> 重启命令失败（exit=${restart_rc}）：$RESTART_CMD"
+    # 只回显前 5 行：pm2 的报错头部就够定位，全量会把每 60s 的日志灌满。
+    printf '%s\n' "$restart_out" | sed -n '1,5p' | sed 's/^/    /'
+  fi
   save_state "$(pm2_restarts kg-backend)" "$(now_epoch)"
   # 给服务一点启动时间再判定，避免把「正在启动」报成新一轮故障。
+  #
+  # 等待窗口从 30s 加到 90s：2026-10-27 高负载下实测后端从 restart 到真正
+  # listen 需要 20~25s，加上 pm2 先停旧进程的 kill_timeout(8s)，30s 窗口会
+  # 刚好卡在边界上，把「正在启动」报成「重启后仍未恢复」并发告警。
+  local budget="${KG_GUARD_RECOVERY_BUDGET:-90}"
   local waited=0
-  while [[ "$waited" -lt 30 ]]; do
+  while [[ "$waited" -lt "$budget" ]]; do
     sleep 3
     waited=$((waited + 3))
     if [[ "$(probe "http://127.0.0.1:$BACK_PORT/api/health")" == "ok 200" ]] \
@@ -321,7 +342,20 @@ restart_services() {
       return 0
     fi
   done
-  say "==> 重启后仍未恢复"
+  say "==> 重启后 ${budget}s 内仍未恢复（重启命令 exit=${restart_rc}）"
+  # 失败时把冷却起点清零。
+  #
+  # 原来无论成败都写 now_epoch，于是一次没救活的重启会让接下来 180s 的巡检
+  # 全部走「跳过重启：仍在冷却期内」——日志看起来每 60s 都在跑，实际上一分
+  # 半钟里什么都没做。2026-10-27 19:2x 的形态就是这样：重启失败 -> 冷却 ->
+  # 再失败 -> 再冷却，用户侧感知到的就是「卡住好几分钟，然后要清一轮」。
+  # 没救活就不该占着冷却窗口，下一拍必须允许再试。
+  save_state "$(pm2_restarts kg-backend)" 0
+  if [[ "$restart_rc" -ne 0 ]]; then
+    say "    先解决上面那条命令失败；否则下一轮巡检只会重复同一次失败。"
+  else
+    say "    命令本身成功但服务没起来：看 pm2 logs kg-backend --err（多半是启动期崩溃）。"
+  fi
   return 1
 }
 
@@ -431,6 +465,38 @@ if [[ "${#problems[@]}" -eq 0 ]] && live_source_drift; then
   problems+=("$EXPECTED_ROOT 的源码已偏离 .live-commit=$(cat "$EXPECTED_ROOT/.live-commit" 2>/dev/null)：被别的任务的分支快照覆盖了")
 fi
 
+# --- 3.55 常驻目录是否落后于 origin/main -------------------------------
+# 前一条 3.5 只回答「有没有被别人覆盖」，回答不了更常见的那件事：
+# **它压根没同步过最新主线**。
+#
+# 2026-10-27 实测就是这种形态：常驻目录 .live-commit=ed66200cba，而
+# origin/main 已经到了 7c2483056c，中间隔着 11 个提交，其中 stream.ts +199 行、
+# aiService.ts +208 行 —— 用户打开侧栏用的还是旧实现，然后反馈「改了怎么没反应」。
+# 端口 200、巡检「结论：正常」，两条都没错，因为它们量的不是这件事。
+#
+# 这里只做**读数**，不自动同步：同步要重启服务、会打断正在跑的 SSE 流，
+# 那是人的决定（也可能是 next 定时任务的事），守护脚本不该擅自做。
+# 所以它只加一行「落后 N 个提交」，让「服务健康但代码是旧的」这件事
+# 在日志里有一句话，而不是要靠人想起来去比对。
+LIVE_REPO="${KG_GUARD_REPO:-/Users/danta/.newmax/workspace/knowledge-graph}"
+live_lag=""
+if [[ -f "$EXPECTED_ROOT/.live-commit" ]] && [[ -d "$LIVE_REPO/.git" ]]; then
+  live_sha="$(cat "$EXPECTED_ROOT/.live-commit" 2>/dev/null)"
+  if [[ -n "$live_sha" ]]; then
+    if main_sha="$(git -C "$LIVE_REPO" rev-parse origin/main 2>/dev/null)" && [[ -n "$main_sha" ]]; then
+      if [[ "$live_sha" != "$main_sha" ]]; then
+        if lag="$(git -C "$LIVE_REPO" rev-list --count "$live_sha..$main_sha" 2>/dev/null)" \
+          && [[ "$lag" =~ ^[0-9]+$ ]] && [[ "$lag" -gt 0 ]]; then
+          live_lag="$lag"
+          say "常驻目录落后 origin/main ${lag} 个提交（.live-commit=${live_sha:0:10} / origin/main=${main_sha:0:10}）"
+        fi
+      else
+        say "常驻目录已是最新 origin/main=${main_sha:0:10}"
+      fi
+    fi
+  fi
+fi
+
 # --- 3.6 磁盘余量 -------------------------------------------------------
 # 磁盘写满时 vite 写不了缓存、sqlite 写不了库，表现是「时能打开时打不开」。
 # 2026-10-26 实测本机可用空间只剩 306MB。
@@ -456,7 +522,16 @@ fi
 
 if [[ "${#problems[@]}" -eq 0 ]]; then
   save_state "${cur_restarts:-0}" "$(last_restart_epoch)"
-  say "结论：正常"
+  # 「服务活着」和「跑的是最新代码」是两件事，别用一句话盖住。
+  # 落后不算故障（不告警、不重启），但必须在结论里说出来，否则
+  # 「结论：正常」会被读成「一切都没问题」——而用户看到的界面其实是旧的。
+  if [[ -n "$live_lag" ]]; then
+    say "结论：服务在线，但代码落后主线 ${live_lag} 个提交（跑的是 .live-commit=$(cat "$EXPECTED_ROOT/.live-commit" 2>/dev/null | cut -c1-10)）"
+    sync_hint origin/main
+    say "  上面这条会重启服务（打断正在跑的流），建议没人在用时再跑。"
+  else
+    say "结论：正常"
+  fi
   exit 0
 fi
 

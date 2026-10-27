@@ -139,6 +139,18 @@ for p in d:
 is_descendant_of() {
   local target="$1" root="$2" frontier="$2" next pid k depth=0 seen=" $2 "
   [[ -z "$root" ]] && return 1
+  # target 就是 root 本身时，它就是 pm2 亲手拉起的那一个，当然「属于它」。
+  #
+  # 2026-10-27 实测踩到，这条 bug 让每一次同步都把自己的服务杀掉：
+  # ecosystem.config.cjs 改用 `node --import tsx src/index.ts` 之后 tsx 不再
+  # fork 一层，pm2 持有的 pid 就是真正监听端口的那个。而下面这个循环只从
+  # 子进程开始找 target，root 自己永远不在候选里，于是 root==listener 被判成
+  # 「不是后代 = 孤儿」→ kill -TERM 掉健康进程 → 紧接着 startOrReload 再拉起。
+  # 用户看到的表象是「同步一次服务就抖一下」，pm2 restart 计数一路涨（本机
+  # 实测 kg-frontend 83 次 / kg-backend 52 次）。同步日志里那两行
+  # `清理占着 3000 的孤儿进程 60587（不属于 pm2 kg-frontend，pid=60587）`
+  # 就是它——自己杀自己。
+  [[ "$target" == "$root" ]] && return 0
   while [[ -n "$frontier" && "$depth" -lt 5 ]]; do
     next=""
     for pid in $frontier; do
