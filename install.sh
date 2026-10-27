@@ -217,6 +217,14 @@ cp "$REPO"/ops/*.py "$STAGE/ops/"
 # 运行时可能带非 .py 的配套文件（模板/示例配置）。一并复制，避免安装后缺文件。
 cp "$REPO"/ops/*.md "$STAGE/ops/" 2>/dev/null || true
 cp "$REPO"/ops/*.json "$STAGE/ops/" 2>/dev/null || true
+# 本机 launchd 定时任务的源文件（看门狗 / 快照 / hooks 看门狗 / 3000 巡检 /
+# 日志轮转）。它们以前散落在 ~/.codex-guard/ 这类「没有版本、没人升级」的位置，
+# install 永远写不到，于是发版之后它们还在跑几周前的代码。搬进版本目录后，
+# 下面 5.7 段会把 plist 改指到这里。
+if [ -d "$REPO/ops/guards" ]; then
+  cp -R "$REPO/ops/guards" "$STAGE/ops/"
+  chmod +x "$STAGE"/ops/guards/*.sh "$STAGE"/ops/guards/*.py 2>/dev/null || true
+fi
 cp "$REPO/preview-check.sh" "$STAGE/preview-check.sh"
 chmod +x "$STAGE/preview-check.sh"
 "$PY" - "$STAGE/.codex-autopilot-source.json" "$VERSION" "$SOURCE_COMMIT" <<'PYEOF'
@@ -541,6 +549,32 @@ ENTRYEOF
   chmod +x "$ENTRY.tmp-$$"
   mv "$ENTRY.tmp-$$" "$ENTRY"
   echo "已刷新定时回收入口（薄转发到 ${DEST}/ops/disk_reap.py）"
+fi
+
+# 5.7) 把本机所有「自动挡自己的」launchd 定时任务改指到这一版。
+#
+#   5.6 只救了 disk-reap 一条。2026-10-27 审计发现同类病灶还有 5 条：
+#
+#     com.danta.autopilot-watchdog      ~/.codex-guard/autopilot-watchdog.sh
+#     com.danta.codex-guard             ~/.codex-guard/snapshot.sh
+#     com.danta.codex-hooks-guard       ~/.codex/hooks/hooks-guard.sh
+#     com.danta.kg-serve-guard          ~/.kg-guard/serve-3000-guard.sh
+#     local.danta.codex-proxy-logrotate ~/.codex-proxy/log-rotate.sh
+#
+#   全部手工维护、全部不在任何仓、全部不会被 install 刷新。它们的源文件现在
+#   随版本目录一起发布（ops/guards/），改指由 ops/guards/repoint_launchd.py
+#   按 registry.json 统一执行：幂等、改前备份、逐条打印、只碰自己登记的 label。
+if [ -f "$DEST/ops/guards/repoint_launchd.py" ]; then
+  echo
+  echo "定时任务改指当前版本（watchdog / 快照 / hooks / 3000 巡检 / 日志轮转）…"
+  set +e
+  "$PY" "$DEST/ops/guards/repoint_launchd.py" --install
+  repoint_rc=$?
+  set -e
+  if [ "$repoint_rc" -ne 0 ]; then
+    echo "× 定时任务改指未全部完成（rc=${repoint_rc}）。"
+    echo "  只读复核：$PY $DEST/ops/guards/repoint_launchd.py --check"
+  fi
 fi
 
 # 6) 可选：用官方 CLI 刷新已安装插件，避免桌面端继续用旧缓存。

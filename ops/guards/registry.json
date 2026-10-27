@@ -1,0 +1,83 @@
+{
+  "_why": [
+    "这张表回答一个问题：本机 launchd 里，哪些定时任务是「自动挡自己的」，",
+    "以及它们各自应该从哪个版本化路径执行。",
+    "",
+    "历史根因（2026-10-27 实测）：这些脚本原本散落在 ~/.codex-guard/、",
+    "~/.codex/hooks/、~/.kg-guard/、~/.codex-proxy/ 这类「没有版本、也没人升级」",
+    "的位置。install.sh 只写 releases/<version>/，从不写它们，于是它们永远停在",
+    "第一次手工拷贝的那一版：代码修好、发版、守护进程生效，但这些每小时/每 15 分钟",
+    "跑一次的路径仍在跑几周前的旧逻辑。用户看到的表象是「跑着跑着就得清一轮」。",
+    "",
+    "修法：源文件住进版本目录（这里），install.sh 每次安装把 plist 的",
+    "ProgramArguments 改指到 releases/<version>/ops/... 并 reload。",
+    "这样「代码更新了但没人升级它」在结构上不可能再发生。"
+  ],
+  "entries": [
+    {
+      "label": "com.danta.autopilot-watchdog",
+      "script": "ops/guards/autopilot-watchdog.sh",
+      "siblings": ["ops/guards/reap-codesign-clone.py"],
+      "interval_s": 300,
+      "class": "repoint"
+    },
+    {
+      "label": "com.danta.codex-guard",
+      "script": "ops/guards/snapshot.sh",
+      "siblings": [],
+      "interval_s": 1800,
+      "class": "repoint"
+    },
+    {
+      "label": "com.danta.codex-hooks-guard",
+      "script": "ops/guards/hooks-guard.sh",
+      "siblings": [],
+      "interval_s": 900,
+      "class": "repoint"
+    },
+    {
+      "label": "com.danta.kg-serve-guard",
+      "script": "ops/guards/serve-3000-guard.sh",
+      "siblings": ["ops/guards/sync-live-3000.sh"],
+      "interval_s": 60,
+      "class": "repoint"
+    },
+    {
+      "label": "local.danta.codex-proxy-logrotate",
+      "script": "ops/guards/log-rotate.sh",
+      "siblings": [],
+      "interval_s": 600,
+      "class": "repoint"
+    },
+    {
+      "label": "com.danta.codex-disk-reap",
+      "script": "ops/disk_reap.py",
+      "siblings": [],
+      "interval_s": 3600,
+      "class": "repoint"
+    },
+    {
+      "label": "com.codex-autopilot.daemon",
+      "script": "ops/central_daemon.py",
+      "siblings": [],
+      "interval_s": 0,
+      "class": "managed",
+      "note": "由 install.sh 的 5.5 段改指并重启，这里只用于门禁核验。"
+    }
+  ],
+  "owned_prefixes": [
+    "~/plugins/codex-autopilot/",
+    "~/.codex-autopilot/",
+    "~/.codex-guard/",
+    "~/.kg-guard/",
+    "~/.codex/hooks/",
+    "~/.codex-proxy/"
+  ],
+  "registered_forwarders": [
+    {
+      "path": "~/.codex-autopilot/ops/disk_reap.py",
+      "heredoc_marker": "<<'ENTRYEOF'",
+      "note": "旧入口，保留作兼容；已改指版本目录后它不再被 launchd 直接调用。"
+    }
+  ]
+}

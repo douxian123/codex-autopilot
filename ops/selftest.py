@@ -88,6 +88,12 @@ def main():
         # 一旦有人在里面写实现，就会和 releases 里的实现各自腐烂。
         run([sys.executable, str(OPS / "test-reap-entry-forwards.py")],
             cwd=str(OPS.parent), check=True)
+        # launchd 入口新鲜度：同一类病一共 6 条（disk-reap 只是其中一条）。
+        # 这些脚本原来散在 ~/.codex-guard/ 这类「没有版本、没人升级」的位置，
+        # 发版之后它们还在跑几周前的代码。门禁要求：要么住在版本目录里，
+        # 要么是登记过的薄转发。单测用假 HOME 造现场，不碰真实 launchd。
+        run([sys.executable, str(OPS / "test-launchd-entry-freshness.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()
