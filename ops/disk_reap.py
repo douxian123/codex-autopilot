@@ -240,6 +240,24 @@ def _reap_kg_tmp(dry: bool = False, guard=None) -> int:
     return removed
 
 
+def _dry_orphan_residue(d) -> int:
+    """预演：只数会被删的孤儿残留，不删。"""
+    import workspace_guard as g
+    root = d._workspace_root()
+    if not root.exists():
+        return 0
+    n = 0
+    for child in sorted(root.iterdir()):
+        try:
+            if not child.is_dir() or child.is_symlink() or "resolve" in child.name:
+                continue
+        except OSError:
+            continue
+        if g.orphan_residue(child, d.ORPHAN_MIN_IDLE_H).get("ok"):
+            n += 1
+    return n
+
+
 def main():
     if os.environ.get("KG_REAP", "1").strip().lower() in ("0", "off", "false"):
         log("KG_REAP=0，跳过")
@@ -265,14 +283,18 @@ def main():
             finally:
                 d.workspace_guard.remove_worktree = orig
             t = _reap_kg_tmp(dry=True, guard=d.workspace_guard)
-            log(f"dry-run: 会回收 {n} 个 worktree / {t} 个 kg tmp -> {picked}")
+            o = _dry_orphan_residue(d)
+            log(f"dry-run: 会回收 {n} 个 worktree / {t} 个 kg tmp / {o} 个孤儿残留 -> {picked}")
         else:
             n = d._reap_dead_worktrees()
             k = d._reap_backend_orphans()
             t = _reap_kg_tmp(guard=d.workspace_guard)
+            # 顺序有讲究：必须在 worktree 回收之后。前者刚把树删掉的现场不会
+            # 变成孤儿；只有「删到一半失败」的现场才会落成孤儿，正是这一条接住它。
+            o = d._reap_orphan_residue()
             after = free_gb()
-            log(f"回收 worktree {n} 个 / 孤儿后端 {k} 个 / kg tmp {t} 个；"
-                f"磁盘 {before:.1f}G → {after:.1f}G")
+            log(f"回收 worktree {n} 个 / 孤儿后端 {k} 个 / kg tmp {t} 个 / "
+                f"孤儿残留目录 {o} 个；磁盘 {before:.1f}G → {after:.1f}G")
     except Exception as exc:
         log(f"回收异常（忽略）：{type(exc).__name__}: {exc}")
     return 0

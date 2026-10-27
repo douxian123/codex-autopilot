@@ -75,6 +75,15 @@ def main():
             cwd=str(OPS.parent), check=True)
         run([sys.executable, str(OPS / "test-land-build-only-todo.py")],
             cwd=str(OPS.parent), check=True)
+        # 孤儿残留回收：回收失败的现场会变成「不在册的目录」，主回收器看不见它。
+        # 这条断言的重点是「不许删人的东西」，所以给它一个干净的空目录做现场。
+        orphan_root = root / "orphan-residue"
+        orphan_root.mkdir()
+        # run() 的 env 是整体替换而非合并，所以要显式带上当前环境，
+        # 否则子进程会丢掉 PATH / PYTHONPATH 之类，失败信息还会指向别处。
+        run([sys.executable, str(OPS / "test-orphan-residue.py")],
+            cwd=str(OPS.parent), check=True,
+            env={**os.environ, "ORPHAN_TEST_ROOT": str(orphan_root)})
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()

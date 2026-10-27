@@ -13,10 +13,16 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 
 PROTECTED_NAMES = {"knowledge-graph", "kg-trunk", "kg-land-main"}
+# Directories that serve a live product surface rather than a task. They are not
+# git worktrees (they are deployed copies), so nothing else would protect them:
+# `kg-live-3000` is the copy the owner actually runs on 3000/3001, and it would
+# otherwise have become reclaimable the moment it sat idle for a day.
+PROTECTED_PREFIXES = ("kg-live-",)
 GENERATED_DIRS = (
     "frontend/node_modules",
     "backend/node_modules",
@@ -273,3 +279,104 @@ def remove_worktree(repo: Path, worktree: Path) -> tuple[bool, str]:
     result = run_git(repo, "worktree", "remove", str(worktree))
     detail = ((result.stdout or "") + (result.stderr or "")).strip()
     return result.returncode == 0, detail[-300:]
+
+
+# Machine-generated task directory names. Only names matching this are eligible
+# for orphan-residue reclamation, so a hand-made directory that happens to be
+# empty (or that someone parked `logs/` in) is never touched.
+MACHINE_TASK_DIR_RE = re.compile(r"^(?:kg[-_]|knowledge-graph[-_])")
+
+# Top-level dirs that are rebuildable build output when they appear at the root
+# of a worktree (not only under frontend/ or backend/). Vite writes the cache
+# into whichever node_modules it finds, and the root one is common in trees that
+# were never installed the standard way.
+ROOT_REBUILDABLE_DIRS = {"node_modules", "dist", ".vite", ".cache"}
+
+
+def _scratch_relative_only(worktree: Path) -> list[str] | None:
+    """All entries under `worktree` are machine scratch -> return their rel paths.
+
+    Returns None the moment one human-authored thing shows up. This is the whole
+    safety argument for reclaiming an orphan directory: we do not have to guess
+    whether an abandoned worktree still holds someone's work -- we only delete
+    when there is literally nothing in it but things we know were written by a
+    machine (build output, caches, SQLite sidecars, scratch markers).
+
+    Why this is needed at all (measured 2026-10-27): `git worktree remove`
+    fails with `Directory not empty` when the tree holds something git refuses
+    to delete. The directory then survives **unregistered** -- it is no longer
+    in `git worktree list`, so every downstream reaper skips it forever. 44 such
+    orphans had piled up in the workspace root, invisible to all of them.
+    """
+    if not worktree.is_dir() or (worktree / ".git").exists():
+        return None
+    found: list[str] = []
+    for entry in sorted(worktree.iterdir()):
+        rel = entry.name
+        if entry.is_symlink():
+            # A symlink points outside the tree and holds nothing restorable.
+            found.append(rel)
+            continue
+        if rel in ROOT_REBUILDABLE_DIRS:
+            # Rebuildable build output: one `npm i` recreates it.
+            found.append(rel)
+            continue
+        if entry.is_file():
+            if is_untracked_scratch(rel):
+                found.append(rel)
+                continue
+            return None
+        # A real directory is only acceptable when every file inside it is
+        # machine scratch too -- otherwise it may hold authored work.
+        for leaf in entry.rglob("*"):
+            if leaf.is_dir() or leaf.is_symlink():
+                continue
+            if not is_untracked_scratch(leaf.relative_to(worktree).as_posix()):
+                return None
+        found.append(rel)
+    return found
+
+
+def orphan_residue(worktree: Path, min_idle_h: float = 24.0) -> dict:
+    """Is this a reaped-then-abandoned worktree directory we may delete?
+
+    Only true when all of these hold, each of which has cost or destroyed real
+    work somewhere in this repo's history when skipped:
+      1. not protected, not the repo root;
+      2. not a git worktree any more (no `.git`) -- registered ones have owners;
+      3. name looks machine-generated (so hand-made dirs are never candidates);
+      4. idle past `min_idle_h` (a just-failed removal is retried by its owner);
+      5. no live process references it;
+      6. **every** entry inside is machine scratch (see `_scratch_relative_only`).
+    """
+    if worktree.name in PROTECTED_NAMES or worktree.name.startswith(PROTECTED_PREFIXES):
+        return {"ok": False, "reason": "protected"}
+    if not worktree.is_dir() or worktree.is_symlink():
+        return {"ok": False, "reason": "missing"}
+    if (worktree / ".git").exists():
+        return {"ok": False, "reason": "registered"}
+    if not MACHINE_TASK_DIR_RE.match(worktree.name):
+        return {"ok": False, "reason": "name"}
+    try:
+        idle_h = (time.time() - worktree.stat().st_mtime) / 3600.0
+    except OSError:
+        return {"ok": False, "reason": "stat"}
+    if idle_h < min_idle_h:
+        return {"ok": False, "reason": "recent"}
+    if process_reference(worktree):
+        return {"ok": False, "reason": "process"}
+    scratch = _scratch_relative_only(worktree)
+    if scratch is None:
+        return {"ok": False, "reason": "content"}
+    return {"ok": True, "reason": "residue", "scratch": ", ".join(scratch[:5])}
+
+
+def remove_orphan_residue(worktree: Path) -> tuple[bool, str]:
+    """Delete an orphan residue directory; never follow a symlink out of it."""
+    if not orphan_residue(worktree).get("ok"):
+        return False, "not-residue"
+    try:
+        shutil.rmtree(worktree)
+        return True, "removed"
+    except OSError as exc:
+        return False, str(exc)[-200:]

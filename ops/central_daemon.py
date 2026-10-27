@@ -3538,6 +3538,60 @@ def _reap_dead_worktrees() -> int:
     return reaped
 
 
+ORPHAN_MIN_IDLE_H = float(os.environ.get("KG_ORPHAN_MIN_IDLE_H", "24"))
+
+
+def _reap_orphan_residue(max_round: int = 30) -> int:
+    """回收「回收失败后留下的孤儿目录」。
+
+    为什么需要单独一条：`git worktree remove` 在树里还有 git 不肯删的东西时
+    会以 `Directory not empty` 失败，目录**原地留着**。而它此刻已经不在
+    `git worktree list` 里了 —— 于是 `_reap_dead_worktrees` 那一套
+    「扫登记在册的 worktree」永远轮不到它，它会安静地留到天荒地老。
+
+    2026-10-27 实测：工作区根下积了 44 个这样的孤儿目录（其中
+    `kg-growth-feedback-long-task-main` 只剩 `node_modules/.vite` 缓存，
+    4 个条目，却是一个多小时前就报过失败的现场）。
+
+    判据比 worktree 回收更严，因为这里没有 git 帮我们兜底：
+      - 名字必须是机器生成的（`kg-` / `knowledge-graph-` 前缀），手工目录一律不碰；
+      - 必须已经没有 `.git`（还登记着的现场有主人，不归这里管）；
+      - 必须闲置过 24h（刚失败的现场留给它的主人重试）；
+      - 没有活进程引用；
+      - **目录里每一个条目都必须是机器残留**（构建产物 / 缓存 / SQLite sidecar /
+        scratch 标记）。只要有一个是人写的文件，整棵跳过，一个字节都不动。
+    """
+    reaped = 0
+    try:
+        root = _workspace_root()
+        if not root.exists():
+            return 0
+        for d in sorted(root.iterdir()):
+            if reaped >= max_round:
+                break
+            try:
+                if not d.is_dir() or d.is_symlink():
+                    continue
+                if "resolve" in d.name:
+                    # 冲突容器目录由 resolve 流程自己收口，别抢它的活。
+                    continue
+            except OSError:
+                continue
+            assessment = workspace_guard.orphan_residue(d, ORPHAN_MIN_IDLE_H)
+            if not assessment.get("ok"):
+                continue
+            ok, detail = workspace_guard.remove_orphan_residue(d)
+            if ok:
+                reaped += 1
+                log(f"[safety] 回收孤儿残留目录 {d.name}"
+                    f"（回收失败后遗留、已无 .git、内容全是机器残留：{assessment.get('scratch')}）")
+            else:
+                log(f"[safety] 回收孤儿残留目录跳过 {d.name}：{detail}")
+    except Exception as exc:  # fail-open
+        log(f"[safety] 孤儿残留回收失败（忽略）：{exc}")
+    return reaped
+
+
 def _active_exec_session_count(jobs: dict) -> int:
     """Count only model sessions with a live PID.
 
@@ -3828,6 +3882,8 @@ def _run_cycle(dry: bool, max_land: int, deadline: float = None) -> dict:
     try:
         _reap_backend_orphans()
         _reap_dead_worktrees()
+        # 紧跟一条：回收失败的现场会变成「不在册的孤儿目录」，上面那条永远看不到它。
+        _reap_orphan_residue()
         _free = _disk_free_gb()
         if _free is None or _free < REAP_PRESSURE_FREE_GB:
             _git_gc_maintenance()
