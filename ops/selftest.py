@@ -5359,3 +5359,105 @@ if __name__ == "__main__":
     test_closure_rate()
     test_budget_gate()
     test_rotation_streaming()
+
+
+def test_reap_ignores_untracked_machine_scratch():
+    """回收器必须能穿透「未跟踪的机器残留」，但绝不动任何已跟踪内容。
+
+    2026-10-27 实测：这台机器 244 个 worktree / 224 个判为 dirty，回收器连续
+    几天每小时只能回收 0 个，磁盘反复被写爆、人只能反复清一轮。真正拦路的
+    不是人的工作，而是每棵树下都有的机器残留 —— 任意一个就让 `git status`
+    非空，于是 `worktree_removable` 永远返回 dirty：
+
+        .kg-task-env            82 棵树（new-task.sh 的 121 字节端口配置）
+        data/dev.db-shm/-wal    20 棵树（SQLite 的共享内存边车文件）
+        frontend/.verify-tmp/   21 棵树（浏览器门禁的临时目录）
+
+    这里锁住四条不变量：
+      1. 默认 OFF：不给参数就一个字节都不删（既有调用方行为不变）；
+      2. 打开后：只有「全部脏项都是未跟踪机器残留」时才清掉并放行回收；
+      3. 只要有一个已跟踪改动，即使打开了也必须继续判 dirty；
+      4. ops/truth/*.jsonl 这类「机器写的但已跟踪」的账本，永远不算残留。
+    """
+    import importlib
+    import sys
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import workspace_guard
+    importlib.reload(workspace_guard)
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-scratch-") as tmp:
+        base = Path(tmp)
+        repo = base / "repo"
+        repo.mkdir()
+        git(repo, "init", "-q", "-b", "main")
+        git(repo, "config", "user.email", "t@example.com")
+        git(repo, "config", "user.name", "t")
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "truth" / "ledger.jsonl").write_text('{"id":"L-1"}\n')
+        (repo / "src.txt").write_text("hi\n")
+        git(repo, "add", "ops/truth/ledger.jsonl", "src.txt")
+        git(repo, "commit", "-q", "-m", "seed")
+
+        def make_wt(name):
+            wt = base / name
+            branch = f"codex/{name}"
+            git(repo, "worktree", "add", "-q", "-b", branch, str(wt), "main")
+            return wt, branch
+
+        # --- 1. 只有未跟踪机器残留 ---
+        wt1, br1 = make_wt("scratch-only")
+        (wt1 / ".kg-task-env").write_text("KG_PORT_BASE=3700\n")
+        (wt1 / "frontend" / ".verify-tmp").mkdir(parents=True, exist_ok=True)
+        (wt1 / "frontend" / ".verify-tmp" / "h.mjs").write_text("// gate scratch\n")
+        (wt1 / "data").mkdir(exist_ok=True)
+        (wt1 / "data" / "dev.db-shm").write_text("sqlite shm\n")
+        assert workspace_guard.status(wt1), "前置条件：这棵树应当先被判为脏"
+
+        # 默认 OFF：必须原样保留，且仍判 dirty
+        before = workspace_guard.worktree_removable(
+            repo, wt1, br1, "main", commands="", backup_unique=False)
+        assert before["ok"] is False and before["reason"] == "dirty", before
+        assert (wt1 / ".kg-task-env").exists(), "默认必须一个字节都不删"
+
+        # 打开后：可以回收，且残留被清掉
+        after = workspace_guard.worktree_removable(
+            repo, wt1, br1, "main", commands="", backup_unique=False,
+            drop_scratch=True)
+        assert after["ok"] is True, after
+        assert after["reason"] == "scratch-only", after
+        assert not (wt1 / ".kg-task-env").exists(), "残留应当被清掉"
+
+        # --- 2. 有已跟踪改动：即使打开也必须拦住 ---
+        wt2, br2 = make_wt("human-edit")
+        (wt2 / ".kg-task-env").write_text("scratch\n")
+        (wt2 / "src.txt").write_text("human wrote this\n")
+        blocked = workspace_guard.worktree_removable(
+            repo, wt2, br2, "main", commands="", backup_unique=False,
+            drop_scratch=True)
+        assert blocked["ok"] is False and blocked["reason"] == "dirty", blocked
+        assert (wt2 / "src.txt").read_text() == "human wrote this\n", \
+            "人的改动一个字都不能丢"
+
+        # --- 3. 已跟踪的机器账本，不算残留 ---
+        wt3, br3 = make_wt("tracked-ledger")
+        (wt3 / "ops" / "truth" / "ledger.jsonl").write_text('{"id":"L-2"}\n')
+        ledger_blocked = workspace_guard.worktree_removable(
+            repo, wt3, br3, "main", commands="", backup_unique=False,
+            drop_scratch=True)
+        assert ledger_blocked["ok"] is False, ledger_blocked
+        assert ledger_blocked["reason"] == "dirty", ledger_blocked
+        assert '{"id":"L-2"}' in (wt3 / "ops" / "truth" / "ledger.jsonl").read_text()
+
+        # --- 4. 白名单本身：已知残留命中，真实源码不命中 ---
+        for good in (".kg-task-env", "data/dev.db-shm", "data/dev.db-wal",
+                     "frontend/.verify-tmp/x.mjs", "ops/__pycache__/a.pyc"):
+            assert workspace_guard.is_untracked_scratch(good), good
+        for bad in ("src.txt", "frontend/src/App.tsx",
+                    "ops/truth/ledger.jsonl", "ops/tasks/inbox.jsonl",
+                    "backend/package.json", "docs/PROJECT_STATUS.md"):
+            assert not workspace_guard.is_untracked_scratch(bad), bad
+
+    print("selftest ok: 未跟踪机器残留可被回收穿透，已跟踪内容（含账本）一律拦住。")

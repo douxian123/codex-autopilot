@@ -3506,15 +3506,28 @@ def _reap_dead_worktrees() -> int:
             brc, branch, _ = _git(d, "rev-parse", "--abbrev-ref", "HEAD")
             if brc != 0 or not branch or branch in ("HEAD", "main"):
                 continue
+            # drop_scratch 只在这一条路径上打开，而且只在压力模式打开。
+            # 位置很重要：这里是「回收闲置现场」的扫描，判据是「这棵树还有没有
+            # 人该保住的东西」。上面 _cleanup_exec 那条路是交付后收尾，绝不能开，
+            # 那里的语义是「刚交付完，别节外生枝」。
+            #
+            # 2026-10-27 实测：244 棵 worktree 有 224 棵判 dirty，回收器连续几天
+            # 每小时回收 0 个，磁盘被反复写爆。拦路的不是人的工作，而是每棵树下
+            # 的机器残留（.kg-task-env 82 棵 / data/dev.db-shm 20 棵 /
+            # frontend/.verify-tmp 21 棵）—— 任意一个就让 git status 非空。
+            # 打开后只有「全部脏项都是未跟踪机器残留」才放行，已跟踪内容一律不变。
             assessment = workspace_guard.worktree_removable(
-                repo, d, branch, "main", commands="", backup_unique=False)
+                repo, d, branch, "main", commands="", backup_unique=False,
+                drop_scratch=_pressure_reap)
             if not assessment.get("ok"):
                 continue
             ok, detail = workspace_guard.remove_worktree(repo, d)
             if ok:
                 reaped += 1
+                scratch = assessment.get("scratch") or ""
+                note = f"；已清机器残留 {scratch}" if scratch else ""
                 log(f"[safety] 回收闲置 worktree {d.name}"
-                    f"（分支 {branch} 无未落提交；分支本身保留）")
+                    f"（分支 {branch} 无未落提交；分支本身保留{note}）")
                 if _pressure_reap:
                     # 只回收目录，分支一律保留：重装/回溯时仍能从分支找回全部内容。
                     log(f"[safety] 保留分支 {branch}（压力回收不删分支）")
