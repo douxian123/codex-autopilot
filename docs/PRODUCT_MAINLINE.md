@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-27 22:38:19　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-10-27 22:53:06　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -47,7 +47,6 @@
 
 ## 最近在推进
 
-- [在途] 真实桌面证据：open ~/Applications/CodexAutopilotCompanion.app -> exit 0，进程 pid=86143；原生 dispatch -> thread_id=01a14ade-cd10-7ae0-9e59-f63e81317eaf/turn_id=01a14ade-ceae-7790-989c-25b67e0815b4，history status completed；companion_api status enabled=true native.can_dispatch=true；codex plugin list 显示 preview.11。A-0005 仍保留真人桌面验收，机器证据记为 A-0044。
 - [在途] 补产品价值立足点文档 PRODUCT_VALUE.md，明确北极星闭环率与人工验收边界，更新 mainline 与判断逻辑，并综合主线；A-0005/A-0006/A-0007/A-0008/A-0022 仍待真人桌面验收
 - [在途] 产品价值页、北极星闭环率、机器/人工验收边界已固化；6 条有证据的机器验收项同步 verified，A-0027 因无证据保持 todo；preview-check/panel-logic/panel-render/selftest/closure_rate 均过；A-0005/A-0006/A-0007/A-0008/A-0022 待真人桌面验收
 - [在途] 端到端落位验收已走到台账确认：入口->归类->账本->面板逻辑检查全部闭环
@@ -57,11 +56,10 @@
 - [在途] 取得可复核边界证据：System Events 的 CodexAutopilotCompanion 辅助功能树含 AXMenuBarItem description=Codex 自动挡，但 ControlCenter 状态项/屏上 CGWindowList 均无对应菜单栏图标窗口；结论为“已注册但当前虚拟桌面不渲染状态项”，A-0005 保留真人桌面验收
 - [已落盘] @ 243f0dd934 codex/install-immutable-source-20261025 验证门禁通过，已落盘 main @ 243f0dd934；改动 5 个文件：docs/PREVIEW.md（+9/-3）、install.sh（+35/-3）、ops/central_daemon.py（+35/-6）、ops/selftest.py（+121/-6）、plugin/.codex-plugin/plugin.json（+1/-1）｜5 files changed, 201 insertions(+), 19 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ aa875f742f codex/remove-accidental-conflict-backup-20261025 验证门禁通过，已落盘 main @ aa875f742f；改动 1 个文件：ops/tasks/conflict_burden.json.bak-codex-20261025-042835（+0/-11）｜1 file changed, 11 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ 145970ba94 codex/reap-regenerable-on-49-20261027 验证门禁通过，已落盘 main @ 145970ba94；改动 3 个文件：ops/central_daemon.py（+7/-1）、ops/selftest.py（+67/-0）、ops/workspace_guard.py（+48/-0）｜3 files changed, 122 insertions(+), 1 deletion(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0034` [P0] 真实桌面宿主原生派活：dispatch 建 native thread/turn/section
-  - 证据：python3 ops/codex_native.py dispatch --cwd /tmp --prompt "只回复两个字：收到。不要改任何文件，不要运行任何命令。" --section "Codex 自动挡真机验证" -> ok true; thread_id=01a147a9-b3ca-7412-80ff-2dc35cb816a1; turn_id=01a147a9-…
 - `A-0036` [P0] preview.10 机器全量验收：自检/面板逻辑/真实渲染/原生直连/安装产物全部通过
   - 证据：preview-check.sh --no-install -> 0 failures (version=0.6.0-preview.10); python3 ops/selftest.py -> exit 0; python3 ops/panel_logic_check.py -> all pass; AUTOPILOT_CHROMIUM=... python3 ops/pa…
 - `A-0037` [P1] Companion 真机运行与环境入口就绪（进程、服务菜单、通知、截图快捷键、拖拽入口均有真实注册）
@@ -83,6 +81,8 @@
 - `A-0047` [P1] codex/install-immutable-source-20261025 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0048` [P1] codex/remove-accidental-conflict-backup-20261025 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0049` [P1] codex/reap-regenerable-on-49-20261027 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
@@ -145,11 +145,12 @@
 - `A-0046` [P1] Companion 作为 UIElement 菜单栏应用在系统注册且驾驶舱可打开（机器自证）
 - `A-0047` [P1] codex/install-immutable-source-20261025 落盘验收
 - `A-0048` [P1] codex/remove-accidental-conflict-backup-20261025 落盘验收
+- `A-0049` [P1] codex/reap-regenerable-on-49-20261027 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：6 条
-- 累计落盘：11 条
+- 累计落盘：12 条
 - 未决问题：1 条
-- 已验收：38 条
+- 已验收：39 条
 

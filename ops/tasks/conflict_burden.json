@@ -1,5 +1,5 @@
 {
- "main": "6392778870d8e2d70267db70f6d0f3fc816f8f1a",
+ "main": "aca6fbdf2483fee58c5ec363e41ccad893a7ccf3",
  "branches": [
   "codex/auto-close-identity-gate-20261024",
   "codex/disk-admission-clean-20261027",
@@ -13,7 +13,7 @@
   "codex/disk-admission-clean-20261027": 3,
   "codex/disk-admission-preview29-20261027": 8,
   "codex/disk-reap-into-repo": 5,
-  "codex/reap-identical-tracked-20261027": 2,
+  "codex/reap-identical-tracked-20261027": 3,
   "codex/slow-model-routing": 4
  }
 }
