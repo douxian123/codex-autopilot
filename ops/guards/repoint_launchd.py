@@ -126,6 +126,48 @@ def desired_program_args(script: Path, current: list[str]) -> list[str]:
     return [interp, str(script)]
 
 
+#: 只应在安装期出现一次的开关。它一旦留在 plist 里，每次开机和 KeepAlive
+#: 拉起都会重跑一遍安装动作（重写 plist、reload 自己），把常驻进程变成安装器。
+INSTALL_ONLY_FLAGS = ("--install", "--reinstall", "--force-reinstall")
+
+
+def swap_script_keep_args(script: Path, current: list[str]) -> list[str]:
+    """只换「脚本路径」这一段，其余参数原样保留。
+
+    为什么必须有这个函数（真实事故，2026-10-27 实测）
+    ------------------------------------------------
+    `com.codex-autopilot.daemon` 这条 plist 是
+        [python3.14, releases/<v>/ops/central_daemon.py, --loop, --interval, 15, --max-land, 3]
+    早前 `class: managed` 分支把 desired 直接算成 `[str(script)]` —— 解释器没了，
+    `--loop` 也没了。改指之后 plist 变成「直接执行一个 .py」，launchd 报一遍
+    exec format error 就放弃，守护进程静默停摆，而改指脚本照样打印「✓ 已改指」。
+    用户看到的是「自动挡突然不干活了」，现场却全是绿的。
+
+    所以 managed 分支不能自己拼 argv，而必须在原 argv 上做「版本目录替换」：
+    找到那个以本条登记的 script 相对路径结尾的参数，换成新路径，别的一个字不动。
+    """
+    suffix = "/" + script.parent.name + "/" + script.name
+    out: list[str] = []
+    replaced = False
+    for arg in current:
+        if arg in INSTALL_ONLY_FLAGS:
+            continue
+        if not replaced and arg.endswith(suffix):
+            out.append(str(script))
+            replaced = True
+            continue
+        out.append(arg)
+    if not replaced:
+        return desired_program_args(script, current)
+    if not out or "python" not in out[0] or not Path(out[0]).exists():
+        # 解释器丢了或被换成了不存在的路径：按通用规则补回去。
+        regen = desired_program_args(script, current)
+        out = [regen[0]] + [a for a in out if not a.startswith("/")] or [regen[0], str(script)]
+        if str(script) not in out:
+            out.insert(1, str(script))
+    return out
+
+
 def _reload(label: str, plist_path: Path) -> tuple[bool, str]:
     domain = f"gui/{os.getuid()}"
     subprocess.run(["launchctl", "bootout", f"{domain}/{label}"],
@@ -167,7 +209,10 @@ def plan(home: Path, only: list[str] | None = None) -> list[dict]:
             # 由 install.sh 的 5.5 段负责；这里只核验它确实指着当前版本。
             ok = any(str(script) == arg for arg in row["current"])
             row["state"] = "ok" if ok else "stale"
-            row["desired"] = [str(script)]
+            # stale 时不能只写脚本路径 —— 那会把 `--loop` 之类的常驻参数抹掉，
+            # 见 swap_script_keep_args 的注释（2026-10-27 守护进程静默停摆）。
+            row["desired"] = (swap_script_keep_args(script, row["current"])
+                              if row["current"] else desired_program_args(script, row["current"]))
             rows.append(row)
             continue
         if not script.exists():
