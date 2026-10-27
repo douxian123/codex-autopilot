@@ -3207,6 +3207,56 @@ def test_model_channel_identity_and_dead_channel_fallback():
           "全通道不可用时本拍不派活并记成可续跑的通道失败；探活关闭时放行。")
 
 
+def test_relaunch_never_reuses_dead_channel():
+    """每一次真起会话（含重试重挂）都必须重新确认通道活着。
+
+    2026-10-27 现场：装好修复、探活已经改派 aibvv 之后，live 上仍然出现
+    `codex exec ... -m ok8888@deepseek-v4.1-flash` 的进程 —— 因为重试重挂走的是
+    `_exec_command(job)`，用的是 job 里缓存的旧模型名，绕过了派发口的探活。
+    结果一条死通道能在 6 次重试里再烧 6 遍 403。
+    """
+    import importlib
+    import sys
+    from unittest import mock
+    from pathlib import Path
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    dead = "ok8888@deepseek-v4.1-flash"
+    alive = "aibvv@deepseek-v4.1-flash"
+    job = {
+        "id": "L-9200", "item": {"id": "L-9200", "kind": "bug", "title": "t"},
+        "cfg": {"fast_model": dead, "slow_model": dead, "reasoning_effort": "medium",
+                "sandbox": "workspace-write"},
+        "worktree": "/tmp", "codex": ["codex"], "model": dead,
+    }
+    # main() 里为了离线可跑把探活整体关了；本用例验的正是「探活开着时」的行为。
+    with mock.patch.dict(os.environ, {"KG_MODEL_PROBE": "on"}), \
+         mock.patch.object(central_daemon, "_probe_model",
+                           side_effect=lambda m: m != dead), \
+         mock.patch.object(central_daemon, "_model_catalog_slugs", return_value=[]):
+        cmd = central_daemon._exec_command(job)
+    joined = " ".join(cmd)
+    if dead in joined:
+        raise AssertionError(f"重挂仍然把死通道写进了命令行: {cmd}")
+    if alive not in joined:
+        raise AssertionError(f"重挂没有改派到活通道: {cmd}")
+
+    # 通道都活着时必须原样沿用，不能因为探活就无谓换模型。
+    job2 = dict(job, model=alive)
+    with mock.patch.dict(os.environ, {"KG_MODEL_PROBE": "on"}), \
+         mock.patch.object(central_daemon, "_probe_model", return_value=True), \
+         mock.patch.object(central_daemon, "_model_catalog_slugs", return_value=[]):
+        cmd2 = central_daemon._exec_command(job2)
+    if alive not in " ".join(cmd2):
+        raise AssertionError(f"通道活着却被换掉了: {cmd2}")
+    print("selftest ok: 每次起会话（含重试重挂）都重新确认通道可用，死通道不再被复用。")
+
+
 def test_exec_model_fallback_relaunch_is_async():
     """A balance fallback must relaunch without blocking the daemon loop."""
     import importlib
@@ -5288,6 +5338,7 @@ if __name__ == "__main__":
     test_auto_exec()
     test_exec_model_balance_fallback()
     test_model_channel_identity_and_dead_channel_fallback()
+    test_relaunch_never_reuses_dead_channel()
     test_exec_model_fallback_relaunch_is_async()
     test_parallel_exec_slots()
     test_disk_hold_withholds_worker_restart()

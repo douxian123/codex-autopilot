@@ -2003,9 +2003,24 @@ def _prepare_exec(item: dict, cfg: dict, blocked: dict,
 
 
 def _exec_command(job: dict) -> list:
-    """Build the Codex CLI command for one prepared job."""
+    """Build the Codex CLI command for one prepared job.
+
+    这里是**每一次真正起会话**的唯一出口 —— 首次派发、限流重挂、额度降级重挂、
+    基础设施退避重试、守护重启后的接管，全都走它。所以「通道此刻还活着吗」必须
+    在这里再确认一次：只在派发口查一次是不够的，重挂会沿用 job 里缓存的旧模型名，
+    于是一条死通道能在重试里再烧 6 次、每次都是 403。探活结果带 TTL 缓存，重复
+    调用不打上游。
+    """
     cfg = job["cfg"]
     wt = Path(job["worktree"])
+    _cached_model = str(job.get("model") or "").strip()
+    if _cached_model and _model_probe_enabled() and _probe_model(_cached_model) is False:
+        _live = _pick_live_model(_cached_model, extra=(
+            str(cfg.get("slow_model") or ""), str(cfg.get("fast_model") or "")))
+        if _live:
+            log(f"[exec] {job.get('id') or '?'} 重挂时发现通道 {_cached_model} 已不可用，"
+                f"改用 {_live}")
+            job["model"] = _live
     cmd = [*job["codex"], "exec", "-C", str(wt), "-s", cfg["sandbox"],
            "--skip-git-repo-check"]
     for d in cfg.get("add_dirs") or []:
