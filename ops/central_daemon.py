@@ -55,6 +55,8 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 # ---- 受控子进程执行器（说明见 ops/proc.py 顶部）---------------------------
@@ -1346,6 +1348,231 @@ def classify_exec_model_fallback(log_path) -> bool:
     return bool(EXEC_MODEL_FALLBACK_PATTERN.search(text))
 
 
+# ------------------------------------------------------------------ 模型通道
+#
+# 2026-10-27 事故（用户主诉「跑着跑着就要清一轮」的第二个结构性根因）：
+# `ops/central.config.json` 里 fast_model 与 slow_model 被填成了**同一条**通道
+# （ok8888@deepseek-v4.1-flash，后台订阅已到期）。旧判据用「model 字符串是否不同」
+# 决定要不要降级，两者同名 → 降级永远不成立 → 每条任务都撞 403
+# SUBSCRIPTION_NOT_FOUND，被记成 codex_exit_1「这需求做不出来」永久封死。
+# 机器看上去在跑心跳，实际上一张图、一行代码都没产出，用户体感就是「又卡死了」。
+#
+# 修法不是再改一次配置（共享检出只读，且配置随时会再被改坏），而是让执行器自己
+# 具备三个能力：
+#   1) `_channel_key()`：按 `@` 前的 provider 认「通道」，而不是按模型名；
+#   2) `_probe_model()`：派活前对候选通道发一次极小请求探活（结果带 TTL 缓存，
+#      探不到就当「未知」放行，绝不因为探活失败而停摆）；
+#   3) `_pick_live_model()`：想要的那条通道死了，就按 `KG_MODEL_FALLBACK_ORDER`
+#      换一条同族活通道；全死则本拍不派活并如实留痕，而不是派一个必死的会话。
+MODEL_PROBE_TTL = float(os.environ.get("KG_MODEL_PROBE_TTL", "300"))
+MODEL_PROBE_TIMEOUT = float(os.environ.get("KG_MODEL_PROBE_TIMEOUT", "12"))
+DEFAULT_MODEL_FALLBACK_ORDER = "aibvv,go,keke-daycard,keketoken"
+# 探活结果缓存：{model: (ts, alive|None)}，进程内即可，重启重探。
+_MODEL_PROBE_CACHE: dict = {}
+_MODEL_PROBE_STATS = {"probed": 0, "dead": 0, "unknown": 0}
+
+
+def _channel_key(model) -> str:
+    """`aibvv@deepseek-v4.1-flash` -> `aibvv`；没有 `@` 时整串当通道名。"""
+    text = str(model or "").strip().lower()
+    return text.split("@", 1)[0].strip() if "@" in text else text
+
+
+def _model_family(model) -> str:
+    """`aibvv@deepseek-v4.1-flash` -> `deepseek-v4.1-flash`（便于同族换通道）。"""
+    text = str(model or "").strip().lower()
+    return text.split("@", 1)[1].strip() if "@" in text else ""
+
+
+def _codex_config_path() -> Path:
+    return Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")) / "config.toml"
+
+
+def _codex_provider_base_url() -> str:
+    """从 ~/.codex/config.toml 读 model_providers.*.base_url（探活着陆点）。"""
+    try:
+        text = _codex_config_path().read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    match = re.search(r'^\s*base_url\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    return (match.group(1).strip() if match else "")
+
+
+def _model_catalog_slugs() -> list:
+    """模型目录里的全部 slug；读不到返回空列表（调用方据此退化为配置值）。"""
+    candidates = []
+    env_path = os.environ.get("KG_MODEL_CATALOG")
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+    try:
+        text = _codex_config_path().read_text(encoding="utf-8", errors="replace")
+        match = re.search(r'^\s*model_catalog_json\s*=\s*"([^"]+)"',
+                          text, re.MULTILINE)
+        if match:
+            candidates.append(Path(match.group(1)).expanduser())
+    except OSError:
+        pass
+    for path in candidates:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        models = data.get("models") if isinstance(data, dict) else data
+        if not isinstance(models, list):
+            continue
+        slugs = [str(m.get("slug") or m.get("id") or "").strip()
+                 for m in models if isinstance(m, dict)]
+        slugs = [s for s in slugs if s]
+        if slugs:
+            return slugs
+    return []
+
+
+def _model_probe_enabled() -> bool:
+    """探活开关：默认开；离线门禁/断网环境用 KG_MODEL_PROBE=off 关掉（关掉=未知=放行）。"""
+    return str(os.environ.get("KG_MODEL_PROBE", "on")).strip().lower() not in (
+        "0", "off", "false", "no")
+
+
+def _probe_model(model: str) -> bool | None:
+    """对一条通道发一次极小请求探活。
+
+    返回 True=活着 / False=明确不可用（欠费、订阅缺失、鉴权拒绝）/ None=未知
+    （没开探活、代理地址未知、网络抖动）。None 必须当成「可以用」——执行器的
+    默认姿态是继续干活，不能因为探活这件辅助事情失败就让整台机器停摆。
+    """
+    slug = str(model or "").strip()
+    if not slug or not _model_probe_enabled():
+        return None
+    now = time.time()
+    cached = _MODEL_PROBE_CACHE.get(slug)
+    if cached and now - float(cached[0]) < MODEL_PROBE_TTL:
+        return cached[1]
+    if not _codex_provider_base_url():
+        _MODEL_PROBE_CACHE[slug] = (now, None)
+        return None
+    alive = None
+    payload = json.dumps({
+        "model": slug,
+        "input": "ok",
+        "max_output_tokens": 8,
+        "stream": False,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        _codex_provider_base_url().rstrip("/") + "/responses",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST")
+    _MODEL_PROBE_STATS["probed"] += 1
+    try:
+        with urllib.request.urlopen(req, timeout=MODEL_PROBE_TIMEOUT) as resp:
+            body = resp.read(4096).decode("utf-8", errors="replace")
+            if resp.status >= 400:
+                alive = False
+            else:
+                # 200 但 body 里带非 null error 也算不可用；读不出结构就当可用
+                # （宁放行不误杀：探活是辅助手段，不能成为新的单点故障）。
+                try:
+                    parsed = json.loads(body)
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, dict) and parsed.get("error"):
+                    alive = False
+                    _MODEL_PROBE_STATS["dead"] += 1
+                else:
+                    alive = True
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read(1024).decode("utf-8", errors="replace")
+        except OSError:
+            pass
+        if exc.code in (401, 402, 403, 429) or EXEC_MODEL_FALLBACK_PATTERN.search(detail):
+            # 明确是通道侧没钱/没订阅/被拒 —— 这就是「这条通道不能派活」。
+            alive = False
+            _MODEL_PROBE_STATS["dead"] += 1
+        else:
+            alive = None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        alive = None
+    if alive is None:
+        _MODEL_PROBE_STATS["unknown"] += 1
+    _MODEL_PROBE_CACHE[slug] = (now, alive)
+    return alive
+
+
+def _fallback_order() -> list:
+    raw = os.environ.get("KG_MODEL_FALLBACK_ORDER", DEFAULT_MODEL_FALLBACK_ORDER)
+    return [p.strip().lower() for p in raw.split(",") if p.strip()]
+
+
+def _live_model_candidates(family: str = "", extra=()) -> list:
+    """按「同族其它通道 → 兜底顺序」给出候选模型，过滤掉探活明确死的。
+
+    顺序先按 provider 优先级，再按模型目录里真实存在的 slug 落地，避免拼出
+    `aibvv@gpt-6-astra` 这种目录里根本没有的组合。
+    """
+    family = str(family or "").strip().lower()
+    slugs = _model_catalog_slugs()
+    by_provider: dict = {}
+    for slug in slugs:
+        by_provider.setdefault(_channel_key(slug), []).append(slug)
+
+    def best_for(provider: str) -> str:
+        options = by_provider.get(provider) or []
+        for slug in options:
+            if family and _model_family(slug) == family:
+                return slug
+        if options:
+            return options[0]
+        # 读不到模型目录（离线门禁、目录文件被换掉）时，按 provider + 当前族
+        # 拼一条候选。这样「配置把 fast/slow 都写死成同一条死通道」时仍有路可走，
+        # 而不是因为读不到目录就退化成「无路可走」。
+        return f"{provider}@{family}" if family else ""
+
+    ordered = []
+    for provider in _fallback_order():
+        slug = best_for(provider)
+        if slug:
+            ordered.append(slug)
+    for slug in extra:
+        if slug:
+            ordered.append(str(slug).strip())
+    seen, out = set(), []
+    for slug in ordered:
+        key = slug.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if _probe_model(slug) is False:
+            log(f"[exec] 通道 {slug} 探活失败（欠费/无订阅/被拒），跳过")
+            continue
+        out.append(slug)
+    return out
+
+
+def _pick_live_model(want, extra=()) -> str | None:
+    """挑一条此刻真的能用的模型；全不可用返回 None（本拍不派活）。
+
+    这是「跑着跑着就卡住」的第二根因的正面修法：派活前先确认通道活着。
+    以前是把死通道原样交出去，等 30 分钟后从日志里看到 403
+    SUBSCRIPTION_NOT_FOUND，再当成「这需求做不出来」封死。
+    """
+    want = str(want or "").strip()
+    if want and _probe_model(want) is not False:
+        return want
+    if want:
+        log(f"[exec] 目标通道 {want} 探活失败（欠费/无订阅/被拒），改挑同族/兜底活通道")
+    for slug in _live_model_candidates(_model_family(want), extra=tuple(extra)):
+        if _probe_model(slug) is not False:
+            log(f"[exec] 改用活通道 {slug}")
+            return slug
+    if want:
+        log("[exec] 所有模型通道都不可用（欠费/无订阅），本拍不派活；"
+            "补上额度或修好代理后下一拍自动继续（不记成需求做不出来）")
+    return None
+
+
 def _disk_holds_restart(rid: str, attempt: int = 0) -> bool:
     """低盘时也不许「重启/重派」worker，不只是不许首次派发。
 
@@ -1364,13 +1591,44 @@ def _disk_holds_restart(rid: str, attempt: int = 0) -> bool:
 
 
 def _should_fallback_to_slow_model(job: dict, cfg: dict, log_path: Path) -> bool:
-    """Return whether a provider-balance failure should retry on slow_model."""
-    return bool(
-        not job.get("model_fallback_used")
-        and cfg.get("slow_model")
-        and job.get("model") != cfg["slow_model"]
-        and classify_exec_model_fallback(log_path)
-    )
+    """Return whether a provider-balance failure should retry on another channel.
+
+    判据是「通道不同」，不是「模型字符串不同」。旧判据在 fast_model 与
+    slow_model 配成同一条通道时恒为 False —— 于是降级变成空操作，撞上 403
+    SUBSCRIPTION_NOT_FOUND 的任务直接被记成做不出来、永久封死。这正是
+    2026-10-27 用户看到的「跑着跑着就不动了，只能清一轮」。
+
+    现在要求三件事同时成立：本次失败确实是通道/额度问题；这条任务还没降级过；
+    确实存在另一条**可用**通道可切（探活确认；探不到按可用处理）。
+    """
+    if job.get("model_fallback_used"):
+        return False
+    if not classify_exec_model_fallback(log_path):
+        return False
+    return _next_fallback_model(cfg, job.get("model")) is not None
+
+
+def _fallback_targets(cfg: dict, current_model) -> list:
+    """降级时按序尝试的模型列表：配置的慢/快通道在前，其后是兜底顺序里的活通道。"""
+    configured = [str(cfg.get("slow_model") or ""), str(cfg.get("fast_model") or "")]
+    configured = [c for c in configured if c.strip()]
+    targets = list(configured)
+    for slug in _live_model_candidates(_model_family(current_model),
+                                       extra=tuple(configured)):
+        if slug not in targets:
+            targets.append(slug)
+    return targets
+
+
+def _next_fallback_model(cfg: dict, current_model) -> str | None:
+    """选一条与当前通道不同的可用模型；都没有则返回 None（本拍不派活）。"""
+    current = _channel_key(current_model)
+    for candidate in _fallback_targets(cfg, current_model):
+        if _channel_key(candidate) == current:
+            continue
+        if _probe_model(candidate) is not False:
+            return candidate
+    return None
 
 
 def classify_exec_throttled(log_path) -> bool:
@@ -1432,6 +1690,64 @@ def _preserve_exec(repo, wt: Path, branch: str, rid: str, reason: str, blocked: 
             "worktree": str(wt), "commit": commit, "preserve": bool(changed)}
 
 
+def _model_required(cfg: dict) -> bool:
+    """配置里到底有没有指定模型通道。
+
+    没指定时返回 False —— 这时应该让 Codex CLI 用它自己的默认模型，执行器不该
+    以「没有可用通道」为由拦下派发。只有「配了通道但通道全死」才是本拍不派活。
+    """
+    return any(str(cfg.get(k) or "").strip()
+               for k in ("model", "fast_model", "slow_model"))
+
+
+def _any_live_channel(cfg: dict) -> bool:
+    """这台机器此刻还有没有一条能用的模型通道。
+
+    只在「确实有活要派」时才调用 —— 探活开销小，但没活的时候不该白探。
+    全不可用时整轮不派活（而不是派一个 30 分钟后才在日志里报 403 的死会话）。
+    """
+    wanted = [str(cfg.get("model") or ""), str(cfg.get("fast_model") or ""),
+              str(cfg.get("slow_model") or "")]
+    for value in wanted:
+        if value.strip() and _probe_model(value.strip()) is not False:
+            return True
+    for slug in _live_model_candidates(""):
+        if _probe_model(slug) is not False:
+            return True
+    return False
+
+
+def _ensure_live_model(job: dict, blocked: dict) -> bool:
+    """派活前确认这条 job 的通道活着；死了就换成同族活通道。
+
+    为什么放在派发口而不是 `_exec_model()` 里：`_exec_model` 是纯路由函数
+    （泳道 → fast/slow），门禁要能对它做确定性断言；「这条通道此刻能不能用」
+    是要打网络的运行时事实，只应出现在真正派活的那一刻。
+
+    返回 False 表示这台机器此刻一条活通道都没有 —— 调用方记成
+    channel_unavailable（可续跑），而不是派一个 30 分钟后才在日志里报
+    403 SUBSCRIPTION_NOT_FOUND 的死会话、再把任务记成「做不出来」。
+    """
+    rid = job.get("id") or "?"
+    model = str(job.get("model") or "").strip()
+    if model and _probe_model(model) is not False:
+        return True
+    if not model:
+        return True  # 用默认模型，交给 CLI 自己决定；不在这一层拦。
+    cfg = job.get("cfg") or {}
+    replacement = _pick_live_model(model, extra=(
+        str(cfg.get("slow_model") or ""), str(cfg.get("fast_model") or "")))
+    if replacement and replacement != model:
+        log(f"[exec] {rid} 通道 {model} 不可用，改派 {replacement}")
+        job["model"] = replacement
+        return True
+    _defer_exec_channel_failure(
+        rid, blocked, branch=str(job.get("branch") or ""),
+        worktree=str(job.get("worktree") or ""), error="no_live_channel",
+        detail="所有候选模型通道探活均失败（欠费/无订阅/被拒）")
+    return False
+
+
 def _exec_model(item: dict, cfg: dict) -> str | None:
     """Pick a predictable model per task: quick bug/gate work uses the fast lane.
 
@@ -1483,6 +1799,15 @@ def _prepare_resolve_exec(item: dict, cfg: dict, blocked: dict) -> dict:
         return {"id": item["id"], "outcome": "no_codex"}
     log_path = _exec_dir() / f"resolve-{_exec_slug(slug)}.log"
     model = _exec_model(item, cfg)
+    if not model and _model_required(cfg):
+        # resolve 现场是 kgctl 建好、可能带在途成果的，绝不删；只不派会话。
+        log(f"[exec] {item['id']} 没有可用模型通道，resolve 现场保留，本拍不派会话")
+        _defer_exec_channel_failure(
+            item["id"], blocked, branch=branch, worktree=str(wt),
+            error="no_live_channel",
+            detail="所有候选模型通道探活均失败（欠费/无订阅/被拒）")
+        return {"id": item["id"], "outcome": "channel_unavailable",
+                "retry_next_cycle": True}
     return {"id": item["id"], "outcome": "ready", "item": item, "cfg": cfg,
             "repo": str(_state_repo() or ""), "branch": branch, "worktree": str(wt),
             "codex": codex, "log": str(log_path), "model": model,
@@ -1657,6 +1982,19 @@ def _prepare_exec(item: dict, cfg: dict, blocked: dict,
 
     log_path = _exec_dir() / f"{slug}.log"
     model = _exec_model(item, cfg)
+    if not model and _model_required(cfg):
+        # 所有模型通道都欠费/无订阅：本拍不派活。这里刚建的是全新 worktree/分支
+        # （没有任何成果），收回即可；同时如实写进 blocked，把失败原因记成
+        # 「机器没有可用通道」而不是「这条需求做不出来」。
+        log(f"[exec] {rid} 没有可用模型通道，撤掉刚建的空 worktree，本拍不派活")
+        _git(repo, "worktree", "remove", "--force", str(wt))
+        if _git(repo, "rev-parse", "--verify", branch)[0] == 0:
+            _git(repo, "branch", "-D", branch)
+        _defer_exec_channel_failure(
+            rid, blocked, branch=branch, worktree="", error="no_live_channel",
+            detail="所有候选模型通道探活均失败（欠费/无订阅/被拒）")
+        return {"id": rid, "outcome": "channel_unavailable",
+                "retry_next_cycle": True}
     return {"id": rid, "outcome": "ready", "item": item, "cfg": cfg,
             "repo": str(repo), "branch": branch, "worktree": str(wt),
             "codex": codex, "log": str(log_path), "model": model,
@@ -1803,10 +2141,21 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
         # Some CLI/provider combinations print a 403 balance error and still
         # exit 0. Provider failure must win over the process exit code.
         if _should_fallback_to_slow_model(job, cfg, log_path):
-            job["model"] = str(cfg["slow_model"])
+            next_model = _next_fallback_model(cfg, job.get("model"))
+            if not next_model:
+                # 没有另一条活通道可切：这不是「需求做不出来」，而是这台机器
+                # 此刻没有可用的模型通道。按通道不可用退避重试，别把任务封死。
+                _defer_exec_channel_failure(
+                    rid, blocked, branch=branch, worktree=str(wt),
+                    error="no_live_channel",
+                    detail=_exec_log_tail(log_path, limit=400))
+                result.update({"outcome": "channel_unavailable",
+                               "retry_next_cycle": True})
+                return result
+            job["model"] = next_model
             job["model_fallback_used"] = True
             detail_tail = _exec_log_tail(log_path, limit=400).strip()
-            log(f"[exec] {rid} 判定为模型通道额度失败，切到 slow_model="
+            log(f"[exec] {rid} 判定为模型通道额度失败，切到备用通道="
                 f"{job['model']} 重跑；日志尾部: {detail_tail[-120:]}")
             # Relaunch and return immediately. Waiting here would stop the
             # daemon loop from filling the remaining configured slots.
@@ -1901,6 +2250,17 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
         if classify_exec_throttled(log_path):
             _defer_exec_channel_failure(
                 rid, blocked, branch=branch, worktree=str(wt), error="throttled",
+                detail=_exec_log_tail(log_path, limit=400))
+            result.update({"outcome": "channel_unavailable",
+                           "retry_next_cycle": True})
+            return result
+        # 通道欠费/无订阅（403 SUBSCRIPTION_NOT_FOUND）不是「这条需求做不出来」。
+        # 以前它会落成 codex_exit_1 并被永久暂缓 —— 用户看到的就是「一堆活卡着不动」。
+        # 现在统一按「通道暂时不可用」退避：现场保留，补上额度后自动续跑。
+        if classify_exec_model_fallback(log_path):
+            _defer_exec_channel_failure(
+                rid, blocked, branch=branch, worktree=str(wt),
+                error="provider_unavailable",
                 detail=_exec_log_tail(log_path, limit=400))
             result.update({"outcome": "channel_unavailable",
                            "retry_next_cycle": True})
@@ -3331,6 +3691,10 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
                                 force_session=rid in force_session_ids)
         if job.get("outcome") != "ready":
             results.append(job)
+            continue
+        if not _ensure_live_model(job, blocked):
+            results.append({"id": rid, "outcome": "channel_unavailable",
+                            "retry_next_cycle": True})
             continue
         _start_exec(job)
         jobs[rid] = job

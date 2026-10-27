@@ -63,6 +63,10 @@ def truthctl(repo, *args, extra_env=None):
 
 
 def main():
+    # 模型通道探活（POST 一次极小请求）在门禁里必须关掉：门禁要在断网、无额度的
+    # 机器上都稳定通过，探活打网络会让断言随上游抖动而假失败。探活本身的行为由
+    # test_model_channel_identity_and_dead_channel_fallback 用 mock 精确锁住。
+    os.environ.setdefault("KG_MODEL_PROBE", "off")
     with tempfile.TemporaryDirectory(prefix="codex-autopilot-selftest-") as tmp:
         root = Path(tmp)
         run([sys.executable, str(OPS / "test_truthctl_cross_worktree_ids.py")],
@@ -3114,6 +3118,95 @@ def test_exec_model_balance_fallback():
     print("selftest ok: 403 欠费即使退出码为 0 也切到 slow_model，且不会循环回退。")
 
 
+def test_model_channel_identity_and_dead_channel_fallback():
+    """fast/slow 配成同一条死通道时，降级不许变成空操作；全死则本拍不派活。
+
+    2026-10-27 事故：central.config.json 的 fast_model 与 slow_model 都是
+    ok8888@deepseek-v4.1-flash（后台订阅已到期）。旧判据 `job["model"] != slow_model`
+    恒为 False，于是「降级」什么也不做，每条任务撞 403 SUBSCRIPTION_NOT_FOUND 之后
+    被记成 codex_exit_1 永久封死 —— 机器心跳照跑，产出为零，用户只能清一轮。
+    """
+    import importlib
+    import sys
+    from unittest import mock
+    from pathlib import Path
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    dead = "ok8888@deepseek-v4.1-flash"
+    alive = "aibvv@deepseek-v4.1-flash"
+
+    # --- 通道身份按 @ 前的 provider 判，不按整串模型名 -------------------
+    assert central_daemon._channel_key(dead) == "ok8888"
+    assert central_daemon._channel_key(alive) == "aibvv"
+    assert central_daemon._channel_key(alive) != central_daemon._channel_key(dead)
+    assert central_daemon._model_family(dead) == "deepseek-v4.1-flash"
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-channel-") as tmp:
+        logp = Path(tmp) / "403.log"
+        logp.write_text(
+            "ERROR: unexpected status 403 Forbidden: {\"code\":\"SUBSCRIPTION_NOT_FOUND\"}, "
+            "url: http://127.0.0.1:15721/v1/responses\n", encoding="utf-8")
+        assert central_daemon.classify_exec_model_fallback(logp)
+
+        cfg_same = {"fast_model": dead, "slow_model": dead}
+
+        # 场景 A：fast == slow 但存在别的活通道 -> 必须切到「不同通道」
+        with mock.patch.object(central_daemon, "_probe_model",
+                               side_effect=lambda m: m != dead), \
+             mock.patch.object(central_daemon, "_model_catalog_slugs", return_value=[]):
+            nxt = central_daemon._next_fallback_model(cfg_same, dead)
+            if nxt is None:
+                raise AssertionError("存在活通道时降级却判定无路可走（旧 bug 回归）")
+            if central_daemon._channel_key(nxt) == central_daemon._channel_key(dead):
+                raise AssertionError(f"降级回到了同一条死通道: {nxt}")
+            job = {"model": dead}
+            if not central_daemon._should_fallback_to_slow_model(job, cfg_same, logp):
+                raise AssertionError("fast==slow 时降级被判为不可行，任务将被永久封死")
+            # 降级只做一轮，不许循环回退
+            job["model_fallback_used"] = True
+            if central_daemon._should_fallback_to_slow_model(job, cfg_same, logp):
+                raise AssertionError("降级过的任务又被判定可以再降级（无限循环风险）")
+
+        # 场景 B：所有通道都探活失败 -> 本拍不派活，且明确不是「需求做不出来」
+        with mock.patch.object(central_daemon, "_probe_model", return_value=False), \
+             mock.patch.object(central_daemon, "_model_catalog_slugs", return_value=[]):
+            job = {"model": dead}
+            if central_daemon._should_fallback_to_slow_model(job, cfg_same, logp):
+                raise AssertionError("没有可用通道时仍判定可以降级，会派出一个必死的会话")
+            if central_daemon._pick_live_model(dead) is not None:
+                raise AssertionError("全通道不可用时仍挑出了一个模型")
+            assert central_daemon._any_live_channel(cfg_same) is False
+
+            blocked = {}
+            job2 = {"id": "L-9100", "branch": "codex/x", "worktree": str(Path(tmp)),
+                    "model": dead, "cfg": cfg_same}
+            if central_daemon._ensure_live_model(job2, blocked):
+                raise AssertionError("全通道不可用时 _ensure_live_model 仍放行派发")
+            rec = blocked.get("L-9100") or {}
+            if rec.get("reason") != "channel_unavailable":
+                raise AssertionError(f"全通道不可用没有记成可续跑的通道失败: {rec}")
+            if not rec.get("restart_worker"):
+                raise AssertionError("通道失败必须保留重启意图，否则任务会静默消失")
+
+        # 场景 C：探活关掉（离线门禁/断网）时一律放行，不能成为新的单点故障
+        with mock.patch.dict(os.environ, {"KG_MODEL_PROBE": "off"}), \
+             mock.patch.object(central_daemon, "_model_catalog_slugs", return_value=[]):
+            central_daemon._MODEL_PROBE_CACHE.clear()
+            if central_daemon._probe_model(dead) is not None:
+                raise AssertionError("探活关闭时不应返回「可用/不可用」判断")
+            if central_daemon._pick_live_model(dead) != dead:
+                raise AssertionError("探活关闭时应原样放行目标模型")
+            central_daemon._MODEL_PROBE_CACHE.clear()
+
+    print("selftest ok: 通道按 provider 判定；fast==slow 的死通道不再让降级变空操作；"
+          "全通道不可用时本拍不派活并记成可续跑的通道失败；探活关闭时放行。")
+
+
 def test_exec_model_fallback_relaunch_is_async():
     """A balance fallback must relaunch without blocking the daemon loop."""
     import importlib
@@ -5194,6 +5287,7 @@ if __name__ == "__main__":
     test_prune_exec_blocked_landed_commit()
     test_auto_exec()
     test_exec_model_balance_fallback()
+    test_model_channel_identity_and_dead_channel_fallback()
     test_exec_model_fallback_relaunch_is_async()
     test_parallel_exec_slots()
     test_disk_hold_withholds_worker_restart()
