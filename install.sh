@@ -452,6 +452,97 @@ if [ "${NO_DAEMON_REPOINT:-0}" != "1" ]; then
   fi
 fi
 
+# 5.6) 刷新「launchd 直接执行的入口脚本」。
+#
+#   为什么单独一步：`com.danta.codex-disk-reap` 这个 launchd 任务每小时直接执行
+#   `~/.codex-autopilot/ops/disk_reap.py` —— 这个文件不在任何不可变版本目录里，
+#   上面的 cp 全都写不到它。于是它永远停在「第一次手工拷进来」的那一版：
+#
+#     - 版本目录里的 disk_reap.py 已经会跟随 install-state 找当前实现（修过一次）；
+#     - 但这个入口文件本身是旧的，它的 main() 里连新加的那几步都没有。
+#
+#   2026-10-27 实测到的后果：孤儿残留回收写进 releases/<version>/ops 之后，
+#   守护进程那条路已经生效（日志里能看到它真的回收了），但每小时这条独立路径
+#   仍然只报「worktree / kg tmp」两项，新加的那一项根本不执行。
+#
+#   修法不是「再拷一份实现」（那样下次又烂），而是把入口变成薄转发：它只负责
+#   找到当前安装版本，然后把 argv 原样交过去。实现永远只有一份，在版本目录里。
+ENTRY="$HOME/.codex-autopilot/ops/disk_reap.py"
+if [ -d "$HOME/.codex-autopilot/ops" ]; then
+  cat >"$ENTRY.tmp-$$" <<'ENTRYEOF'
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""launchd 入口：只做转发，绝不在这里实现任何逻辑。
+
+这个文件由 install.sh 在每次安装时重写。它之所以必须是薄转发，是因为它处在
+一个「没有版本、也没人升级」的位置：launchd 直接执行它，而它既不在不可变版本
+目录里，也不跟随 marketplace 指针。历史上它因此停在首次手工拷贝的版本上，
+在版本目录已经修好、守护进程已经生效之后，这条每小时独立回收路径还在跑旧逻辑。
+
+真正的实现在 `releases/<version>/ops/disk_reap.py`，那份会跟着发版一起更新。
+"""
+import json
+import os
+import runpy
+import sys
+from pathlib import Path
+
+
+def current_ops() -> Path | None:
+    """当前安装版本里的 ops/，与 disk_reap._resolve_ops 同一套判断顺序。"""
+    home = Path.home()
+
+    def usable(raw: str | None) -> Path | None:
+        if not raw:
+            return None
+        cand = Path(raw).expanduser()
+        if not cand.is_absolute():
+            cand = home / raw.lstrip("./")
+        ops = cand / "ops"
+        return ops if (ops / "disk_reap.py").exists() else None
+
+    state = home / "plugins/codex-autopilot/install-state.json"
+    try:
+        found = usable(str(json.loads(state.read_text(encoding="utf-8")).get("source") or ""))
+        if found:
+            return found
+    except Exception:
+        pass
+    mkt = home / ".agents/plugins/marketplace.json"
+    try:
+        for plugin in (json.loads(mkt.read_text(encoding="utf-8")).get("plugins") or []):
+            if isinstance(plugin, dict) and plugin.get("name") == "codex-autopilot":
+                src = plugin.get("source")
+                found = usable(src.get("path") if isinstance(src, dict) else src)
+                if found:
+                    return found
+    except Exception:
+        pass
+    return None
+
+
+def main() -> int:
+    ops = current_ops()
+    if ops is None:
+        # 找不到当前版本时不能静默成功：那会让「回收一直在跑」变成谎话。
+        sys.stderr.write(
+            "× 找不到当前安装版本里的 ops/disk_reap.py；"
+            "先跑一次 ./install.sh 再启用这个定时任务。\n")
+        return 1
+    target = ops / "disk_reap.py"
+    sys.argv = [str(target), *sys.argv[1:]]
+    runpy.run_path(str(target), run_name="__main__")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+ENTRYEOF
+  chmod +x "$ENTRY.tmp-$$"
+  mv "$ENTRY.tmp-$$" "$ENTRY"
+  echo "已刷新定时回收入口（薄转发到 ${DEST}/ops/disk_reap.py）"
+fi
+
 # 6) 可选：用官方 CLI 刷新已安装插件，避免桌面端继续用旧缓存。
 #    Codex 会把插件快照到 ~/.codex/plugins/cache/personal/<name>/<version>/；
 #    只改 marketplace 文件和插件目录，缓存不会自动更新。
