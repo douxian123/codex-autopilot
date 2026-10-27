@@ -5461,3 +5461,64 @@ def test_reap_ignores_untracked_machine_scratch():
             assert not workspace_guard.is_untracked_scratch(bad), bad
 
     print("selftest ok: 未跟踪机器残留可被回收穿透，已跟踪内容（含账本）一律拦住。")
+
+
+def test_disk_reap_follows_installed_release():
+    """每小时跑的磁盘回收器必须跟随当前安装版本，不能钉在化石副本上。
+
+    2026-10-27 事故：`~/.codex-autopilot/ops/disk_reap.py` 里把运行时代码路径
+    写死成 `~/plugins/codex-autopilot/ops`，那是装插件时留下的一份 ops/ 副本，
+    2026-10-21 之后就冻结了 —— `install.sh` 每次发版只写
+    `releases/<version>/ops/`，从不更新它。
+
+    后果：`workspace_guard` 修好了回收判据、发了 44 个版本，这个每小时跑的
+    回收器一直在跑 10-21 的旧判据，每小时回收 0 个 worktree，磁盘反复被写到
+    4GB 告急，用户只能反复手工清一轮。用户的原话是「有没有一种干净机制能长期
+    稳定跑」—— 机制一直是有的，但它执行的是化石代码。
+
+    这里锁住两条：
+      1. 回收器脚本进了仓库（不再只存在于 home 目录、无法评审无法回归）；
+      2. 它的 ops 路径解析必须读 install-state / marketplace，而不是写死。
+    """
+    import sys
+
+    ops = Path(__file__).resolve().parent
+    reap = ops / "disk_reap.py"
+    assert reap.exists(), "disk_reap.py 必须入库，否则它无法被评审和回归"
+
+    src = reap.read_text(encoding="utf-8")
+    assert "_resolve_ops" in src, "必须动态解析当前安装版本的 ops 目录"
+    assert "install-state.json" in src, "必须读 install-state 记录的当前版本"
+    assert "marketplace.json" in src, "install-state 读不到时要有 marketplace 兜底"
+    # 旧的写死路径只能作为最后兜底出现，不能是唯一路径
+    assert src.count("codex-autopilot/ops") >= 1
+
+    # 端到端：把 install-state 指到一个有 central_daemon.py 的假版本，必须跟随过去
+    import importlib.util
+    import json
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-ops-") as tmp:
+        home = Path(tmp)
+        rel = "plugins/codex-autopilot/releases/9.9.9-test"
+        ver = home / rel / "ops"
+        ver.mkdir(parents=True)
+        (ver / "central_daemon.py").write_text("# fake\n")
+        (ver / "workspace_guard.py").write_text("# fake\n")
+        (home / "plugins/codex-autopilot/install-state.json").write_text(
+            json.dumps({"version": "9.9.9-test", "source": f"./{rel}"}))
+        spec = importlib.util.spec_from_file_location("disk_reap_probe", reap)
+        mod = importlib.util.module_from_spec(spec)
+        saved_home = Path.home
+
+        class _FakeHome(type(home)):
+            pass
+
+        import pathlib
+        orig = pathlib.Path.home
+        try:
+            pathlib.Path.home = classmethod(lambda cls: home)
+            spec.loader.exec_module(mod)
+            assert mod.OPS == ver, f"必须跟随 install-state，实际 {mod.OPS}"
+        finally:
+            pathlib.Path.home = orig
+
+    print("selftest ok: 磁盘回收器跟随当前安装版本，且脚本本身已入库可回归。")
