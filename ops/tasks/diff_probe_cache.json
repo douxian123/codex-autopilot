@@ -2110,5 +2110,17 @@
  "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@5224f1fd00cde508973af4ce0c6c3e5e0429a1b1": {
   "files": 4,
   "lines": 5372
+ },
+ "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@be6dd64e3eae4ae7c8b92690455331e6cb2f0649": {
+  "files": 28,
+  "lines": 12929
+ },
+ "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@be6dd64e3eae4ae7c8b92690455331e6cb2f0649": {
+  "files": 14,
+  "lines": 1923
+ },
+ "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@be6dd64e3eae4ae7c8b92690455331e6cb2f0649": {
+  "files": 4,
+  "lines": 5372
  }
 }
