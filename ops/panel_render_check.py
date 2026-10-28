@@ -206,6 +206,30 @@ def main(argv):
         ("有「工程详情与证据」区块", "工程详情与证据"),
     ]
     folders = ((payload.get("project_folders") or {}).get("folders") or [])
+    radar_folder = next((f for f in folders if (f.get("engineering_radar") or {}).get("layers")), None)
+    gate_folder = next((f for f in folders if (f.get("quality_gate") or {}).get("checks")), None)
+    if radar_folder:
+        radar = radar_folder["engineering_radar"]
+        checks.append(("项目文件夹显示 19 层工程进度",
+                       "19 层工程进度 " + str(radar.get("overall") or "")))
+        if radar.get("generated_at"):
+            checks.append(("项目文件夹显示工程快照日期",
+                           "快照 " + str(radar["generated_at"])[:10]))
+        if radar.get("next_steps"):
+            checks.append(("项目文件夹显示工程下一步", "下一步：" + str(radar["next_steps"][0])))
+        if radar.get("blockers"):
+            checks.append(("项目文件夹显示工程卡点", "卡点：" + str(radar["blockers"][0])))
+    else:
+        checks.append(("项目文件夹显示 19 层工程进度", None))
+    if gate_folder and gate_folder["quality_gate"].get("status"):
+        gate_status = gate_folder["quality_gate"].get("status")
+        gate_text = ("质量门禁：严格质量通过" if gate_status == "pass" else
+                     "质量门禁：等待真人盲评" if gate_status == "human_pending" else
+                     "质量门禁：门禁历史不可读" if gate_status == "unverified" else
+                     "质量门禁：严格质量 RED")
+        checks.append(("项目文件夹显示独立质量门禁状态", gate_text))
+    else:
+        checks.append(("项目文件夹显示独立质量门禁状态", None))
     if folders:
         checks.append(("项目文件夹显示当前步骤", folders[0].get("current_step")))
     if step_check:

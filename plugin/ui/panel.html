@@ -842,6 +842,48 @@
         err.textContent = "项目账本读不到：" + (f.read_error || "未知原因");
         info.appendChild(err);
       }
+      var gate = f.quality_gate;
+      if (gate && gate.status){
+        var gateLine = document.createElement("div");
+        gateLine.className = "folder-source";
+        gateLine.textContent = "质量门禁：" + (gate.status === "pass" ? "严格质量通过" :
+          gate.status === "human_pending" ? "等待真人盲评" :
+          gate.status === "unverified" ? "门禁历史不可读" : "严格质量 RED");
+        gateLine.title = (gate.checks || []).map(function(checkRow){
+          return checkRow.label + "：观测 " + String(checkRow.observed) + "/" + String(checkRow.expected);
+        }).join("；");
+        info.appendChild(gateLine);
+      }
+      var radar = f.engineering_radar;
+      if (radar && radar.status === "unverified"){
+        var radarError = document.createElement("div");
+        radarError.className = "folder-error";
+        radarError.textContent = "工程进度不可读：" + (radar.detail || "未知原因");
+        info.appendChild(radarError);
+      } else if (radar && radar.layers) {
+        var radarLine = document.createElement("div");
+        radarLine.className = "folder-step";
+        radarLine.textContent = "19 层工程进度 " + String(radar.overall || radar.layers.length + " 层") +
+          " · 快照 " + String(radar.generated_at || "未标注日期").slice(0, 10);
+        radarLine.title = radar.layers.map(function(layer){
+          return layer.layer + " " + layer.completion + "%" +
+            (layer.blocker ? "：" + layer.blocker : "");
+        }).join("\n");
+        info.appendChild(radarLine);
+        if ((radar.next_steps || []).length){
+          var next = document.createElement("div"); next.className = "folder-source";
+          next.textContent = "下一步：" + radar.next_steps[0];
+          next.title = radar.next_steps.join("\n");
+          info.appendChild(next);
+        }
+        if ((radar.blockers || []).length){
+          var blocked = document.createElement("div");
+          blocked.className = "folder-error";
+          blocked.textContent = "卡点：" + radar.blockers[0];
+          blocked.title = radar.blockers.join("\n");
+          info.appendChild(blocked);
+        }
+      }
       var stats = document.createElement("div"); stats.className = "folder-stats";
       var c = f.counts || {};
       [["doing", c.doing || 0, "进行"], ["todo", c.todo || 0, "待办"], ["human", c.human || 0, "验收"]].forEach(function(row){

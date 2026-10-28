@@ -709,8 +709,194 @@ def _project_folder_project_ids():
             "one_liner": item.get("one_liner") or "",
             "stage": item.get("stage") or "",
             "source_thread_id": item.get("source_thread_id"),
+            "quality_gate": item.get("quality_gate"),
         })
     return out
+
+
+_QUALITY_GATE_STATUSES = {
+    "PASS": "pass",
+    "RED": "red",
+    "HUMAN_PENDING": "human_pending",
+    "UNVERIFIED": "unverified",
+}
+
+
+def _quality_gate_unverified(source, detail):
+    return {
+        "status": "unverified",
+        "label": "质量门禁不可读",
+        "detail": detail,
+        "source": source,
+    }
+
+
+def _quality_gate_report(root, rel, label):
+    rel = str(rel or "").strip()
+    if not rel:
+        raise ValueError(f"质量门禁配置缺少 {label}")
+    path = (root / rel).resolve()
+    if root.resolve() not in path.parents:
+        raise ValueError(f"{label}必须位于项目目录内")
+    report = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(report, dict):
+        raise ValueError(f"{label}不是 JSON 对象")
+    return report
+
+
+def _quality_gate_value(data, path):
+    value = data
+    for part in str(path or "").split("."):
+        if isinstance(value, dict) and part in value:
+            value = value[part]
+        else:
+            return None
+    return value
+
+
+def _read_quality_gate(root):
+    """Read a project-declared quality gate snapshot without mutating that project.
+
+    Release quality has a different meaning from acceptance count. A project can
+    have every engineering item implemented while its strict benchmark remains
+    RED and its human review remains pending. Keep those states explicit so a
+    downstream folder or panel cannot turn them into a green acceptance count.
+    """
+    root = Path(root)
+    registry = _json_file(_truth_dir() / "project_folders.json")
+    folder = next((
+        item for item in (registry.get("folders") or [])
+        if isinstance(item, dict)
+        and Path(str(item.get("path") or "")).expanduser().resolve() == root.resolve()
+    ), {})
+    spec = folder.get("quality_gate")
+    if not isinstance(spec, dict) or not spec.get("report"):
+        return None
+
+    try:
+        default_rel = str(spec.get("report") or "").strip()
+        if not default_rel:
+            raise ValueError("质量门禁配置缺少 report")
+        reports = {default_rel: _quality_gate_report(root, default_rel, "report")}
+        raw_checks = spec.get("checks")
+        if not isinstance(raw_checks, list) or not raw_checks:
+            raise ValueError("质量门禁配置缺少 checks")
+        checks = []
+        strict_red = False
+        human_pending = False
+        for check in raw_checks:
+            if not isinstance(check, dict):
+                raise ValueError("质量门禁 checks 项不是 JSON 对象")
+            label = str(check.get("label") or "").strip()
+            path = str(check.get("path") or "").strip()
+            if not label or not path:
+                raise ValueError("质量门禁 checks 项缺少 label 或 path")
+            report_rel = str(check.get("report") or default_rel).strip()
+            if report_rel not in reports:
+                reports[report_rel] = _quality_gate_report(
+                    root, report_rel, "checks.report")
+            expected = check.get("equals")
+            observed = _quality_gate_value(reports[report_rel], path)
+            aggregate = check.get("aggregate")
+            if aggregate is not None:
+                if not isinstance(aggregate, dict) or aggregate.get("mode") != "count":
+                    raise ValueError("质量门禁 checks.aggregate 只支持 count")
+                if not isinstance(observed, list) or not aggregate.get("field"):
+                    raise ValueError("质量门禁 checks.aggregate 需要数组和 field")
+                field = str(aggregate.get("field"))
+                wanted = aggregate.get("equals")
+                observed = sum(
+                    1 for row in observed
+                    if isinstance(row, dict)
+                    and _quality_gate_value(row, field) == wanted
+                )
+            matched = observed == expected
+            status = "pass" if matched else _QUALITY_GATE_STATUSES.get(
+                str(check.get("fail_status") or "RED").upper(), "red")
+            if status == "human_pending":
+                human_pending = True
+            elif status != "pass":
+                strict_red = True
+            checks.append({
+                "label": label,
+                "report": report_rel,
+                "path": path,
+                "expected": expected,
+                "observed": observed,
+                "status": status,
+            })
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return _quality_gate_unverified(spec.get("report"), str(exc))
+
+    if strict_red:
+        status = "red"
+        label = "严格质量 RED"
+    elif human_pending:
+        status = "human_pending"
+        label = "等待真人盲评"
+    else:
+        status = "pass"
+        label = "严格质量通过"
+    return {
+        "status": status,
+        "label": label,
+        "source": spec.get("report"),
+        "reports": list(reports),
+        "checks": checks,
+    }
+
+
+def _read_engineering_radar(root):
+    """Read a project's explicit 19-layer engineering snapshot without inventing scores."""
+    root = Path(root)
+    registry = _json_file(_truth_dir() / "project_folders.json")
+    folder = next((
+        item for item in (registry.get("folders") or [])
+        if isinstance(item, dict)
+        and Path(str(item.get("path") or "")).expanduser().resolve() == root.resolve()
+    ), {})
+    spec = folder.get("engineering_radar")
+    if not isinstance(spec, dict) or not spec.get("report"):
+        return None
+    try:
+        report_rel = str(spec.get("report") or "").strip()
+        report = _quality_gate_report(root, report_rel, "engineering_radar.report")
+        layers = report.get("layers")
+        if not isinstance(layers, list) or not layers:
+            raise ValueError("工程雷达没有 layers")
+        rows = []
+        for item in layers:
+            if not isinstance(item, dict):
+                raise ValueError("工程雷达 layers 项不是 JSON 对象")
+            completion = item.get("completionPercent")
+            if not isinstance(completion, (int, float)) or isinstance(completion, bool):
+                raise ValueError("工程雷达层缺少数字 completionPercent")
+            rows.append({
+                "layer": str(item.get("layer") or "").strip() or "未命名层",
+                "completion": completion,
+                "blocker": str(item.get("blocker") or "").strip(),
+            })
+        verdict = report.get("verdict") if isinstance(report.get("verdict"), dict) else {}
+        next_steps = [str(x).strip() for x in (report.get("p0Gaps") or []) if str(x).strip()]
+        blockers = [str(x).strip() for x in (report.get("externalBlockers") or []) if str(x).strip()]
+        return {
+            "source": report_rel,
+            "generated_at": report.get("generatedAt"),
+            "main_sha": report.get("mainSha"),
+            "overall": verdict.get("overallCompletionPercent"),
+            "note": verdict.get("note"),
+            "public_launch_ready": verdict.get("publicLaunchReady"),
+            "layers": rows,
+            "next_steps": next_steps[:3],
+            "blockers": blockers[:3],
+        }
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return {
+            "status": "unverified",
+            "label": "工程雷达不可读",
+            "detail": str(exc),
+            "source": spec.get("report"),
+        }
 
 
 def _read_project_truth(root):
@@ -766,6 +952,8 @@ def _read_project_truth(root):
         "product": mainline_product,
         "one_liner": mainline_one_liner,
         "stage": mainline_stage,
+        "quality_gate": _read_quality_gate(root),
+        "engineering_radar": _read_engineering_radar(root),
     }
 
 
@@ -823,6 +1011,8 @@ def _project_folders(fast=True):
             "human_acceptance": human,
             "machine_verified": machine,
             "route_tasks": data.get("route_tasks") or [],
+            "quality_gate": data.get("quality_gate") or meta.get("quality_gate"),
+            "engineering_radar": data.get("engineering_radar"),
             "counts": {
                 "doing": len(doing),
                 "todo": len(todo),
@@ -842,6 +1032,7 @@ def _project_folders(fast=True):
         "one_liner": ml.get("one_liner") or "",
         "stage": ml.get("stage") or "",
         "source_thread_id": current_meta.get("source_thread_id"),
+        "quality_gate": current_meta.get("quality_gate"),
     }, {
         "roadmap": road,
         "current_step": (current_step or {}).get("step") or "路线待拆解",
@@ -851,6 +1042,8 @@ def _project_folders(fast=True):
         "human_acceptance": board.get("human") or [],
         "machine_verified": board.get("machine") or [],
         "route_tasks": route_tasks,
+        "quality_gate": _read_quality_gate(Path(current)),
+        "engineering_radar": _read_engineering_radar(Path(current)),
     })
 
     folders = [current_folder]
@@ -873,6 +1066,8 @@ def _project_folders(fast=True):
                 "human_acceptance": [],
                 "machine_verified": [],
                 "route_tasks": [],
+                "quality_gate": None,
+                "engineering_radar": None,
             }
         else:
             try:
@@ -890,6 +1085,8 @@ def _project_folders(fast=True):
                     "human_acceptance": [],
                     "machine_verified": [],
                     "route_tasks": [],
+                    "quality_gate": _read_quality_gate(Path(path)),
+                    "engineering_radar": _read_engineering_radar(Path(path)),
                 }
         folders.append(summarize_folder(meta, data))
 
@@ -1232,10 +1429,7 @@ def _running_exec():
     rid = info.get("id")
     for r in _read_jsonl(_truth_dir() / "ledger.jsonl"):
         if r.get("id") == rid:
-            _t = (r.get("title") or "").strip()
-            if len(_t) > 36:
-                _t = _t[:36] + "…"
-            info["title"] = _t
+            info["title"] = (r.get("title") or "").strip()
             info["kind"] = r.get("kind") or ""
             break
     info.setdefault("title", "")

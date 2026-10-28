@@ -3485,7 +3485,10 @@ def _resolve_land(rec: dict, wt: Path) -> None:
     resolve_branch = rec["resolve_branch"]
     res = proc_run([sys.executable, str(Path(__file__).resolve()), "land", resolve_branch],
                          capture_output=True, text=True)
-    out = (res.stdout or "").rstrip()
+    # land 的失败原因可能只写 stderr（例如写台账时抛错）。旧实现只打印 stdout，
+    # 调用方既看不到根因，又会因为本函数正常返回而把失败误报成 resolve rc=0。
+    out = "\n".join(
+        part.rstrip() for part in (res.stdout or "", res.stderr or "") if part.strip())
     print(out)
     rec["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
     # land 在写门禁之前可能因分支已被合入而短路（"已完全合并，无需 land"）。那同样是
@@ -3509,6 +3512,7 @@ def _resolve_land(rec: dict, wt: Path) -> None:
     print(f"× 门禁未通过：{resolve_branch} 留在 {wt}，已登记任务 {rec['slug']}（gate_fail）。")
     print(f"  在该工作树修到过门禁，再 kgctl resolve --finish {rec['slug']} --go。")
     print(f"RESOLVE_RESULT branch={rec['branch']} outcome=gate_fail")
+    sys.exit(res.returncode or 1)
 
 
 def _resolve_prepare(args) -> None:
