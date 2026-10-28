@@ -1,16 +1,4 @@
 {
- "codex/auto-close-identity-gate-20261024@4de87c3eef52bcc9477e521704d031f0985ae5de@18dee5b97726a7f1fc908fb0af3ad0abedd77e98": {
-  "files": 3,
-  "lines": 352
- },
- "codex/disk-admission-clean-20261027@728b93900d9e3376026062185d606bdc24523a25@18dee5b97726a7f1fc908fb0af3ad0abedd77e98": {
-  "files": 3,
-  "lines": 378
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@18dee5b97726a7f1fc908fb0af3ad0abedd77e98": {
-  "files": 28,
-  "lines": 12929
- },
  "codex/reap-identical-tracked-20261027@4cc6c7b8d3de55c0f21ca55578fce5da7aabd77d@18dee5b97726a7f1fc908fb0af3ad0abedd77e98": {
   "files": 3,
   "lines": 117
@@ -2396,6 +2384,18 @@
   "lines": 1923
  },
  "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@f4edb1723d6113eb9290487e504b279feae4791a": {
+  "files": 4,
+  "lines": 5372
+ },
+ "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@a7069764cd7886c62da94b817b70a5df374f8b96": {
+  "files": 28,
+  "lines": 12929
+ },
+ "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@a7069764cd7886c62da94b817b70a5df374f8b96": {
+  "files": 14,
+  "lines": 1923
+ },
+ "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@a7069764cd7886c62da94b817b70a5df374f8b96": {
   "files": 4,
   "lines": 5372
  }
