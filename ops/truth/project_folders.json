@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-16",
+  "updated": "2026-10-28",
   "folders": [
     {
       "id": "codex-autopilot",
@@ -7,6 +7,38 @@
       "path": "/Users/danta/Documents/Codex/codex-autopilot-native-autopilot",
       "active": true,
       "source_thread_id": "01a14331-6d8b-70c0-aba2-fc214034b9c5"
+    },
+    {
+      "id": "knowledge-graph",
+      "name": "ThoughLoom",
+      "path": "/Users/danta/.newmax/workspace/knowledge-graph",
+      "active": false,
+      "source_thread_id": null,
+      "engineering_radar": {
+        "report": "evidence/20261022/progress-radar-20261022.json"
+      },
+      "quality_gate": {
+        "report": "ops/truth/benchmark-contract-report.json",
+        "checks": [
+          {
+            "label": "36 题严格质量",
+            "path": "passed",
+            "equals": true
+          },
+          {
+            "label": "50 题真人盲评",
+            "report": "docs/review-blinding-export/stage1-center-definition-review-packet-review-tasks.json",
+            "path": "rows",
+            "equals": 50,
+            "fail_status": "HUMAN_PENDING",
+            "aggregate": {
+              "mode": "count",
+              "field": "reviewStatus",
+              "equals": "reviewed"
+            }
+          }
+        ]
+      }
     }
   ]
 }

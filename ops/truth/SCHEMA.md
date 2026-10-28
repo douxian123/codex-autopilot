@@ -83,6 +83,33 @@ judgment 记「以后遇到同类情况该怎么判断」——记的是判断�
 Codex 对话负责 / 入口从哪里来」。项目账本不可读时，面板必须保留文件夹并显示读取失败，
 不能显示成 0 个工作项。
 
+`quality_gate`、`engineering_radar` 都是可选只读快照，不复制报告实体：
+
+```json
+{
+  "engineering_radar": {"report": "evidence/progress-radar.json"},
+  "quality_gate": {
+    "report": "ops/truth/benchmark-report.json",
+    "checks": [
+      {"label": "36 题严格质量", "path": "passed", "equals": true},
+      {"label": "50 题真人盲评",
+       "report": "docs/review-tasks.json",
+       "path": "rows",
+       "equals": 50,
+       "fail_status": "HUMAN_PENDING",
+       "aggregate": {"mode": "count", "field": "reviewStatus", "equals": "reviewed"}}
+    ]
+  }
+}
+```
+
+`report` 必须位于项目根目录内；检查项可各自覆盖报告，`equals` 支持 JSON 标量。
+`aggregate.mode=count` 会把数组里字段等于给定值的行计数，适合真人评审：
+即使题数存在，未填写的行也不能算完成。`fail_status` 只能是 `RED` 或
+`HUMAN_PENDING`。只要任一检查 RED，整体就是 RED；机器门禁变绿但真人评审仍为
+`HUMAN_PENDING` 时，整体只能显示等待人工，不能冒充发布通过。报告缺失、JSON
+损坏、路径越界或配置残缺时，必须显示 `unverified`，不是 `pass`。
+
 ### acceptance.jsonl
 
 额外字段：`level` ∈ `P0` | `P1` | `P2`、`needs_human`（bool）、`steps`（人工复核步骤）、

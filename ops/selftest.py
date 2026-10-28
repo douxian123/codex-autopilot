@@ -48,6 +48,8 @@ def kgctl(repo, trunk, *args, extra_env=None):
     env = os.environ.copy()
     env["KG_REPO"] = str(repo)
     env["KG_TRUNK"] = str(trunk)
+    env["KG_TRUTH_ID_STATE_ROOT"] = str(
+        Path(repo).expanduser().resolve().parent / "truth-ids")
     if extra_env:
         env.update({k: str(v) for k, v in extra_env.items()})
     return run([sys.executable, str(KGCTL), *args], cwd=str(OPS.parent), env=env, check=False)
@@ -56,6 +58,8 @@ def kgctl(repo, trunk, *args, extra_env=None):
 def truthctl(repo, *args, extra_env=None):
     env = os.environ.copy()
     env["KG_REPO"] = str(repo)
+    env["KG_TRUTH_ID_STATE_ROOT"] = str(
+        Path(repo).expanduser().resolve().parent / "truth-ids")
     if extra_env:
         env.update({k: str(v) for k, v in extra_env.items()})
     return run([sys.executable, str(OPS / "truthctl.py"), *args],
@@ -69,12 +73,17 @@ def main():
     os.environ.setdefault("KG_MODEL_PROBE", "off")
     with tempfile.TemporaryDirectory(prefix="codex-autopilot-selftest-") as tmp:
         root = Path(tmp)
+        # 子进程里的编号高水位必须落在本次临时根；否则会写宿主目录，
+        # 或在上一组临时目录删除后继续指向失效路径。
+        os.environ["KG_TRUTH_ID_STATE_ROOT"] = str(root / "truth-ids")
         run([sys.executable, str(OPS / "test_truthctl_cross_worktree_ids.py")],
-            cwd=str(OPS.parent), check=True)
+            cwd=str(OPS.parent), check=True,
+            env={**os.environ, "KG_TRUTH_ID_STATE_ROOT": str(root / "truth-ids")})
         run([sys.executable, str(OPS / "test-ledger-terminal-state.py")],
             cwd=str(OPS.parent), check=True)
         run([sys.executable, str(OPS / "test-land-build-only-todo.py")],
-            cwd=str(OPS.parent), check=True)
+            cwd=str(OPS.parent), check=True,
+            env={**os.environ, "KG_TRUTH_ID_STATE_ROOT": str(root / "truth-ids")})
         # 孤儿残留回收：回收失败的现场会变成「不在册的目录」，主回收器看不见它。
         # 这条断言的重点是「不许删人的东西」，所以给它一个干净的空目录做现场。
         orphan_root = root / "orphan-residue"
@@ -407,6 +416,23 @@ def test_resolve():
     import json as _json
     with tempfile.TemporaryDirectory(prefix="codex-autopilot-resolve-") as tmp:
         root = Path(tmp)
+        previous_id_root = os.environ.get("KG_TRUTH_ID_STATE_ROOT")
+        os.environ["KG_TRUTH_ID_STATE_ROOT"] = str(root / "truth-ids")
+        try:
+            _test_resolve(root)
+        finally:
+            if previous_id_root is None:
+                os.environ.pop("KG_TRUTH_ID_STATE_ROOT", None)
+            else:
+                os.environ["KG_TRUTH_ID_STATE_ROOT"] = previous_id_root
+
+    print("selftest ok: resolve 拆冲突为单任务、保留 marker、走门禁落盘并回收；容器不被当源分支。")
+    print("selftest ok: resolve --abandon 清容器且源分支不动；append-only JSONL 确定性并集落盘。")
+    print("selftest ok: KG_RESOLVE_SKIP 让守护进程跳过已判定的冲突分支，不重复拆。")
+
+
+def _test_resolve(root):
+        import json as _json
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()
@@ -582,10 +608,6 @@ def test_resolve():
             raise AssertionError(f"KG_RESOLVE_SKIP 没跳过指定分支:\n{skipped.stdout}")
         if (root / "state-resolve-skipme").exists():
             raise AssertionError("KG_RESOLVE_SKIP 还是建了 worktree")
-
-    print("selftest ok: resolve 拆冲突为单任务、保留 marker、走门禁落盘并回收；容器不被当源分支。")
-    print("selftest ok: resolve --abandon 清容器且源分支不动；append-only JSONL 确定性并集落盘。")
-    print("selftest ok: KG_RESOLVE_SKIP 让守护进程跳过已判定的冲突分支，不重复拆。")
 
 
 def test_reset_trunk_truth_conflict():
@@ -1720,6 +1742,10 @@ def test_panel_contract():
             _json.dumps({"id": "L-9001", "title": "另一个项目的工作项", "status": "doing",
                          "source_thread_id": "thread-foreign"}, ensure_ascii=False) + "\n",
             encoding="utf-8")
+        (foreign / "ops" / "truth" / "quality-report.json").write_text(
+            _json.dumps({"passed": False, "humanReview": {"completed": 0}},
+                        ensure_ascii=False),
+            encoding="utf-8")
         registry = state / "ops" / "truth" / "project_folders.json"
         registry.write_text(_json.dumps({"folders": [
             {"id": "foreign", "name": "另一个项目", "path": str(foreign),
@@ -1746,6 +1772,92 @@ def test_panel_contract():
         assert row.get("doing_items") and row["doing_items"][0].get("id") == "L-9001", \
             "跨项目工作项没有按项目归属"
         assert row.get("source_thread_id") == "thread-foreign", "跨项目来源对话丢失"
+
+        # 质量门禁与工程验收不是同一口径：36 题 RED 和 50 题真人待办必须
+        # 保持各自状态，不能被“项目可读 / 工作项可读”折叠成通过。
+        registry.write_text(_json.dumps({"folders": [
+            {"id": "foreign", "name": "另一个项目", "path": str(foreign),
+             "active": False, "source_thread_id": "thread-foreign",
+             "quality_gate": {
+                 "report": "ops/truth/quality-report.json",
+                 "checks": [
+                     {"label": "36 题严格质量", "path": "passed", "equals": True},
+                     {"label": "50 题真人盲评", "path": "humanReview.completed",
+                      "equals": 50, "fail_status": "HUMAN_PENDING"}
+                 ]
+             }}]}, ensure_ascii=False), encoding="utf-8")
+        probe = subprocess.run([sys.executable, "-c", script], cwd=str(OPS.parent), env=env,
+                               capture_output=True, text=True)
+        assert probe.returncode == 0, f"质量门禁状态探针失败：{probe.stderr[-500:]}"
+        quality_rows = _json.loads(probe.stdout.strip().splitlines()[-1]).get("folders") or []
+        quality = next((r for r in quality_rows
+                        if Path(str(r.get("path") or "")).resolve() == foreign.resolve()), {})
+        gate = quality.get("quality_gate") or {}
+        assert gate.get("status") == "red", "36 题严格质量 RED 被折叠成了通过"
+        assert [c.get("status") for c in gate.get("checks") or []] == ["red", "human_pending"], \
+            "36 题 RED 与 50 题真人盲评待办没有分别保留"
+
+        (foreign / "ops" / "truth" / "quality-report.json").write_text(
+            _json.dumps({"passed": True, "humanReview": {"completed": 0}},
+                        ensure_ascii=False),
+            encoding="utf-8")
+        probe = subprocess.run([sys.executable, "-c", "import json,sys; sys.path.insert(0, %r); "
+                               "import central_mcp; print(json.dumps(central_mcp._project_folders(), "
+                               "ensure_ascii=False))" % str(OPS)],
+                               cwd=str(OPS.parent), env=env, capture_output=True, text=True)
+        assert probe.returncode == 0, f"真人盲评状态探针失败：{probe.stderr[-500:]}"
+        quality_rows = _json.loads(probe.stdout.strip().splitlines()[-1]).get("folders") or []
+        quality = next((r for r in quality_rows
+                        if Path(str(r.get("path") or "")).resolve() == foreign.resolve()), {})
+        gate = quality.get("quality_gate") or {}
+        assert gate.get("status") == "human_pending", "50 题真人盲评待办被折叠成了通过"
+
+        # 报告损坏时必须 fail-closed 成不可读，不能因为读取器抛错或空 checks 就变绿。
+        registry.write_text(_json.dumps({"folders": [
+            {"id": "foreign", "name": "另一个项目", "path": str(foreign),
+             "active": False,
+             "quality_gate": {
+                 "report": "quality-report.json",
+                 "checks": [{"label": "损坏配置", "path": "passed"}],
+             }}]}, ensure_ascii=False), encoding="utf-8")
+        broken = subprocess.run([sys.executable, "-c", "import json,sys; sys.path.insert(0, %r); "
+                                "import central_mcp; print(json.dumps(central_mcp._read_quality_gate(%r), "
+                                "ensure_ascii=False))" % (str(OPS), str(foreign))],
+                               cwd=str(OPS.parent), env=env, capture_output=True, text=True)
+        assert broken.returncode == 0, f"损坏门禁配置没有安全降级：{broken.stderr[-500:]}"
+        broken_gate = _json.loads(broken.stdout.strip().splitlines()[-1])
+        assert broken_gate.get("status") == "unverified", "损坏门禁配置被误报成通过"
+
+        # 36 题门禁变绿时，50 题盲评仍必须独立保持待人工，不能被折叠成整体通过。
+        (foreign / "ops" / "truth" / "quality-report.json").write_text(
+            _json.dumps({"passed": True}, ensure_ascii=False), encoding="utf-8")
+        (foreign / "human-review.json").write_text(
+            _json.dumps({"rows": [{"reviewStatus": "pending"}] * 50},
+                        ensure_ascii=False), encoding="utf-8")
+        registry.write_text(_json.dumps({"folders": [
+            {"id": "foreign", "name": "另一个项目", "path": str(foreign),
+             "active": False,
+             "quality_gate": {
+                 "report": "ops/truth/quality-report.json",
+                 "checks": [
+                     {"label": "36 题严格质量", "path": "passed", "equals": True},
+                     {"label": "50 题真人盲评", "report": "human-review.json",
+                      "path": "rows", "equals": 50, "fail_status": "HUMAN_PENDING",
+                      "aggregate": {"mode": "count", "field": "reviewStatus",
+                                    "equals": "reviewed"}},
+                 ],
+             }}]}, ensure_ascii=False), encoding="utf-8")
+        split = subprocess.run([sys.executable, "-c", "import json,sys; sys.path.insert(0, %r); "
+                                "import central_mcp; print(json.dumps(central_mcp._read_quality_gate(%r), "
+                                "ensure_ascii=False))" % (str(OPS), str(foreign))],
+                               cwd=str(OPS.parent), env=env, capture_output=True, text=True)
+        assert split.returncode == 0, f"双质量口径探针失败：{split.stderr[-500:]}"
+        split_gate = _json.loads(split.stdout.strip().splitlines()[-1])
+        assert split_gate.get("status") == "human_pending", \
+            "36 题变绿后，50 题真人盲评待办被折叠成了整体通过"
+        states = {row.get("label"): row.get("status") for row in split_gate.get("checks") or []}
+        assert states == {"36 题严格质量": "pass", "50 题真人盲评": "human_pending"}, \
+            "36 题与 50 题盲评的状态没有分别保留"
 
     print(f"selftest ok: 面板元素（{len(used_ids)} 个）与工具（{len(called)} 个）"
           f"全部真实存在，项目文件夹按项目归口，开关项都在控制层里。")
@@ -4071,7 +4183,13 @@ def test_resolve_exec_parallel():
 
         # 本用例只验证 resolve 派发，不验证磁盘闸；宿主真实低盘会让它假失败。
         central_daemon._disk_free_gb = lambda: 20.0
-
+        # 当前门禁沙箱禁止读取宿主的全部进程表，_resolve_worktree_owned 会
+        # fail-closed 成 True；本用例要验证的是「无 worker 时重新入队」，
+        # 占用探测由 _resolve_open_items 的独立行为和真实 daemon 负责。
+        central_daemon._resolve_worktree_owned = lambda _wt: False
+        # 模型路由由独立用例覆盖；这里固定探活为可用，避免宿主的真实模型
+        # 目录与通道健康度改变“fast 通道”断言。
+        central_daemon._probe_model = lambda _model: None
         original = (wt / "doc.txt").read_text(encoding="utf-8")
         (wt / "doc.txt").write_text("manual external edit\n", encoding="utf-8")
         if central_daemon._resolve_open_items():
@@ -4235,13 +4353,26 @@ def test_resolve_gate_fail_auto_retry():
         import control_state, central_config, central_daemon
         importlib.reload(control_state); importlib.reload(central_config)
         importlib.reload(central_daemon)
+        # 当前门禁沙箱不能读全进程表，占用探测会 fail-closed；本用例验证的是
+        # 已提交的 resolve 现场直接重试 finish，而不是重新启动 worker。
+        central_daemon._resolve_worktree_owned = lambda _wt: False
 
         blocked = {"resolve:light": {
             "reason": "resolve_gate_fail", "_id": "resolve:light",
             "branch": "codex/resolve-light", "worktree": str(wt),
             "commit": commit, "ts": "2026-10-20T00:00:00+08:00"}}
         workers = {}
-        results, workers = central_daemon.dispatch_exec(False, blocked, workers)
+        # dispatch_exec 会启动真实 kgctl/truthctl 子进程；编号高水位也必须留在
+        # 本次临时根，不能继承宿主目录或上一组已删除的临时目录。
+        previous_id_root = os.environ.get("KG_TRUTH_ID_STATE_ROOT")
+        os.environ["KG_TRUTH_ID_STATE_ROOT"] = str(root / "truth-ids")
+        try:
+            results, workers = central_daemon.dispatch_exec(False, blocked, workers)
+        finally:
+            if previous_id_root is None:
+                os.environ.pop("KG_TRUTH_ID_STATE_ROOT", None)
+            else:
+                os.environ["KG_TRUTH_ID_STATE_ROOT"] = previous_id_root
         landed = [r for r in results if r.get("outcome") == "landed"]
         if not landed:
             raise AssertionError(f"gate_fail 没有下轮直接收口: {results} {blocked} {workers}")
