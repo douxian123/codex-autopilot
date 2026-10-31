@@ -3,17 +3,13 @@
  "branches": [
   "codex/auto-close-identity-gate-20261024",
   "codex/disk-admission-clean-20261027",
-  "codex/disk-admission-preview29-20261027",
   "codex/disk-reap-into-repo",
-  "codex/reap-identical-tracked-20261027",
-  "codex/slow-model-routing"
+  "codex/reap-identical-tracked-20261027"
  ],
  "burden": {
   "codex/auto-close-identity-gate-20261024": 1,
   "codex/disk-admission-clean-20261027": 3,
-  "codex/disk-admission-preview29-20261027": 8,
   "codex/disk-reap-into-repo": 5,
-  "codex/reap-identical-tracked-20261027": 3,
-  "codex/slow-model-routing": 4
+  "codex/reap-identical-tracked-20261027": 3
  }
 }
