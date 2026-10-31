@@ -1,15 +1,19 @@
 {
- "main": "e70b2e9503d8d9aff1ca4bfd356382e91571e17c",
+ "main": "e5f570988a01f5583828c4670a8e38092829e070",
  "branches": [
   "codex/auto-close-identity-gate-20261024",
   "codex/disk-admission-clean-20261027",
+  "codex/disk-admission-preview29-20261027",
   "codex/disk-reap-into-repo",
-  "codex/reap-identical-tracked-20261027"
+  "codex/reap-identical-tracked-20261027",
+  "codex/slow-model-routing"
  ],
  "burden": {
   "codex/auto-close-identity-gate-20261024": 1,
   "codex/disk-admission-clean-20261027": 3,
+  "codex/disk-admission-preview29-20261027": 8,
   "codex/disk-reap-into-repo": 5,
-  "codex/reap-identical-tracked-20261027": 3
+  "codex/reap-identical-tracked-20261027": 3,
+  "codex/slow-model-routing": 4
  }
 }
