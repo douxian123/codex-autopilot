@@ -1021,6 +1021,22 @@ def test_control_state():
     print("selftest ok: 用户级开关生效，暂停闸门拦住新工作，损坏即安全暂停。")
 
 
+def test_project_auto_exec_default_is_off():
+    """项目配置也必须保持 opt-in，避免旧控制状态误恢复后直接派 worker。"""
+    import json
+
+    config_path = OPS / "central.config.json"
+    data = json.loads(config_path.read_text(encoding="utf-8"))
+    auto_exec = data.get("auto_exec") or {}
+    assert auto_exec.get("enabled") is False, (
+        "项目级 auto_exec 必须默认关闭，只有用户显式打开两层开关才可派发"
+    )
+    assert int(auto_exec.get("max_per_cycle", 1)) == 1, (
+        "自动实现每轮最多只能派一个 worker"
+    )
+    print("selftest ok: 项目级 auto_exec 默认关闭，单轮 worker 上限为 1。")
+
+
 def test_installer():
     """版本化安装只切 marketplace 指针，不覆盖旧插件；回滚只还原自动挡入口。"""
     import json as _json
@@ -5538,6 +5554,7 @@ if __name__ == "__main__":
     test_stale_lock_selfheals_and_never_deletes_others()
     test_remote_benchmark_pollution_failclosed()
     test_control_state()
+    test_project_auto_exec_default_is_off()
     test_installer()
     test_installer_requires_clean_source()
     test_installer_shell_portability()
