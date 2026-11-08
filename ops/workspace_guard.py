@@ -46,6 +46,84 @@ REGENERABLE_TRACKED_DIRS = (
 )
 
 
+def regenerable_dirs_state(worktree: Path) -> dict[str, str]:
+    """Report, per regenerable dir, whether its working copy may be stripped.
+
+    Returns {rel_dir: "pristine" | "untracked" | "modified" | "absent"}.
+
+    Why this exists (2026-11-09, measured on the real machine): 86 live
+    worktrees each carry a full ~235MB copy of `backend/evidence` + `evidence`,
+    byte-identical to HEAD because the content is git-tracked. That is ~15.6GB
+    of pure duplication with zero information gain -- and the reaper never
+    touched it, because the only thing it knew how to do was *restore* those
+    copies from HEAD (see `restore_regenerable_tracked`), which re-materialises
+    the bytes instead of freeing them. So the disk drifted back to full every
+    few days no matter how often it was cleaned by hand.
+
+    "pristine" is the only state that may be stripped. A single untracked file
+    or a single tracked edit under the dir means a human or a gate wrote
+    something that exists nowhere else yet; that dir is left completely alone.
+    """
+    state: dict[str, str] = {}
+    for rel in REGENERABLE_TRACKED_DIRS:
+        path = worktree / rel
+        if not path.exists():
+            state[rel] = "absent"
+            continue
+        tracked = run_git(worktree, "ls-files", "--", rel)
+        if tracked.returncode != 0 or not (tracked.stdout or "").strip():
+            # Nothing from HEAD lives here, so there is nothing restorable.
+            state[rel] = "untracked"
+            continue
+        diff = run_git(worktree, "status", "--porcelain", "-uall",
+                       "--ignored=matching", "--", rel)
+        lines = [ln for ln in (diff.stdout or "").splitlines() if ln.strip()]
+        if not lines:
+            state[rel] = "pristine"
+            continue
+        # Any '??' entry is content git never recorded; any other entry is a
+        # live edit. Both mean "do not touch". A plain deletion is also left
+        # alone -- it may be someone mid-investigation.
+        if any(ln.startswith("??") or ln.startswith("!!") for ln in lines):
+            state[rel] = "untracked"
+        else:
+            state[rel] = "modified"
+    return state
+
+
+def strip_regenerable_tracked(worktree: Path) -> dict[str, int]:
+    """Delete pristine working copies of the regenerable tracked dirs.
+
+    Safe because the bytes still exist in git: `git -C <tree> checkout --
+    backend/evidence evidence` restores them byte-for-byte (verified by a
+    round-trip test). This is the only place in this codebase that deletes
+    tracked content, and it refuses unless `regenerable_dirs_state` says
+    "pristine" for the dir. Returns {rel_dir: freed_bytes}.
+
+    It writes nothing to HEAD, the index, or any branch, and it never stages,
+    commits, stashes or resets.
+    """
+    stripped: dict[str, int] = {}
+    state = regenerable_dirs_state(worktree)
+    for rel, how in state.items():
+        if how != "pristine":
+            continue
+        path = worktree / rel
+        try:
+            freed = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+        except OSError:
+            freed = 0
+        try:
+            subprocess.run(
+                ["find", str(path), "-mindepth", "1", "-depth", "-delete"],
+                capture_output=True, timeout=120)
+            path.rmdir()
+        except OSError:
+            continue
+        stripped[rel] = freed
+    return stripped
+
+
 def restore_regenerable_tracked(worktree: Path) -> list[str]:
     """Restore tracked files under regenerable output dirs from HEAD.
 
@@ -188,6 +266,45 @@ def dirty_paths(worktree: Path) -> list[tuple[str, str]]:
     return out
 
 
+def dirty_outside_regenerable(worktree: Path) -> list[tuple[str, str]]:
+    """Dirty entries that are NOT under a regenerable dir.
+
+    The gate for stripping: as long as this is empty (or only untracked
+    scratch, which the caller may drop), the only thing standing between this
+    tree and reclamation is a byte-for-byte duplicate of content that lives in
+    git. Anything else here means a human is mid-flight and the tree is left
+    exactly as it is, evidence copies and all.
+    """
+    out = []
+    for code, path in dirty_paths(worktree):
+        if any(path == r or path.startswith(r + "/")
+               for r in REGENERABLE_TRACKED_DIRS):
+            continue
+        out.append((code, path))
+    return out
+
+
+def only_regenerable_deletions(worktree: Path) -> bool:
+    """True when every dirty entry is a deletion of tracked regenerable output.
+
+    This is the exact state `strip_regenerable_tracked` leaves behind, and it is
+    what lets a stripped tree still be reaped instead of being pinned forever.
+    Those bytes are reproducible from HEAD by definition, so such a tree carries
+    zero human work. Deliberately strict in the other direction: one untracked
+    file, or one edit anywhere, returns False and the tree is left alone.
+    """
+    entries = dirty_paths(worktree)
+    if not entries:
+        return False
+    for code, path in entries:
+        if 'D' not in code:
+            return False
+        if not any(path == r or path.startswith(r + '/')
+                   for r in REGENERABLE_TRACKED_DIRS):
+            return False
+    return True
+
+
 def only_untracked_scratch(worktree: Path) -> bool:
     """True when every dirty entry is untracked machine scratch.
 
@@ -266,6 +383,7 @@ def worktree_removable(
     stamp: str = "",
     drop_scratch: bool = False,
     restore_regenerable: bool = False,
+    accept_stripped_regenerable: bool = False,
 ) -> dict:
     """Assess a worktree without deleting source."""
     if not worktree.exists():
@@ -301,11 +419,34 @@ def worktree_removable(
         # it on. `drop_scratch` above only clears *untracked* scratch; this only
         # restores *tracked* content from HEAD. Neither touches human edits:
         # any remaining dirty entry still keeps the worktree alive.
-        if restore_regenerable:
+        # When the caller also accepts the stripped state, skip the restore: it
+        # would re-materialise the same 235MB and the strip below would delete
+        # it again, every single run. That write/delete churn is pure disk wear
+        # for zero benefit, and this machine's disks are already the scarce
+        # resource -- so restore is only for callers that want the copies back.
+        if restore_regenerable and not accept_stripped_regenerable:
             restored = restore_regenerable_tracked(worktree)
             if restored and not scratch_note:
                 scratch_note = "已从 HEAD 还原可重建产物 " + ", ".join(restored)
-        if status(worktree):
+        # Opt-in (pressure / disk-reap path): once every *human* entry is gone,
+        # the only thing still pinning this tree may be its byte-identical copy
+        # of `backend/evidence` (~235MB each, 86 copies, ~15.6GB total). Those
+        # bytes live in git and `git checkout -- <dir>` brings them back exactly
+        # (round-trip verified). So reclaim the duplicate instead of keeping it
+        # forever -- which is what the old restore-only behaviour did, and why
+        # the disk kept refilling. Runs ONLY when nothing outside the
+        # regenerable dirs is dirty; one edit or one stray file anywhere else
+        # and the tree is left untouched, evidence copies included.
+        if accept_stripped_regenerable and not dirty_outside_regenerable(worktree):
+            freed = strip_regenerable_tracked(worktree)
+            if freed and not scratch_note:
+                total = sum(freed.values())
+                scratch_note = (f"已剥离可重建副本 "
+                                f"{', '.join(freed)}（{total / 1e9:.2f}GB，"
+                                f"`git checkout --` 可还原）")
+        if status(worktree) and not (
+                accept_stripped_regenerable
+                and only_regenerable_deletions(worktree)):
             return {"ok": False, "reason": "dirty", "ahead": ahead, "backup": ""}
     else:
         scratch_note = ""
@@ -322,11 +463,27 @@ def worktree_removable(
             "scratch": scratch_note}
 
 
-def remove_worktree(repo: Path, worktree: Path) -> tuple[bool, str]:
+def remove_worktree(repo: Path, worktree: Path,
+                    force_regenerable: bool = False) -> tuple[bool, str]:
+    """Remove a worktree directory. The branch is never touched by this.
+
+    `force_regenerable` is opt-in and narrow: after a strip, the tree reads
+    dirty (` D` on evidence paths) and plain `git worktree remove` refuses it.
+    With the flag on we retry with --force, but ONLY when the entire diff is
+    deletions inside the regenerable dirs -- i.e. the bytes are all in git and
+    we removed them on purpose. Any other diff keeps the original refusal, so
+    the default path (delivery cleanup) behaves exactly as before.
+    """
     remove_generated_dirs(worktree)
     result = run_git(repo, "worktree", "remove", str(worktree))
+    if result.returncode == 0:
+        return True, ""
+    if force_regenerable and only_regenerable_deletions(worktree):
+        forced = run_git(repo, "worktree", "remove", "--force", str(worktree))
+        detail = ((forced.stdout or "") + (forced.stderr or "")).strip()
+        return forced.returncode == 0, detail[-300:]
     detail = ((result.stdout or "") + (result.stderr or "")).strip()
-    return result.returncode == 0, detail[-300:]
+    return False, detail[-300:]
 
 
 # Machine-generated task directory names. Only names matching this are eligible

@@ -5144,6 +5144,93 @@ def test_regenerable_tracked_restore_is_opt_in_and_lossless():
     print("selftest ok: 可重建已跟踪产物只在 opt-in 时从 HEAD 恢复，人间改动不受影响。")
 
 
+
+def test_strip_regenerable_duplicate_is_opt_in_and_lossless():
+    """剥离「已跟踪但可重建」的重复副本：零信息损失，且只动纯重复。
+
+    2026-11-09 根因：backend/evidence 被 git 跟踪，每个 worktree 都物化一份
+    235MB，本机 86 棵树合计约 15.6GB 完全重复。旧逻辑只会 `git checkout --`
+    把副本「还原」回来 —— 每轮把同样的字节再写一遍，从不释放，磁盘于是反复
+    被填满。修复：单开一条剥离通道，把与 HEAD 逐字节相同的副本真正删掉
+    （`git checkout --` 可原样还原），并把已剥离的树视为「可回收」。
+
+    本测试守住五条不变式：
+      1. 干净副本判为 pristine，可剥离；有未跟踪文件或真实改动 -> 不可剥离；
+      2. `strip_regenerable_tracked` 只删 pristine 的，返回释放字节数；
+      3. 剥离后可无损还原回 HEAD 的内容；
+      4. 已剥离的树在 opt-in 下仍可回收，且 `remove_worktree` 能安全强删；
+      5. 可再生产物之外有真实改动时，副本一律不动、树也不回收。
+    """
+    import sys
+    from pathlib import Path
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import workspace_guard as wg
+
+    def _git(cwd, *a):
+        return subprocess.run(["git", "-C", str(cwd), *a],
+                              capture_output=True, text=True)
+
+    with tempfile.TemporaryDirectory(prefix="wg-strip-") as tmp:
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q", "-b", "main")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "backend" / "evidence").mkdir(parents=True)
+        (repo / "backend" / "evidence" / "a.json").write_text('{"k":1}')
+        (repo / "src").mkdir()
+        (repo / "src" / "app.ts").write_text("v1\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "init")
+
+        wt = Path(tmp) / "wt"
+        _git(repo, "worktree", "add", "-q", "-b", "codex/y", str(wt))
+
+        # 1) 干净副本 -> pristine
+        assert wg.regenerable_dirs_state(wt)["backend/evidence"] == "pristine"
+
+        # 2) 剥离，返回释放字节数；内容可从 HEAD 无损还原
+        freed = wg.strip_regenerable_tracked(wt)
+        assert "backend/evidence" in freed and freed["backend/evidence"] > 0, freed
+        assert not (wt / "backend" / "evidence").exists(), "应当真正剥离"
+        _git(wt, "checkout", "--", "backend/evidence")
+        assert (wt / "backend" / "evidence" / "a.json").read_text() == '{"k":1}', \
+            "剥离的内容必须能从 HEAD 原样还原"
+
+        # 3) 未跟踪文件 -> 不可剥离
+        (wt / "backend" / "evidence" / "human-note.md").write_text("人工备注")
+        st = wg.regenerable_dirs_state(wt)["backend/evidence"]
+        assert st == "untracked", st
+        assert wg.strip_regenerable_tracked(wt) == {}, "有未跟踪文件时不得剥离"
+        assert (wt / "backend" / "evidence" / "human-note.md").exists(), \
+            "未跟踪的人间产物绝不能被删"
+        (wt / "backend" / "evidence" / "human-note.md").unlink()
+
+        # 4) 已剥离的树：opt-in 下仍可回收，且能安全强删
+        wg.strip_regenerable_tracked(wt)
+        assert wg.only_regenerable_deletions(wt), "剥离后应判为纯可再生产物删除"
+        a = wg.worktree_removable(repo, wt, "codex/y", "main", commands="",
+                                  accept_stripped_regenerable=True)
+        assert a["ok"] is True, a
+        ok, detail = wg.remove_worktree(repo, wt, force_regenerable=True)
+        assert ok, detail
+        assert not wt.exists(), "剥离后的树应当能被安全回收"
+        _git(wt, "checkout", "--", "backend/evidence")
+
+        # 5) 可再生产物之外有真实改动 -> 副本不动、树不回收
+        wt2 = Path(tmp) / "wt2"
+        _git(repo, "worktree", "add", "-q", "-b", "codex/z", str(wt2))
+        (wt2 / "src" / "app.ts").write_text("v2 human edit\n")
+        a = wg.worktree_removable(repo, wt2, "codex/z", "main", commands="",
+                                  accept_stripped_regenerable=True)
+        assert a["ok"] is False and a["reason"] == "dirty", a
+        assert (wt2 / "backend" / "evidence" / "a.json").exists(), \
+            "有真实改动时，可再生产物副本也不能被剥离"
+
+    print("selftest ok: 重复的可重建副本可剥离、可无损还原，人间改动全保留。")
+
 def test_mcp_contract():
     """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
     import json as _json
@@ -5641,6 +5728,7 @@ if __name__ == "__main__":
     test_pressure_reap_engages_even_when_regular_reaping_is_on()
     test_reap_scan_is_sliced_and_throttled()
     test_regenerable_tracked_restore_is_opt_in_and_lossless()
+    test_strip_regenerable_duplicate_is_opt_in_and_lossless()
     test_mcp_contract()
     test_closure_rate()
     test_budget_gate()
