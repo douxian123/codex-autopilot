@@ -3524,10 +3524,16 @@ def _reap_dead_worktrees() -> int:
                 # 50+ 现场合计约 6GB 完全重复），就从 HEAD 还原再判脏。
                 # 安全判据一条没放松：未跟踪的人间产物、未落提交、活进程
                 # 仍全部保留；还原后仍有任何脏项，这棵树照样留下。
-                restore_regenerable=_pressure_reap)
+                restore_regenerable=_pressure_reap,
+                # 2026-11-09: 不再「还原」这些副本（那是每轮 235MB 的写-删抖动），
+                # 改为把与 HEAD 逐字节相同的副本真正剥离，释放 86 棵树约 15.6GB
+                # 的纯重复。安全判据没放松：可再生产物之外只要还有一处改动，
+                # 整棵树原地不动。`git checkout -- <dir>` 可随时原样还原。
+                accept_stripped_regenerable=_pressure_reap)
             if not assessment.get("ok"):
                 continue
-            ok, detail = workspace_guard.remove_worktree(repo, d)
+            ok, detail = workspace_guard.remove_worktree(
+                repo, d, force_regenerable=_pressure_reap)
             if ok:
                 reaped += 1
                 scratch = assessment.get("scratch") or ""

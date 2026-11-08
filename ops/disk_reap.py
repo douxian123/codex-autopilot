@@ -98,6 +98,8 @@ KG_TMP_AGE_H = float(os.environ.get("KG_TMP_AGE_H", "6"))
 REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "40"))
 REAP_TIME_BUDGET_S = float(os.environ.get("KG_REAP_TIME_BUDGET_S", "60"))
 REAP_MIN_IDLE_H = float(os.environ.get("KG_REAP_MIN_IDLE_H", "1"))
+# 剥离重复副本的闲置门槛：默认 24h，避免动到正在进行的现场。
+STRIP_IDLE_H = float(os.environ.get("KG_STRIP_IDLE_H", "24"))
 
 
 def log(msg):
@@ -276,10 +278,10 @@ def _remove_one_kg_tmp(path: Path, procs: str, guard=None) -> bool:
                     branch = brc
                 assessment = guard.worktree_removable(
                     repo, path, branch, "main", commands=procs,
-                    backup_unique=False)
+                    backup_unique=False, accept_stripped_regenerable=True)
                 if not assessment.get("ok"):
                     return False
-                ok, _ = guard.remove_worktree(repo, path)
+                ok, _ = guard.remove_worktree(repo, path, force_regenerable=True)
                 return ok
             except Exception:
                 return False
@@ -315,6 +317,79 @@ def _remove_one_kg_tmp(path: Path, procs: str, guard=None) -> bool:
         return True
     except OSError:
         return False
+
+
+def reap_regenerable_duplicates(dry: bool = False, guard=None,
+                                idle_h: float | None = None) -> tuple[int, int]:
+    """剥离闲置 worktree 里与 HEAD 逐字节相同的可重建副本。
+
+    为什么单开一条通道（2026-11-09 实测）：`backend/evidence` + `evidence` 被
+    git 跟踪，每个 worktree 都物化一份 ~235MB，本机 86 棵树合计约 15.6GB 完全
+    重复。旧逻辑只会 `git checkout --` 把副本「还原」回来，从不真正释放 —— 所以
+    磁盘每隔几天就被填满，人只能反复手工清。
+
+    这条路与「回收整棵树」解耦：一棵树可能因为主人在别处还有真实改动而长期
+    留在盘上（本来就该留），但它那份 235MB 的重复缓存没有任何理由跟着留。
+    判据一条没放松 —— 只动「与 HEAD 逐字节相同」的副本：
+      * 可再生产物之外/之内出现任何未跟踪文件或真实改动 -> 整棵树原地不动；
+      * 有活进程引用 -> 跳过；
+      * 闲置不足 idle_h -> 跳过；
+      * 受保护名字（主仓、kg-trunk、kg-live-*）-> 跳过。
+    释放的字节全部可从 git 还原（`git checkout -- <dir>`），零信息损失。
+    """
+    if guard is None:
+        return 0, 0
+    if os.environ.get("KG_STRIP_DUPLICATES", "1").strip().lower() in ("0", "off", "false"):
+        return 0, 0
+    root = Path(os.environ.get("KG_WORKSPACE_ROOT")
+                or (Path.home() / ".newmax/workspace"))
+    if not root.is_dir():
+        return 0, 0
+    procs = _process_lines()
+    hours = REAP_MIN_IDLE_H if idle_h is None else idle_h
+    cutoff = time.time() - hours * 3600
+    stripped_n = 0
+    freed = 0
+    for d in sorted(root.iterdir()):
+        if not d.is_dir() or d.is_symlink() or not d.name.startswith("kg-"):
+            continue
+        if not (d / ".git").exists():
+            continue
+        if d.name in guard.PROTECTED_NAMES or d.name.startswith(guard.PROTECTED_PREFIXES):
+            continue
+        try:
+            if d.stat().st_mtime > cutoff:
+                continue
+        except OSError:
+            continue
+        if guard.process_reference(d, procs):
+            continue
+        state = guard.regenerable_dirs_state(d)
+        if not any(v == "pristine" for v in state.values()):
+            continue
+        if guard.dirty_outside_regenerable(d):
+            continue
+        if dry:
+            approx = 0
+            for rel, how in state.items():
+                if how != "pristine":
+                    continue
+                try:
+                    approx += sum(f.stat().st_size
+                                  for f in (d / rel).rglob("*") if f.is_file())
+                except OSError:
+                    pass
+            if approx:
+                stripped_n += 1
+                freed += approx
+            continue
+        got = guard.strip_regenerable_tracked(d)
+        if got:
+            stripped_n += 1
+            freed += sum(got.values())
+            log(f"剥离可重建重复副本 {d.name}：{', '.join(got)}"
+                f"（{sum(got.values()) / 1e9:.2f}GB，可从 HEAD 还原）")
+    return stripped_n, freed
 
 
 def _reap_kg_tmp(dry: bool = False, guard=None) -> int:
@@ -384,14 +459,19 @@ def main():
         if DRY:
             picked = []
             orig = d.workspace_guard.remove_worktree
-            d.workspace_guard.remove_worktree = lambda repo, wt: (picked.append(wt.name) or (True, "dry"))
+            d.workspace_guard.remove_worktree = (
+                lambda repo, wt, **kw: (picked.append(wt.name) or (True, "dry")))
             try:
                 n = d._reap_dead_worktrees()
             finally:
                 d.workspace_guard.remove_worktree = orig
             t = _reap_kg_tmp(dry=True, guard=d.workspace_guard)
             o = _dry_orphan_residue(d)
-            log(f"dry-run: 会回收 {clone_n} 个签名临时副本 / {n} 个 worktree / {t} 个 kg tmp / {o} 个孤儿残留 -> {picked}")
+            sn, sf = reap_regenerable_duplicates(
+                dry=True, guard=d.workspace_guard, idle_h=STRIP_IDLE_H)
+            log(f"dry-run: 会回收 {clone_n} 个签名临时副本 / {n} 个 worktree / "
+                f"{t} 个 kg tmp / {o} 个孤儿残留；会剥离 {sn} 棵树的重复副本"
+                f"（{sf / 1e9:.2f}GB）-> {picked}")
         else:
             n = d._reap_dead_worktrees()
             k = d._reap_backend_orphans()
@@ -399,9 +479,14 @@ def main():
             # 顺序有讲究：必须在 worktree 回收之后。前者刚把树删掉的现场不会
             # 变成孤儿；只有「删到一半失败」的现场才会落成孤儿，正是这一条接住它。
             o = d._reap_orphan_residue()
+            # 顺序有讲究：剥离放在 worktree 回收之后。刚被整棵回收的树不必再
+            # 剥离；而回收失败的树正好在这里把它那份重复副本清掉。
+            sn, sf = reap_regenerable_duplicates(
+                guard=d.workspace_guard, idle_h=STRIP_IDLE_H)
             after = free_gb()
             log(f"回收签名临时副本 {clone_n} 个（{clone_freed / 1e9:.2f}GB）/ worktree {n} 个 / "
-                f"孤儿后端 {k} 个 / kg tmp {t} 个 / 孤儿残留目录 {o} 个；"
+                f"孤儿后端 {k} 个 / kg tmp {t} 个 / 孤儿残留目录 {o} 个 / "
+                f"剥离重复副本 {sn} 棵树（{sf / 1e9:.2f}GB）；"
                 f"磁盘 {before:.1f}G → {after:.1f}G")
     except Exception as exc:
         log(f"回收异常（忽略）：{type(exc).__name__}: {exc}")
