@@ -22,6 +22,12 @@ import sys
 import time
 from pathlib import Path
 
+CODEX_SIGN_CLONE_TARGETS = (
+    "com.google.Chrome.code_sign_clone",
+    "com.bot.pc.doubao.browser.code_sign_clone",
+)
+CODEX_SIGN_CLONE_GRACE_MIN = float(os.environ.get("KG_CODESIGN_CLONE_GRACE_MIN", "20"))
+
 def _resolve_ops() -> Path:
     """Locate the runtime ops/ that is ACTUALLY INSTALLED right now.
 
@@ -49,6 +55,10 @@ def _resolve_ops() -> Path:
     def _ok(ops: Path | None) -> bool:
         return bool(ops) and (ops / "central_daemon.py").exists()
 
+    here = Path(__file__).resolve().parent
+    if _ok(here):
+        return here
+
     state = Path.home() / "plugins/codex-autopilot/install-state.json"
     try:
         data = json.loads(state.read_text(encoding="utf-8"))
@@ -70,7 +80,10 @@ def _resolve_ops() -> Path:
                 return (cand / "ops")
     except Exception:
         pass
-    return Path("/Users/danta/plugins/codex-autopilot/ops")
+    # The executable own versioned ops directory is the only safe fallback.
+    # The old non-versioned copy is commonly absent after plugin migration;
+    # returning it made this hourly guard silently stop working.
+    return here
 
 
 OPS = _resolve_ops()
@@ -105,6 +118,99 @@ def free_gb():
         return st.f_bavail * st.f_frsize / 1e9
     except Exception:
         return -1.0
+
+
+def _code_sign_clone_xdirs():
+    """Yield temporary X directories where macOS app signing clones live."""
+    tmp = os.environ.get("TMPDIR", "/var/folders").rstrip("/")
+    seen = set()
+    for base in (os.path.dirname(tmp), tmp, "/var/folders"):
+        cur = base
+        for _ in range(4):
+            cand = os.path.join(cur, "X")
+            if os.path.isdir(cand) and cand not in seen:
+                seen.add(cand)
+                yield cand
+            cur = os.path.dirname(cur)
+
+
+def _path_in_use(path: str) -> bool:
+    """Return True when an open process references this clone path.
+
+    Do not use `lsof +D` for one clone at a time: macOS may report files in
+    sibling clones under the same parent as well, which made stale and active
+    Chrome copies look identical. Ask open files explicitly, then keep the
+    directory when the probe itself fails.
+    """
+    try:
+        out = subprocess.run(
+            ["lsof", "-n", "-F", "n"],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        if out.returncode not in (0, 1):
+            return True
+        needle = path.rstrip("/") + "/"
+        return any(line.startswith("n") and needle in line[1:] for line in out.stdout.splitlines())
+    except Exception:
+        return True
+
+
+def _tree_size(path: str) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def reap_code_sign_clones(dry: bool = False) -> tuple[int, int]:
+    """Remove stale macOS app-signing clones that are no longer in use."""
+    removed = 0
+    freed = 0
+    cutoff = time.time() - CODEX_SIGN_CLONE_GRACE_MIN * 60
+    for xdir in _code_sign_clone_xdirs():
+        for parent_name in CODEX_SIGN_CLONE_TARGETS:
+            root = os.path.join(xdir, parent_name)
+            if not os.path.isdir(root):
+                continue
+            try:
+                entries = sorted(os.listdir(root))
+            except OSError:
+                continue
+            for ent in entries:
+                if not ent.startswith("code_sign_clone."):
+                    continue
+                path = os.path.join(root, ent)
+                if not os.path.isdir(path) or os.path.islink(path):
+                    continue
+                try:
+                    if os.path.getmtime(path) > cutoff:
+                        continue
+                except OSError:
+                    continue
+                if _path_in_use(path):
+                    log(f"签名临时副本仍在使用，跳过：{path}")
+                    continue
+                size = _tree_size(path)
+                if dry:
+                    log(f"dry-run: 会回收签名临时副本 {path}（{size / 1e9:.2f}GB）")
+                    removed += 1
+                    freed += size
+                    continue
+                try:
+                    shutil.rmtree(path)
+                except Exception as exc:
+                    log(f"签名临时副本回收失败 {path}: {type(exc).__name__}: {exc}")
+                    continue
+                removed += 1
+                freed += size
+                log(f"回收签名临时副本 {path}（{size / 1e9:.2f}GB）")
+    return removed, freed
 
 
 def _process_lines() -> str:
@@ -273,6 +379,7 @@ def main():
     d.REAP_MIN_IDLE_H = REAP_MIN_IDLE_H
 
     before = free_gb()
+    clone_n, clone_freed = reap_code_sign_clones(dry=DRY)
     try:
         if DRY:
             picked = []
@@ -284,7 +391,7 @@ def main():
                 d.workspace_guard.remove_worktree = orig
             t = _reap_kg_tmp(dry=True, guard=d.workspace_guard)
             o = _dry_orphan_residue(d)
-            log(f"dry-run: 会回收 {n} 个 worktree / {t} 个 kg tmp / {o} 个孤儿残留 -> {picked}")
+            log(f"dry-run: 会回收 {clone_n} 个签名临时副本 / {n} 个 worktree / {t} 个 kg tmp / {o} 个孤儿残留 -> {picked}")
         else:
             n = d._reap_dead_worktrees()
             k = d._reap_backend_orphans()
@@ -293,8 +400,9 @@ def main():
             # 变成孤儿；只有「删到一半失败」的现场才会落成孤儿，正是这一条接住它。
             o = d._reap_orphan_residue()
             after = free_gb()
-            log(f"回收 worktree {n} 个 / 孤儿后端 {k} 个 / kg tmp {t} 个 / "
-                f"孤儿残留目录 {o} 个；磁盘 {before:.1f}G → {after:.1f}G")
+            log(f"回收签名临时副本 {clone_n} 个（{clone_freed / 1e9:.2f}GB）/ worktree {n} 个 / "
+                f"孤儿后端 {k} 个 / kg tmp {t} 个 / 孤儿残留目录 {o} 个；"
+                f"磁盘 {before:.1f}G → {after:.1f}G")
     except Exception as exc:
         log(f"回收异常（忽略）：{type(exc).__name__}: {exc}")
     return 0

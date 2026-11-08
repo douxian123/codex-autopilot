@@ -5533,7 +5533,54 @@ def test_rotation_streaming():
     print("selftest ok: 窗口轮换在 thread.started 后立即返回，不受首次长回复阻塞。")
 
 
+
+def test_disk_reap_reaps_stale_code_sign_clones():
+    """签名临时副本只清旧副本，活跃副本和探针失败时必须保留。"""
+    import importlib.util
+    import os
+    import tempfile
+    import time
+
+    reap_path = Path(__file__).resolve().parent / "disk_reap.py"
+    spec = importlib.util.spec_from_file_location("disk_reap_codesign_probe", reap_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    with tempfile.TemporaryDirectory(prefix="codex-sign-clones-") as tmp:
+        xdir = Path(tmp) / "X" / "com.google.Chrome.code_sign_clone"
+        stale = xdir / "code_sign_clone.stale"
+        active = xdir / "code_sign_clone.active"
+        fresh = xdir / "code_sign_clone.fresh"
+        for path in (stale, active, fresh):
+            path.mkdir(parents=True)
+            (path / "payload").write_text("x" * 32, encoding="utf-8")
+        old = time.time() - 3600
+        os.utime(stale, (old, old))
+        os.utime(active, (old, old))
+
+        mod._code_sign_clone_xdirs = lambda: iter([str(Path(tmp) / "X")])
+        mod._path_in_use = lambda path: Path(path).name == "code_sign_clone.active"
+        removed, freed = mod.reap_code_sign_clones(dry=True)
+        assert removed == 1 and freed > 0, (removed, freed)
+        assert stale.exists() and active.exists() and fresh.exists()
+
+        removed, freed = mod.reap_code_sign_clones(dry=False)
+        assert removed == 1 and freed > 0, (removed, freed)
+        assert not stale.exists(), "旧副本应被删除"
+        assert active.exists(), "活跃副本不能被删除"
+        assert fresh.exists(), "未过 grace 的新副本不能被删除"
+
+        mod._path_in_use = lambda path: True
+        another = xdir / "code_sign_clone.another"
+        another.mkdir(parents=True)
+        os.utime(another, (old, old))
+        removed, _ = mod.reap_code_sign_clones(dry=False)
+        assert removed == 0 and another.exists(), "引用探针不确定时必须保留"
+
+    print("selftest ok: 签名临时副本只回收旧且无引用的目录，活跃副本受保护。")
+
 if __name__ == "__main__":
+    test_disk_reap_reaps_stale_code_sign_clones()
     main()
     test_replan()
     test_resolve()
