@@ -10,6 +10,7 @@
 import json
 import os
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1150,13 +1151,18 @@ def test_installer_requires_clean_source():
         run(["git", "-C", str(source), "commit", "-qm", "fixture"])
         commit = run(["git", "-C", str(source), "rev-parse", "HEAD"],
                      check=False).stdout.strip()
+        # 安装器的生产约束要求落盘主干是独立 worktree；fixture 也必须按真实布局建，
+        # 不能靠默认路径恰好不存在来证明安装成功。
+        trunk = root / "source-trunk"
+        run(["git", "-C", str(source), "worktree", "add", "-q", "--detach", str(trunk), "main"])
 
         home = root / "home"
         home.mkdir()
         env = os.environ.copy()
         env["HOME"] = str(home)
-        clean = run(["bash", str(source_install), "--no-seed", "--no-marketplace",
-                     "--no-companion", str(source)], env=env, check=False)
+        clean = run(["bash", str(source_install), "--trunk", str(trunk),
+                     "--no-seed", "--no-marketplace", "--no-companion", str(source)],
+                    env=env, check=False)
         if clean.returncode:
             raise AssertionError(f"干净安装失败:\n{clean.stdout}\n{clean.stderr}")
         release = home / "plugins" / "codex-autopilot" / "releases" / installed_version
@@ -1169,8 +1175,9 @@ def test_installer_requires_clean_source():
         home2.mkdir()
         env["HOME"] = str(home2)
         (source / "UNPUBLISHED.py").write_text("# dirty\n", encoding="utf-8")
-        dirty = run(["bash", str(source_install), "--no-seed", "--no-marketplace",
-                     "--no-companion", str(source)], env=env, check=False)
+        dirty = run(["bash", str(source_install), "--trunk", str(trunk),
+                     "--no-seed", "--no-marketplace", "--no-companion", str(source)],
+                    env=env, check=False)
         combined = dirty.stdout + dirty.stderr
         assert dirty.returncode != 0, f"脏工作区被误发布:\n{combined}"
         assert "拒绝发布不可变版本" in combined, combined
@@ -1216,21 +1223,25 @@ def test_installer_shell_portability():
         stub = fake_bin / "swiftc"
         stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         stub.chmod(0o755)
+        trunk = Path(tmp) / "project-trunk"
+        run(["git", "-C", str(OPS.parent), "worktree", "add", "-q", "--detach",
+             str(trunk), "HEAD"])
 
         env = os.environ.copy()
         env["HOME"] = str(home)
         env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
         env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
-        result = run(["bash", str(install), "--no-seed", "--no-marketplace", str(OPS.parent)],
-                     env=env, check=False)
+        result = run(["bash", str(install), "--trunk", str(trunk), "--no-seed",
+                      "--no-marketplace", str(OPS.parent)], env=env, check=False)
         combined = result.stdout + result.stderr
         assert "unbound variable" not in combined, f"bash 3.2 变量解析崩了:\n{combined}"
         assert result.returncode == 0, f"完整安装路径没跑完:\n{combined}"
         assert (home / "plugins" / "codex-autopilot" / "releases" / installed_version
                 / "ops" / "central_mcp.py").is_file()
         # 同一份安装不带 Companion 时也必须照样成功。
-        result2 = run(["bash", str(install), "--no-seed", "--no-marketplace",
-                       "--no-companion", str(OPS.parent)], env=env, check=False)
+        result2 = run(["bash", str(install), "--trunk", str(trunk), "--no-seed",
+                       "--no-marketplace", "--no-companion", str(OPS.parent)],
+                      env=env, check=False)
         # 版本目录已存在，第二次会因「拒绝覆盖」退出；只要不是崩在变量解析上就说明路径健康。
         assert "unbound variable" not in (result2.stdout + result2.stderr)
 
@@ -1286,14 +1297,18 @@ def test_installed_copy_binding():
              "add", "."], check=False)
         run(["git", "-C", str(project), "-c", "user.email=t@t", "-c", "user.name=t",
              "commit", "-qm", "init"], check=False)
+        trunk = Path(tmp) / "project-trunk"
+        run(["git", "-C", str(project), "worktree", "add", "-q", "--detach",
+             str(trunk), "main"])
 
         env = os.environ.copy()
         env["HOME"] = str(home)
         env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
         for key in ("KG_REPO", "KG_TRUNK", "KG_DAEMON_HOME"):
             env.pop(key, None)
-        result = run(["bash", str(install), "--no-seed", "--no-marketplace",
-                      "--no-companion", str(project)], env=env, check=False)
+        result = run(["bash", str(install), "--trunk", str(trunk), "--no-seed",
+                      "--no-marketplace", "--no-companion", str(project)],
+                     env=env, check=False)
         assert result.returncode == 0, f"安装失败:\n{result.stdout}\n{result.stderr}"
 
         release = home / "plugins" / "codex-autopilot" / "releases" / installed_version
@@ -1334,6 +1349,143 @@ def test_installed_copy_binding():
             proc.wait(timeout=10)
 
     print("selftest ok: 装出来的副本自带绑定、kgctl 认得出项目、MCP 能应答（不带任何环境变量）。")
+
+
+def test_binding_preflight_rejects_empty_shell():
+    """锁住 2026-11-08 的真实空转：目录存在、但既不是 git 仓库也没有任务账本。
+
+    ``install-49`` 正是这种形态：只有 3 个 truth 文件，安装却仍写 ``KG_REPO``，
+    面板显示 enabled。用户每说一句需求，都没有落到项目账本里。
+    """
+    import json as _json
+
+    with tempfile.TemporaryDirectory(prefix="autopilot-binding-health-") as tmp:
+        root = Path(tmp)
+        shell = root / "empty-state-root"
+        (shell / "ops" / "truth").mkdir(parents=True)
+        (shell / "ops" / "truth" / "acceptance.jsonl").write_text("", encoding="utf-8")
+        # plugin_binding.py 从自身 ops/ 的上一级找 .mcp.json。测试复制一份临时插件根，
+        # 既隔离真实配置，也验证 binding_health 的真实解析路径。
+        temp_plugin = root / "plugin"
+        (temp_plugin / "ops").mkdir(parents=True)
+        (temp_plugin / ".mcp.json").write_text(_json.dumps({
+            "mcpServers": {"codex-autopilot": {
+                "env": {"KG_REPO": str(shell)}}},
+        }), encoding="utf-8")
+        (temp_plugin / "ops" / "plugin_binding.py").write_text(
+            (OPS / "plugin_binding.py").read_text(encoding="utf-8"), encoding="utf-8")
+
+        script = (
+            "import json, sys; from pathlib import Path; "
+            "sys.path.insert(0, sys.argv[1]); import plugin_binding as b; "
+            "print(json.dumps(b.binding_health(), ensure_ascii=False))"
+        )
+        env = os.environ.copy()
+        for key in ("KG_REPO", "KG_TRUNK"):
+            env.pop(key, None)
+        bad = run([sys.executable, "-c", script, str(temp_plugin / "ops")],
+                  env=env, cwd=str(temp_plugin), check=False)
+        assert bad.returncode == 0, f"体检脚本自己坏了：{bad.stderr}"
+        report = _json.loads(bad.stdout)
+        assert report["status"] == "broken", report
+        joined = "\n".join(report["problems"])
+        assert "不是 git 仓库" in joined and "缺少账本目录" in joined, joined
+
+        project = root / "real-project"
+        (project / "ops" / "tasks").mkdir(parents=True)
+        (project / "ops" / "truth").mkdir(parents=True)
+        (project / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(project)])
+        # 首次安装允许显式主干尚未创建：这里必须是 ok + warning，不能因
+        # “等待第一次落盘时自建”而把整个安装判死。
+        pending_trunk = root / "real-project-trunk"
+        (temp_plugin / ".mcp.json").write_text(_json.dumps({
+            "mcpServers": {"codex-autopilot": {
+                "env": {"KG_REPO": str(project), "KG_TRUNK": str(pending_trunk)}}},
+        }), encoding="utf-8")
+        good = run([sys.executable, "-c", script, str(temp_plugin / "ops")],
+                   env=env, cwd=str(temp_plugin), check=False)
+        assert good.returncode == 0, f"体检脚本自己坏了：{good.stderr}"
+        good_health = _json.loads(good.stdout)
+        assert good_health["status"] == "ok", good.stdout
+        assert good_health["warnings"], "首次安装缺 trunk 应明确给出待创建警告"
+
+        # 已存在的 trunk 仍是硬约束：若它存在却不是 git worktree，必须拒绝。
+        pending_trunk.mkdir()
+        bad_trunk = run([sys.executable, "-c", script, str(temp_plugin / "ops")],
+                        env=env, cwd=str(temp_plugin), check=False)
+        assert bad_trunk.returncode == 0, f"体检脚本自己坏了：{bad_trunk.stderr}"
+        bad_trunk_health = _json.loads(bad_trunk.stdout)
+        assert bad_trunk_health["status"] == "broken", bad_trunk.stdout
+        assert "不是 git worktree" in "\n".join(bad_trunk_health["problems"]), bad_trunk.stdout
+
+    print("selftest ok: 空壳状态根被判 broken，真仓库根被判 ok。")
+
+
+def test_broken_binding_panel_contract():
+    """坏绑定必须经真实 MCP 状态返回完整面板契约。
+
+    只测 ``binding_health()`` 不够：面板调用 ``autopilot_status``。若它提前返回
+    字段残缺的 payload，UI 会把队列、计数和验收显示成空白或 0，用户仍看不出
+    “自动挡没接上项目”。这里复制插件，把 .mcp.json 真改成事故形态，再经 MCP
+    子进程读状态。
+    """
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="autopilot-broken-binding-") as tmp:
+        root = Path(tmp)
+        plugin = root / "plugin"
+        shutil.copytree(OPS.parent, plugin)
+        shell = root / "install-49"
+        shell.mkdir()
+        (plugin / ".mcp.json").write_text(_json.dumps({
+            "mcpServers": {"codex-autopilot": {
+                "env": {"KG_REPO": str(shell),
+                        "KG_TRUNK": str(root / "install-49-trunk")}}},
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        proc = subprocess.Popen([sys.executable, str(plugin / "ops" / "central_mcp.py")],
+                                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True,
+                                env=dict(os.environ, KG_DAEMON_HOME=str(root / "home")),
+                                cwd=str(plugin))
+        try:
+            def send(obj):
+                proc.stdin.write(_json.dumps(obj, ensure_ascii=False) + "\n")
+                proc.stdin.flush()
+
+            send({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                  "params": {"protocolVersion": "2025-06-18"}})
+            _json.loads(proc.stdout.readline())
+            send({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                  "params": {"name": "autopilot_status",
+                             "arguments": {"fast": True}}})
+            result = _json.loads(proc.stdout.readline())["result"]
+            payload = result.get("structuredContent") or _json.loads(
+                result["content"][0]["text"])
+            assert payload["state"] == "binding_broken", payload
+            assert payload["ok"] is False and payload["enabled"] is False, payload
+            assert "不是 git 仓库" in payload["why"], payload
+            assert "普通目录无法闭环" in payload["why"], payload
+            for key in ("project", "switches", "queue", "counters", "closure_rate",
+                        "human_acceptance", "daemon", "doing_items", "todo_items",
+                        "machine_verified", "roadmap", "project_folders"):
+                assert key in payload, f"坏绑定状态缺少面板字段：{key}"
+            assert payload["counters"]["landed"] is None, "坏绑定的计数不能伪装成 0"
+            assert payload["queue"]["clean"] is None, "坏绑定的队列不能伪装成空"
+            import central_mcp
+            closure_line = central_mcp._closure_rate_line(payload["closure_rate"])
+            assert "取不到" in closure_line, closure_line
+        finally:
+            proc.stdin.close()
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+            err = proc.stderr.read()
+            assert proc.returncode is not None, err
+        print("selftest ok: 坏绑定经真实 MCP 状态返回完整面板契约，"
+              "不伪装为空队列或 0。")
 
 
 def test_preview_check_contract():
@@ -5565,6 +5717,8 @@ if __name__ == "__main__":
     test_panel_contract()
     test_preview_check_contract()
     test_installed_copy_binding()
+    test_binding_preflight_rejects_empty_shell()
+    test_broken_binding_panel_contract()
     test_panel_first_screen()
     test_codex_native_bridge()
     test_native_socket_lstat()

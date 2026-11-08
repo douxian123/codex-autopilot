@@ -67,7 +67,7 @@ MAIN = os.environ.get("KG_MAIN", "main")
 # 旧实现取「git 主工作树」当账本家，而 truthctl 取「调用所在 worktree」，于是
 # 同一个项目能同时存在两份互不相认的账本。现在两个脚本共用同一个解析器。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plugin_binding import apply_plugin_env  # noqa: E402
+from plugin_binding import apply_plugin_env, binding_health, binding_line  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, looks_like_state_root, resolve_state_root  # noqa: E402
 import central_config  # noqa: E402
@@ -75,7 +75,20 @@ import central_config  # noqa: E402
 # 自包含安装下，绑定的项目写在插件 .mcp.json 里；显式 KG_REPO 优先。
 apply_plugin_env()
 REPO = resolve_state_root()
+# status / doctor 是诊断入口：即使状态根坏了，也必须能说清坏在哪。其它命令继续
+# fail-closed，绝不把写操作落到一个未经校验的目录。
+_DIAGNOSTIC_CMDS = {"status", "doctor"}
 if not looks_like_state_root(REPO):
+    _requested = sys.argv[1] if len(sys.argv) > 1 else ""
+    if _requested in _DIAGNOSTIC_CMDS:
+        _h = binding_health()
+        print("=== 自动挡诊断 ===")
+        print(binding_line(_h))
+        print(f"状态根         {REPO}")
+        print("结论           自动挡当前不可用：状态根缺少 ops/tasks 或 ops/truth。")
+        print("下一步         请用 ./install.sh <真实 git 仓库根目录> 重新绑定；"
+              "不要把它指向安装缓存或空壳目录。")
+        sys.exit(1)
     sys.exit(f"找不到编排状态根（{REPO}）；请设 KG_REPO 指到带 ops/tasks + ops/truth 的目录"
              "（自包含插件用 ./install.sh <项目> 初始化，不再要求项目里放运行时代码）")
 # 项目相关的旋钮集中在 ops/central.config.json（env 可覆盖），见 ops/central_config.py。
@@ -3967,6 +3980,8 @@ def cmd_status(args):
             except Exception:
                 pass
     print("=== 自动挡一屏 ===")
+    health = binding_health()
+    print(binding_line(health))
     print(f"状态根         {REPO}")
     print(f"共享检出       {SHARED}（只读诊断，不当账本）")
     print(f"主干           {MAIN} @ {git('log','-1','--format=%h %s',MAIN)[:56]}")
@@ -4172,6 +4187,17 @@ def cmd_doctor(args):
     problems: list[str] = []
     INFOS: list[str] = []
 
+    # ⓪ 安装绑定：装的是一份、账本落在哪是另一份；两者断开时其他检查都可能假绿。
+    h = binding_health()
+    if h.get("status") == "broken":
+        for p in h.get("problems") or ["原因未知"]:
+            problems.append("⓪ 安装绑定失效：" + p)
+        INFOS.append("⓪ 安装绑定：失效（" + str(h.get("repo") or "未绑定") + "）")
+    elif h.get("status") == "ok":
+        INFOS.append("⓪ 安装绑定：正常（" + str(h.get("repo")) + "）")
+    else:
+        INFOS.append("⓪ 安装绑定：传统布局（无 .mcp.json，跳过）")
+
     # ① automation 漂移
     auto_root = Path.home() / ".codex" / "automations"
     if not auto_root.exists():
@@ -4284,6 +4310,10 @@ def cmd_doctor(args):
             problems.append("③ 窗口预算：一个线程都没探测成功——探针失效，别把「无输出」当正常")
 
     print("=== 自动挡体检 ===")
+    if not looks_like_state_root(REPO):
+        print(f"  × 编排状态根不可用：{REPO}")
+        print(f"    （需要 {REPO}/ops/tasks 与 {REPO}/ops/truth 同时存在；"
+              "自动挡现在无法落账）")
     for line in INFOS:
         print("  " + line)
     print()

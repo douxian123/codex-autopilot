@@ -159,6 +159,34 @@ if [ ! -d "$PROJECT" ]; then
   exit 1
 fi
 PROJECT="$(cd "$PROJECT" && pwd)"
+# 状态根必须就是仓库根。只在任意 git worktree 或裸目录里写 .mcp.json，之后能从
+# 子目录/软链绑定到错误路径；而自动挡又不会因此报错，只会安静地空转。
+if ! git -C "$PROJECT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "× --state-root 必须是 git 仓库：$PROJECT" >&2
+  echo "  自动挡需要分支与 worktree 才能落盘；普通目录只能存文件，不能闭环。" >&2
+  exit 1
+fi
+PROJECT_TOP="$("$PY" - "$PROJECT" <<'PYEOF'
+import os, sys
+print(os.path.realpath(sys.argv[1]))
+PYEOF
+)"
+PROJECT_REAL="$("$PY" - "$PROJECT" <<'PYEOF'
+import os, sys
+print(os.path.realpath(sys.argv[1]))
+PYEOF
+)"
+GIT_TOP="$(git -C "$PROJECT" rev-parse --show-toplevel 2>/dev/null || true)"
+GIT_TOP_REAL="$("$PY" - "$GIT_TOP" <<'PYEOF'
+import os, sys
+print(os.path.realpath(sys.argv[1]))
+PYEOF
+)"
+if [ "$GIT_TOP_REAL" != "$PROJECT_REAL" ]; then
+  echo "× --state-root 必须是仓库根，而不是子目录：$PROJECT" >&2
+  echo "  实际仓库根：${GIT_TOP:-未知}" >&2
+  exit 1
+fi
 # 落盘主干 = 一个独立的 worktree；缺省用同级的 <项目名>-trunk（kgctl 首次落盘时自建）。
 # 它绝不能等于状态根本身：那样 land 的 merge/reset 会直接改写 ops/tasks、ops/truth 账本。
 if [ -z "$TRUNK" ]; then
@@ -282,6 +310,26 @@ if trunk:
 PYEOF
 if ! "$PY" -m py_compile "$STAGE"/ops/*.py; then
   echo "× 新版本 Python 预检失败，当前安装入口未更改。" >&2
+  exit 1
+fi
+# 绑定自检：从即将发布的这份副本按 .mcp.json 解析状态根，必须证明真的落账。
+# 这个检查放在移动版本目录之前，失败只删除 staging，不影响现有安装。
+if ! "$PY" - "$STAGE/ops/plugin_binding.py" <<'PYEOF'
+import importlib.util, sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("binding_check", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+h = mod.binding_health()
+if h.get("status") == "broken":
+    print("× 安装绑定自检失败：", file=sys.stderr)
+    for p in h.get("problems") or ["原因未知"]:
+        print("  - " + p, file=sys.stderr)
+    sys.exit(1)
+print("安装绑定自检通过：" + str(h.get("repo") or "传统布局"))
+PYEOF
+then
+  echo "× 新版本绑定预检失败，当前安装入口未更改。" >&2
   exit 1
 fi
 mv "$STAGE" "$DEST"
