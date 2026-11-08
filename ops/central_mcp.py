@@ -72,7 +72,7 @@ def _server_version() -> str:
 
 SERVER_VERSION = _server_version()
 
-from plugin_binding import apply_plugin_env  # noqa: E402
+from plugin_binding import apply_plugin_env, binding_health, binding_line  # noqa: E402
 
 import control_state  # noqa: E402
 import codex_native  # noqa: E402
@@ -1463,6 +1463,86 @@ def _status_payload(fast=True):
     """把控制开关 + 缓存状态 + 项目计数，拼成面板和模型都能用的一个 JSON。"""
     from datetime import datetime, timezone
     ctrl = control_state.load()
+    health = binding_health()
+    if health.get("status") == "broken":
+        line = binding_line(health)
+        payload = {
+            "ok": False,
+            "generated_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+            "fast": bool(fast),
+            "paused": bool(ctrl.get("paused")),
+            "enabled": False,
+            "lifecycle": "error",
+            "error": line,
+            "state": "binding_broken",
+            "state_label": "安装绑定失效，自动挡不可用",
+            "doing": "没有在动任何项目：当前绑定的状态根不是一个可用的项目账本",
+            "why": line,
+            "recent": "需求不会被可靠落账；这不是「没有待办」，是自动挡没接上项目",
+            "need_action": "重跑 ./install.sh <真实 git 仓库根目录>；先不要继续提需求",
+            "project": {
+                "path": health.get("repo"),
+                "name": Path(health.get("repo")).name if health.get("repo") else None,
+            },
+            "recent_completed": [],
+            "switches": {
+                "auto_land": bool(ctrl.get("auto_land", True)),
+                "auto_resolve": bool(ctrl.get("auto_resolve", True)),
+                "auto_port": bool(ctrl.get("auto_port", False)),
+                "auto_exec": bool(ctrl.get("auto_exec", False)),
+                "daemon_enabled": bool(ctrl.get("daemon_enabled", True)),
+            },
+            "daemon": {
+                "live": False,
+                "job_running": False,
+                "pid": None,
+                "project": None,
+                "last_cycle": None,
+                "interval_min": None,
+            },
+            "native": _native_status(),
+            "counters": {
+                "received": None,
+                "open_items": None,
+                "landed": None,
+                "resolved": None,
+                "superseded": None,
+                "ported": None,
+            },
+            "queue": {
+                "clean": None,
+                "merged": None,
+                "conflict": None,
+                "unresolved": None,
+            },
+            "exec_now": None,
+            "blocked": {"failures": [], "resolve": [], "port": [], "exec": []},
+            "resolve_tasks": [],
+            "events": control_state.read_events(30),
+            "product_state": [],
+            "judgments": [],
+            "last_verification": None,
+            "closure_rate": _closure_rate_summary(),
+            "mainline": {},
+            "route": {},
+            "roadmap": [],
+            "project_folders": [],
+            "doing_items": [],
+            "todo_items": [],
+            "todo_count": None,
+            "human_acceptance": [],
+            "machine_verified": [],
+            "human_accepted_count": None,
+            "binding": health,
+        }
+        payload["__text__"] = (
+            "自动挡 · 安装绑定失效\n"
+            "正在做：" + payload["doing"] + "\n"
+            "为什么：" + line + "\n"
+            + payload["recent"] + "\n"
+            + payload["need_action"]
+        )
+        return payload
     job_running, pid, daemon_project = _daemon_live()
     current_project = str(Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve())
     live = bool(job_running and daemon_project == current_project)
