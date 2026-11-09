@@ -61,6 +61,23 @@ from pathlib import Path
 import proc as _proc  # noqa: E402
 proc_run = _proc.run
 
+
+class KgctlError(Exception):
+    """库函数里的「用法/前置条件不满足」错误，由 CLI 边界翻译成退出码。
+
+    这些错误以前写成 `sys.exit(msg)`：`sys.exit` 是进程级终止，不是普通报错，
+    任何同进程调用者（selftest、import kgctl 的脚本、守护收尾）都会被它连同自己的
+    断言一起截断——2026-11-09 实测 `ops/selftest.py` 就因此只打印 21 条 ok 便静默
+    exit 1、stderr 全空，而 selftest 正是 build 与 verify[0] 门禁，land 链路整条被堵。
+    库位置只抛这个异常；`__main__` 捕获后按「stderr 打印 + 非零退出」翻译，
+    CLI 对外行为与旧的 sys.exit(msg) 完全一致。
+    """
+
+    def __init__(self, message: str, code: int = 1):
+        super().__init__(message)
+        self.code = code
+
+
 MAIN = os.environ.get("KG_MAIN", "main")
 
 # 编排状态（inbox / 台账 / 泳道 / 看板）只有一处权威目录，见 ops/state_root.py。
@@ -3552,11 +3569,11 @@ def _resolve_prepare(args) -> None:
                 pass
     branch = None if auto else next((a for a in args if not a.startswith("--")), None)
     if branch and not branch.startswith(BRANCH_PREFIX):
-        sys.exit(f"只允许 resolve {BRANCH_PREFIX}* 分支")
+        raise KgctlError(f"只允许 resolve {BRANCH_PREFIX}* 分支")
     oversize = []
     if branch:
         if not git("rev-parse", "--verify", branch):
-            sys.exit(f"找不到分支 {branch}")
+            raise KgctlError(f"找不到分支 {branch}")
         if branch in _landed_resolve_branches():
             print(f"{branch} 已经 resolve 落盘过（见 ops/tasks/resolve.json），不重复拆。")
             return
@@ -3591,7 +3608,7 @@ def _resolve_prepare(args) -> None:
               "kgctl resolve --finish <slug> --go 走同一道门禁后落盘。")
         return
     if _lock_blocked():
-        sys.exit(f"已有 land/port/converge/resolve 在进行（{LOCK}）")
+        raise KgctlError(f"已有 land/port/converge/resolve 在进行（{LOCK}）")
     slug = _resolve_slug(branch)
     resolve_branch = _resolve_branch_name(slug)
     wt = _resolve_worktree_path(slug)
@@ -3660,7 +3677,7 @@ def _resolve_prepare(args) -> None:
     add = proc_run(["git", "-C", str(REPO), "worktree", "add", "-b", resolve_branch,
                           str(wt), base], capture_output=True, text=True)
     if add.returncode != 0:
-        sys.exit(f"建 worktree 失败：{(add.stdout + add.stderr).strip()[:400]}")
+        raise KgctlError(f"建 worktree 失败：{(add.stdout + add.stderr).strip()[:400]}")
     _link_side_dirs(wt)
     rec = {
         "slug": slug, "branch": branch, "resolve_branch": resolve_branch, "worktree": str(wt),
@@ -3715,11 +3732,11 @@ def _resolve_prepare(args) -> None:
 def _resolve_finish(target: str, go: bool) -> None:
     rec = _find_resolve_task(target)
     if not rec:
-        sys.exit(f"找不到进行中的 resolve 任务：{target}（用 kgctl resolve --list 看）")
+        raise KgctlError(f"找不到进行中的 resolve 任务：{target}（用 kgctl resolve --list 看）")
     wt = Path(rec["worktree"])
     resolve_branch = rec["resolve_branch"]
     if not wt.exists():
-        sys.exit(f"任务 {rec['slug']} 的 worktree 不存在：{wt}")
+        raise KgctlError(f"任务 {rec['slug']} 的 worktree 不存在：{wt}")
     unresolved = proc_run(["git", "-C", str(wt), "diff", "--name-only", "--diff-filter=U"],
                                 capture_output=True, text=True).stdout.splitlines()
     if unresolved:
@@ -3755,13 +3772,13 @@ def _resolve_abandon(target: str, go: bool, reason: str = "") -> None:
         # land/reap 的分支，避免把能落地的工作误标成放弃。
         branch = target if target.startswith(BRANCH_PREFIX) else ""
         if not branch:
-            sys.exit(f"找不到进行中的 resolve 任务：{target}（用 kgctl resolve --list 看）")
+            raise KgctlError(f"找不到进行中的 resolve 任务：{target}（用 kgctl resolve --list 看）")
         ahead, _behind = counts(branch)
         if ahead == 0:
-            sys.exit(f"{branch} 已完全合并，无需 abandon（可用 kgctl reap --go 回收）。")
+            raise KgctlError(f"{branch} 已完全合并，无需 abandon（可用 kgctl reap --go 回收）。")
         conf = conflict_files(branch)
         if not conf:
-            sys.exit(f"{branch} 与 {MAIN} 无冲突文件：应走 kgctl land {branch}，不要 abandon。")
+            raise KgctlError(f"{branch} 与 {MAIN} 无冲突文件：应走 kgctl land {branch}，不要 abandon。")
         if not go:
             print(f"{branch}：没有进行中的 resolve 任务（属于「有冲突·未拆解」）。")
             print("  加 --go 会写一条 abandoned 决定：源分支原样不动，只是不再计入冲突队列；")
@@ -4361,5 +4378,11 @@ if __name__ == "__main__":
     # 只有显式返回 int 才作为进程退出码；返回 None 一律当 0。
     # 注意：命令内部的用法提示（sys.exit("用法: ...")）本来就会以非 0 退出，
     # 这是原有行为，不在这里改写。
-    _rc = CMDS[sys.argv[1]](sys.argv[2:])
+    try:
+        _rc = CMDS[sys.argv[1]](sys.argv[2:])
+    except KgctlError as exc:
+        # 库函数不再用 sys.exit 终止进程：错误在 CLI 边界翻译成「stderr + 退出码」，
+        # 同进程调用者（selftest 等）因此能跑到自己的断言，CLI 对外行为不变。
+        print(str(exc), file=sys.stderr)
+        sys.exit(exc.code or 1)
     sys.exit(_rc if isinstance(_rc, int) else 0)
