@@ -1,19 +1,19 @@
 {
- "main": "55a16e2561578fdd86f366359a1353ec2878c68a",
+ "main": "808a0a60b3633d9da607eaa81b03b9ec58434a94",
  "branches": [
-  "codex/auto-close-identity-gate-20261024",
-  "codex/disk-admission-clean-20261027",
-  "codex/disk-admission-preview29-20261027",
-  "codex/disk-reap-into-repo",
-  "codex/reap-identical-tracked-20261027",
-  "codex/slow-model-routing"
+  "codex/autopilot-close-gate-20261026",
+  "codex/autopilot-exec-recover-min-20261020",
+  "codex/autopilot-health-20261019",
+  "codex/autopilot-parallel-runtime-fix-20261019",
+  "codex/autopilot-resolve-stderr",
+  "codex/autopilot-truth-sync-failclosed"
  ],
  "burden": {
-  "codex/auto-close-identity-gate-20261024": 1,
-  "codex/disk-admission-clean-20261027": 3,
-  "codex/disk-admission-preview29-20261027": 8,
-  "codex/disk-reap-into-repo": 5,
-  "codex/reap-identical-tracked-20261027": 3,
-  "codex/slow-model-routing": 4
+  "codex/autopilot-close-gate-20261026": 1,
+  "codex/autopilot-exec-recover-min-20261020": 2,
+  "codex/autopilot-health-20261019": 1,
+  "codex/autopilot-parallel-runtime-fix-20261019": 1,
+  "codex/autopilot-resolve-stderr": 2,
+  "codex/autopilot-truth-sync-failclosed": 2
  }
 }
