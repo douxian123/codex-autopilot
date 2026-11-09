@@ -3493,8 +3493,15 @@ def _write_resolve_task_md(rec: dict) -> None:
     write_text(RESOLVE_DIR / f"{rec['slug']}.md", "\n".join(lines) + "\n")
 
 
-def _resolve_land(rec: dict, wt: Path) -> None:
-    """把 resolve 分支交给 land 走完整门禁；过了落盘并回收 worktree，不过则留作任务。"""
+def _resolve_land(rec: dict, wt: Path) -> int:
+    """把 resolve 分支交给 land 走完整门禁；过了落盘并回收 worktree，不过则留作任务。
+
+    返回进程退出码（0=已落盘，非 0=门禁未过），由 CLI 入口翻译成退出码。
+    这里以前用 `sys.exit(res.returncode or 1)` 报失败，等于直接把整个解释器干掉：
+    任何同进程调用者（selftest、import kgctl 的脚本）都会被它截断，连自己的断言
+    都来不及跑完——门禁于是变成「静默红」，land 链路跟着一起堵死。失败靠返回值加
+    打印表达，不靠杀进程。
+    """
     resolve_branch = rec["resolve_branch"]
     res = proc_run([sys.executable, str(Path(__file__).resolve()), "land", resolve_branch],
                          capture_output=True, text=True)
@@ -3517,7 +3524,7 @@ def _resolve_land(rec: dict, wt: Path) -> None:
         else:
             print(f"✓ {resolve_branch} 已通过门禁并落盘；worktree 已回收，源分支 {rec['branch']} 未改动。")
         print(f"RESOLVE_RESULT branch={rec['branch']} outcome=landed")
-        return
+        return 0
     rec["status"] = "gate_fail"
     rec["gate_output"] = out[-1500:]
     _write_resolve_record(rec)
@@ -3525,7 +3532,7 @@ def _resolve_land(rec: dict, wt: Path) -> None:
     print(f"× 门禁未通过：{resolve_branch} 留在 {wt}，已登记任务 {rec['slug']}（gate_fail）。")
     print(f"  在该工作树修到过门禁，再 kgctl resolve --finish {rec['slug']} --go。")
     print(f"RESOLVE_RESULT branch={rec['branch']} outcome=gate_fail")
-    sys.exit(res.returncode or 1)
+    return res.returncode or 1
 
 
 def _resolve_prepare(args) -> None:

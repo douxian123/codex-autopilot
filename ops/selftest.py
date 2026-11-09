@@ -4900,6 +4900,72 @@ def test_resolve_orphan_container_is_adopted_not_blocked_forever():
     print("selftest ok: resolve 遗留容器分支会被接管/重拆，已解过的绝不自动删，有 open 记录不抢。")
 
 
+def test_resolve_land_reports_exit_code_without_killing_caller():
+    """`_resolve_land` 门禁失败必须返回非零码，绝不能 sys.exit 切断同进程调用者。
+
+    2026-11-09 实测：`ops/selftest.py` 只打印 21 条 ok 就静默 exit 1、stderr 全空，
+    整条 land 链路跟着堵死。根因是 `_resolve_land` 在 gate_fail 分支写
+    `sys.exit(res.returncode or 1)` —— 它是库函数，却被设计成终止整个解释器。任何
+    同进程调用者（selftest、import kgctl 的脚本、守护收尾）都会被它截断，自己的断言
+    来不及跑完，门禁于是变成「静默红」。这里锁住：失败返回非零码、成功返回 0，
+    两条路都不许抛 SystemExit。
+    """
+    import importlib.util
+    from pathlib import Path
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    with tempfile.TemporaryDirectory(prefix="kgctl-resolve-land-returncode-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        with mock.patch.dict(os.environ, {"KG_REPO": str(repo),
+                                          "KG_TRUNK": str(root / "trunk")}):
+            spec = importlib.util.spec_from_file_location(
+                "kgctl_resolve_land_selftest", ops / "kgctl.py")
+            kgctl = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(kgctl)
+
+        rec = {"slug": "probe", "branch": "codex/probe",
+               "resolve_branch": "codex/resolve-probe", "worktree": str(root / "wt")}
+
+        class _FailProc:
+            returncode = 1
+            stdout = "\u00d7 \u95e8\u7981\u672a\u901a\u8fc7\uff1aselftest \u7ea2\u4e86\n"
+            stderr = ""
+
+        class _OkProc:
+            returncode = 0
+            stdout = "  main \u63a8\u8fdb abcd1234 \u2192 efgh5678\uff08\u5df2\u843d\u76d8\u5e76\u63a8\u9001 origin\uff09\n"
+            stderr = ""
+
+        printed = []
+
+        def _run(res):
+            with mock.patch.object(kgctl, "proc_run", return_value=res), \
+                 mock.patch.object(kgctl, "_write_resolve_record", lambda r: None), \
+                 mock.patch.object(kgctl, "_write_resolve_task_md", lambda r: None), \
+                 mock.patch("builtins.print",
+                            lambda *a, **k: printed.append(" ".join(map(str, a)))):
+                try:
+                    return kgctl._resolve_land(dict(rec), Path(rec["worktree"]))
+                except SystemExit as exc:
+                    raise AssertionError(
+                        f"_resolve_land 不该终止进程，却抛了 SystemExit({exc.code})") from exc
+
+        rc = _run(_FailProc())
+        assert isinstance(rc, int) and rc != 0, f"门禁失败必须返回非零退出码，实际 {rc!r}"
+        assert any("outcome=gate_fail" in line for line in printed), printed
+
+        printed.clear()
+        rc = _run(_OkProc())
+        assert rc == 0, f"门禁通过必须返回 0，实际 {rc!r}"
+        assert any("outcome=landed" in line for line in printed), printed
+
+    print("selftest ok: resolve 门禁失败只返回非零码，不再 sys.exit 切断同进程调用者。")
+
+
 def test_resolve_candidate_caches_branch_sizes():
     """`resolve --auto` 不许对每条冲突分支都重跑 merge-base + diff。
 
@@ -5831,6 +5897,7 @@ if __name__ == "__main__":
     test_scan_batches_branch_metadata()
     test_resolve_candidate_caches_branch_sizes()
     test_resolve_orphan_container_is_adopted_not_blocked_forever()
+    test_resolve_land_reports_exit_code_without_killing_caller()
     test_zero_file_branches_do_not_occupy_land_queue()
     test_conflict_decision_hold_survives_existing_markers()
     test_prune_keeps_open_resolve_hold()
