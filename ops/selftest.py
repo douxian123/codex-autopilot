@@ -5796,13 +5796,23 @@ def test_budget_gate():
 
 
 def test_rotation_streaming():
-    """轮换只等 thread.started，不等首次长回复结束。"""
+    """轮换只等 thread.started，不等首次长回复结束。
+
+    真不变量是「子进程仍在跑首次长回复时就返回」，不是某个墙钟秒数。旧判据用
+    `elapsed < 2.0` 当代理：单跑时约 0.5s，但这台机器上有负载时实测到 2.00-2.92s，
+    于是它变成偶发假红——2026-11-09 两轮门禁各被它挡下一次（`ops/selftest.py` 是
+    build 与 verify[0] 门禁，偶发红等于 land 间歇性被堵）。现在直接钉结构：
+      1) 返回时子进程必须还活着（首次回复都没结束，就说明没在等它，与负载无关）；
+      2) 假回复拉到 60s 且上限给到 30s——若实现退化成「等整段回复」，必然超时红。
+    这比原判据判别力更强：负载再高也不会假绿，退化必假红。
+    """
     import importlib
     import signal
 
     sys.path.insert(0, str(OPS))
     cr = importlib.import_module("cockpit_rotate")
 
+    child_pid = None
     with tempfile.TemporaryDirectory(prefix="codex-autopilot-rotate-") as tmp:
         root = Path(tmp)
         fake = root / "codex"
@@ -5812,7 +5822,7 @@ def test_rotation_streaming():
             "print(json.dumps({'type':'thread.started',"
             "'thread_id':'01a12345-6789-7abc-8def-0123456789ab','pid':os.getpid()}),"
             " flush=True)\n"
-            "time.sleep(5)\n",
+            "time.sleep(60)\n",
             encoding="utf-8",
         )
         fake.chmod(0o755)
@@ -5824,15 +5834,24 @@ def test_rotation_streaming():
             tid, log_path = cr.new_thread("handoff", str(root), None)
             elapsed = _time.monotonic() - started
             assert tid == "01a12345-6789-7abc-8def-0123456789ab", (tid, log_path)
-            assert elapsed < 2.0, f"轮换等待了 {elapsed:.2f}s，仍在等首次回复"
             log = Path(log_path).read_text(encoding="utf-8")
             row = next(line for line in log.splitlines() if '"thread.started"' in line)
             child_pid = json.loads(row)["pid"]
+            # 子进程还在 sleep(60)：它没退出就说明轮换没等首次回复。用 kill(pid, 0)
+            # 活性探测代替秒数比较，机器再忙也不会假红。
             try:
-                os.killpg(child_pid, signal.SIGTERM)
-            except OSError:
-                pass
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                raise AssertionError(
+                    "轮换返回时子进程已退出——说明它其实等到了首次长回复结束") from None
+            assert elapsed < 30, (
+                f"轮换等待了 {elapsed:.2f}s；实现可能退化成等整段回复（子进程本该还在跑 60s）")
         finally:
+            if child_pid is not None:
+                try:
+                    os.killpg(child_pid, signal.SIGTERM)
+                except OSError:
+                    pass
             cr._resolve_codex_cli, cr.ROTATE_RUNS = real_cli, real_runs
 
     print("selftest ok: 窗口轮换在 thread.started 后立即返回，不受首次长回复阻塞。")
