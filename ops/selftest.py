@@ -4900,6 +4900,52 @@ def test_resolve_orphan_container_is_adopted_not_blocked_forever():
     print("selftest ok: resolve 遗留容器分支会被接管/重拆，已解过的绝不自动删，有 open 记录不抢。")
 
 
+def test_resolve_prepare_raises_controlled_error_not_sysexit():
+    """`_resolve_prepare` 的前置错误必须抛受控异常，不能 sys.exit 截断同进程调用者。
+
+    与 `_resolve_land` 同一个病根：resolve 家族是**库函数**，却被 selftest 以进程内
+    方式直接调用（`kgctl._resolve_prepare([...])`）。只要它内部任一条前置检查走
+    `sys.exit`（非法分支名、找不到分支、锁占用、建 worktree 失败），整个 selftest
+    进程就被截断，门禁再次变成「静默红」。这里锁住：这些路径抛 `KgctlError`
+    （带可用的退出码），且 CLI 边界能把它翻译成「stderr + 非零退出」。
+    """
+    import importlib.util
+    from pathlib import Path
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    with tempfile.TemporaryDirectory(prefix="kgctl-resolve-prepare-error-") as tmp:
+        root = Path(tmp)
+        repo = root / "state"
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        with mock.patch.dict(os.environ, {"KG_REPO": str(repo),
+                                          "KG_TRUNK": str(root / "trunk")}):
+            spec = importlib.util.spec_from_file_location(
+                "kgctl_resolve_prepare_selftest", ops / "kgctl.py")
+            kgctl = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(kgctl)
+
+        assert issubclass(kgctl.KgctlError, Exception), "必须有一个受控异常类型"
+
+        def _expect_error(args, what):
+            with mock.patch("builtins.print", lambda *a, **k: None):
+                try:
+                    kgctl._resolve_prepare(args)
+                except SystemExit as exc:
+                    raise AssertionError(
+                        f"{what} 不该终止进程，却抛了 SystemExit({exc.code})") from exc
+                except kgctl.KgctlError as exc:
+                    assert exc.code and isinstance(exc.code, int), \
+                        f"{what} 的受控异常必须带非零退出码：{exc.code!r}"
+                    return
+            raise AssertionError(f"{what} 竟然没报错")
+
+        _expect_error(["not-a-codex-branch", "--go"], "非法分支名")
+
+    print("selftest ok: resolve prepare 前置错误抛受控异常，不 sys.exit 截断调用者。")
+
+
 def test_resolve_land_reports_exit_code_without_killing_caller():
     """`_resolve_land` 门禁失败必须返回非零码，绝不能 sys.exit 切断同进程调用者。
 
@@ -5917,6 +5963,7 @@ if __name__ == "__main__":
     test_resolve_candidate_caches_branch_sizes()
     test_resolve_orphan_container_is_adopted_not_blocked_forever()
     test_resolve_land_reports_exit_code_without_killing_caller()
+    test_resolve_prepare_raises_controlled_error_not_sysexit()
     test_zero_file_branches_do_not_occupy_land_queue()
     test_conflict_decision_hold_survives_existing_markers()
     test_prune_keeps_open_resolve_hold()
