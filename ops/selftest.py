@@ -5949,6 +5949,87 @@ def test_disk_reap_reaps_stale_code_sign_clones():
 
     print("selftest ok: 签名临时副本只回收旧且无引用的目录，活跃副本受保护。")
 
+def test_daemon_liveness_shared_judge():
+    """守护进程「开关显示开、进程早没了」这类静默死亡，判据只有一份。
+
+    2026-11-10 实测：control.json 里 enabled=true、daemon_enabled=true，面板显示
+    「后台常驻=开」，但 launchd 里那个 job 早没了，state.json 的 last_cycle_iso 停在
+    八天前。开关全绿、界面正常、什么异常都不抛，自动挡其实一步都没动。
+
+    这里锁三件事：
+      1. 纯解析：从 launchctl print 文本取出 state / pid / 绑定项目；
+      2. 三态判定：running / not_installed / loaded_not_running，且用户级开关关掉时
+         不得把「没装」误报成需要处理的问题；
+      3. 判据共用：面板 central_mcp 与 CLI 走同一份 daemon_liveness，不再各写一套
+         launchctl 正则（否则 CLI 报「未安装」、面板还显示「在跑」）。
+    """
+    import importlib
+    import sys
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    from unittest import mock
+
+    import daemon_liveness
+    importlib.reload(daemon_liveness)
+
+    # 1) 纯解析
+    parsed = daemon_liveness.parse_launchctl_print(
+        "\tstate = running\n\tpid = 4321\n\t\tKG_REPO => /tmp/proj-a\n")
+    assert parsed["state"] == "running" and parsed["pid"] == 4321
+    assert parsed["bound_repo"] == str(Path("/tmp/proj-a").resolve())
+
+    # 2) running 且绑定当前项目
+    run_a = lambda argv: (0, "\tstate = running\n\tpid = 4321\n\t\tKG_REPO => /tmp/proj-a\n")
+    st = daemon_liveness.daemon_liveness("/tmp/proj-a", launcher=run_a)
+    assert st["status"] == "running" and st["live"] is True and st["pid"] == 4321
+    assert st["matches_repo"] is True, "绑定当前项目却没判成一致"
+    assert daemon_liveness.liveness_problem(st, True) is None
+
+    # running 但绑定的是别的项目：必须报「它在替别的账本干活」
+    st_other = daemon_liveness.daemon_liveness("/tmp/proj-b", launcher=run_a)
+    assert st_other["matches_repo"] is False
+    msg = daemon_liveness.liveness_problem(st_other, True)
+    assert msg and "别的账本" in msg, msg
+
+    # 3) not_installed：launchctl 非零返回
+    gone = lambda argv: (113, "")
+    st_gone = daemon_liveness.daemon_liveness("/tmp/proj-a", launcher=gone)
+    assert st_gone["status"] == "not_installed" and st_gone["live"] is False
+    # 用户级开关也关着 -> 符合预期，不误报
+    assert daemon_liveness.liveness_problem(st_gone, False) is None, \
+        "开关关着还把「没装」当问题，就是误报"
+    # 开关显示开却没有 job -> 必须报，且给出装回命令
+    msg = daemon_liveness.liveness_problem(st_gone, True)
+    assert msg and "central_daemon.py --install" in msg, msg
+    line = daemon_liveness.liveness_line(st_gone, True)
+    assert "未运行" in line and "没有这个 job" in line, line
+
+    # loaded_not_running：job 在但 pid 缺失
+    stuck = lambda argv: (0, "\tstate = not running\n")
+    st_stuck = daemon_liveness.daemon_liveness("/tmp/proj-a", launcher=stuck)
+    assert st_stuck["status"] == "loaded_not_running"
+    assert daemon_liveness.liveness_problem(st_stuck, True)
+
+    # 判据共用：面板不得自己再写一份 launchctl 正则
+    mcp_src = (ops / "central_mcp.py").read_text(encoding="utf-8")
+    assert "launchctl" not in mcp_src, \
+        "面板又自己拼 launchctl 了，会和 CLI 各说各话；应复用 daemon_liveness"
+    assert "daemon_liveness" in mcp_src
+
+    # 面板 _daemon_live 必须委托给同一份判据
+    import central_mcp
+    importlib.reload(central_mcp)
+    with mock.patch.object(daemon_liveness, "daemon_liveness",
+                          return_value={"live": True, "pid": 4321,
+                                        "bound_repo": str(Path("/tmp/proj-a").resolve())}):
+        live, pid, project = central_mcp._daemon_live()
+    assert live is True and pid == 4321 and project == str(Path("/tmp/proj-a").resolve()), \
+        (live, pid, project)
+    print("selftest ok: 守护存活判据只有一份，面板与 CLI 共用；没装且开关关着不误报。")
+
+
 if __name__ == "__main__":
     test_disk_reap_reaps_stale_code_sign_clones()
     main()
@@ -5980,6 +6061,7 @@ if __name__ == "__main__":
     test_daemon_project_binding()
     test_daemon_plist_repoints_on_upgrade()
     test_daemon_control_action()
+    test_daemon_liveness_shared_judge()
     test_companion_contract()
     test_panel_contract()
     test_preview_check_contract()

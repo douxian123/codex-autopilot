@@ -88,6 +88,9 @@ from plugin_binding import apply_plugin_env, binding_health, binding_line  # noq
 from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, looks_like_state_root, resolve_state_root  # noqa: E402
 import central_config  # noqa: E402
+from daemon_liveness import (daemon_liveness, liveness_line,  # noqa: E402
+                             liveness_problem)
+
 
 # 自包含安装下，绑定的项目写在插件 .mcp.json 里；显式 KG_REPO 优先。
 apply_plugin_env()
@@ -4006,6 +4009,12 @@ def cmd_status(args):
     print("=== 自动挡一屏 ===")
     health = binding_health()
     print(binding_line(health))
+    try:
+        import control_state
+        _ctrl = control_state.load()
+    except Exception:
+        _ctrl = {}
+    print(liveness_line(daemon_liveness(REPO), _ctrl.get("daemon_enabled")))
     print(f"状态根         {REPO}")
     print(f"共享检出       {SHARED}（只读诊断，不当账本）")
     print(f"主干           {MAIN} @ {git('log','-1','--format=%h %s',MAIN)[:56]}")
@@ -4210,6 +4219,7 @@ def cmd_doctor(args):
     """
     problems: list[str] = []
     INFOS: list[str] = []
+    import control_state  # noqa: F401  (doctor ④ 需要用户级开关)
 
     # ⓪ 安装绑定：装的是一份、账本落在哪是另一份；两者断开时其他检查都可能假绿。
     h = binding_health()
@@ -4221,6 +4231,23 @@ def cmd_doctor(args):
         INFOS.append("⓪ 安装绑定：正常（" + str(h.get("repo")) + "）")
     else:
         INFOS.append("⓪ 安装绑定：传统布局（无 .mcp.json，跳过）")
+
+    # ④ 常驻守护进程：开关可以显示「开」，而进程早就不在了。
+    # 这类静默死亡此前只有面板看得到，CLI 诊断面从头到尾不提，用户就
+    # 会以为「装了=在跑」。
+    try:
+        _ctrl = control_state.load()
+    except Exception:
+        _ctrl = {}
+    _live = daemon_liveness(REPO)
+    _lp = liveness_problem(_live, _ctrl.get("daemon_enabled"))
+    if _lp:
+        problems.append(_lp)
+    INFOS.append("④ 常驻守护进程：" + {
+        "running": "在跑（pid %s）" % _live.get("pid"),
+        "loaded_not_running": "未起来（job 在但无 pid）",
+        "not_installed": "未安装",
+    }.get(_live.get("status"), "看不清"))
 
     # ① automation 漂移
     auto_root = Path.home() / ".codex" / "automations"
