@@ -1493,6 +1493,81 @@ def test_install_consistency_gate():
     print("selftest ok: 版本漂移被判 broken，对齐后 ok，无安装记录跳过。")
 
 
+def test_truth_mirror_never_regresses_landing():
+    """锁住 2026-11-10 的「真相回退卡死落盘」：镜像必须只做加法，绝不把 main 的真相改旧。
+
+    事故现场：状态根停在旧分支、真相是 2026-10-13，而 main 上的真相已到 10-18。
+    `kgctl land` 在 `_mirror_truth_into_trunk` 里用 shutil.copy2 无条件覆盖，把 main
+    上的新真相回退成旧内容，于是 panel_render_check 的两条断言（"路线里显示下一步"
+    期望 '常驻自追踪'）必然 FAIL，任何分支都无法 land —— 系统从未真正闭环过一次。
+    对照：纯 main@8eda3817 panel_render_check exit 0；被旧真相覆盖后 2 项未通过。
+
+    这里锁住三条不变量：
+      1. 状态根落后时，镜像不得让主干真相时间戳回退；
+      2. 状态根更新时，镜像仍能正常覆盖前进；
+      3. JSONL 追加账本取并集，生成视图保留主干。
+    """
+    import importlib
+    with tempfile.TemporaryDirectory(prefix="autopilot-truth-mirror-") as tmp:
+        root = Path(tmp)
+        state = root / "state"
+        trunk = root / "state-trunk"
+        for d in ("ops/tasks", "ops/truth", "docs"):
+            (state / d).mkdir(parents=True)
+            (trunk / d).mkdir(parents=True)
+        # 落后状态根：真相是旧日期
+        (state / "ops" / "truth" / "mainline.json").write_text(
+            json.dumps({"product": "Codex 自动挡", "updated": "2026-10-13"}),
+            encoding="utf-8")
+        (state / "ops" / "tasks" / "inbox.jsonl").write_text(
+            '{"ts": "2026-10-13", "text": "old"}\n', encoding="utf-8")
+        (state / "docs" / "PRODUCT_MAINLINE.md").write_text("旧生成视图", encoding="utf-8")
+        # 主干（main）：真相更新
+        (trunk / "ops" / "truth" / "mainline.json").write_text(
+            json.dumps({"product": "Codex 自动挡", "updated": "2026-10-18"}),
+            encoding="utf-8")
+        (trunk / "ops" / "tasks" / "inbox.jsonl").write_text(
+            '{"ts": "2026-10-18", "text": "new"}\n', encoding="utf-8")
+        (trunk / "docs" / "PRODUCT_MAINLINE.md").write_text("main 上的新生成视图", encoding="utf-8")
+
+        sys.path.insert(0, str(OPS))
+        saved = {k: os.environ.get(k) for k in ("KG_REPO", "KG_TRUNK")}
+        os.environ["KG_REPO"] = str(state)
+        os.environ["KG_TRUNK"] = str(trunk)
+        try:
+            import kgctl
+            importlib.reload(kgctl)
+            # 不变量 1：落后状态根不得让主干真相回退
+            kgctl._mirror_truth_into_trunk(trunk)
+            stamp = json.loads((trunk / "ops" / "truth" / "mainline.json")
+                               .read_text(encoding="utf-8"))["updated"]
+            assert stamp == "2026-10-18", f"真相回退了：{stamp}"
+            # 不变量 3：JSONL 取并集（新旧都在）
+            body = (trunk / "ops" / "tasks" / "inbox.jsonl").read_text(encoding="utf-8")
+            assert '"old"' in body and '"new"' in body, body
+            # 不变量 3：生成视图保留主干
+            assert (trunk / "docs" / "PRODUCT_MAINLINE.md").read_text(encoding="utf-8") \
+                == "main 上的新生成视图"
+            # 不变量 2：状态根更新时应能前进
+            (state / "ops" / "truth" / "mainline.json").write_text(
+                json.dumps({"product": "Codex 自动挡", "updated": "2026-12-01"}),
+                encoding="utf-8")
+            kgctl._mirror_truth_into_trunk(trunk)
+            newer = json.loads((trunk / "ops" / "truth" / "mainline.json")
+                               .read_text(encoding="utf-8"))["updated"]
+            assert newer == "2026-12-01", f"更新的真相未前进：{newer}"
+        finally:
+            # 只还原环境变量，绝不在这里 reload：kgctl 导入即解析状态根，而还原后的
+            # KG_REPO 很可能指向上一个用例已删除的临时目录，reload 会 sys.exit 把
+            # 整条门禁带红。后续用例各自设好 KG_REPO 后会自己 reload。
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+    print("selftest ok: 真相镜像只做加法，落后状态根不会回退 main 上的真相。")
+
+
 def test_broken_binding_panel_contract():
     """坏绑定必须经真实 MCP 状态返回完整面板契约。
 
@@ -6058,6 +6133,7 @@ if __name__ == "__main__":
     test_binding_preflight_rejects_empty_shell()
     test_broken_binding_panel_contract()
     test_install_consistency_gate()
+    test_truth_mirror_never_regresses_landing()
     test_panel_first_screen()
     test_codex_native_bridge()
     test_native_socket_lstat()
