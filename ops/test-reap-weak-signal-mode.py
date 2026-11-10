@@ -18,6 +18,11 @@
 
   本文件把这三条钉住：断言它们确实以 "all" 提问，且命中判活时一定不删。
 
+  另有第四类漏点，不在调用点而在判活本身（2026-11-11 实测）：
+  transcript 记的会话 cwd 是 `file://` URL，不是裸路径。现网 32 条活跃会话记录里
+  11 条是这种形式，而 `path_within` 只做裸字符串比较 —— 等于近三分之一的
+  会话证据在进入判断前就已经失效。最后两节把 URL 归一化与边界一起钉住。
+
 反向断言同样重要：判活不能把每一棵树都永久钉住。最后一节用一棵真正闲置、
 干净、无人使用的树，确认它在最强模式下仍可回收。
 """
@@ -166,6 +171,46 @@ def main():
     dead_assessment = wg.orphan_residue(dead, min_idle_h=0.0)
     check("闲置且无人在用的孤儿仍可回收",
           dead_assessment.get("ok") is True, dead_assessment)
+
+
+    # ---- 5. 会话记录里的 file:// URL 与百分号转义必须归一化 ----
+    # 2026-11-11 实测：Codex 会话把桌面会话的 cwd 记成 file:// URL。裸字符串比较
+    # 一条都匹配不上，会话证据等于没用；仓库名带中文时还会是百分号转义形式。
+    url_tree = base / "kg-url-tree"
+    url_tree.mkdir()
+    check("会话记录 file:// URL 能认出",
+          lg.path_within("file://" + str(url_tree), url_tree),
+          str(url_tree))
+    check("会话记录百分号转义能认出",
+          lg.path_within("file://" + str(url_tree).replace("kg-url", "kg-%75rl"), url_tree),
+          str(url_tree))
+    check("file:// 的边界仍然安全",
+          not lg.path_within("file://" + str(url_tree) + "-extra", url_tree))
+    check("空值不误判",
+          not lg.path_within("", url_tree) and not lg.path_within(None, url_tree))
+
+    # 端到端：写一条 file:// 形式、且没有长命进程的会话记录，树必须被保住
+    url_session = base / "sessions-url"
+    url_session.mkdir()
+    protected = base / "kg-url-protected"
+    protected.mkdir()
+    (protected / "node_modules").mkdir()
+    (protected / "vite.log").write_text("x\n")
+    write_transcript(url_session, "rollout-url.jsonl", "file://" + str(protected))
+    os.utime(protected, (past, past))
+    saved_roots = os.environ.get("KG_SESSION_ROOTS")
+    os.environ["KG_SESSION_ROOTS"] = str(url_session)
+    try:
+        lg.reset_caches()
+        url_assessment = wg.orphan_residue(protected, min_idle_h=0.0)
+    finally:
+        if saved_roots is None:
+            os.environ.pop("KG_SESSION_ROOTS", None)
+        else:
+            os.environ["KG_SESSION_ROOTS"] = saved_roots
+        lg.reset_caches()
+    check("file:// 形式的只读会话同样保住现场",
+          url_assessment.get("ok") is False, url_assessment)
 
     if failures:
         print("\n失败项：")
