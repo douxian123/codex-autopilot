@@ -3112,6 +3112,12 @@ RESOLVE_CONFLICT_CAP = 2       # 同一组冲突文件连续撞 N 次 → 停手
 RESOLVE_CONFLICT_BLOCK_H = 6   # 停手时长（小时），到期自动允许再试一次
 REAP_MIN_IDLE_H = float(os.environ.get("KG_REAP_MIN_IDLE_H", "3"))
 REAP_IDLE_PRESSURE_H = float(os.environ.get("KG_REAP_IDLE_PRESSURE_H", "0.25"))
+# 创建宽限期：一棵刚建好的 worktree 就算 idle 已过闸、分支 ahead=0、工作区干净，也先别回收。
+# 专治「新建/迁移刚完成、人还没开始写、会话短暂离开」的空档 —— 压力模式闲置门槛只有
+# 15 分钟（REAP_IDLE_PRESSURE_H=0.25），新现场会在人还没落任何改动前就落进回收视角。
+# 只按目录创建时间放行，不放松任何安全判据：它只可能让回收器少删，绝不会让它多删。
+# 与其它开关一致，可用 KG_REAP_CREATION_GRACE_H 调（0 即关闭）。
+REAP_CREATION_GRACE_H = float(os.environ.get("KG_REAP_CREATION_GRACE_H", "1"))
 # 回收扫描必须是「切片」而不是「每拍全扫」。实测：242 个现场全扫一遍，
 # 每个还要跑 4~6 次 git 子进程，在 15s 的守护循环里等于常驻一个 CPU 黑洞，
 # load 会被自己顶到上百，机器反而更不稳。改成按游标轮流扫一片。
@@ -3380,6 +3386,36 @@ def _wt_last_activity(wt: Path) -> float:
     return ts
 
 
+def _wt_created_at(wt: Path) -> float:
+    """worktree 目录的创建时间（秒级）。
+
+    取 st_birthtime（macOS 上文件系统的真实创建时间）；旧内核对目录不提供时退回
+    st_ctime。读不到就返回当前时间 —— 与判活一致，没有证据不构成删除许可，宽限期
+    因此把这棵树当成「刚创建」而放行保留，方向永远偏保守。
+    """
+    try:
+        st = wt.stat()
+        birth = getattr(st, "st_birthtime", None)
+        return float(birth if birth else st.st_ctime)
+    except Exception:
+        return time.time()
+
+
+def _within_creation_grace(wt: Path, now: float | None = None) -> bool:
+    """True 表示这棵树还在「创建宽限期」内，回收扫描必须先跳过它。
+
+    只读创建时间，不参与任何安全判据：它只让回收器少删，绝不让它多删。
+    KG_REAP_CREATION_GRACE_H<=0 时恒为 False（等于关闭这条加固）。
+    """
+    if REAP_CREATION_GRACE_H <= 0:
+        return False
+    now = time.time() if now is None else now
+    age_h = (now - _wt_created_at(wt)) / 3600
+    # 负数（读不到创建时间时回落到「现在」，或时钟回拨）一律当作「刚创建」：
+    # 宽限期只负责少删，方向永远偏保守。
+    return age_h < REAP_CREATION_GRACE_H
+
+
 def _worktree_repo(wt: Path) -> Path | None:
     """worktree → 它所属的主仓路径。不是 worktree（或读不到）就返回 None。"""
     try:
@@ -3521,6 +3557,11 @@ def _reap_dead_worktrees() -> int:
             if repo is None:
                 continue
             if _wt_last_activity(d) > cutoff:
+                continue
+            # 创建宽限期：刚建好的现场先不回收，哪怕它此刻 clean 且 ahead=0。
+            # 压力模式下 idle 门槛只有 15 分钟，新建/迁移完成后人还没来得及写字的
+            # 空档最危险；宽限只看创建时间，只减少回收、不增加回收。
+            if _within_creation_grace(d):
                 continue
             brc, branch, _ = _git(d, "rev-parse", "--abbrev-ref", "HEAD")
             if brc != 0 or not branch or branch in ("HEAD", "main"):
