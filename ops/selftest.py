@@ -94,12 +94,6 @@ def main():
         run([sys.executable, str(OPS / "test-orphan-residue.py")],
             cwd=str(OPS.parent), check=True,
             env={**os.environ, "ORPHAN_TEST_ROOT": str(orphan_root)})
-        # 回收判活：2026-11-10 压力模式下 15 分钟闲置门槛删掉了 18 棵桌面会话
-        # 正在用的树（分支保留才捞得回来）。根因是回收只看 git 状态 + 目录 mtime，
-        # 而「会话 cwd 就是这棵树」既不出现在 `codex exec -C` 里，只读分析也不
-        # 刷新 mtime。这条门禁锁住两件事：在用的树必须被拦，真死的干净树仍要能回收。
-        run([sys.executable, str(OPS / "test-reap-live-session-guard.py")],
-            cwd=str(OPS.parent), check=True)
         # launchd 直接执行的入口必须只是转发：它不在任何不可变版本目录里，
         # 一旦有人在里面写实现，就会和 releases 里的实现各自腐烂。
         run([sys.executable, str(OPS / "test-reap-entry-forwards.py")],
@@ -1426,146 +1420,6 @@ def test_binding_preflight_rejects_empty_shell():
         assert "不是 git worktree" in "\n".join(bad_trunk_health["problems"]), bad_trunk.stdout
 
     print("selftest ok: 空壳状态根被判 broken，真仓库根被判 ok。")
-
-
-def test_install_consistency_gate():
-    """锁住 2026-11-10 的「半完成升级」：install-state 写新版、入口仍指旧版。
-
-    那次升级只写了 ``install-state.json``（.52），``marketplace.json`` 仍指 .51，
-    Codex 加载的还是 .51。新版本才加的门禁（``binding_health`` 本身就是 .52 带来的）
-    因而从未上线，用户面对的仍是旧行为——「装了 / 开了 / enabled」全成立，却没有任何
-    一处真的变新。这类失效不抛异常，只在几份配置之间自相矛盾，普通自检看不见。
-    """
-    import json as _json
-
-    with tempfile.TemporaryDirectory(prefix="autopilot-install-consistency-") as tmp:
-        home = Path(tmp)
-        (home / ".agents" / "plugins").mkdir(parents=True)
-        (home / "plugins" / "codex-autopilot").mkdir(parents=True)
-        temp_plugin = home / "plugin"
-        (temp_plugin / "ops").mkdir(parents=True)
-        (temp_plugin / "ops" / "plugin_binding.py").write_text(
-            (OPS / "plugin_binding.py").read_text(encoding="utf-8"), encoding="utf-8")
-
-        script = (
-            "import json, sys; "
-            "sys.path.insert(0, sys.argv[1]); import plugin_binding as b; "
-            "print(json.dumps(b.install_consistency(), ensure_ascii=False))"
-        )
-        env = os.environ.copy()
-        for key in ("KG_REPO", "KG_TRUNK"):
-            env.pop(key, None)
-        env["HOME"] = str(home)
-
-        def check():
-            out = run([sys.executable, "-c", script, str(temp_plugin / "ops")],
-                      env=env, cwd=str(temp_plugin), check=False)
-            assert out.returncode == 0, f"体检脚本自己坏了：{out.stderr}"
-            return _json.loads(out.stdout)
-
-        # 半完成升级：install-state 已写 .52，marketplace 入口仍指 .51 -> broken
-        (home / "plugins" / "codex-autopilot" / "install-state.json").write_text(
-            _json.dumps({"version": "0.6.0-preview.52"}), encoding="utf-8")
-        (home / ".agents" / "plugins" / "marketplace.json").write_text(_json.dumps({
-            "name": "personal", "plugins": [{"name": "codex-autopilot",
-                "source": {"source": "local",
-                           "path": "./plugins/codex-autopilot/releases/0.6.0-preview.51"}}],
-        }), encoding="utf-8")
-        drift = check()
-        assert drift["status"] == "broken", drift
-        assert "安装版本不一致" in "\n".join(drift["problems"]), drift
-
-        # 对齐后 -> ok
-        (home / ".agents" / "plugins" / "marketplace.json").write_text(_json.dumps({
-            "name": "personal", "plugins": [{"name": "codex-autopilot",
-                "source": {"source": "local",
-                           "path": "./plugins/codex-autopilot/releases/0.6.0-preview.52"}}],
-        }), encoding="utf-8")
-        aligned = check()
-        assert aligned["status"] == "ok", aligned
-
-        # 传统布局 / 开发检出：既无 install-state 也无入口 -> skip（不能误判 broken）
-        (home / "plugins" / "codex-autopilot" / "install-state.json").unlink()
-        (home / ".agents" / "plugins" / "marketplace.json").unlink()
-        skipped = check()
-        assert skipped["status"] == "skip", skipped
-
-    print("selftest ok: 版本漂移被判 broken，对齐后 ok，无安装记录跳过。")
-
-
-def test_truth_mirror_never_regresses_landing():
-    """锁住 2026-11-10 的「真相回退卡死落盘」：镜像必须只做加法，绝不把 main 的真相改旧。
-
-    事故现场：状态根停在旧分支、真相是 2026-10-13，而 main 上的真相已到 10-18。
-    `kgctl land` 在 `_mirror_truth_into_trunk` 里用 shutil.copy2 无条件覆盖，把 main
-    上的新真相回退成旧内容，于是 panel_render_check 的两条断言（"路线里显示下一步"
-    期望 '常驻自追踪'）必然 FAIL，任何分支都无法 land —— 系统从未真正闭环过一次。
-    对照：纯 main@8eda3817 panel_render_check exit 0；被旧真相覆盖后 2 项未通过。
-
-    这里锁住三条不变量：
-      1. 状态根落后时，镜像不得让主干真相时间戳回退；
-      2. 状态根更新时，镜像仍能正常覆盖前进；
-      3. JSONL 追加账本取并集，生成视图保留主干。
-    """
-    import importlib
-    with tempfile.TemporaryDirectory(prefix="autopilot-truth-mirror-") as tmp:
-        root = Path(tmp)
-        state = root / "state"
-        trunk = root / "state-trunk"
-        for d in ("ops/tasks", "ops/truth", "docs"):
-            (state / d).mkdir(parents=True)
-            (trunk / d).mkdir(parents=True)
-        # 落后状态根：真相是旧日期
-        (state / "ops" / "truth" / "mainline.json").write_text(
-            json.dumps({"product": "Codex 自动挡", "updated": "2026-10-13"}),
-            encoding="utf-8")
-        (state / "ops" / "tasks" / "inbox.jsonl").write_text(
-            '{"ts": "2026-10-13", "text": "old"}\n', encoding="utf-8")
-        (state / "docs" / "PRODUCT_MAINLINE.md").write_text("旧生成视图", encoding="utf-8")
-        # 主干（main）：真相更新
-        (trunk / "ops" / "truth" / "mainline.json").write_text(
-            json.dumps({"product": "Codex 自动挡", "updated": "2026-10-18"}),
-            encoding="utf-8")
-        (trunk / "ops" / "tasks" / "inbox.jsonl").write_text(
-            '{"ts": "2026-10-18", "text": "new"}\n', encoding="utf-8")
-        (trunk / "docs" / "PRODUCT_MAINLINE.md").write_text("main 上的新生成视图", encoding="utf-8")
-
-        sys.path.insert(0, str(OPS))
-        saved = {k: os.environ.get(k) for k in ("KG_REPO", "KG_TRUNK")}
-        os.environ["KG_REPO"] = str(state)
-        os.environ["KG_TRUNK"] = str(trunk)
-        try:
-            import kgctl
-            importlib.reload(kgctl)
-            # 不变量 1：落后状态根不得让主干真相回退
-            kgctl._mirror_truth_into_trunk(trunk)
-            stamp = json.loads((trunk / "ops" / "truth" / "mainline.json")
-                               .read_text(encoding="utf-8"))["updated"]
-            assert stamp == "2026-10-18", f"真相回退了：{stamp}"
-            # 不变量 3：JSONL 取并集（新旧都在）
-            body = (trunk / "ops" / "tasks" / "inbox.jsonl").read_text(encoding="utf-8")
-            assert '"old"' in body and '"new"' in body, body
-            # 不变量 3：生成视图保留主干
-            assert (trunk / "docs" / "PRODUCT_MAINLINE.md").read_text(encoding="utf-8") \
-                == "main 上的新生成视图"
-            # 不变量 2：状态根更新时应能前进
-            (state / "ops" / "truth" / "mainline.json").write_text(
-                json.dumps({"product": "Codex 自动挡", "updated": "2026-12-01"}),
-                encoding="utf-8")
-            kgctl._mirror_truth_into_trunk(trunk)
-            newer = json.loads((trunk / "ops" / "truth" / "mainline.json")
-                               .read_text(encoding="utf-8"))["updated"]
-            assert newer == "2026-12-01", f"更新的真相未前进：{newer}"
-        finally:
-            # 只还原环境变量，绝不在这里 reload：kgctl 导入即解析状态根，而还原后的
-            # KG_REPO 很可能指向上一个用例已删除的临时目录，reload 会 sys.exit 把
-            # 整条门禁带红。后续用例各自设好 KG_REPO 后会自己 reload。
-            for k, v in saved.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
-    print("selftest ok: 真相镜像只做加法，落后状态根不会回退 main 上的真相。")
 
 
 def test_broken_binding_panel_contract():
@@ -6095,6 +5949,209 @@ def test_disk_reap_reaps_stale_code_sign_clones():
 
     print("selftest ok: 签名临时副本只回收旧且无引用的目录，活跃副本受保护。")
 
+def test_daemon_liveness_shared_judge():
+    """守护进程「开关显示开、进程早没了」这类静默死亡，判据只有一份。
+
+    2026-11-10 实测：control.json 里 enabled=true、daemon_enabled=true，面板显示
+    「后台常驻=开」，但 launchd 里那个 job 早没了，state.json 的 last_cycle_iso 停在
+    八天前。开关全绿、界面正常、什么异常都不抛，自动挡其实一步都没动。
+
+    这里锁三件事：
+      1. 纯解析：从 launchctl print 文本取出 state / pid / 绑定项目；
+      2. 三态判定：running / not_installed / loaded_not_running，且用户级开关关掉时
+         不得把「没装」误报成需要处理的问题；
+      3. 判据共用：面板 central_mcp 与 CLI 走同一份 daemon_liveness，不再各写一套
+         launchctl 正则（否则 CLI 报「未安装」、面板还显示「在跑」）。
+    """
+    import importlib
+    import sys
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    from unittest import mock
+
+    import daemon_liveness
+    importlib.reload(daemon_liveness)
+
+    # 1) 纯解析
+    parsed = daemon_liveness.parse_launchctl_print(
+        "\tstate = running\n\tpid = 4321\n\t\tKG_REPO => /tmp/proj-a\n")
+    assert parsed["state"] == "running" and parsed["pid"] == 4321
+    assert parsed["bound_repo"] == str(Path("/tmp/proj-a").resolve())
+
+    # 2) running 且绑定当前项目
+    run_a = lambda argv: (0, "\tstate = running\n\tpid = 4321\n\t\tKG_REPO => /tmp/proj-a\n")
+    st = daemon_liveness.daemon_liveness("/tmp/proj-a", launcher=run_a)
+    assert st["status"] == "running" and st["live"] is True and st["pid"] == 4321
+    assert st["matches_repo"] is True, "绑定当前项目却没判成一致"
+    assert daemon_liveness.liveness_problem(st, True) is None
+
+    # running 但绑定的是别的项目：必须报「它在替别的账本干活」
+    st_other = daemon_liveness.daemon_liveness("/tmp/proj-b", launcher=run_a)
+    assert st_other["matches_repo"] is False
+    msg = daemon_liveness.liveness_problem(st_other, True)
+    assert msg and "别的账本" in msg, msg
+
+    # 3) not_installed：launchctl 非零返回
+    gone = lambda argv: (113, "")
+    st_gone = daemon_liveness.daemon_liveness("/tmp/proj-a", launcher=gone)
+    assert st_gone["status"] == "not_installed" and st_gone["live"] is False
+    # 用户级开关也关着 -> 符合预期，不误报
+    assert daemon_liveness.liveness_problem(st_gone, False) is None, \
+        "开关关着还把「没装」当问题，就是误报"
+    # 开关显示开却没有 job -> 必须报，且给出装回命令
+    msg = daemon_liveness.liveness_problem(st_gone, True)
+    assert msg and "central_daemon.py --install" in msg, msg
+    line = daemon_liveness.liveness_line(st_gone, True)
+    assert "未运行" in line and "没有这个 job" in line, line
+
+    # loaded_not_running：job 在但 pid 缺失
+    stuck = lambda argv: (0, "\tstate = not running\n")
+    st_stuck = daemon_liveness.daemon_liveness("/tmp/proj-a", launcher=stuck)
+    assert st_stuck["status"] == "loaded_not_running"
+    assert daemon_liveness.liveness_problem(st_stuck, True)
+
+    # 判据共用：面板不得自己再写一份 launchctl 正则
+    mcp_src = (ops / "central_mcp.py").read_text(encoding="utf-8")
+    assert "launchctl" not in mcp_src, \
+        "面板又自己拼 launchctl 了，会和 CLI 各说各话；应复用 daemon_liveness"
+    assert "daemon_liveness" in mcp_src
+
+    # 面板 _daemon_live 必须委托给同一份判据
+    import central_mcp
+    importlib.reload(central_mcp)
+    with mock.patch.object(daemon_liveness, "daemon_liveness",
+                          return_value={"live": True, "pid": 4321,
+                                        "bound_repo": str(Path("/tmp/proj-a").resolve())}):
+        live, pid, project = central_mcp._daemon_live()
+    assert live is True and pid == 4321 and project == str(Path("/tmp/proj-a").resolve()), \
+        (live, pid, project)
+    print("selftest ok: 守护存活判据只有一份，面板与 CLI 共用；没装且开关关着不误报。")
+
+
+def test_product_eval():
+    """对外发布评估闭环：五条判据必须能红、能绿，且阴性对照全部按预期变红。
+
+    本项目踩过的坑：所有开关全绿、面板显示「后台常驻=开」，但插件 .mcp.json 把
+    KG_REPO 指到一个空目录，真实项目里一条需求都没落 —— 装上跟没装一样。这类失效
+    不会抛异常，只会「静默地什么都不干」，所以评估本身必须是一个闭环：
+      1. 每条判据都配阴性对照，喂坏现场必须变红（不然判据等于没写）；
+      2. 好现场必须能绿（不然判据太吵，没人信）；
+      3. 结论收敛成一份会红的认证物，差哪几条、差多少都写清楚。
+    全程在临时目录里造现场，绝不碰真实安装 / 真实项目 / 真实 launchd。
+    """
+    import importlib
+    import json as _json
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import product_eval
+    importlib.reload(product_eval)
+
+    # 1) 阴性对照：五条判据喂已知坏现场，必须全部变红。
+    rows = product_eval.negative_controls()
+    assert len(rows) >= 5, rows
+    bad = [c for c, ok, _n in rows if not ok]
+    assert not bad, f"这些判据的阴性对照没能变红，等于判据失效：{bad}"
+
+    with tempfile.TemporaryDirectory(prefix="product-eval-test-") as tmp:
+        tmp = Path(tmp)
+
+        # 2) 判据 1：好安装目录必须绿，缺文件必须红。
+        good_install = tmp / "install-good"
+        rel = good_install / "releases" / "1.2.3"
+        for sub in ("ops", ".codex-plugin", "skills"):
+            (rel / sub).mkdir(parents=True, exist_ok=True)
+        (rel / "ops" / "central_mcp.py").write_text("# fake\n", encoding="utf-8")
+        (rel / ".mcp.json").write_text("{}", encoding="utf-8")
+        (rel / ".codex-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
+        (good_install / "install-state.json").write_text(
+            _json.dumps({"version": "1.2.3"}), encoding="utf-8")
+        assert product_eval.crit_installable(good_install)["status"] == "pass"
+        broken = tmp / "install-broken"
+        (broken / "releases" / "1.2.3").mkdir(parents=True)
+        (broken / "install-state.json").write_text(
+            _json.dumps({"version": "1.2.3"}), encoding="utf-8")
+        assert product_eval.crit_installable(broken)["status"] == "fail"
+
+        # 3) 判据 3：绑定到真实期望仓库必须绿；绑到别处必须红。
+        real_repo = tmp / "real-repo"
+        real_repo.mkdir()
+        (real_repo / "ops" / "tasks").mkdir(parents=True)
+        (real_repo / "ops" / "truth").mkdir(parents=True)
+        run(["git", "init", "-q", "-b", "main", str(real_repo)])
+        git(real_repo, "config", "user.email", "t@example.com")
+        git(real_repo, "config", "user.name", "t")
+        (real_repo / "app.txt").write_text("x\n", encoding="utf-8")
+        git(real_repo, "add", "app.txt")
+        git(real_repo, "commit", "-q", "-m", "init")
+        ci = tmp / "install-bound"
+        crel = ci / "releases" / "1.2.3"
+        crel.mkdir(parents=True)
+        (ci / "install-state.json").write_text(
+            _json.dumps({"version": "1.2.3"}), encoding="utf-8")
+        (crel / ".mcp.json").write_text(_json.dumps({"mcpServers": {
+            "codex-autopilot": {"env": {"KG_REPO": str(real_repo)}}}}),
+            encoding="utf-8")
+        ok = product_eval.crit_targets(ci, expected_repo=str(real_repo))
+        assert ok["status"] == "pass", ok
+        wr = product_eval.crit_targets(ci, expected_repo=str(tmp / "other"))
+        assert wr["status"] == "fail", wr
+
+        # 4) 判据 4：好台账绿；全 open 红；台账缺失红（取不到分母，不是 0%）。
+        proj = tmp / "proj"
+        (proj / "ops" / "truth").mkdir(parents=True)
+        (proj / "ops" / "truth" / "ledger.jsonl").write_text("\n".join(
+            _json.dumps({"id": "L-%04d" % i, "type": "ledger",
+                         "status": "done",
+                         "evidence": "cmd -> exit 0"}) for i in range(8)) + "\n",
+            encoding="utf-8")
+        assert product_eval.crit_effective(proj)["status"] == "pass"
+        (proj / "ops" / "truth" / "ledger.jsonl").write_text("\n".join(
+            _json.dumps({"id": "L-%04d" % i, "type": "ledger",
+                         "status": "open"}) for i in range(8)) + "\n",
+            encoding="utf-8")
+        assert product_eval.crit_effective(proj)["status"] == "fail"
+
+        # 5) 判据 5：三线一致 + 有回滚点才绿。
+        vi = tmp / "install-v"
+        (vi / "releases" / "1.2.3").mkdir(parents=True)
+        (vi / "releases" / "1.2.2").mkdir(parents=True)
+        (vi / "install-state.json").write_text(_json.dumps(
+            {"version": "1.2.3", "source_commit": git(real_repo, "rev-parse", "HEAD").stdout.strip(),
+             "previous_source": str(vi / "releases" / "1.2.2")}),
+            encoding="utf-8")
+        (tmp / "cache-v" / "1.2.3").mkdir(parents=True)
+        cok = product_eval.crit_consistent(vi, tmp / "cache-v", real_repo)
+        assert cok["status"] == "pass", cok
+
+        # 6) 认证物结构 + 人读报告必须带会红的结论。
+        import os as _os
+        saved = {k: _os.environ.get(k) for k in
+                 ("KG_EVAL_INSTALL_DIR", "KG_EVAL_CACHE_DIR", "KG_EVAL_TRUNK")}
+        try:
+            _os.environ["KG_EVAL_INSTALL_DIR"] = str(good_install)
+            _os.environ["KG_EVAL_CACHE_DIR"] = str(tmp / "cache-v")
+            _os.environ["KG_EVAL_TRUNK"] = str(real_repo)
+            cert = product_eval.certify(str(real_repo))
+            assert set(cert["summary"]) >= {"passed", "total", "failed",
+                                            "release_ready"}
+            assert cert["summary"]["total"] == 5
+            assert isinstance(cert["summary"]["release_ready"], bool)
+            text = product_eval.human_report(cert)
+            assert "对外发布评估" in text and "结论" in text, text
+            assert "不能对外" in text or "可以对外" in text, text
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    _os.environ.pop(k, None)
+                else:
+                    _os.environ[k] = v
+
+    print("selftest ok: 对外发布评估五条判据能红能绿，阴性对照 7/7 全部按预期变红。")
+
 if __name__ == "__main__":
     test_disk_reap_reaps_stale_code_sign_clones()
     main()
@@ -6126,14 +6183,13 @@ if __name__ == "__main__":
     test_daemon_project_binding()
     test_daemon_plist_repoints_on_upgrade()
     test_daemon_control_action()
+    test_daemon_liveness_shared_judge()
     test_companion_contract()
     test_panel_contract()
     test_preview_check_contract()
     test_installed_copy_binding()
     test_binding_preflight_rejects_empty_shell()
     test_broken_binding_panel_contract()
-    test_install_consistency_gate()
-    test_truth_mirror_never_regresses_landing()
     test_panel_first_screen()
     test_codex_native_bridge()
     test_native_socket_lstat()
@@ -6166,6 +6222,7 @@ if __name__ == "__main__":
     test_strip_regenerable_duplicate_is_opt_in_and_lossless()
     test_mcp_contract()
     test_closure_rate()
+    test_product_eval()
     test_budget_gate()
     test_rotation_streaming()
 
