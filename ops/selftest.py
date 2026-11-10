@@ -6152,6 +6152,38 @@ def test_product_eval():
 
     print("selftest ok: 对外发布评估五条判据能红能绿，阴性对照 7/7 全部按预期变红。")
 
+def test_compact_session_logs_is_lossless_and_under_pressure_only():
+    import tempfile
+    from unittest import mock
+    with tempfile.TemporaryDirectory(
+            prefix="codex-autopilot-session-compact-",
+            dir="/Users/danta/.newmax/workspace") as tmp:
+        root = Path(tmp)
+        sessions = root / ".codex/sessions/2026/01/01"
+        sessions.mkdir(parents=True)
+        old = sessions / "old.jsonl"
+        old.write_bytes(b'{"type":"event","payload":"keep me"}\n' * 900_000)
+        old.touch()
+        import os as _os
+        _old = old.stat().st_mtime
+        _os.utime(old, (_old - 7 * 3600, _old - 7 * 3600))
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "disk_reap_test", Path(__file__).with_name("disk_reap.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        with mock.patch.dict("os.environ", {"CODEX_HOME": str(root / ".codex")}), \
+             mock.patch.object(mod, "free_gb", return_value=20.0):
+            assert mod.compact_session_logs() == (0, 0)
+            assert old.exists() and not old.with_name(old.name + ".zst").exists()
+        with mock.patch.dict("os.environ", {"CODEX_HOME": str(root / ".codex")}), \
+             mock.patch.object(mod, "free_gb", return_value=1.0):
+            n, freed = mod.compact_session_logs()
+        assert n == 1 and freed > 0
+        assert not old.exists()
+        assert old.with_name(old.name + ".zst").is_file()
+
+
 if __name__ == "__main__":
     test_disk_reap_reaps_stale_code_sign_clones()
     main()
@@ -6224,6 +6256,7 @@ if __name__ == "__main__":
     test_closure_rate()
     test_product_eval()
     test_budget_gate()
+    test_compact_session_logs_is_lossless_and_under_pressure_only()
     test_rotation_streaming()
 
 

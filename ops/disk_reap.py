@@ -100,6 +100,13 @@ REAP_TIME_BUDGET_S = float(os.environ.get("KG_REAP_TIME_BUDGET_S", "60"))
 REAP_MIN_IDLE_H = float(os.environ.get("KG_REAP_MIN_IDLE_H", "1"))
 # 剥离重复副本的闲置门槛：默认 24h，避免动到正在进行的现场。
 STRIP_IDLE_H = float(os.environ.get("KG_STRIP_IDLE_H", "24"))
+# 旧会话原始 JSONL 的压缩门槛与预算。只压缩“未被进程引用”的旧文件，
+# 压缩后先做完整性校验，校验失败绝不删除原文件。
+SESSION_COMPACT_MIN_AGE_H = float(os.environ.get("KG_SESSION_COMPACT_MIN_AGE_H", "6"))
+SESSION_COMPACT_MIN_MB = float(os.environ.get("KG_SESSION_COMPACT_MIN_MB", "20"))
+SESSION_COMPACT_MAX_FILES = int(os.environ.get("KG_SESSION_COMPACT_MAX_FILES", "8"))
+SESSION_COMPACT_UNDER_FREE_GB = float(
+    os.environ.get("KG_SESSION_COMPACT_UNDER_FREE_GB", "15"))
 
 
 def log(msg):
@@ -120,6 +127,79 @@ def free_gb():
         return st.f_bavail * st.f_frsize / 1e9
     except Exception:
         return -1.0
+
+
+def compact_session_logs(dry: bool = False) -> tuple[int, int]:
+    """Compress old Codex JSONL transcripts with an integrity check.
+
+    Session history is valuable user context, so this path never removes a
+    transcript before the compressed archive has been decompressed and compared
+    byte-for-byte with the source.
+    """
+    if os.environ.get("KG_SESSION_COMPACT", "1").strip().lower() in ("0", "off", "false"):
+        return 0, 0
+    if free_gb() >= SESSION_COMPACT_UNDER_FREE_GB:
+        return 0, 0
+    home = Path.home()
+    codex_home = Path(os.getenv("CODEX_HOME", str(home / ".codex"))).expanduser()
+    sessions = codex_home / "sessions"
+    if not sessions.is_dir() and codex_home.name == ".codex":
+        sessions = home / ".codex/sessions"
+    if not sessions.is_dir():
+        return 0, 0
+    cutoff = time.time() - SESSION_COMPACT_MIN_AGE_H * 3600
+    min_bytes = int(SESSION_COMPACT_MIN_MB * 1024 * 1024)
+    procs = _process_lines()
+    candidates = []
+    for path in sessions.rglob("*.jsonl"):
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        if st.st_size < min_bytes or st.st_mtime > cutoff:
+            continue
+        if _referenced(path, procs) or _referenced(path.with_name(path.name + ".zst"), procs):
+            continue
+        candidates.append((st.st_mtime, st.st_size, path))
+    candidates.sort(reverse=True)
+    compressed = 0
+    freed = 0
+    for _mtime, size, path in candidates[:SESSION_COMPACT_MAX_FILES]:
+        archive = path.with_name(path.name + ".zst")
+        if archive.exists():
+            continue
+        if dry:
+            compressed += 1
+            freed += size
+            continue
+        tmp_archive = path.with_name(path.name + ".zst.tmp")
+        try:
+            proc = subprocess.run(
+                ["zstd", "-19", "-f", "-o", str(tmp_archive), str(path)],
+                capture_output=True, text=True, timeout=600)
+            if proc.returncode != 0 or not tmp_archive.is_file():
+                log(f"会话压缩失败，保留原文件：{path} rc={proc.returncode} {proc.stderr[:200]}")
+                continue
+            check = subprocess.run(
+                ["zstd", "-dc", str(tmp_archive)],
+                capture_output=True, timeout=600)
+            if check.returncode != 0 or check.stdout != path.read_bytes():
+                log(f"会话压缩校验失败，保留原文件：{path}")
+                continue
+            tmp_archive.replace(archive)
+            path.unlink()
+            compressed += 1
+            freed += max(0, size - archive.stat().st_size)
+            log(f"压缩旧会话 {path.name}: {size} -> {archive.stat().st_size} bytes")
+        except Exception as exc:
+            log(f"会话压缩异常，保留原文件 {path}: {type(exc).__name__}: {exc}")
+        finally:
+            try:
+                if tmp_archive.exists():
+                    tmp_archive.unlink()
+            except OSError:
+                pass
+    return compressed, freed
 
 
 def _code_sign_clone_xdirs():
@@ -466,6 +546,7 @@ def main():
 
     before = free_gb()
     clone_n, clone_freed = reap_code_sign_clones(dry=DRY)
+    session_n, session_freed = compact_session_logs(dry=DRY)
     try:
         if DRY:
             picked = []
@@ -481,7 +562,8 @@ def main():
             sn, sf = reap_regenerable_duplicates(
                 dry=True, guard=d.workspace_guard, idle_h=STRIP_IDLE_H)
             log(f"dry-run: 会回收 {clone_n} 个签名临时副本 / {n} 个 worktree / "
-                f"{t} 个 kg tmp / {o} 个孤儿残留；会剥离 {sn} 棵树的重复副本"
+                f"{t} 个 kg tmp / {o} 个孤儿残留；会压缩 {session_n} 个旧会话"
+                f"（{session_freed / 1e9:.2f}GB）；会剥离 {sn} 棵树的重复副本"
                 f"（{sf / 1e9:.2f}GB）-> {picked}")
         else:
             n = d._reap_dead_worktrees()
@@ -497,6 +579,7 @@ def main():
             after = free_gb()
             log(f"回收签名临时副本 {clone_n} 个（{clone_freed / 1e9:.2f}GB）/ worktree {n} 个 / "
                 f"孤儿后端 {k} 个 / kg tmp {t} 个 / 孤儿残留目录 {o} 个 / "
+                f"压缩旧会话 {session_n} 个（{session_freed / 1e9:.2f}GB）/ "
                 f"剥离重复副本 {sn} 棵树（{sf / 1e9:.2f}GB）；"
                 f"磁盘 {before:.1f}G → {after:.1f}G")
     except Exception as exc:
