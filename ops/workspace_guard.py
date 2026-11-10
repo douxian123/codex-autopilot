@@ -622,7 +622,9 @@ def orphan_residue(worktree: Path, min_idle_h: float = 24.0) -> dict:
         return {"ok": False, "reason": "recent"}
     if process_reference(worktree):
         return {"ok": False, "reason": "process"}
-    if live_guard_blocker(worktree, "cwd"):
+    # 判活用 "all"（2026-11-10）：孤儿残留一样可能是某个只读会话的工作目录；
+    # 只认内核 cwd 会把它判成无人使用。
+    if live_guard_blocker(worktree, "all"):
         return {"ok": False, "reason": "live-cwd"}
     scratch = _scratch_relative_only(worktree)
     if scratch is None:

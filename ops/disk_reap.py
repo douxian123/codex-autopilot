@@ -276,9 +276,14 @@ def _remove_one_kg_tmp(path: Path, procs: str, guard=None) -> bool:
                     capture_output=True, text=True).stdout.strip()
                 if brc and brc not in ("HEAD", "main"):
                     branch = brc
+                # 判活用 "all"（2026-11-10）：这里删的是 /private/tmp 下已登记、
+                # 已并入 main 的 kg-* worktree。只认内核 cwd 会漏掉「一个只读会话
+                # 正把这棵树当工作目录」——它的 argv 里没有树路径，只读活动也不
+                # 刷新目录 mtime，于是「正在用」和「已废弃」读起来一模一样。
                 assessment = guard.worktree_removable(
                     repo, path, branch, "main", commands=procs,
-                    backup_unique=False, accept_stripped_regenerable=True)
+                    backup_unique=False, accept_stripped_regenerable=True,
+                    live_guard_mode="all")
                 if not assessment.get("ok"):
                     return False
                 ok, _ = guard.remove_worktree(repo, path, force_regenerable=True)
@@ -368,7 +373,7 @@ def reap_regenerable_duplicates(dry: bool = False, guard=None,
         # 还原，损失远小于整棵回收；但一个正在读这些证据的会话仍然会被搅乱。
         # 命令行扫描挡不住桌面会话（它的 argv 里没有树路径），所以再问一次内核
         # cwd。命中就跳过这一棵，别的树照常剥离。
-        if guard.live_guard_blocker(d, "cwd"):
+        if guard.live_guard_blocker(d, "all"):
             continue
         state = guard.regenerable_dirs_state(d)
         if not any(v == "pristine" for v in state.values()):
