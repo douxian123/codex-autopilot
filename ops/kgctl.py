@@ -2761,13 +2761,61 @@ def _roadmap_touch(manifest: dict, changed: list) -> str:
     return ""
 
 
+def _truth_stamp(path: Path) -> str:
+    """真相信封 JSON 里的时间戳（updated/…）；取不到返回空串。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    if isinstance(data, dict):
+        for key in ("updated", "updated_at", "ts", "generated_at"):
+            val = data.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+    return ""
+
+
+def _merge_truth_file(src: Path, dst: Path) -> None:
+    """把状态根的一份真相并入主干工作树：缺失就补，存在就按类型合并，绝不回退更新。
+
+    旧实现用 shutil.copy2 无条件覆盖。当状态根落后于 main 时（例如状态根停在旧分支、
+    真相还是几天前的），它会把 main 上较新的真相回退成旧内容，直接让 panel_render_check
+    必红、任何分支都无法 land（2026-11-10 实录：状态根 mainline.updated=10-13 覆盖了
+    main 的 10-18，面板门禁 2 项未通过）。真相是只增不减的资产，镜像只能是加法。
+    """
+    try:
+        if dst.exists() and src.read_bytes() == dst.read_bytes():
+            return
+    except OSError:
+        pass
+    if not dst.exists():
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        return
+    if src.suffix == ".jsonl":
+        merged = _union_jsonl_text(dst.read_text(encoding="utf-8", errors="replace"),
+                                   src.read_text(encoding="utf-8", errors="replace"))
+        dst.write_text(merged, encoding="utf-8")
+        return
+    if src.suffix == ".json":
+        # 只有状态根的 JSON 明显更新时才覆盖主干，否则保留 main（真相不回退）。
+        s_src, s_dst = _truth_stamp(src), _truth_stamp(dst)
+        if s_src and (not s_dst or s_src > s_dst):
+            shutil.copy2(src, dst)
+        return
+    # 生成视图（md/html 等）：主干通常就是 main 上已落盘的版本，保留主干、不覆盖；
+    # 它们由真相派生，下一拍 tick 会按合并后的真相同步重生成。
+    return
+
+
 def _mirror_truth_into_trunk(wt: Path) -> None:
-    """把状态根的账本镜像进落盘用的主干工作树。
+    """把状态根的账本并入落盘用的主干工作树（只做加法，绝不回退）。
 
     自包含安装下，账本在项目目录的 `ops/truth` 里，而主干工作树是从 `main` 检出的；
-    若 `ops/truth` 没进过版本库，trunk 里连目录都不存在，写进展台账会直接崩。这里只做
-    文件级拷贝（加法），让主干工作树拥有同一份账本，后续 `sync_trunk_truth` 才能把它
-    作为真相层提交，与代码一起推回 `main`。
+    若 `ops/truth` 没进过版本库，trunk 里连目录都不存在，写进展台账会直接崩。这里把
+    状态根的账本按类型并入主干（JSONL 取并集、JSON 取更新的一份、生成视图保留主干），
+    让主干工作树拥有同一份账本，后续 `sync_trunk_truth` 才能把它作为真相层提交，与代码
+    一起推回 `main`。绝不整体覆盖，否则落后于 main 的状态根会把已落盘的真相回退掉。
     """
     for rel in TRUTH_PATHS:
         src, dst = REPO / rel, wt / rel
@@ -2775,18 +2823,14 @@ def _mirror_truth_into_trunk(wt: Path) -> None:
             continue
         if src.resolve() == dst.resolve():
             # 状态根本身就是落盘主干时（配置错误），源与目标同一个文件；
-            # 直接跳过，绝不 shutil.copy2 到自己。
+            # 直接跳过，绝不写到自身。
             continue
         if src.is_dir():
             for item in src.rglob("*"):
-                if not item.is_file():
-                    continue
-                target = dst / item.relative_to(src)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, target)
+                if item.is_file():
+                    _merge_truth_file(item, dst / item.relative_to(src))
         elif src.is_file():
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+            _merge_truth_file(src, dst)
 
 
 def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
