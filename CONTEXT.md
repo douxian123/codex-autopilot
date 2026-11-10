@@ -21,6 +21,7 @@
 - 验收：机器已自证项持续增加；当前 A-0005/A-0006/A-0007/A-0008 仍需真人/桌面操作
 - 本机实测（2026-10-25）：候选版本 **`0.6.0-preview.23`** 修复跨 worktree / clone 的真相编号复用：同一项目共用持久高水位与文件锁，并合并本地真相根和 `origin/main` 的已占编号；隔离分支先写进展、主干后落盘时不会再撞号。全量 `python3 ops/selftest.py` 退出码 0；真实双 clone 回归验证 `P-0001` / `P-0002` 连续分配。preview.22 的自动收口证据门禁与共享 partial clone 保护保留，旧 `preview.22` 可回滚。
 - 自检：`python3 ops/selftest.py` → **24 组全过、退出码 0、约 58 秒**；再开真编译 + 真二进制两个开关 → **26 组全过**
+- 释放 `0.6.0-preview.53`（2026-11-10，commit `a54ac2c6`）：修复磁盘回收误删**正在被桌面会话使用**的 worktree。判活逻辑（`ops/live_guard.py`：内核 cwd 快照 + 最近写过的 Codex transcript cwd）早已合进 `main`，但从未打包进版本目录，运行中的 `com.danta.codex-disk-reap` 一直执行 `.52` 副本里「只看已合并 + 干净 + mtime 闲置」的旧规则；叠加本机长期低盘（压力模式把闲置门槛从 3 小时降到 15 分钟），于是频繁把在用现场整棵删掉、任务被迫重做。修复前实测 `.52` 的 `disk_reap.py --dry-run` 会回收 `ca-reap-live-session-guard-20261110` 等**持有这个修复本身**的树；换成 `.53` 后同一 dry-run 回收 0 个 worktree。门禁 `python3 ops/test-reap-live-session-guard.py` → `PASS`（含「闲置且干净的真死树仍可回收」反向断言）；全量 `python3 ops/selftest.py` 退出码 0。旧 `preview.52` 完整保留，可 `./install.sh --rollback` 回退。
 - 自动实现（2026-10-17 补充）：`ops/central_daemon.py` 强制首步落盘并对“退出 0 但无改动”在同一 worktree 自动重试；真实 `codex exec` 已在隔离 fixture 完成 `L-0001` → `verify.txt` 内容 `hello-e2e` → 过门禁 → land → 收口。
 
 ---
