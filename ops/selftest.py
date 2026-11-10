@@ -6185,6 +6185,33 @@ def test_product_eval():
                 else:
                     _os.environ[k] = v
 
+    # 8) 判据 5 主干锚点回归：source_commit 是**插件仓库**的提交，能被比的只有
+    #    插件自己的主干。曾拿被服务项目的 trunk 去比 —— 跨库，永远不可能绿。
+    with tempfile.TemporaryDirectory(prefix="product-eval-trunk-") as tmp:
+        tmp = Path(tmp)
+        idir = tmp / "install"
+        rel = idir / "releases" / "7.7.7"
+        (rel / "ops").mkdir(parents=True)
+        (idir / "install-state.json").write_text(
+            _json.dumps({"version": "7.7.7"}), encoding="utf-8")
+        plugin_trunk = tmp / "plugin-source-trunk"
+        (rel / "ops" / "central.config.json").write_text(
+            _json.dumps({"trunk_dir": str(plugin_trunk)}), encoding="utf-8")
+        saved = {k: _os.environ.get(k) for k in
+                 ("KG_EVAL_INSTALL_DIR", "KG_EVAL_TRUNK", "KG_TRUNK")}
+        try:
+            _os.environ["KG_EVAL_INSTALL_DIR"] = str(idir)
+            _os.environ.pop("KG_EVAL_TRUNK", None)
+            _os.environ.pop("KG_TRUNK", None)
+            got = product_eval.trunk_dir(tmp / "served-project")
+            assert got == plugin_trunk, (got, plugin_trunk)
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    _os.environ.pop(k, None)
+                else:
+                    _os.environ[k] = v
+
     print("selftest ok: 对外发布评估五条判据能红能绿，阴性对照 7/7 全部按预期变红。")
 
 def test_compact_session_logs_is_lossless_and_under_pressure_only():
