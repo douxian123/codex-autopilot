@@ -364,6 +364,12 @@ def reap_regenerable_duplicates(dry: bool = False, guard=None,
             continue
         if guard.process_reference(d, procs):
             continue
+        # 判活补充：这里删的是「与 HEAD 逐字节相同的可再生产物」，内容可从 git
+        # 还原，损失远小于整棵回收；但一个正在读这些证据的会话仍然会被搅乱。
+        # 命令行扫描挡不住桌面会话（它的 argv 里没有树路径），所以再问一次内核
+        # cwd。命中就跳过这一棵，别的树照常剥离。
+        if guard.live_guard_blocker(d, "cwd"):
+            continue
         state = guard.regenerable_dirs_state(d)
         if not any(v == "pristine" for v in state.values()):
             continue

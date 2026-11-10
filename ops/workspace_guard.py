@@ -16,6 +16,11 @@ import subprocess
 import time
 from pathlib import Path
 
+try:  # sibling module in ops/; absent only in a partially copied install
+    import live_guard as _live_guard
+except Exception:  # a missing guard must never block a caller
+    _live_guard = None
+
 
 PROTECTED_NAMES = {"knowledge-graph", "kg-trunk", "kg-land-main"}
 # Directories that serve a live product surface rather than a task. They are not
@@ -220,6 +225,49 @@ def process_reference(worktree: Path, commands: str | None = None) -> str:
     return ""
 
 
+def live_guard_blocker(worktree: Path, mode: str = "cwd") -> str:
+    """Veto reason when something is still working inside `worktree`, else "".
+
+    `mode` is "off" | "cwd" | "all" and controls how much evidence counts:
+
+      * "cwd" -- a live process currently holds the tree as its working
+        directory. Precise and always safe, so it is the default: a dev server
+        or gate run whose argv never spells the tree path is still caught.
+      * "all" -- additionally treats a recently written Codex transcript whose
+        recorded cwd sits in the tree as live. This is the read-only-session
+        case: thinking between turns touches no file, so directory mtime and
+        command-line scans both read it as abandoned.
+
+    Why this is separate from `process_reference` (2026-11-10): the hourly
+    reaper called `worktree_removable(..., commands="")`, which switches that
+    command-line scan off entirely, and its 15-minute pressure idle gate then
+    deleted worktrees a desktop session was still working in -- 18 trees in one
+    day, recoverable only because the branches were kept. A liveness probe that
+    asks the kernel (cwd) and the session log (transcript cwd) cannot be turned
+    off by a caller forgetting to pass `commands`.
+
+    Fails open on purpose: if the probe is unavailable this returns "", i.e. no
+    evidence -- never a delete licence and never a spurious veto.
+    """
+    if _live_guard is None or mode in (None, "", "off"):
+        return ""
+    try:
+        pids = _live_guard.live_processes_in(worktree)
+    except Exception:
+        pids = []
+    if pids:
+        return f"live-cwd: pid {' '.join(pids[:6])}"
+    if mode != "all":
+        return ""
+    try:
+        sessions = _live_guard.sessions_working_in(worktree)
+    except Exception:
+        sessions = []
+    if sessions:
+        return f"live-session: {sessions[0][:160]}"
+    return ""
+
+
 def status(worktree: Path) -> str:
     result = run_git(worktree, "status", "--porcelain")
     return (result.stdout or "").strip() if result.returncode == 0 else "status-unavailable"
@@ -384,6 +432,7 @@ def worktree_removable(
     drop_scratch: bool = False,
     restore_regenerable: bool = False,
     accept_stripped_regenerable: bool = False,
+    live_guard_mode: str = "cwd",
 ) -> dict:
     """Assess a worktree without deleting source."""
     if not worktree.exists():
@@ -393,6 +442,9 @@ def worktree_removable(
     live = process_reference(worktree, commands)
     if live:
         return {"ok": False, "reason": f"process: {live}", "ahead": 0, "backup": ""}
+    guarded = live_guard_blocker(worktree, live_guard_mode)
+    if guarded:
+        return {"ok": False, "reason": guarded, "ahead": 0, "backup": ""}
 
     ahead = branch_ahead(repo, branch, main) if branch else 0
     if status(worktree):
@@ -570,6 +622,8 @@ def orphan_residue(worktree: Path, min_idle_h: float = 24.0) -> dict:
         return {"ok": False, "reason": "recent"}
     if process_reference(worktree):
         return {"ok": False, "reason": "process"}
+    if live_guard_blocker(worktree, "cwd"):
+        return {"ok": False, "reason": "live-cwd"}
     scratch = _scratch_relative_only(worktree)
     if scratch is None:
         return {"ok": False, "reason": "content"}

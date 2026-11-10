@@ -2423,8 +2423,15 @@ def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked,
 
 
 def _cleanup_exec(repo, wt: Path, branch: str) -> None:
+    # 判活：交付后收尾也可能撞上「用户此刻正站在这棵树里」。只认内核 cwd
+    # （精确、不会因为一个安静的会话就永久拦住收尾），命中就保留现场，
+    # 分支照样留给后续落盘。
+    if workspace_guard.live_guard_blocker(wt, "cwd"):
+        log(f"[exec] worktree cleanup skipped (live-cwd): {wt}")
+        return
     assessment = workspace_guard.worktree_removable(
-        Path(repo), wt, branch, "main", commands="", backup_unique=False)
+        Path(repo), wt, branch, "main", commands="", backup_unique=False,
+        live_guard_mode="off")
     if assessment.get("reason") == "missing":
         # 工作区已经不在了（上一轮收尾/压力回收把它删了），但分支还在。
         # 内容已全部进 main 时应当把分支一起清掉，否则每落一条就在本地留一个
@@ -3452,6 +3459,10 @@ def _reap_dead_worktrees() -> int:
         reap_state["last_ts"] = time.time()
         _save_reap_state(reap_state)
         live = _live_exec_slugs()
+        # 进程命令表整轮只取一次：`process_reference` 原本在调用点传 commands=""
+        # 把命令行扫描整个关掉了（见下），这里改成一次性快照后复用，既恢复
+        # 那道检查，又不至于每个候选树各 fork 一次 `ps ax`。
+        _proc_cmds = workspace_guard.process_commands()
         # 磁盘偏紧时放宽「闲置多久算可回收」：默认 3 小时是为了不打扰正在
         # 进行的活；但今天刚收口完的现场只闲置 2 小时，卡在门槛上就一个都
         # 回收不了，磁盘照样往下走。压力模式下用 30 分钟 —— 安全判据
@@ -3490,6 +3501,14 @@ def _reap_dead_worktrees() -> int:
                 continue
             if any(f"-{d.name}-" in f"-{s}-" for s in live):
                 continue
+            # 判活（2026-11-10 事故）：桌面会话的 cwd 就是这棵树，但它既不会
+            # 被 `_live_exec_slugs` 认出来（那只看 `codex exec -C <tree>`），
+            # 只读分析也不会刷新目录 mtime —— 于是「正在用」和「已废弃」读起来
+            # 一模一样。压力模式闲置门槛只有 15 分钟，一天因此删掉 18 棵在用的树
+            # （分支保留才捞得回来）。信号取自内核 cwd 与会话日志，不依赖
+            # 调用方记得传 commands，所以传参失误也不会再关掉它。
+            if workspace_guard.live_guard_blocker(d, "all"):
+                continue
             # 廉价预筛：先看目录 mtime。一个 worktree 只要有文件被写过，顶层目录
             # 或子目录 mtime 就会前进；先按 mtime 砍掉明显「刚动过」的现场，
             # 能省掉后面 4~6 次 git 子进程。最终判定仍由下面的 git 检查兜底。
@@ -3517,7 +3536,8 @@ def _reap_dead_worktrees() -> int:
             # frontend/.verify-tmp 21 棵）—— 任意一个就让 git status 非空。
             # 打开后只有「全部脏项都是未跟踪机器残留」才放行，已跟踪内容一律不变。
             assessment = workspace_guard.worktree_removable(
-                repo, d, branch, "main", commands="", backup_unique=False,
+                repo, d, branch, "main", commands=_proc_cmds, backup_unique=False,
+                live_guard_mode="all",
                 drop_scratch=_pressure_reap,
                 # 压力回收路径：如果一棵树唯一「脏」的是 backend/evidence 这类
                 # 已跟踪但可重建的产物（每个 worktree 各存一份 ~131MB，实测

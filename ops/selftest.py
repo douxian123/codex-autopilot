@@ -94,6 +94,12 @@ def main():
         run([sys.executable, str(OPS / "test-orphan-residue.py")],
             cwd=str(OPS.parent), check=True,
             env={**os.environ, "ORPHAN_TEST_ROOT": str(orphan_root)})
+        # 回收判活：2026-11-10 压力模式下 15 分钟闲置门槛删掉了 18 棵桌面会话
+        # 正在用的树（分支保留才捞得回来）。根因是回收只看 git 状态 + 目录 mtime，
+        # 而「会话 cwd 就是这棵树」既不出现在 `codex exec -C` 里，只读分析也不
+        # 刷新 mtime。这条门禁锁住两件事：在用的树必须被拦，真死的干净树仍要能回收。
+        run([sys.executable, str(OPS / "test-reap-live-session-guard.py")],
+            cwd=str(OPS.parent), check=True)
         # launchd 直接执行的入口必须只是转发：它不在任何不可变版本目录里，
         # 一旦有人在里面写实现，就会和 releases 里的实现各自腐烂。
         run([sys.executable, str(OPS / "test-reap-entry-forwards.py")],
