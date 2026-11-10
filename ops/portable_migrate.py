@@ -38,9 +38,8 @@ SPEC: list[tuple[str, str, str]] = [
     (".codex/plugins/cache/personal", "core", "个人插件缓存（自动挡运行的那份）"),
     ("plugins/codex-autopilot/install-state.json", "core", "自动挡安装状态（版本指针）"),
     (".codex-autopilot", "core", "自动挡运行态与账本（control/safety/state）"),
-    ("plugins/codex-autopilot/releases", "runtime", "自动挡历史版本包"),
-    ("plugins/codex-autopilot/plugin", "runtime", "插件实体（skill+面板）"),
-    ("plugins/codex-autopilot/ops", "runtime", "运行时 ops/ 代码"),
+    ("plugins/codex-autopilot/releases", "runtime", "自动挡历史版本包（含 ops/skills/ui）"),
+    ("plugins/codex-autopilot/build", "regen", "Companion 编译产物，可重跑 build.sh 生成"),
     (".codex/packages", "runtime", "Codex 依赖包"),
     (".codex/hooks", "runtime", "hooks 脚本"),
     (".codex/thread_history_1.sqlite", "regen", "会话历史主库 ~7G，再生件"),
@@ -52,9 +51,32 @@ SPEC: list[tuple[str, str, str]] = [
     (".codex/computer-use", "regen", "computer-use 缓存"),
 ]
 
+# 工具本体会被额外打进包里（放在目标机的 ~/.codex-autopilot/portable_migrate.py）。
+# 为什么必须带它：落地后第一件事就是 remap（本机实测要改 6.8 万处写死的绝对路径），
+# 而这个工具还没随 releases/ 发版——不带过去，目标机上就没有 remap 可跑。
+SELF_PATH_IN_TAR = ".codex-autopilot/portable_migrate.py"
+
 EXCLUDE_DIRS = [
     ".git", "node_modules", "__pycache__", ".venv", "venv",
     "build", "dist", ".next", ".turbo", "DerivedData",
+]
+
+# 按「相对 $HOME 的路径前缀」排除的再生件。
+#
+# .codex-autopilot 整个挂在 core 档，但它里面塞着几百 MB 纯运行历史：exec 107M、
+# evidence-archive 131M，还有 daemon.log* 和一堆 .bak-*。这些对「在新机器上接着
+# 跑」毫无用处，却是包体的大头。
+#
+# 顺带修掉一个假警报：这些 exec 日志含 NUL 字节（二进制日志），remap 会按设计
+# 跳过它们，于是落地后 grep 还能扫到 7 个文件残留 /Users/danta。不传它们，
+# 既省 200M+，也让「remap 后零残留」这条判据真的成立。
+EXCLUDE_RELPATHS = [
+    ".codex-autopilot/exec",
+    ".codex-autopilot/evidence-archive",
+    ".codex-autopilot/rotate-runs",
+    ".codex-autopilot/fix-backups-20261025",
+    ".codex-autopilot/kg-land-trunk-rescue",
+    "plugins/codex-autopilot/logs",
 ]
 
 
@@ -100,6 +122,19 @@ def _entries(args) -> list[str]:
     return [rel for rel, _t, _d in selected(args.tier) if (HOME / rel).exists()]
 
 
+def _excluded_size() -> tuple[int, list[tuple[str, int]]]:
+    """统计会被 EXCLUDE_RELPATHS 剔掉的量（这些在传的条目里面，得从账里扣掉）。"""
+    rows: list[tuple[str, int]] = []
+    total = 0
+    for rel in EXCLUDE_RELPATHS:
+        p = HOME / rel
+        if p.exists():
+            n = _du(p)
+            rows.append((rel, n))
+            total += n
+    return total, rows
+
+
 def cmd_plan(args) -> int:
     print(f"源机 $HOME = {HOME}\n")
     print(f"{'处理':<8}{'大小':>10}  路径")
@@ -119,18 +154,57 @@ def cmd_plan(args) -> int:
             if tier == "regen":
                 total_skip += size
         print(f"{mark:<8}{_human(size):>10}  {rel}   -- {desc}")
+
+    drop_total, drop_rows = _excluded_size()
+    # 只有落在「要传」条目里的排除项才算真省下的量。
+    keep_prefixes = tuple(rel for rel, t, _d in SPEC if t in keep_tiers)
+    effective_drop = 0
+    for rel, n in drop_rows:
+        if any(rel == k or rel.startswith(k + "/") for k in keep_prefixes):
+            effective_drop += n
     print("-" * 78)
-    print(f"要传（tier={args.tier}）：约 {_human(total_keep)}")
+    print(f"要传（tier={args.tier}）：约 {_human(total_keep - effective_drop)}")
     if total_skip:
         print(f"再生件省掉：约 {_human(total_skip)}")
+    if effective_drop:
+        print(f"运行历史/备份再省：约 {_human(effective_drop)}")
+        for rel, n in sorted(drop_rows, key=lambda x: -x[1])[:6]:
+            print(f"    - {rel}  {_human(n)}")
     print("\n传输：`serve` 起临时 HTTP，目标机一条 curl 拉走，源机不落盘。")
     return 0
 
 
+def _stage_self() -> None:
+    """把工具本体放进 $HOME/.codex-autopilot/，好让它随包传到目标机。
+
+    这是有意为之的一处落盘：15KB，且 .codex-autopilot 本来就是 core 条目会被
+    整个打走。为什么必须带：落地后第一件事就是 remap（本机实测要改 3.9 万处
+    写死的绝对路径），而本工具还没随 releases/ 发版，不带过去目标机就没得跑。
+
+    不用 tar 的 -s 重命名，是因为 bsdtar 在创建模式下不支持（实测报
+    "Unrecognized archive format"）。拷贝一份最直白，也最容易验证。
+    """
+    dst = HOME / SELF_PATH_IN_TAR
+    me = Path(__file__).resolve()
+    if dst.resolve() == me:
+        return
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(me, dst)
+        os.chmod(dst, 0o755)
+    except OSError as exc:
+        print(f"警告：没能把工具本体放进 {dst}（{exc}）；"
+              f"目标机上将没有 remap 可跑。", file=sys.stderr)
+
+
 def _tar_cmd(entries, output: str) -> list[str]:
+    _stage_self()
     cmd = ["tar", "-czf", output, "-C", str(HOME)]
     for d in EXCLUDE_DIRS:
         cmd += ["--exclude", d]
+    for rel in EXCLUDE_RELPATHS:
+        if (HOME / rel).exists():
+            cmd += ["--exclude", "./" + rel]
     cmd += entries
     return cmd
 
@@ -269,6 +343,9 @@ def cmd_serve(args) -> int:
         print("目标机上执行：")
         print(f'  curl -fL {url} | tar -xzf - -C "$HOME"')
         print()
+        print("落地后先 remap 再重载 launchd（目标机用户名与源机不同时必须做）：")
+        print('  python3 ~/.codex-autopilot/portable_migrate.py remap --to "$HOME" --go')
+        print()
         try:
             srv.serve_forever()
         except KeyboardInterrupt:
@@ -302,6 +379,14 @@ def _remap_roots() -> list[Path]:
     return [r for r in roots if r.exists()]
 
 
+def _excluded(p: Path) -> bool:
+    try:
+        rel = str(p.relative_to(HOME))
+    except ValueError:
+        return False
+    return any(rel == r or rel.startswith(r + "/") for r in EXCLUDE_RELPATHS)
+
+
 def _iter_files(roots):
     seen: set[str] = set()
     for root in roots:
@@ -323,6 +408,8 @@ def _iter_files(roots):
             except OSError:
                 continue
             if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_REMAP_BYTES:
+                continue
+            if _excluded(f):
                 continue
             yield f
 
