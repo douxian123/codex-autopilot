@@ -1428,6 +1428,71 @@ def test_binding_preflight_rejects_empty_shell():
     print("selftest ok: 空壳状态根被判 broken，真仓库根被判 ok。")
 
 
+def test_install_consistency_gate():
+    """锁住 2026-11-10 的「半完成升级」：install-state 写新版、入口仍指旧版。
+
+    那次升级只写了 ``install-state.json``（.52），``marketplace.json`` 仍指 .51，
+    Codex 加载的还是 .51。新版本才加的门禁（``binding_health`` 本身就是 .52 带来的）
+    因而从未上线，用户面对的仍是旧行为——「装了 / 开了 / enabled」全成立，却没有任何
+    一处真的变新。这类失效不抛异常，只在几份配置之间自相矛盾，普通自检看不见。
+    """
+    import json as _json
+
+    with tempfile.TemporaryDirectory(prefix="autopilot-install-consistency-") as tmp:
+        home = Path(tmp)
+        (home / ".agents" / "plugins").mkdir(parents=True)
+        (home / "plugins" / "codex-autopilot").mkdir(parents=True)
+        temp_plugin = home / "plugin"
+        (temp_plugin / "ops").mkdir(parents=True)
+        (temp_plugin / "ops" / "plugin_binding.py").write_text(
+            (OPS / "plugin_binding.py").read_text(encoding="utf-8"), encoding="utf-8")
+
+        script = (
+            "import json, sys; "
+            "sys.path.insert(0, sys.argv[1]); import plugin_binding as b; "
+            "print(json.dumps(b.install_consistency(), ensure_ascii=False))"
+        )
+        env = os.environ.copy()
+        for key in ("KG_REPO", "KG_TRUNK"):
+            env.pop(key, None)
+        env["HOME"] = str(home)
+
+        def check():
+            out = run([sys.executable, "-c", script, str(temp_plugin / "ops")],
+                      env=env, cwd=str(temp_plugin), check=False)
+            assert out.returncode == 0, f"体检脚本自己坏了：{out.stderr}"
+            return _json.loads(out.stdout)
+
+        # 半完成升级：install-state 已写 .52，marketplace 入口仍指 .51 -> broken
+        (home / "plugins" / "codex-autopilot" / "install-state.json").write_text(
+            _json.dumps({"version": "0.6.0-preview.52"}), encoding="utf-8")
+        (home / ".agents" / "plugins" / "marketplace.json").write_text(_json.dumps({
+            "name": "personal", "plugins": [{"name": "codex-autopilot",
+                "source": {"source": "local",
+                           "path": "./plugins/codex-autopilot/releases/0.6.0-preview.51"}}],
+        }), encoding="utf-8")
+        drift = check()
+        assert drift["status"] == "broken", drift
+        assert "安装版本不一致" in "\n".join(drift["problems"]), drift
+
+        # 对齐后 -> ok
+        (home / ".agents" / "plugins" / "marketplace.json").write_text(_json.dumps({
+            "name": "personal", "plugins": [{"name": "codex-autopilot",
+                "source": {"source": "local",
+                           "path": "./plugins/codex-autopilot/releases/0.6.0-preview.52"}}],
+        }), encoding="utf-8")
+        aligned = check()
+        assert aligned["status"] == "ok", aligned
+
+        # 传统布局 / 开发检出：既无 install-state 也无入口 -> skip（不能误判 broken）
+        (home / "plugins" / "codex-autopilot" / "install-state.json").unlink()
+        (home / ".agents" / "plugins" / "marketplace.json").unlink()
+        skipped = check()
+        assert skipped["status"] == "skip", skipped
+
+    print("selftest ok: 版本漂移被判 broken，对齐后 ok，无安装记录跳过。")
+
+
 def test_broken_binding_panel_contract():
     """坏绑定必须经真实 MCP 状态返回完整面板契约。
 
@@ -5992,6 +6057,7 @@ if __name__ == "__main__":
     test_installed_copy_binding()
     test_binding_preflight_rejects_empty_shell()
     test_broken_binding_panel_contract()
+    test_install_consistency_gate()
     test_panel_first_screen()
     test_codex_native_bridge()
     test_native_socket_lstat()
