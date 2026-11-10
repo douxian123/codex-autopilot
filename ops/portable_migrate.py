@@ -21,6 +21,7 @@ import os
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -275,36 +276,94 @@ def cmd_serve(args) -> int:
     return 0
 
 
-REMAP_GLOBS = [
-    ".codex/plugins/cache/personal/*/*/.mcp.json",
-    "plugins/codex-autopilot/install-state.json",
-    "Library/LaunchAgents/*.plist",
-]
-
-
 HOME_RE = re.compile(r"/Users/[A-Za-z0-9._-]+")
 
+# 落地后要扫的范围 = pack 实际会传的那些条目（SPEC 里 core+runtime），再加上用户
+# 可能手工搬过来的 launchd plist。
+#
+# 为什么必须全扫，而不是列几个 glob：实测这台机上写死 /Users/danta 的分布是
+#   .codex/config.toml                1 个文件（20+ 处：CODEX_HOME / notify /
+#                                     writable_roots / 各 mcp server / projects.*）
+#   .codex-autopilot                334 个文件
+#   .codex/hooks                    143 个文件
+#   plugins/codex-autopilot/releases 35 个文件
+#   .codex/plugins/cache/personal     7 个文件
+# 只改 .mcp.json 那几处，传过去就是「半个环境」——而且坏得很安静（插件能加载，
+# 但 CODEX_HOME、mcp server 路径、project 配置全指着不存在的目录）。
+#
+# 不碰：二进制（含 NUL 字节）、超大文件、以及 SKIP_DIRS 里的目录。
+SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", ".next", "dist"}
+MAX_REMAP_BYTES = 16 << 20
 
-def _scan(args):
-    """扫出「这次要改哪些文件」以及每个文件里的候选源前缀计数。
 
-    注意 from-home 不能默认成「当前机器的 HOME」：本工具是在目标机上跑的，
-    而文件里写死的是**源机**的路径。所以不给 --from-home 时，从文件内容里
-    自动认出出现最多的 /Users/<name> 那一个作为源前缀。
+def _remap_roots() -> list[Path]:
+    roots = [HOME / rel for rel, tier, _d in SPEC if tier in ("core", "runtime")]
+    roots.append(HOME / "Library/LaunchAgents")
+    return [r for r in roots if r.exists()]
+
+
+def _iter_files(roots):
+    seen: set[str] = set()
+    for root in roots:
+        if root.is_file():
+            cand = [root]
+        else:
+            cand = []
+            for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+                dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+                for f in filenames:
+                    cand.append(Path(dirpath) / f)
+        for f in cand:
+            key = str(f)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                st = f.lstat()
+            except OSError:
+                continue
+            if not stat.S_ISREG(st.st_mode) or st.st_size > MAX_REMAP_BYTES:
+                continue
+            yield f
+
+
+def _group_of(p: Path) -> str:
+    """把命中文件归到它属于哪个 top 条目，便于按组汇报。"""
+    rel = p.relative_to(HOME)
+    for name, tier, _d in SPEC:
+        if tier in ("core", "runtime") and (rel == Path(name) or Path(name) in rel.parents):
+            return name
+    return str(rel.parts[0]) if len(rel.parts) > 1 else str(rel)
+
+
+def _read_text(p: Path):
+    try:
+        raw = p.read_bytes()
+    except OSError:
+        return None
+    if b"\x00" in raw:          # 二进制，跳过
+        return None
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("utf-8", errors="ignore")
+
+
+def _scan():
+    """全量扫一遍，返回 [(文件, 文本)] 与 {候选源前缀: 出现次数}。
+
+    注意源前缀不能默认成「当前机器的 HOME」：本工具在目标机上跑，而文件里写死的
+    是**源机**的路径。所以从文件内容里自动认出出现最多的 /Users/<name> 当源前缀。
     """
     counts: dict[str, int] = {}
     files: list[tuple[Path, str]] = []
-    for pat in REMAP_GLOBS:
-        for p in sorted(HOME.glob(pat)):
-            if not p.is_file() or p.is_symlink():
-                continue
-            try:
-                txt = p.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            files.append((p, txt))
-            for m in HOME_RE.findall(txt):
-                counts[m] = counts.get(m, 0) + 1
+    for p in _iter_files(_remap_roots()):
+        txt = _read_text(p)
+        if txt is None:
+            continue
+        files.append((p, txt))
+        for m in HOME_RE.findall(txt):
+            counts[m] = counts.get(m, 0) + 1
     return files, counts
 
 
@@ -317,43 +376,61 @@ def _pick_source(counts: dict[str, int], explicit: str) -> str:
 
 
 def cmd_remap(args) -> int:
-    files, counts = _scan(args)
+    files, counts = _scan()
     src = _pick_source(counts, args.from_home)
     dst = (args.to_home or str(HOME)).rstrip("/")
+    print(f"扫描范围：{len(_remap_roots())} 个根、{len(files)} 个文本文件\n")
     if counts and len(counts) > 1:
-        top = sorted(counts.items(), key=lambda kv: -kv[1])[:5]
         print("文件中出现过的 /Users/<name> 前缀（按出现次数）：")
-        for name, n in top:
-            flag = "  ← 采用" if name == src else ""
-            print(f"  {n:>4}  {name}{flag}")
+        for name, n in sorted(counts.items(), key=lambda kv: -kv[1])[:6]:
+            flag = "  <= 采用" if name == src else ""
+            print(f"  {n:>5}  {name}{flag}")
         print()
     if not src:
-        print("没有在任何插件/plist 文件里发现 /Users/<name> 形式的绝对路径。")
+        print("没有发现 /Users/<name> 形式的绝对路径，不需要改写。")
         return 0
+
     hits = [(p, txt.count(src)) for p, txt in files if src in txt]
     if not hits:
         print(f"没有文件引用 {src}。")
-        if dst == src:
-            print(f"目标 $HOME 与源相同（{src}），无需改写。")
         return 0
-    print(f"{'命中':>4}  文件")
-    print("-" * 78)
+
+    groups: dict[str, list[int]] = {}
     for p, n in hits:
-        print(f"{n:>4}  {p}")
+        g = groups.setdefault(_group_of(p), [0, 0])
+        g[0] += 1
+        g[1] += n
+    print(f"{'文件数':>6}{'处数':>8}  条目")
+    print("-" * 78)
+    for g, (fc, oc) in sorted(groups.items(), key=lambda kv: -kv[1][1]):
+        print(f"{fc:>6}{oc:>8}  {g}")
     print("-" * 78)
     total = sum(n for _p, n in hits)
-    print(f"共 {len(hits)} 个文件、{total} 处引用 {src}")
+    print(f"合计 {len(hits)} 个文件、{total} 处引用 {src}")
+    if args.list:
+        print()
+        for p, n in sorted(hits, key=lambda x: -x[1]):
+            print(f"{n:>5}  {p}")
+    else:
+        print("（加 --list 看逐文件明细）")
+
     if dst == src:
-        print(f"目标 $HOME 与源相同（{src}），无需改写。")
+        print(f"\n目标 $HOME 与源相同（{src}），无需改写。")
         return 0
     if not args.go:
         print(f"\n预演模式。要真的改成 {dst}，加 --go：")
         print(f"  python3 {Path(__file__).name} remap --to {dst} --go")
         return 0
+
+    n_files = n_occ = 0
     for p, _n in hits:
-        txt = p.read_text(encoding="utf-8", errors="ignore")
+        txt = _read_text(p)
+        if txt is None:
+            continue
+        n_occ += txt.count(src)
         p.write_text(txt.replace(src, dst), encoding="utf-8")
-    print(f"\n已改写 {len(hits)} 个文件：{src} -> {dst}")
+        n_files += 1
+    print(f"\n已改写 {n_files} 个文件、{n_occ} 处：{src} -> {dst}")
     print("接着重新加载 launchd：launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/<plist>")
     return 0
 
@@ -382,6 +459,8 @@ def main(argv=None) -> int:
                    help="源机 HOME 前缀；默认从文件内容自动识别")
     p.add_argument("--to", dest="to_home", default=str(HOME))
     p.add_argument("--go", action="store_true")
+    p.add_argument("--list", action="store_true",
+                   help="逐文件列出命中明细")
     p.set_defaults(func=cmd_remap)
 
     args = ap.parse_args(argv)
