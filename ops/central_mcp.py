@@ -608,24 +608,17 @@ def _daemon_state():
 
 
 def _daemon_live():
-    """从 launchd 读取存活状态和绑定项目，不用受沙箱限制的 kill(pid, 0)。"""
-    uid = os.getuid() if hasattr(os, "getuid") else 0
+    """从 launchd 读取存活状态和绑定项目，不用受沙箱限制的 kill(pid, 0)。
+
+    判据只有一份（ops/daemon_liveness.py），与 kgctl status / doctor 共用；
+    否则面板和 CLI 会各说各话：CLI 报「未安装」而面板仍显示「后台常驻=开」。
+    """
     try:
-        result = subprocess.run(
-            ["launchctl", "print", f"gui/{uid}/com.codex-autopilot.daemon"],
-            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=3,
-        )
-    except (OSError, subprocess.TimeoutExpired):
+        import daemon_liveness
+    except Exception:
         return False, None, None
-    if result.returncode != 0:
-        return False, None, None
-    text = result.stdout or ""
-    state = re.search(r"(?m)^\s*state = (\w+)\s*$", text)
-    pid_match = re.search(r"(?m)^\s*pid = (\d+)\s*$", text)
-    repo_match = re.search(r"(?m)^\s*KG_REPO => (.+?)\s*$", text)
-    pid = int(pid_match.group(1)) if pid_match else None
-    bound_repo = str(Path(repo_match.group(1)).expanduser().resolve()) if repo_match else None
-    return bool(state and state.group(1) == "running" and pid), pid, bound_repo
+    st = daemon_liveness.daemon_liveness(os.environ.get("KG_REPO") or REPO)
+    return bool(st.get("live")), st.get("pid"), st.get("bound_repo")
 
 
 def _ledger_count():
