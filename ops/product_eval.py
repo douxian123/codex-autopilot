@@ -71,9 +71,36 @@ def cache_dir() -> Path:
 
 
 def trunk_dir(repo=None) -> Path:
+    """判据 5 的「主干」是**插件自己**的落盘主干，不是被服务项目的。
+
+    install-state.json 里的 source_commit 记的是插件源码仓库的提交
+    （install.sh 用 `git -C "$REPO" rev-parse HEAD`，$REPO 就是插件源码目录）。
+    所以只能拿**插件的** trunk / main 去比。把被服务项目的 trunk 拿来比是跨库，
+    那条判据永远不可能通过 —— 那是尺子量错了对象，不是部署真的分叉。
+
+    优先读插件自己 central.config.json 里写的 trunk_dir（自包含安装的落盘主干）。
+    """
     env = os.environ.get("KG_EVAL_TRUNK") or os.environ.get("KG_TRUNK")
     if env:
         return Path(env).expanduser()
+    idir = install_dir()
+    cands = []
+    try:
+        version = json.loads((idir / "install-state.json")
+                             .read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError):
+        version = None
+    if version:
+        cands.append(idir / "releases" / str(version) / "ops" / "central.config.json")
+    cands.append(idir / "ops" / "central.config.json")
+    for cfgp in cands:
+        try:
+            t = json.loads(cfgp.read_text(encoding="utf-8")).get("trunk_dir")
+        except (OSError, ValueError):
+            continue
+        if t:
+            return Path(t).expanduser()
+    # 兜底：插件源码目录同级、名字加 -trunk（install.sh 的默认落盘主干位置）
     repo = Path(repo or DEFAULT_REPO).resolve()
     return repo.parent / (repo.name + "-trunk")
 
