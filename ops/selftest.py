@@ -6150,6 +6150,41 @@ def test_product_eval():
                 else:
                     _os.environ[k] = v
 
+    # 7) 锚点回归：从安装目录跑时，「期望项目」必须来自 .mcp.json 的 KG_REPO，
+    #    不是脚本所在的代码目录。否则判据 3 会把「绑定正确」误判成假红。
+    #    真现场：曾从 releases/<ver>/ 跑，期望项目被判成 release 目录本身。
+    with tempfile.TemporaryDirectory(prefix="product-eval-anchor-") as tmp:
+        tmp = Path(tmp)
+        idir = tmp / "install"
+        rel = idir / "releases" / "9.9.9"
+        rel.mkdir(parents=True)
+        (idir / "install-state.json").write_text(
+            _json.dumps({"version": "9.9.9"}), encoding="utf-8")
+        served = tmp / "served-project"
+        served.mkdir()
+        (rel / ".mcp.json").write_text(_json.dumps({"mcpServers": {
+            "codex-autopilot": {"env": {"KG_REPO": str(served)}}}}),
+            encoding="utf-8")
+        saved = {k: _os.environ.get(k) for k in
+                 ("KG_EVAL_INSTALL_DIR", "KG_REPO")}
+        try:
+            _os.environ["KG_EVAL_INSTALL_DIR"] = str(idir)
+            _os.environ.pop("KG_REPO", None)
+            got, src_note = product_eval.resolve_expected_repo(None)
+            assert got == served.resolve(), (got, served)
+            assert src_note == ".mcp.json", src_note
+            # 无 .mcp.json 绑定时才退回代码目录兜底
+            (rel / ".mcp.json").write_text("{}", encoding="utf-8")
+            got2, src_note2 = product_eval.resolve_expected_repo(None)
+            assert got2 == product_eval.DEFAULT_REPO.resolve(), got2
+            assert "兜底" in src_note2, src_note2
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    _os.environ.pop(k, None)
+                else:
+                    _os.environ[k] = v
+
     print("selftest ok: 对外发布评估五条判据能红能绿，阴性对照 7/7 全部按预期变红。")
 
 def test_compact_session_logs_is_lossless_and_under_pressure_only():

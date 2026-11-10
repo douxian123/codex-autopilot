@@ -34,6 +34,7 @@ import os
 import re
 import subprocess
 import time
+import urllib.parse
 from pathlib import Path
 
 # How long a silent transcript keeps protecting its tree. Long enough to cover a
@@ -97,7 +98,28 @@ def _live_cwd_pids(max_age: float = LIVE_PROBE_TTL_S) -> dict:
     return dict(pids)
 
 
-def path_within(child: str, parent: Path) -> bool:
+def _normalize_recorded_path(raw) -> str:
+    """Turn a transcript-recorded path into a filesystem path.
+
+    Codex transcripts record the desktop session cwd as a `file://` URL, not as
+    a bare path: measured 2026-11-11, 9 of 30 live-session records were in that
+    form (`file:///Users/danta/.newmax/workspace/knowledge-graph`). A bare
+    string comparison against the tree path therefore matched none of them, so
+    roughly a third of the session evidence arrived pre-blinded and those trees
+    still read as abandoned. Percent-escapes are decoded for the same reason:
+    repository names with CJK characters are stored fully escaped
+    (`file:///.../kg-%E4%BE%A7%E6%A0%8F`).
+    """
+    text = str(raw or "").strip()
+    if text.startswith("file://"):
+        text = text[len("file://"):]
+    try:
+        return urllib.parse.unquote(text)
+    except Exception:
+        return text
+
+
+def path_within(child, parent: Path) -> bool:
     """True when `child` is `parent` itself or sits below it (boundary aware).
 
     The boundary matters: `/w/kg-tree` must not be matched by a process sitting
@@ -113,7 +135,9 @@ def path_within(child: str, parent: Path) -> bool:
     # means "not live" -> deletion. The boundary check is kept so that
     # `/w/kg-tree` is still not matched by `/w/kg-tree-extra`.
     base = os.path.realpath(str(parent)).rstrip("/")
-    target = os.path.realpath(str(child)).rstrip("/")
+    target = os.path.realpath(_normalize_recorded_path(child)).rstrip("/")
+    if not target:
+        return False
     return target == base or target.startswith(base + os.sep)
 
 

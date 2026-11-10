@@ -78,6 +78,46 @@ def trunk_dir(repo=None) -> Path:
     return repo.parent / (repo.name + "-trunk")
 
 
+def bound_repo_from_mcp(idir=None) -> str:
+    """读安装的 .mcp.json 里 KG_REPO —— 这是这套部署真正服务的项目。"""
+    idir = Path(idir or install_dir())
+    try:
+        version = json.loads((idir / "install-state.json")
+                             .read_text(encoding="utf-8")).get("version")
+    except (OSError, ValueError):
+        version = None
+    if not version:
+        return ""
+    mcp = idir / "releases" / str(version) / ".mcp.json"
+    try:
+        env = ((json.loads(mcp.read_text(encoding="utf-8"))
+                .get("mcpServers") or {}).get("codex-autopilot") or {}).get("env") or {}
+        return env.get("KG_REPO") or ""
+    except (OSError, ValueError):
+        return ""
+
+
+def resolve_expected_repo(cli=None):
+    """决定「期望服务的目标项目」是谁，以及锚点从哪来。
+
+    优先级：--repo > 环境变量 KG_REPO > 安装的 .mcp.json 里绑定的 KG_REPO
+            > 代码目录（兜底）。
+
+    为什么要这条链：从**已安装的插件目录**跑评估时，脚本所在目录是代码目录，
+    不是它服务的项目。拿代码目录当锚点，判据 3 会把「绑定正确」误判成假红，
+    判据 5 还会去查一个根本不存在的 <代码目录>-trunk。
+    """
+    if cli:
+        return Path(cli).expanduser().resolve(), "--repo"
+    env = os.environ.get("KG_REPO")
+    if env:
+        return Path(env).expanduser().resolve(), "env KG_REPO"
+    bound = bound_repo_from_mcp()
+    if bound:
+        return Path(bound).expanduser().resolve(), ".mcp.json"
+    return DEFAULT_REPO.resolve(), "代码目录（兜底，可能不是被服务的项目）"
+
+
 def ev(argv, cwd=None, note=""):
     """跑一条只读命令，把证据压成固定结构。绝不抛异常，拿不到就是拿不到。"""
     argv = [str(a) for a in argv]
@@ -265,11 +305,11 @@ def crit_effective(repo=None):
 
 
 # ----------------------------------------------------------------- 判据 5
-def crit_consistent(idir=None, cdir=None, trunk=None):
+def crit_consistent(idir=None, cdir=None, trunk=None, repo=None):
     """5 一致可回滚：release / Codex 缓存 / 主干三处版本一致，且有旧版本。"""
     idir = Path(idir or install_dir())
     cdir = Path(cdir or cache_dir())
-    trunk = Path(trunk or trunk_dir())
+    trunk = Path(trunk or trunk_dir(repo))
     evidence, shortfall = [], []
 
     try:
@@ -395,10 +435,11 @@ def negative_controls():
 # ----------------------------------------------------------------- 认证物
 def certify(repo=None):
     """跑完五条判据，产出一份会红的认证物。只读。"""
-    repo = Path(repo or DEFAULT_REPO).resolve()
+    repo, anchor_src = resolve_expected_repo(repo)
     frozen = {
         "evaluated_at": _now(),
         "expected_repo": str(repo),
+        "expected_repo_source": anchor_src,
         "install_dir": str(install_dir()),
         "cache_dir": str(cache_dir()),
         "trunk": str(trunk_dir(repo)),
@@ -409,7 +450,7 @@ def certify(repo=None):
         crit_runnable(repo),
         crit_targets(expected_repo=repo),
         crit_effective(repo),
-        crit_consistent(),
+        crit_consistent(repo=repo),
     ]
     controls = [{"criterion": c, "went_red": ok, "note": note}
                 for c, ok, note in negative_controls()]
@@ -431,9 +472,11 @@ def certify(repo=None):
 
 
 def human_report(cert):
+    src_note = cert["frozen"].get("expected_repo_source")
     lines = ["对外发布评估  %s" % cert["generated_at"],
-             "冻结对象  项目 %s @ %s" % (cert["frozen"]["expected_repo"],
-                                         (cert["frozen"]["repo_head"] or "?")[:8])]
+             "冻结对象  项目 %s @ %s%s" % (cert["frozen"]["expected_repo"],
+                                         (cert["frozen"]["repo_head"] or "?")[:8],
+                                         ("（锚点来自 %s）" % src_note) if src_note else "")]
     for c in cert["criteria"]:
         mark = {"pass": "OK  ", "fail": "红  ", "unknown": "看不清"}.get(c["status"], "?")
         lines.append("  %s %s  %s" % (mark, c["name"], c["detail"]))
@@ -464,7 +507,8 @@ def write_certification(repo, cert):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="对外发布评估闭环（默认只读）")
-    ap.add_argument("--repo", default=str(DEFAULT_REPO), help="期望服务的目标项目")
+    ap.add_argument("--repo", default=None,
+                    help="期望服务的目标项目（默认按 KG_REPO/.mcp.json 自动解析）")
     ap.add_argument("--json", action="store_true", help="输出认证物 JSON")
     ap.add_argument("--write", action="store_true",
                     help="把认证物写进 <repo>/ops/truth/release-certification.json")
