@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 
 def _is_prefix(candidate: Path, covering: Path) -> bool:
@@ -51,10 +52,10 @@ def _is_prefix(candidate: Path, covering: Path) -> bool:
 
 
 def snapshot_uncovered_files(
-    candidate: Path, covering_roots: list[Path]
-) -> list[Path]:
+    candidate: Path, covering_roots: List[Path]
+) -> List[Path]:
     """Return files whose historical bytes are not covered by newer content."""
-    uncovered: list[Path] = []
+    uncovered: List[Path] = []
     try:
         entries = sorted(candidate.rglob("*"))
     except OSError:
@@ -76,7 +77,7 @@ def snapshot_uncovered_files(
     return uncovered
 
 
-def snapshot_is_covered(candidate: Path, covering_roots: list[Path]) -> tuple[bool, str]:
+def snapshot_is_covered(candidate: Path, covering_roots: List[Path]) -> Tuple[bool, str]:
     """Return whether every file in one snapshot exists in newer content."""
     uncovered = snapshot_uncovered_files(candidate, covering_roots)
     if uncovered:
@@ -88,7 +89,7 @@ class CoveredNameIndex:
     """Index newer files by name for renamed-file coverage checks."""
 
     def __init__(self) -> None:
-        self._files: dict[str, list[tuple[int, Path]]] = {}
+        self._files: Dict[str, List[Tuple[int, Path]]] = {}
 
     def add_tree(self, root: Path) -> None:
         if not root.is_dir():
@@ -104,14 +105,14 @@ class CoveredNameIndex:
         size = path.stat().st_size
         self._files.setdefault(path.name, []).append((size, path))
 
-    def covering(self, candidate: Path) -> Path | None:
+    def covering(self, candidate: Path) -> Optional[Path]:
         wanted = candidate.stat().st_size
         for size, path in self._files.get(candidate.name, []):
             if size >= wanted and _is_prefix(candidate, path):
                 return path
         return None
 
-    def covering_any(self, candidate: Path) -> Path | None:
+    def covering_any(self, candidate: Path) -> Optional[Path]:
         wanted = candidate.stat().st_size
         for rows in self._files.values():
             for size, path in rows:
@@ -126,7 +127,7 @@ def safe_rel(rel: Path) -> Path:
     return Path(*parts[-8:])
 
 
-def content_key(path: Path) -> tuple[str, int]:
+def content_key(path: Path) -> Tuple[str, int]:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         while True:
@@ -140,11 +141,11 @@ def content_key(path: Path) -> tuple[str, int]:
 def archive_unique(
     path: Path,
     archive: Path,
-    known_content: dict[tuple[str, int], Path],
-    global_queue: list[Path],
-    archive_bytes: list[int],
+    known_content: Dict[Tuple[str, int], Path],
+    global_queue: List[Path],
+    archive_bytes: List[int],
     archive_cap: int,
-) -> tuple[bool, str]:
+) -> Tuple[bool, str]:
     """Move unique bytes into the protection archive without exceeding its cap."""
     key = content_key(path)
     if key in known_content:
@@ -181,16 +182,16 @@ def archive_unique(
 
 def prune_snapshot_files(
     candidate: Path,
-    covering_roots: list[Path],
+    covering_roots: List[Path],
     name_index: CoveredNameIndex,
     archive: Path,
-    known_content: dict[tuple[str, int], Path],
-    global_queue: list[Path],
-    archive_bytes: list[int],
+    known_content: Dict[Tuple[str, int], Path],
+    global_queue: List[Path],
+    archive_bytes: List[int],
     archive_cap: int,
-) -> tuple[bool, str]:
+) -> Tuple[bool, str]:
     """Remove covered files; archive every unique historical byte sequence."""
-    failed: list[str] = []
+    failed: List[str] = []
     for path in sorted(candidate.rglob("*")):
         if not path.is_file() or path.is_symlink():
             continue
@@ -233,14 +234,14 @@ def archive_usage(archive: Path) -> int:
     )
 
 
-def prunable_snapshots(source: Path, snapshots: Path, keep: int = 48) -> tuple[list[Path], list[tuple[Path, str]]]:
+def prunable_snapshots(source: Path, snapshots: Path, keep: int = 48) -> Tuple[List[Path], List[Tuple[Path, str]]]:
     dirs = sorted(
         (p for p in snapshots.iterdir() if p.is_dir() and not p.is_symlink()),
         key=lambda p: (p.stat().st_mtime_ns, p.name),
         reverse=True,
     )
-    removable: list[Path] = []
-    retained: list[tuple[Path, str]] = []
+    removable: List[Path] = []
+    retained: List[Tuple[Path, str]] = []
     for index, candidate in enumerate(dirs):
         if index < keep:
             continue
@@ -267,8 +268,8 @@ def main() -> int:
     archive = args.archive or (args.snapshots.parent / "archive")
     if not args.dry_run:
         archive.mkdir(parents=True, exist_ok=True)
-    known_content: dict[tuple[str, int], Path] = {}
-    global_queue: list[Path] = []
+    known_content: Dict[Tuple[str, int], Path] = {}
+    global_queue: List[Path] = []
     name_index = CoveredNameIndex()
     archive_cap = args.archive_cap_mib * 1024 * 1024
     archive_bytes = [archive_usage(archive) if not args.keep_archive else 0]

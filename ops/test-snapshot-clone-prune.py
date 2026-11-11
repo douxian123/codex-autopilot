@@ -3,6 +3,7 @@
 """Regression: snapshot pruning may never remove unique Codex history."""
 import importlib.util
 import os
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -33,6 +34,13 @@ def write(path: Path, data: bytes):
 
 
 def main():
+    toolchain = subprocess.run(
+        ["/usr/bin/python3", "-m", "py_compile", str(HELPER)],
+        capture_output=True, text=True)
+    check("淘汰器能用守护脚本的系统 Python 3.9 编译",
+          toolchain.returncode == 0,
+          (toolchain.stdout + toolchain.stderr).strip())
+
     mod = load_helper()
     with tempfile.TemporaryDirectory(prefix="snapshot-prune-") as tmp:
         root = Path(tmp)
