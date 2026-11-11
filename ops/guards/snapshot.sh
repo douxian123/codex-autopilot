@@ -13,7 +13,7 @@ GUARD="$HOME/.codex-guard"
 SNAP="$GUARD/snapshots"
 SRC="$HOME/.codex/sessions"
 LOG="$GUARD/guard.log"
-KEEP=8    # 至少保留最近 8 个有效快照；更老的按文件级历史保护规则淘汰
+KEEP=3    # 保留最近 3 个有效快照；更老的按文件级历史保护规则淘汰
 MIN_FREE_GIB="${MIN_FREE_GIB:-12}"
 
 [ -e "$GUARD/OFF" ] && exit 0

@@ -107,6 +107,46 @@ def main():
         check("保留窗口按修改时间而不是目录名",
               removable == [older_name] and not retained, (removable, retained))
 
+    with tempfile.TemporaryDirectory(prefix="snapshot-prune-archive-") as tmp:
+        root = Path(tmp)
+        archive = root / "archive"
+        original = root / "snapshot/unique.jsonl"
+        write(original, b"unique history\n")
+        known = {}
+        queued = []
+        usage = [0]
+        archived, reason = mod.archive_unique(
+            original, archive, known, queued, usage, len(b"unique history\n"))
+        archived_paths = [
+            path for path in archive.rglob("*")
+            if path.is_file() and not path.name.startswith(".incoming-")
+        ]
+        check("独有内容通过原子搬到归档而不是删除",
+              archived and not reason and not original.exists()
+              and len(archived_paths) == 1
+              and archived_paths[0].read_bytes() == b"unique history\n"
+              and usage[0] == len(b"unique history\n"),
+              (archived, reason, archived_paths, usage))
+        check("归档搬移不遗留 staging 文件",
+              not list(archive.rglob(".incoming-*")), list(archive.rglob(".incoming-*")))
+
+        original = root / "snapshot/cap.jsonl"
+        write(original, b"must preserve\n")
+        usage = [len(b"unique history\n")]
+        archived, reason = mod.archive_unique(
+            original, archive, known, queued, usage, usage[0] + 4)
+        archived_paths = [
+            path for path in archive.rglob("*")
+            if path.is_file() and not path.name.startswith(".incoming-")
+        ]
+        check("归档容量不足时停止且不删除原快照文件",
+              not archived and reason == "archive capacity reached"
+              and original.read_bytes() == b"must preserve\n"
+              and len(archived_paths) == 1,
+              (archived, reason, original.exists(), archived_paths))
+        check("不存在为满足容量上限删除旧归档的路径",
+              not hasattr(mod, "enforce_archive_cap"))
+
     snapshot_sh = (OPS / "guards/snapshot.sh").read_text(encoding="utf-8")
     check("快照使用 APFS clone 而不是会跟随追加写入的硬链接",
           "cp -cR" in snapshot_sh and "cp -al" not in snapshot_sh)

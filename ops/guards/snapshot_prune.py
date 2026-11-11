@@ -135,12 +135,18 @@ def archive_unique(
     archive: Path,
     known_content: dict[tuple[str, int], Path],
     global_queue: list[Path],
-) -> bool:
-    """Move unique bytes into the protection archive without losing the inode."""
+    archive_bytes: list[int],
+    archive_cap: int,
+) -> tuple[bool, str]:
+    """Move unique bytes into the protection archive without exceeding its cap."""
     key = content_key(path)
     if key in known_content:
         path.unlink()
-        return True
+        return True, ""
+
+    needed = path.stat().st_size
+    if archive_cap >= 0 and archive_bytes[0] + needed > archive_cap:
+        return False, "archive capacity reached"
 
     archive.mkdir(parents=True, exist_ok=True)
     staged = archive / f".incoming-{key[0][:20]}-{os.getpid()}"
@@ -156,13 +162,14 @@ def archive_unique(
             if content_key(destination) == key:
                 staged.unlink()
                 known_content[key] = destination
-                return True
+                return True, ""
         except OSError:
             pass
     os.replace(staged, destination)
     known_content[key] = destination
     global_queue.append(destination)
-    return True
+    archive_bytes[0] += needed
+    return True, ""
 
 
 def prune_snapshot_files(
@@ -172,6 +179,8 @@ def prune_snapshot_files(
     archive: Path,
     known_content: dict[tuple[str, int], Path],
     global_queue: list[Path],
+    archive_bytes: list[int],
+    archive_cap: int,
 ) -> tuple[bool, str]:
     """Remove covered files; archive every unique historical byte sequence."""
     failed: list[str] = []
@@ -195,30 +204,26 @@ def prune_snapshot_files(
                 failed.append(str(rel))
             continue
         try:
-            if not archive_unique(path, archive, known_content, global_queue):
-                failed.append(str(rel))
+            archived, reason = archive_unique(
+                path, archive, known_content, global_queue,
+                archive_bytes, archive_cap)
+            if not archived:
+                return False, f"{rel}: {reason}"
         except OSError:
             failed.append(str(rel))
     return not failed, failed[0] if failed else ""
 
 
-def enforce_archive_cap(archive: Path, queue: list[Path], cap: int) -> None:
-    if cap < 0 or not queue:
-        return
-    while queue:
-        total = sum(
-            p.stat().st_size
-            for p in archive.rglob("*")
-            if p.is_file()
-            and p.name not in {".source-stamp"} and not p.name.startswith(".incoming-")
-        )
-        if total <= cap:
-            return
-        oldest = queue.pop(0)
-        try:
-            oldest.unlink()
-        except OSError:
-            continue
+def archive_usage(archive: Path) -> int:
+    if not archive.is_dir():
+        return 0
+    return sum(
+        path.stat().st_size
+        for path in archive.rglob("*")
+        if path.is_file()
+        and path.name != ".source-stamp"
+        and not path.name.startswith(".incoming-")
+    )
 
 
 def prunable_snapshots(source: Path, snapshots: Path, keep: int = 48) -> tuple[list[Path], list[tuple[Path, str]]]:
@@ -258,6 +263,8 @@ def main() -> int:
     known_content: dict[tuple[str, int], Path] = {}
     global_queue: list[Path] = []
     name_index = CoveredNameIndex()
+    archive_cap = args.archive_cap_mib * 1024 * 1024
+    archive_bytes = [archive_usage(archive) if not args.keep_archive else 0]
     dirs = sorted(
         (p for p in args.snapshots.iterdir() if p.is_dir() and not p.is_symlink()),
         key=lambda p: (p.stat().st_mtime_ns, p.name),
@@ -291,7 +298,8 @@ def main() -> int:
                 index = next(i for i, d in enumerate(dirs) if d == path)
                 ok, reason = prune_snapshot_files(
                     path, [args.source, *dirs[:index]], name_index,
-                    archive, known_content, global_queue)
+                    archive, known_content, global_queue,
+                    archive_bytes, archive_cap)
                 if ok:
                     shutil.rmtree(path)
                     removed += 1
@@ -310,7 +318,8 @@ def main() -> int:
                 index = next(i for i, d in enumerate(dirs) if d == path)
                 ok, why = prune_snapshot_files(
                     path, [args.source, *dirs[:index]], name_index,
-                    archive, known_content, global_queue)
+                    archive, known_content, global_queue,
+                    archive_bytes, archive_cap)
                 if ok:
                     shutil.rmtree(path)
                     removed += 1
@@ -318,12 +327,11 @@ def main() -> int:
                     print(f"snapshot prune keep {path.name} (unprotected: {why})")
             except OSError as exc:
                 print(f"snapshot prune keep {path.name} ({exc})")
-    if not args.dry_run and not args.keep_archive:
-        enforce_archive_cap(archive, global_queue, args.archive_cap_mib * 1024 * 1024)
     print(
         f"snapshot prune summary: removed={removed} "
         f"candidates={len(removable) + len(retained)} "
-        f"archive={archive} archive_files={len(global_queue)}"
+        f"archive={archive} archive_files={len(global_queue)} "
+        f"archive_bytes={archive_bytes[0]}"
     )
     return 0
 
