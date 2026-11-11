@@ -2669,6 +2669,41 @@ def test_verify_and_truth():
         if op.returncode != 0:
             raise AssertionError(f"open 失败:\n{op.stdout}\n{op.stderr}")
 
+        # fail-closed：既无证据也无 commit 时，close 必须被拒，且不得把状态改成 done。
+        add2 = truthctl(repo, "add", "ledger", "没有证据也想关",
+                        extra_env={"KG_TRUTH_KIND": "bug", "KG_TRUTH_DETAIL": "凭空标 done"})
+        if add2.returncode != 0:
+            raise AssertionError(f"ledger add2 失败:\n{add2.stdout}\n{add2.stderr}")
+        ledger2 = (repo / "ops" / "truth" / "ledger.jsonl").read_text(encoding="utf-8")
+        lid2 = _json.loads(ledger2.splitlines()[-1])["id"]
+        bad = truthctl(repo, "close", lid2, "我觉得修好了",
+                       extra_env={"KG_TRUTH_EVIDENCE": "", "KG_TRUTH_COMMIT": ""})
+        if bad.returncode == 0:
+            raise AssertionError(f"无证据的 close 竟然成功:\n{bad.stdout}")
+        if "拒绝" not in (bad.stdout + bad.stderr):
+            raise AssertionError(f"无证据的 close 未给出拒绝理由:\n{bad.stdout}\n{bad.stderr}")
+        latest2 = {}
+        for line in (repo / "ops" / "truth" / "ledger.jsonl").read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                r = _json.loads(line)
+                latest2[r["id"]] = r
+        if latest2[lid2].get("status") == "done":
+            raise AssertionError(f"无证据的 close 竟把状态写成 done: {latest2[lid2]}")
+        # 只给 commit（daemon 的三处自动收口就是这样调的）必须能成功，且派生证据。
+        ok_commit = truthctl(repo, "close", lid2, "靠 commit 收口",
+                             extra_env={"KG_TRUTH_EVIDENCE": "", "KG_TRUTH_COMMIT": "deadbee"})
+        if ok_commit.returncode != 0:
+            raise AssertionError(f"仅带 commit 的 close 失败:\n{ok_commit.stdout}\n{ok_commit.stderr}")
+        latest3 = {}
+        for line in (repo / "ops" / "truth" / "ledger.jsonl").read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                r = _json.loads(line)
+                latest3[r["id"]] = r
+        if latest3[lid2].get("status") != "done":
+            raise AssertionError(f"仅带 commit 的 close 未收口: {latest3[lid2]}")
+        if "deadbee" not in str(latest3[lid2].get("evidence", "")):
+            raise AssertionError(f"commit 未派生进 evidence: {latest3[lid2].get('evidence')}")
+
         # 综合：决策/进展/问题/验收合成产品主线，且主线文件真的落盘。
         syn = truthctl(repo, "synthesize")
         if syn.returncode != 0:
