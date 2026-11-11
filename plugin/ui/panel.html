@@ -926,12 +926,15 @@
     var road = s.roadmap || [];
     var current = road.filter(function(r){ return r.status === "doing"; })[0]
       || road.filter(function(r){ return r.status === "next"; })[0];
+    var next = road.filter(function(r){ return r.status === "next"; })[0];
+    if (next === current) next = null;
     var doingItems = s.doing_items || [];
     var todoItems = s.todo_items || [];
     var doing = doingItems.length || (s.exec_now ? 1 : 0);
     var human = (s.human_acceptance || []).length;
     var blocked = s.state === "blocked" || s.state === "error";
     var stage = current ? (current.step || "当前路线") : "路线待拆解";
+    var routeNow = stage + (next ? " · 下一步：" + (next.step || "待拆解") : "");
     var product = ml.product || proj.name || "当前项目";
     var projectName = proj.name || (proj.path ? proj.path.split("/").pop() : "未绑定项目");
     var currentWork = doingItems[0] || s.exec_now || todoItems[0] || null;
@@ -942,12 +945,13 @@
     var roadNodeLabel = el("hierRoad");
     var workNodeLabel = el("hierWork");
     if (projectNode) { projectNode.textContent = projectName; projectNode.title = proj.path || projectName; }
-    if (roadNodeLabel) { roadNodeLabel.textContent = product + " · " + stage; roadNodeLabel.title = product + " · " + stage; }
+    if (roadNodeLabel) { roadNodeLabel.textContent = product + " · " + routeNow; roadNodeLabel.title = product + " · " + routeNow; }
     if (workNodeLabel) { workNodeLabel.textContent = workTitle; workNodeLabel.title = workTitle; }
     var note = el("orientationNote");
     if (note){
       var action = doing ? "正在推进工作项" : human ? "等待你验收" : blocked ? "卡住，等待处理" : "等待下一条需求";
-      note.textContent = product + " · 当前路线：" + stage + " · " + action + "。";
+      note.textContent = product + " · 当前路线：" + stage +
+        (next ? " · 下一步：" + (next.step || "待拆解") : "") + " · " + action + "。";
     }
     var ids = ["journeyNeed","journeyProduct","journeyRoad","journeyWork","journeyAccept"];
     ids.forEach(function(id){ var n = el(id); if (n) n.className = "journey-step"; });
