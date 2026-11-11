@@ -1708,6 +1708,22 @@ def _status_payload(fast=True):
     return payload
 
 
+def _daemon_switch_label(enabled, daemon):
+    """后台常驻这一格反映「是不是真在跑」，不是照念配置位。
+
+    2026-11-11 实测：control.json 写着 daemon_enabled=true，launchd 里那个 job 根本
+    不存在、ps 里没有 central_daemon，状态面却仍打印「后台常驻=开」。用户看到的是
+    「开着」，实际一步没动 —— 这正是「感觉不到增益」的机械根因。
+
+    三态：关 / 开 / 开但没在跑。没在跑时点明「没进程接活」，让配置位和现实分开。
+    """
+    if not enabled:
+        return "关"
+    if (daemon or {}).get("live"):
+        return "开"
+    return "开（但没进程接活）"
+
+
 def _status_text(payload):
     sw = payload["switches"]
     q = payload["queue"]
@@ -1723,7 +1739,8 @@ def _status_text(payload):
         % ("开" if sw["auto_land"] else "关",
            "开" if sw["auto_resolve"] else "关",
            "开" if sw["auto_port"] else "关",
-           "开" if sw["daemon_enabled"] else "关"),
+           _daemon_switch_label(sw.get("daemon_enabled"),
+                                payload.get("daemon"))),
         "队列：可合 %s · 已合待回收 %s · 冲突 %s"
         % (q.get("clean"), q.get("merged"), q.get("conflict")),
         "累计：收到反馈 %s 条 · 自动合入 %s 个 · 拆解冲突 %s 条"

@@ -6029,6 +6029,18 @@ def test_daemon_liveness_shared_judge():
         (live, pid, project)
     print("selftest ok: 守护存活判据只有一份，面板与 CLI 共用；没装且开关关着不误报。")
 
+    # 状态面（模型通过 autopilot_status 读到的那段文本）不许把配置位当现实念。
+    # 2026-11-11 实测：daemon_enabled=true 但 launchd 无 job、无进程，文本仍印
+    # 「后台常驻=开」。这一格必须反映「是不是真在跑」。
+    label = central_mcp._daemon_switch_label
+    assert label(False, {"live": True}) == "关", "用户关了就报关，不能被 live 带跑"
+    assert label(True, {"live": True}) == "开", "真在跑就报开"
+    off = label(True, {"live": False})
+    assert off != "开", "开关位为真但进程不在时，不能只报「开」"
+    assert "没进程" in off, off
+    assert label(True, None) != "开", "连 daemon 字段都没有时也不许报「开」"
+
+
 
 def test_product_eval():
     """对外发布评估闭环：五条判据必须能红、能绿，且阴性对照全部按预期变红。
