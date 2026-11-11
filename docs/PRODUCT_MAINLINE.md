@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-01 03:29:33　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-11 22:13:16　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -47,27 +47,19 @@
 
 ## 最近在推进
 
-- [在途] 端到端落位验收已走到台账确认：入口->归类->账本->面板逻辑检查全部闭环
-- [在途] 把机器已验证证据清单和真人待验清单固化进 PRODUCT_VALUE.md；preview/panel-logic/panel-render/selftest/probe/closure-rate/A-0045/A-0046 是机器证据，A-0005/A-0006/A-0007/A-0008/A-0022 未人工确认前保持 todo
-- [在途] 实机验证总闸关闭态：companion_api disable -> enabled=false lifecycle=off；关闭后 intake 返回 AUTOPILOT_DISABLED exit 2；panel_render_check 在关闭态仍渲染真实面板；随后 enable 恢复 enabled=true lifecycle=on。A-0006 仍保留真人确认首屏观感与总闸交互
-- [在途] 尝试自动化唤出菜单栏 Companion 弹窗：osascript 发送 ⌥⌘A 后 CGWindowList 未出现 Companion popover 窗口，screencapture 只拍到壁纸；System Events 对 CodexAutopilotCompanion 的 menu bar item 返回 missing value。结论：当前虚拟桌面无法由机器补足 A-0005 视觉证据，仍需真人验收
 - [在途] 取得可复核边界证据：System Events 的 CodexAutopilotCompanion 辅助功能树含 AXMenuBarItem description=Codex 自动挡，但 ControlCenter 状态项/屏上 CGWindowList 均无对应菜单栏图标窗口；结论为“已注册但当前虚拟桌面不渲染状态项”，A-0005 保留真人桌面验收
 - [已落盘] @ 243f0dd934 codex/install-immutable-source-20261025 验证门禁通过，已落盘 main @ 243f0dd934；改动 5 个文件：docs/PREVIEW.md（+9/-3）、install.sh（+35/-3）、ops/central_daemon.py（+35/-6）、ops/selftest.py（+121/-6）、plugin/.codex-plugin/plugin.json（+1/-1）｜5 files changed, 201 insertions(+), 19 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ aa875f742f codex/remove-accidental-conflict-backup-20261025 验证门禁通过，已落盘 main @ aa875f742f；改动 1 个文件：ops/tasks/conflict_burden.json.bak-codex-20261025-042835（+0/-11）｜1 file changed, 11 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 145970ba94 codex/reap-regenerable-on-49-20261027 验证门禁通过，已落盘 main @ 145970ba94；改动 3 个文件：ops/central_daemon.py（+7/-1）、ops/selftest.py（+67/-0）、ops/workspace_guard.py（+48/-0）｜3 files changed, 122 insertions(+), 1 deletion(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ bc129de253 codex/release-50 验证门禁通过，已落盘 main @ bc129de253；改动 1 个文件：plugin/.codex-plugin/plugin.json（+1/-1）｜1 file changed, 1 insertion(+), 1 deletion(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [在途] 面板质量门禁四态与工程进度快照已落盘（6b7b66d9，合入 douxian123/codex-autopilot main）。36 题严格质量保持 RED、50 题真人盲评 0/50 如实显示为 HUMAN_PENDING/UNVERIFIED，不再折叠成验收计数；ThoughLoom 19 层进度按 2026-10-23 快照显示。门禁：test_panel_contract / test_preview_check_contract / test_panel_first_screen / test_mcp_contract 全过；panel_render_check 结果全部通过。
+- [已落盘] @ cf77b7ca8e codex/resolve-prepare-no-sysexit-20261109 验证门禁通过，已落盘 main @ cf77b7ca8e；改动 2 个文件：ops/kgctl.py（+33/-10）、ops/selftest.py（+47/-0）｜2 files changed, 80 insertions(+), 10 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ f68cf3655a codex/state-root-freshness-20261110 验证门禁通过，已落盘 main @ f68cf3655a；改动 2 个文件：ops/kgctl.py（+56/-12）、ops/selftest.py（+76/-0）｜2 files changed, 132 insertions(+), 12 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ 5eb9c3ca7c codex/release-eval-on-main-20261110 验证门禁通过，已落盘 main @ 5eb9c3ca7c；改动 5 个文件：ops/central_mcp.py（+9/-16）、ops/daemon_liveness.py（+129/-0）、ops/kgctl.py（+39/-56）、ops/product_eval.py（+497/-0）、ops/selftest.py（+205/-148）｜5 files changed, 879 insertions(+), 220 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ fdb7de9f3d preview.59 已合入 main、安装并切换 5 条定时任务。真实低盘压力 dry-run 汇总为 14 个签名临时副本 / 0 个 worktree / 8 个 kg tmp / 0 个孤儿残留；显式锁定的 kg-source-provenance-audit-20261110 在日志中零命中。全量 selftest exit 0，安装版 worktree-lock 门禁 PASS exit 0，安装版 repoint_launchd --check exit 0。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0037` [P1] Companion 真机运行与环境入口就绪（进程、服务菜单、通知、截图快捷键、拖拽入口均有真实注册）
-  - 证据：pgrep -> /Users/danta/Applications/CodexAutopilotCompanion.app/Contents/MacOS/CodexAutopilotCompanion 进程在跑; launchctl print gui/501 -> com.douxian.codex-autopilot.companion 已注册, ServiceProvi…
-- `A-0038` [P1] Companion 真机运行与环境入口就绪（机器自证已验）
-  - 证据：pgrep -> /Users/danta/Applications/CodexAutopilotCompanion.app/Contents/MacOS/CodexAutopilotCompanion 进程在跑; launchctl print gui/501 -> com.douxian.codex-autopilot.companion 已注册, ServiceProvi…
-- `A-0039` [P1] codex/release-preview10 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0041` [P0] preview.11 原生直连与全量预览验收通过
-  - 证据：codex app-server daemon start -> started pid=56805 socketPath=~/.codex/app-server-control/app-server-control.sock; python3 ops/codex_native.py probe (cwd=/Users/danta/Documents/Codex/codex-a…
 - `A-0042` [P0] preview.11 真实桌面宿主原生派活（thread/turn/section）通过
   - 证据：python3 ops/codex_native.py dispatch --cwd /tmp --prompt '只回复两个字：收到。不要改任何文件，不要运行任何命令。' --section 'Codex 自动挡真机验收' (cwd=/Users/danta/Documents/Codex/codex-autopilot-native-autopilot) -> ok tru…
 - `A-0043` [P1] codex/native-socket-lstat-v7 落盘验收
@@ -84,6 +76,14 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0050` [P1] codex/release-50 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0053` [P1] codex/resolve-prepare-no-sysexit-20261109 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0054` [P1] codex/state-root-freshness-20261110 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0055` [P1] codex/release-eval-on-main-20261110 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0056` [P0] .59 已装机，显式 Git worktree lock 不再进入回收候选
+  - 证据：release commit: fdb7de9f3d666bbc4e1c21b34c76b51ad2aa3b31 (main = origin/main)
 
 ## 还差什么
 
@@ -146,11 +146,15 @@
 - `A-0048` [P1] codex/remove-accidental-conflict-backup-20261025 落盘验收
 - `A-0049` [P1] codex/reap-regenerable-on-49-20261027 落盘验收
 - `A-0050` [P1] codex/release-50 落盘验收
+- `A-0053` [P1] codex/resolve-prepare-no-sysexit-20261109 落盘验收
+- `A-0054` [P1] codex/state-root-freshness-20261110 落盘验收
+- `A-0055` [P1] codex/release-eval-on-main-20261110 落盘验收
+- `A-0056` [P0] .59 已装机，显式 Git worktree lock 不再进入回收候选
 
 ## 进度概览
 
 - 累计关闭问题：7 条
-- 累计落盘：13 条
+- 累计落盘：17 条
 - 未决问题：0 条
-- 已验收：40 条
+- 已验收：44 条
 
