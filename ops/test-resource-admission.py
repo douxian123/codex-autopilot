@@ -29,6 +29,9 @@ def run_hook(
     env["CODEX_RESOURCE_ADMISSION_STATE_DIR"] = str(state_dir)
     env["CODEX_RESOURCE_ADMISSION_SLOTS"] = str(slots)
     env["CODEX_RESOURCE_ADMISSION_MIN_FREE_GIB"] = "0"
+    env["CODEX_RESOURCE_ADMISSION_MIN_FREE_MEM_GIB"] = "0"
+    env["CODEX_RESOURCE_ADMISSION_MAX_COMPRESSOR_GIB"] = "999"
+    env["CODEX_RESOURCE_ADMISSION_MAX_SWAP_USED_GIB"] = "999"
     if pid > 1:
         env["CODEX_RESOURCE_ADMISSION_PID"] = str(pid)
     else:
@@ -183,12 +186,64 @@ def main() -> None:
         after_release = run_hook("PreToolUse", "npm exec vite build", state, "call-4", slots=2)
         check("释放后下一次放行", not after_release.stdout.strip(), after_release.stdout + after_release.stderr)
 
+        pressure_probe = state / "vm_stat"
+        pressure_probe.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\n' 'Mach Virtual Memory Statistics: (page size of 16384 bytes)'\n"
+            "printf '%s\\n' 'Pages occupied by compressor: 393216.'\n",
+            encoding="utf-8",
+        )
+        pressure_probe.chmod(0o755)
+        pressure_env = os.environ.copy()
+        pressure_env.update({
+            "CODEX_RESOURCE_ADMISSION_STATE_DIR": str(state),
+            "CODEX_RESOURCE_ADMISSION_MIN_FREE_GIB": "0",
+            "CODEX_RESOURCE_ADMISSION_MIN_FREE_MEM_GIB": "0",
+            "CODEX_RESOURCE_ADMISSION_MAX_COMPRESSOR_GIB": "4",
+            "CODEX_RESOURCE_ADMISSION_MAX_SWAP_USED_GIB": "999",
+            "CODEX_RESOURCE_ADMISSION_SLOTS": "2",
+            "CODEX_RESOURCE_ADMISSION_MEMORY_PROBE": str(pressure_probe),
+        })
+        pressure_event = {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "exec_command",
+            "tool_input": {"command": "npx tsc --noEmit"},
+            "tool_use_id": "call-pressure",
+            "session_id": "test-session",
+            "cwd": str(ROOT),
+        }
+        # Exercise memory pressure independently, then restore the two leases
+        # used by the following failure-release assertion.
+        leases_path = state / "leases.json"
+        raw_state = json.loads(leases_path.read_text(encoding="utf-8"))
+        raw_state["leases"] = []
+        leases_path.write_text(json.dumps(raw_state), encoding="utf-8")
+        pressure_result = subprocess.run(
+            [sys.executable, str(GUARD)],
+            input=json.dumps(pressure_event),
+            text=True,
+            capture_output=True,
+            env=pressure_env,
+            check=False,
+        )
+        check("高内存压缩时延后重验证",
+              "内存压缩" in pressure_result.stdout,
+              pressure_result.stdout + pressure_result.stderr)
+        check("高内存压力拒绝不占槽",
+              all(item["id"] != "test-session:call-pressure" for item in leases(state)))
+        leases_path.write_text(
+            json.dumps({"leases": [
+                {"id": "test-session:call-1", "created_at": time.time(), "pid": 0},
+                {"id": "test-session:call-2", "created_at": time.time(), "pid": 0},
+            ]}),
+            encoding="utf-8",
+        )
+
         failed = run_hook("PostToolUseFailure", "npx playwright test", state, "call-2", slots=2)
         check("失败结束也释放租约", not failed.stdout.strip(), failed.stderr)
         check("失败释放后只保留新租约",
-              [item["id"] for item in leases(state)] == ["test-session:call-4"])
+              [item["id"] for item in leases(state)] == ["test-session:call-1"])
 
-        leases_path = state / "leases.json"
         raw_state = json.loads(leases_path.read_text(encoding="utf-8"))
         raw_state["leases"][0]["created_at"] = time.time() - 7 * 60 * 60
         leases_path.write_text(json.dumps(raw_state), encoding="utf-8")

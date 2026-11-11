@@ -13,6 +13,7 @@ import fcntl
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -28,6 +29,17 @@ STATE_DIR = Path(
 DISABLED_FILE = Path.home() / ".codex" / "hooks" / "RESOURCE_ADMISSION_DISABLED"
 MAX_LEASES = max(1, int(os.environ.get("CODEX_RESOURCE_ADMISSION_SLOTS", "2")))
 MIN_FREE_GIB = float(os.environ.get("CODEX_RESOURCE_ADMISSION_MIN_FREE_GIB", "8"))
+# Heavy verification gates can also flood RAM before they fill the disk.
+# Keep this fail-open and only gate new heavy commands; never kill live work.
+MIN_FREE_MEM_GIB = float(
+    os.environ.get("CODEX_RESOURCE_ADMISSION_MIN_FREE_MEM_GIB", "1")
+)
+MAX_COMPRESSOR_GIB = float(
+    os.environ.get("CODEX_RESOURCE_ADMISSION_MAX_COMPRESSOR_GIB", "4")
+)
+MAX_SWAP_USED_GIB = float(
+    os.environ.get("CODEX_RESOURCE_ADMISSION_MAX_SWAP_USED_GIB", "4")
+)
 LEASE_MAX_AGE_SECONDS = int(
     os.environ.get("CODEX_RESOURCE_ADMISSION_MAX_AGE_SECONDS", str(6 * 60 * 60))
 )
@@ -90,6 +102,56 @@ def _is_heavy(command: str) -> bool:
 def _free_gib(path: Path = Path.home()) -> float:
     stat = os.statvfs(path)
     return stat.f_bavail * stat.f_frsize / (1024**3)
+
+
+def _memory_pressure() -> dict[str, float] | None:
+    """Return current macOS swap/compressor pressure, or None if unknown."""
+    try:
+        memory = os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / (1024**3)
+    except (AttributeError, OSError, ValueError):
+        memory = 0.0
+    try:
+        probe = os.environ.get("CODEX_RESOURCE_ADMISSION_MEMORY_PROBE")
+        if probe:
+            output = subprocess.run(
+                [probe], text=True, capture_output=True, timeout=2, check=False
+            ).stdout
+        else:
+            output = subprocess.run(
+                ["vm_stat"], text=True, capture_output=True, timeout=2, check=False
+            ).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    page_match = re.search(r"page size of (\d+) bytes", output)
+    if not page_match:
+        return None
+    page_size = int(page_match.group(1)) / (1024**3)
+    compressor_match = re.search(
+        r"Pages occupied by compressor:\s*(\d+)", output
+    )
+    if not compressor_match:
+        return None
+    compressor_gib = int(compressor_match.group(1)) * page_size
+    swap_used_gib = 0.0
+    try:
+        swap_output = subprocess.run(
+            ["sysctl", "-n", "vm.swapusage"],
+            text=True, capture_output=True, timeout=2, check=False
+        ).stdout
+        total_match = re.search(r"total = ([\d.]+)M", swap_output)
+        free_match = re.search(r"free = ([\d.]+)M", swap_output)
+        if total_match and free_match:
+            swap_used_gib = (
+                float(total_match.group(1)) - float(free_match.group(1))
+            ) / 1024
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        pass
+    free_mem_gib = max(0.0, memory - compressor_gib)
+    return {
+        "free_mem_gib": free_mem_gib,
+        "compressor_gib": compressor_gib,
+        "swap_used_gib": swap_used_gib,
+    }
 
 
 def _pid_alive(pid: int) -> bool:
@@ -184,11 +246,24 @@ def _lease_id(event: dict[str, Any]) -> str:
     return f"{session_id}:{call_id}" if call_id else ""
 
 
-def _deny_reason(state: dict[str, Any], free_gib: float) -> str:
+def _deny_reason(
+    state: dict[str, Any], free_gib: float, pressure: dict[str, float] | None
+) -> str:
     if free_gib < MIN_FREE_GIB:
         return (
             f"[资源准入] 目前只剩 {free_gib:.1f} GiB，新的重验证已延后。"
             "已有命令不会被终止；请先释放空间，或完成当前工作后再运行验证。"
+        )
+    if pressure and (
+        pressure["compressor_gib"] >= MAX_COMPRESSOR_GIB
+        or pressure["swap_used_gib"] >= MAX_SWAP_USED_GIB
+        or pressure["free_mem_gib"] < MIN_FREE_MEM_GIB
+    ):
+        return (
+            "[资源准入] 当前内存压缩 "
+            f"{pressure['compressor_gib']:.1f} GiB、Swap 已用 "
+            f"{pressure['swap_used_gib']:.1f} GiB，新的重验证已延后。"
+            "已有命令不会被终止；请先让当前验证结束或释放内存。"
         )
     return (
         f"[资源准入] 已有 {len(state['leases'])}/{MAX_LEASES} 个重验证在运行，"
@@ -211,12 +286,25 @@ def _admit_pre(event: dict[str, Any]) -> None:
     if not lease_id:
         return
     free_gib = _free_gib()
+    pressure = _memory_pressure()
     with _locked_state() as state:
         _prune(state)
         if any(lease.get("id") == lease_id for lease in state["leases"]):
             return
-        if len(state["leases"]) >= MAX_LEASES or free_gib < MIN_FREE_GIB:
-            _emit_deny(_deny_reason(state, free_gib))
+        pressure_blocked = bool(
+            pressure
+            and (
+                pressure["compressor_gib"] >= MAX_COMPRESSOR_GIB
+                or pressure["swap_used_gib"] >= MAX_SWAP_USED_GIB
+                or pressure["free_mem_gib"] < MIN_FREE_MEM_GIB
+            )
+        )
+        if (
+            len(state["leases"]) >= MAX_LEASES
+            or free_gib < MIN_FREE_GIB
+            or pressure_blocked
+        ):
+            _emit_deny(_deny_reason(state, free_gib, pressure))
             return
         test_pid = int(os.environ.get(TEST_PID_ENV, "0") or 0)
         state["leases"].append(
