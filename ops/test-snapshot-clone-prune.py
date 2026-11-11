@@ -152,6 +152,13 @@ def main():
           "cp -cR" in snapshot_sh and "cp -al" not in snapshot_sh)
     check("shell 不再按时间直接 rm -rf 超量快照",
           "tail -n +" not in snapshot_sh and "snapshot_prune.py" in snapshot_sh)
+    check("快照低盘准入线固定为 20GiB",
+          'MIN_FREE_GIB="${MIN_FREE_GIB:-20}"' in snapshot_sh)
+    check("快照保留窗口固定为 8 份",
+          "KEEP=8" in snapshot_sh)
+    check("快照先写 partial 再原子改名",
+          'PARTIAL="$SNAP/.${TS}.partial.$$"' in snapshot_sh
+          and 'mv "$PARTIAL" "$FINAL"' in snapshot_sh)
 
     if failures:
         print(f"\nsnapshot clone/prune unit: FAIL ({len(failures)})")

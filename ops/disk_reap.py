@@ -97,6 +97,11 @@ DRY = "--dry-run" in sys.argv
 KG_TMP_RE = re.compile(r"^kg(?:-|_|\.)")
 # 闲置多久算可清：默认 6 小时，避免清掉正在跑的现场；压力可收紧。
 KG_TMP_AGE_H = float(os.environ.get("KG_TMP_AGE_H", "6"))
+# 低磁盘时只缩短闲置时间，不绕过进程引用和 worktree 守卫。
+KG_TMP_AGE_PRESSURE_H = float(
+    os.environ.get("KG_TMP_AGE_PRESSURE_H", "1"))
+KG_TMP_PRESSURE_FREE_GB = float(
+    os.environ.get("KG_TMP_PRESSURE_FREE_GB", "15"))
 # 每小时独立回收的力度，与 plist 注入一致；直接运行也能验证。
 REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "40"))
 REAP_TIME_BUDGET_S = float(os.environ.get("KG_REAP_TIME_BUDGET_S", "60"))
@@ -541,15 +546,24 @@ def reap_regenerable_duplicates(dry: bool = False, guard=None,
     return stripped_n, freed
 
 
-def _reap_kg_tmp(dry: bool = False, guard=None) -> int:
-    """Remove kg-generated /private/tmp objects idle past KG_TMP_AGE_H."""
+def _kg_tmp_age_hours() -> float:
+    """Use a shorter idle window under pressure, never a weaker safety check."""
+    hours = KG_TMP_AGE_H
+    if free_gb() < KG_TMP_PRESSURE_FREE_GB:
+        hours = min(hours, KG_TMP_AGE_PRESSURE_H)
+    return max(0.0, hours)
+
+
+def _reap_kg_tmp(dry: bool = False, guard=None,
+                 root: Path | None = None) -> int:
+    """Remove kg-generated temp objects idle past the active cutoff."""
     if os.environ.get("KG_TMP_REAP", "1").strip().lower() in ("0", "off", "false"):
         return 0
-    tmp = Path("/private/tmp")
+    tmp = root or Path("/private/tmp")
     if not tmp.is_dir():
         return 0
     procs = _process_lines()
-    cutoff = time.time() - KG_TMP_AGE_H * 3600
+    cutoff = time.time() - _kg_tmp_age_hours() * 3600
     removed = 0
     for child in sorted(tmp.iterdir()):
         if not KG_TMP_RE.match(child.name):
