@@ -3525,14 +3525,17 @@ def _reap_dead_worktrees(dry: bool = False,
         budget = (REAP_TIME_BUDGET_PRESSURE_S if _pressure_reap
                   else REAP_TIME_BUDGET_S)
         deadline = time.time() + budget
-        candidates = sorted(root.iterdir())
+        # Keep the caller-owned output list separate from the scan input. A
+        # same-name local used to overwrite it, so dry-run logged "would reap"
+        # while disk_reap.py still received an empty candidate list.
+        scan_candidates = sorted(root.iterdir())
         # 游标切片：每次只扫一片，扫完从头轮回。242 个现场全扫要 4~6 次 git/个，
         # 放在 15s 循环里就是常驻 CPU 黑洞；切片后单轮成本恒定，且每个现场最终都会被扫到。
-        start = int(reap_state.get("cursor") or 0) % max(1, len(candidates))
-        window = (candidates[start:] + candidates[:start])[:REAP_SCAN_SLICE]
-        reap_state["cursor"] = (start + len(window)) % max(1, len(candidates))
+        start = int(reap_state.get("cursor") or 0) % max(1, len(scan_candidates))
+        window = (scan_candidates[start:] + scan_candidates[:start])[:REAP_SCAN_SLICE]
+        reap_state["cursor"] = (start + len(window)) % max(1, len(scan_candidates))
         reap_state["last_scan_n"] = len(window)
-        reap_state["last_scan_total"] = len(candidates)
+        reap_state["last_scan_total"] = len(scan_candidates)
         _save_reap_state(reap_state)
         for d in window:
             if reaped >= max_round:

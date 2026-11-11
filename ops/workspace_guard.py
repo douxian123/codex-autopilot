@@ -188,6 +188,63 @@ def run_git(path: Path, *args: str, timeout: int = 30) -> subprocess.CompletedPr
     )
 
 
+def _canonical_worktree_path(path: Path) -> Path:
+    """Compare worktree paths by their real filesystem location."""
+    return Path(os.path.realpath(os.fspath(path)))
+
+
+def _worktree_records(repo: Path) -> tuple[list[dict[str, str]] | None, str]:
+    """Return structured `git worktree list --porcelain` records.
+
+    None means the lock state could not be inspected. Callers that delete must
+    treat that as a veto rather than as evidence that a worktree is unlocked.
+    """
+    result = run_git(repo, "worktree", "list", "--porcelain", "-z")
+    if result.returncode != 0:
+        detail = ((result.stdout or "") + (result.stderr or "")).strip()
+        return None, detail[-200:]
+
+    records: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for field in (result.stdout or "").split("\0"):
+        if not field:
+            if current:
+                records.append(current)
+                current = {}
+            continue
+        key, _, value = field.partition(" ")
+        current[key] = value
+    if current:
+        records.append(current)
+    return records, ""
+
+
+def worktree_lock_reason(repo: Path, worktree: Path) -> str:
+    """Return why `worktree` is locked, or a fail-closed probe error.
+
+    An empty string means Git explicitly reports the worktree as unlocked.
+    `worktree_removable()` uses the same fail-closed check so a broken Git
+    command cannot silently turn "unknown" into permission to delete.
+    """
+    records, error = _worktree_records(repo)
+    if records is None:
+        detail = f": {error}" if error else ""
+        return f"worktree-lock-check-failed{detail}"
+
+    target = _canonical_worktree_path(worktree)
+    for record in records:
+        raw_path = record.get("worktree")
+        if not raw_path:
+            continue
+        if _canonical_worktree_path(Path(raw_path)) != target:
+            continue
+        if "locked" not in record:
+            return ""
+        reason = record.get("locked", "").strip()
+        return f"worktree-locked: {reason or 'no reason recorded'}"
+    return "worktree-lock-check-failed: worktree not registered"
+
+
 def process_commands() -> str:
     try:
         result = subprocess.run(
@@ -439,6 +496,9 @@ def worktree_removable(
         return {"ok": False, "reason": "missing", "ahead": 0, "backup": ""}
     if worktree.resolve() == repo.resolve() or worktree.name in PROTECTED_NAMES:
         return {"ok": False, "reason": "protected", "ahead": 0, "backup": ""}
+    lock_reason = worktree_lock_reason(repo, worktree)
+    if lock_reason:
+        return {"ok": False, "reason": lock_reason, "ahead": 0, "backup": ""}
     live = process_reference(worktree, commands)
     if live:
         return {"ok": False, "reason": f"process: {live}", "ahead": 0, "backup": ""}
@@ -526,6 +586,9 @@ def remove_worktree(repo: Path, worktree: Path,
     we removed them on purpose. Any other diff keeps the original refusal, so
     the default path (delivery cleanup) behaves exactly as before.
     """
+    lock_reason = worktree_lock_reason(repo, worktree)
+    if lock_reason:
+        return False, lock_reason
     remove_generated_dirs(worktree)
     result = run_git(repo, "worktree", "remove", str(worktree))
     if result.returncode == 0:

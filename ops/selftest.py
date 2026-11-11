@@ -103,6 +103,18 @@ def main():
         # （ca-fix-fileurl-20261111 就是铁证），用户因此以为工作被清空重做。
         run([sys.executable, str(OPS / "test-reap-log-honesty.py")],
             cwd=str(OPS.parent), check=True)
+        # 回收器的安全判据必须由总闸托管。此前这些独立门禁只有人工点名才会跑，
+        # 一次普通的全量 selftest 绿灯并不能证明「在用现场」仍被保住。
+        reap_guards = (
+            "test-reap-worktree-lock.py",
+            "test-reap-live-session-guard.py",
+            "test-reap-weak-signal-mode.py",
+            "test-reap-creation-grace.py",
+        )
+        for guard in reap_guards:
+            print(f"  run  {guard}", flush=True)
+            run([sys.executable, str(OPS / guard)],
+                cwd=str(OPS.parent), check=True)
         # launchd 入口新鲜度：同一类病一共 6 条（disk-reap 只是其中一条）。
         # 这些脚本原来散在 ~/.codex-guard/ 这类「没有版本、没人升级」的位置，
         # 发版之后它们还在跑几周前的代码。门禁要求：要么住在版本目录里，
