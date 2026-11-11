@@ -46,6 +46,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -138,6 +139,10 @@ def _git_common_dir() -> Path:
 # land 锁放进共享的 .git（所有 worktree 共用），而不是任何检出目录里：放在检出里
 # 会被 `git status` 当成脏改动，而 land 要求主干工作树干净，于是命令把自己锁死。
 LOCK = _git_common_dir() / "kgctl-land.lock"
+# 重验证锁也必须跨 worktree 共用。land 锁只防落盘，不能阻止多个 land 在各自
+# worktree 同时跑 tsc/Playwright/build；周末实测多个门禁并发把 Swap 和磁盘一起
+# 推满。锁只包住实际命令，不包住队列推进或真相推送。
+VERIFY_LOCK = _git_common_dir() / "kgctl-verify.lock"
 
 
 def _lock_blocked() -> bool:
@@ -2815,25 +2820,68 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
              else central_config.verify_gates(CFG))
     if not gates:
         return True, [], "(未配置验证门禁，跳过)"
-    results, chunks, all_ok = [], [], True
-    for g in gates:
-        rel = g.get("cwd") or "."
-        cwd = wt / rel
-        if not cwd.exists():
+    with _verification_gate_lock():
+        results, chunks, all_ok = [], [], True
+        for g in gates:
+            rel = g.get("cwd") or "."
+            cwd = wt / rel
+            if not cwd.exists():
+                results.append({"name": g.get("name"), "cmd": g.get("cmd"), "cwd": rel,
+                                "ok": False, "output": f"工作目录不存在：{cwd}"})
+                chunks.append(f"[{g.get('name')}] cwd 不存在：{cwd}")
+                all_ok = False
+                continue
+            p = proc_run(g["cmd"], shell=True, cwd=cwd, capture_output=True, text=True)
+            out = (p.stdout or "") + (p.stderr or "")
             results.append({"name": g.get("name"), "cmd": g.get("cmd"), "cwd": rel,
-                            "ok": False, "output": f"工作目录不存在：{cwd}"})
-            chunks.append(f"[{g.get('name')}] cwd 不存在：{cwd}")
-            all_ok = False
-            continue
-        p = proc_run(g["cmd"], shell=True, cwd=cwd, capture_output=True, text=True)
-        out = (p.stdout or "") + (p.stderr or "")
-        results.append({"name": g.get("name"), "cmd": g.get("cmd"), "cwd": rel,
-                        "ok": p.returncode == 0, "output": out[-4000:]})
-        chunks.append(f"[{g.get('name')}] $ {g.get('cmd')} (cwd={rel}) "
-                      f"-> exit {p.returncode}\n{out[-1500:]}")
-        if p.returncode != 0:
-            all_ok = False
-    return all_ok, results, "\n".join(chunks)
+                            "ok": p.returncode == 0, "output": out[-4000:]})
+            chunks.append(f"[{g.get('name')}] $ {g.get('cmd')} (cwd={rel}) "
+                          f"-> exit {p.returncode}\n{out[-1500:]}")
+            if p.returncode != 0:
+                all_ok = False
+        return all_ok, results, "\n".join(chunks)
+
+
+@contextmanager
+def _verification_gate_lock():
+    """跨进程串行执行重验证，不让一个坏进程留下永久锁。
+
+    使用 flock 而不是 O_EXCL：进程崩溃、收到 SIGKILL 或调用器超时后，内核会
+    自动释放文件锁；不需要猜测多久算“僵死”，也不会因为残留文件堵住后续任务。
+    锁失败时 fail-open 并打印告警，保证正常 land 不会因审计设施故障停摆。
+    """
+    try:
+        import fcntl
+    except ImportError:
+        print("  [verify-lock] 当前平台无 fcntl，重验证锁 fail-open", file=sys.stderr)
+        yield
+        return
+    try:
+        VERIFY_LOCK.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(VERIFY_LOCK, "a+", encoding="utf-8")
+    except OSError as exc:
+        print(f"  [verify-lock] 无法打开 {VERIFY_LOCK}，重验证锁 fail-open：{exc}",
+              file=sys.stderr)
+        yield
+        return
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("  [verify-lock] 另一路自动挡正在跑重验证；等待它结束后继续",
+                  flush=True)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        handle.seek(0)
+        handle.truncate()
+        handle.write(f"{os.getpid()} verification\n")
+        handle.flush()
+        yield
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        handle.close()
 
 
 def _push_main_with_one_retry(wt: Path) -> str:

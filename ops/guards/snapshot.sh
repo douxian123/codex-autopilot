@@ -14,15 +14,28 @@ SNAP="$GUARD/snapshots"
 SRC="$HOME/.codex/sessions"
 LOG="$GUARD/guard.log"
 KEEP=3    # 保留最近 3 个有效快照；更老的按文件级历史保护规则淘汰
-MIN_FREE_GIB="${MIN_FREE_GIB:-12}"
+MIN_FREE_GIB="${MIN_FREE_GIB:-20}"   # 工作盘低于此值时停止新建保护快照
+LOCK="$GUARD/.snapshot.lock"
 
 [ -e "$GUARD/OFF" ] && exit 0
 [ -d "$SRC" ] || exit 0
 
 mkdir -p "$SNAP" 2>/dev/null || exit 0
 
-# 先清理已被当前 sessions 或更新快照覆盖的旧快照。这样低盘时也能腾出空间，
-# 但任何被删除、截断或改写过的独有内容仍会保留。
+# 单实例运行，避免 launchd 与手动测试同时改写/淘汰快照。
+if ! mkdir "$LOCK" 2>/dev/null; then
+  if find "$LOCK" -prune -mmin +120 -print 2>/dev/null | grep -q .; then
+    rm -r "$LOCK" 2>/dev/null || exit 0
+    mkdir "$LOCK" 2>/dev/null || exit 0
+  else
+    echo "$(date '+%F %T') snapshot skipped: another run is active" >>"$LOG"
+    exit 0
+  fi
+fi
+trap 'rm -r "$LOCK" 2>/dev/null' EXIT
+
+# 先淘汰“每个文件都已被当前 sessions 或更新快照完整包含”的旧目录。
+# 删除、截断、改写过的内容都属于唯一历史，条件不满足时永久保留。
 if [ -f "$SELF_DIR/snapshot_prune.py" ] && [ -x /usr/bin/python3 ]; then
   /usr/bin/python3 "$SELF_DIR/snapshot_prune.py" \
     --source "$SRC" --snapshots "$SNAP" --keep "$KEEP" >>"$LOG" 2>&1 || \
@@ -37,12 +50,13 @@ if [ "$free_gib" -lt "$MIN_FREE_GIB" ]; then
 fi
 
 TS=$(date +%Y%m%d-%H%M%S)
-DEST="$SNAP/$TS"
-if cp -cR "$SRC" "$DEST" 2>>"$LOG"; then
-  echo "$(date '+%F %T') snapshot ok -> $DEST $(find "$DEST" -name '*.jsonl' | wc -l | tr -d ' ') files" >>"$LOG"
+FINAL="$SNAP/$TS"
+PARTIAL="$SNAP/.${TS}.partial.$$"
+if cp -cR "$SRC" "$PARTIAL" 2>>"$LOG" && mv "$PARTIAL" "$FINAL"; then
+  echo "$(date '+%F %T') snapshot ok -> $FINAL $(find "$FINAL" -name '*.jsonl' | wc -l | tr -d ' ') files" >>"$LOG"
 else
   echo "$(date '+%F %T') snapshot FAILED" >>"$LOG"
-  rm -rf "$DEST" 2>/dev/null
+  rm -r "$PARTIAL" 2>/dev/null
 fi
 
 # 日志滚动，避免无限增长

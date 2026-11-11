@@ -76,6 +76,81 @@ def main() -> None:
               any("resource-admission.py" in hook["command"]
                   for group in groups for hook in group.get("hooks", [])))
 
+    with tempfile.TemporaryDirectory(prefix="verification-lock-test-") as raw:
+        root = Path(raw)
+        state = root / "state"
+        trunk = root / "trunk"
+        (state / "ops" / "tasks").mkdir(parents=True)
+        (state / "ops" / "truth").mkdir(parents=True)
+        (state / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for name in ("ledger", "progress", "decisions", "acceptance"):
+            (state / "ops" / "truth" / f"{name}.jsonl").write_text("", encoding="utf-8")
+        (state / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        marker = root / "entered"
+        probe = root / "probe.py"
+        probe.write_text(
+            "import pathlib, sys, time\n"
+            "pathlib.Path(sys.argv[1]).write_text(str(time.time()))\n"
+            "time.sleep(1.5)\n",
+            encoding="utf-8",
+        )
+        command = f"{sys.executable} {probe} {marker}"
+        config = {
+            "build": {"name": "probe", "cmd": command, "cwd": "."},
+            "verify": [{"name": "probe", "cmd": command, "cwd": "."}],
+            "shared_dir": str(state),
+        }
+        (state / "ops" / "central.config.json").write_text(
+            json.dumps(config), encoding="utf-8"
+        )
+        subprocess.run(
+            ["git", "init", "-q", "-b", "main", str(state)], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(state), "config", "user.email", "test@example.invalid"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(state), "config", "user.name", "Test"],
+            check=True,
+        )
+        (state / "README").write_text("fixture\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(state), "add", "."], check=True)
+        subprocess.run(
+            ["git", "-C", str(state), "commit", "-qm", "fixture"], check=True
+        )
+        trunk.mkdir()
+        env = os.environ.copy()
+        env["KG_REPO"] = str(state)
+        env["KG_MAIN"] = "main"
+        code = (
+            "import sys; "
+            f"sys.path.insert(0, {str(ROOT / 'ops')!r}); "
+            "import kgctl; "
+            f"ok, results, out = kgctl._run_verify_gates(kgctl.Path({str(state)!r})); "
+            "print(ok, results, out)"
+        )
+        first = subprocess.Popen(
+            [sys.executable, "-c", code], env=env, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True,
+        )
+        deadline = time.time() + 4
+        while not marker.exists() and time.time() < deadline:
+            time.sleep(0.02)
+        check("第一路已进入重门禁", marker.exists())
+        started = time.time()
+        second = subprocess.run(
+            [sys.executable, "-c", code], env=env, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, timeout=12,
+        )
+        first_out, first_err = first.communicate(timeout=12)
+        check("第一路门禁成功", first.returncode == 0 and "True" in first_out,
+              first_out + first_err)
+        check("第二路等待后成功", second.returncode == 0 and "True" in second.stdout,
+              second.stdout + second.stderr)
+        check("两路未同时执行", time.time() - started >= 1.2,
+              f"elapsed={time.time() - started:.2f}s")
+
     with tempfile.TemporaryDirectory(prefix="resource-admission-test-") as raw:
         state = Path(raw)
         (Path.home() / ".codex" / "hooks" / "RESOURCE_ADMISSION_DISABLED").unlink(missing_ok=True)
