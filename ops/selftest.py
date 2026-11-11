@@ -6246,6 +6246,45 @@ def test_compact_session_logs_is_lossless_and_under_pressure_only():
         assert old.with_name(old.name + ".zst").is_file()
 
 
+def test_portable_serve_requires_token():
+    """跨机移植的 serve 必须把包锁在一次性令牌后面。
+
+    为什么锁这条：`serve` 起的是明文 HTTP、绑 0.0.0.0，而包里有
+    `~/.codex/auth.json`（登录凭据）和 `.codex/config.toml`（各 provider 配置）。
+    裸路径的话，同一个 WiFi 下任何人扫到 8899 端口，GET 一次就把整包拿走 ——
+    用户问的正是「同一个 WiFi 怎么传」，所以这就是他要用的那条路径上的洞。
+
+    这里在临时目录造场景，只对源码与 handler 判据断言，不起真服务、不碰真 HOME。
+    """
+    import importlib.util
+    import inspect
+
+    ops = Path(__file__).resolve().parent
+    pm = ops / "portable_migrate.py"
+    assert pm.exists(), "移植工具必须入库，否则无法评审与回归"
+    src = pm.read_text(encoding="utf-8")
+
+    # 令牌必须来自每次运行现取的随机值，不能写死、不能是固定文件名。
+    assert "secrets.token_urlsafe" in src, "serve 必须用每轮随机令牌，不能裸路径"
+    assert "def cmd_serve" in src
+
+    spec = importlib.util.spec_from_file_location("portable_probe", pm)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    body = inspect.getsource(mod.cmd_serve)
+
+    # 求值后的请求路径必须带令牌段：这里是 /{token}/codex-portable.tar.gz。
+    assert "{token}" in body, "serve 播报的 URL 必须含令牌段"
+    # 判据必须是「请求路径 != 带令牌路径 即 404」，而不是放行空路径或裸名。
+    assert 'self.path.rstrip("/") != path' in body, (
+        "serve 必须对缺令牌/错令牌/裸名一律 404，不能只拦非空路径")
+
+    # 反面：只要源码里出现「裸名即放行」的旧写法，这条就得报出来。
+    assert 'not in ("", f"/{SERVE_NAME}")' not in src, (
+        "旧的裸路径放行写法还在，等于令牌形同虚设")
+    print("selftest ok: 跨机移植 serve 走一次性令牌，缺/错令牌一律 404。")
+
+
 if __name__ == "__main__":
     test_disk_reap_reaps_stale_code_sign_clones()
     main()
@@ -6317,6 +6356,7 @@ if __name__ == "__main__":
     test_mcp_contract()
     test_closure_rate()
     test_product_eval()
+    test_portable_serve_requires_token()
     test_budget_gate()
     test_compact_session_logs_is_lossless_and_under_pressure_only()
     test_rotation_streaming()

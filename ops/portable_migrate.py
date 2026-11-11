@@ -307,6 +307,7 @@ def _lan_ip() -> str:
 
 def cmd_serve(args) -> int:
     import http.server
+    import secrets
     import socketserver
 
     entries = _entries(args)
@@ -316,11 +317,20 @@ def cmd_serve(args) -> int:
     ip = args.bind or _lan_ip()
     port = args.port
 
+    # 路径里带一次性随机令牌。
+    #
+    # 为什么必须带：这个 HTTP 服务绑在 0.0.0.0，而包里含 ~/.codex/auth.json
+    # （登录凭据）和 .codex/config.toml（各 provider 配置）。裸路径的话，同一个
+    # WiFi 下任何扫到 8899 端口的人 GET 一次就把整包拿走。令牌是本次运行的口令，
+    # Ctrl-C 即失效；没带令牌的请求一律 404，连「这个端口在服务什么」都不透露。
+    token = secrets.token_urlsafe(18)
+    path = f"/{token}/{SERVE_NAME}"
+
     class Handler(http.server.BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def do_GET(self):
-            if self.path.rstrip("/") not in ("", f"/{SERVE_NAME}"):
+            if self.path.rstrip("/") != path:
                 self.send_error(404)
                 return
             self.send_response(200)
@@ -338,8 +348,11 @@ def cmd_serve(args) -> int:
 
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.ThreadingTCPServer(("0.0.0.0", port), Handler) as srv:
-        url = f"http://{ip}:{port}/{SERVE_NAME}"
+        url = f"http://{ip}:{port}{path}"
         print(f"已在 {ip}:{port} 就绪，提供 {len(entries)} 项。Ctrl-C 结束。\n")
+        print("注意：这一包含 ~/.codex/auth.json（登录凭据）等敏感文件，且走的是")
+        print("  明文 HTTP。链接里的随机令牌就是本次口令，Ctrl-C 后立即失效；")
+        print("  只在可信 WiFi 上跑，传完就 Ctrl-C，别让它常驻。\n")
         print("目标机上执行：")
         print(f'  curl -fL {url} | tar -xzf - -C "$HOME"')
         print()
