@@ -146,6 +146,35 @@ def main():
           guard2.modes == ["all"], guard2.modes)
     check("kg tmp 判活为真时不回收", ok is False, ok)
 
+    # ---- 2b. 低磁盘只收紧闲置门槛，仍然必须过同一条判活守卫 ----
+    orig_age = dr.KG_TMP_AGE_H
+    orig_free = dr.free_gb
+    orig_registered = dr._registered_worktree
+    orig_common = dr._git_common_dir
+    isolated_tmp = base / "private-tmp"
+    isolated_tmp.mkdir()
+    pressured = isolated_tmp / "kg-pressure-candidate"
+    pressured.mkdir()
+    old_mtime = time.time() - 2 * 3600
+    os.utime(pressured, (old_mtime, old_mtime))
+    dr.KG_TMP_AGE_H = 6.0
+    dr.KG_TMP_AGE_PRESSURE_H = 1.0
+    dr.KG_TMP_PRESSURE_FREE_GB = 15.0
+    dr.free_gb = lambda: 5.0
+    dr._registered_worktree = lambda _p: True
+    dr._git_common_dir = lambda _p: (base / "repo" / ".git")
+    try:
+        check("低磁盘时 kg tmp 宽限收紧到 1 小时",
+              dr._kg_tmp_age_hours() == 1.0, dr._kg_tmp_age_hours())
+        guard3 = RecordingGuard(blocker="live-session: pressure")
+        removed = dr._reap_kg_tmp(guard=guard3, root=isolated_tmp)
+        check("低磁盘仍不会删除活跃 kg tmp",
+              removed == 0 and pressured.exists() and guard3.modes == ["all"],
+              (removed, pressured.exists(), guard3.modes))
+    finally:
+        dr.KG_TMP_AGE_H, dr.free_gb = orig_age, orig_free
+        dr._registered_worktree, dr._git_common_dir = orig_registered, orig_common
+
     # ---- 3. 孤儿残留：只读会话在用时不删 ----
     orphan = base / "kg-orphan-residue"
     (orphan / "node_modules").mkdir(parents=True)
