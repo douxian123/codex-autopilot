@@ -31,10 +31,15 @@ def check(label, cond, detail=""):
         print(f"  FAIL {label} {detail}")
 
 
-def load_disk_reap():
+def load_disk_reap(log_path: Path | None = None):
     spec = importlib.util.spec_from_file_location("disk_reap_zstd", OPS / "disk_reap.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    # 本门禁会真的跑 compact_session_logs，而它的 log() 写模块级全局 LOG。
+    # 不重定向的话，「压缩旧会话 old.jsonl: ...」会落进真实运行日志，把一条
+    # 合成夹具的压缩记录伪装成生产事件（实测 2026-11-11 反复出现）。
+    if log_path is not None:
+        mod.LOG = log_path
     return mod
 
 
@@ -50,7 +55,8 @@ def make_old_session(root: Path) -> Path:
 
 
 def main():
-    mod = load_disk_reap()
+    log_sink = Path(tempfile.mkdtemp(prefix="reap-zstd-log-")) / "disk-reap.log"
+    mod = load_disk_reap(log_sink)
 
     # 1) 精简 PATH 下仍能定位 zstd：证明不再依赖 PATH。
     with mock.patch.dict("os.environ", {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}, clear=False):

@@ -98,6 +98,11 @@ def main():
         # 一旦有人在里面写实现，就会和 releases 里的实现各自腐烂。
         run([sys.executable, str(OPS / "test-reap-entry-forwards.py")],
             cwd=str(OPS.parent), check=True)
+        # 回收日志不许把「演练」和「没删掉」说成「已回收」。2026-11-11 实测：
+        # `disk_reap.py --dry-run` 会把「会回收」写进生产 daemon.log，而现场还在
+        # （ca-fix-fileurl-20261111 就是铁证），用户因此以为工作被清空重做。
+        run([sys.executable, str(OPS / "test-reap-log-honesty.py")],
+            cwd=str(OPS.parent), check=True)
         # launchd 入口新鲜度：同一类病一共 6 条（disk-reap 只是其中一条）。
         # 这些脚本原来散在 ~/.codex-guard/ 这类「没有版本、没人升级」的位置，
         # 发版之后它们还在跑几周前的代码。门禁要求：要么住在版本目录里，
@@ -6234,6 +6239,10 @@ def test_compact_session_logs_is_lossless_and_under_pressure_only():
             "disk_reap_test", Path(__file__).with_name("disk_reap.py"))
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
+        # 这条夹具的 old.jsonl 是合成文件；compact 的 log() 写的是模块级全局 LOG，
+        # 不重定向就会把「压缩旧会话 old.jsonl: 33300000 -> 2857 bytes」写进真实的
+        # ~/.codex-autopilot/disk-reap.log —— 实测 2026-11-11 该行反复出现，全是测试产物。
+        mod.LOG = root / "disk-reap-test.log"
         with mock.patch.dict("os.environ", {"CODEX_HOME": str(root / ".codex")}), \
              mock.patch.object(mod, "free_gb", return_value=20.0):
             assert mod.compact_session_logs() == (0, 0)

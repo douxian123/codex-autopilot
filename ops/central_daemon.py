@@ -3445,7 +3445,8 @@ def _git_gc_maintenance() -> None:
     log("[safety] automatic git gc --prune=now is disabled; no objects were pruned")
 
 
-def _reap_dead_worktrees() -> int:
+def _reap_dead_worktrees(dry: bool = False,
+                       candidates: list | None = None) -> int:
     """回收闲置且安全的 worktree（无改动、分支无未落提交、没人在用）。
 
     2026-10-22 实录：autopilot 累计留下 336 个 worktree / 24.5GB（一天新增 22 个），
@@ -3458,6 +3459,15 @@ def _reap_dead_worktrees() -> int:
     # 只回收「零损失」的现场 —— 分支无未落提交、工作区无未提交改动、无活着的会话、
     # 闲置够久，且**只删工作目录、保留分支**。任何一条不满足就不动。
     # 用 KG_REAP_ON_DISK_PRESSURE=0 / safety.json 关掉这一层。
+    def _note(msg: str) -> None:
+        # dry 演练（ops/disk_reap.py --dry-run 走这条）只回显到 stdout，
+        # 绝不写生产 daemon.log。否则「会回收」被下一班人读成「已回收」，
+        # 而现场其实还在 —— 实测 2026-11-11 的 ca-fix-fileurl-20261111 就是这样。
+        if dry:
+            print(f"{_now()} [dry-run] {msg}", flush=True)
+        else:
+            log(msg)
+
     _pressure_reap = False
     if not _knob("reap_worktrees", True):
         if not _knob("reap_on_disk_pressure", True):
@@ -3466,8 +3476,8 @@ def _reap_dead_worktrees() -> int:
         if _free is not None and _free >= REAP_PRESSURE_FREE_GB:
             return 0          # 空间够用就不动任何现场
         _pressure_reap = True
-        log(f"[safety] 磁盘可用 {(_free if _free is not None else -1):.2f}GB "
-            f"< {REAP_PRESSURE_FREE_GB}GB：对零损失现场做回收（只删目录，分支保留）")
+        _note(f"[safety] 磁盘可用 {(_free if _free is not None else -1):.2f}GB "
+              f"< {REAP_PRESSURE_FREE_GB}GB：对零损失现场做回收（只删目录，分支保留）")
     # 磁盘紧张度必须独立判断，不能只在「常规回收被关掉」时才成立。
     # 2026-10-27 实测：safety.json 里 reap_worktrees=true 时，上面的分支整个被
     # 跳过 → _pressure_reap 永远是 False → 一直用常规的 25s 预算 / 600s 间隔，
@@ -3477,8 +3487,8 @@ def _reap_dead_worktrees() -> int:
     _disk_tight = _free_now is not None and _free_now < REAP_PRESSURE_FREE_GB
     if _disk_tight and not _pressure_reap:
         _pressure_reap = True
-        log(f"[safety] 磁盘可用 {_free_now:.2f}GB < {REAP_PRESSURE_FREE_GB}GB："
-            f"回收改用紧张节奏（更短间隔/更大时间预算；判据不变，仍只删零损失现场）")
+        _note(f"[safety] 磁盘可用 {_free_now:.2f}GB < {REAP_PRESSURE_FREE_GB}GB："
+              f"回收改用紧张节奏（更短间隔/更大时间预算；判据不变，仍只删零损失现场）")
     reaped = 0
     reap_state = _load_reap_state()
     try:
@@ -3528,8 +3538,8 @@ def _reap_dead_worktrees() -> int:
             if reaped >= max_round:
                 break
             if time.time() > deadline:
-                log(f"[safety] worktree 回收达时间预算 {budget:.0f}s"
-                    f"（已回收 {reaped} 个），余下留给下一轮，先回去派活")
+                _note(f"[safety] worktree 回收达时间预算 {budget:.0f}s"
+                      f"（已回收 {reaped} 个），余下留给下一轮，先回去派活")
                 break
             if not d.is_dir():
                 continue
@@ -3593,9 +3603,29 @@ def _reap_dead_worktrees() -> int:
                 accept_stripped_regenerable=_pressure_reap)
             if not assessment.get("ok"):
                 continue
+            if dry:
+                # 演练：绝不调用删除。dry 的安全性必须由这条分支自己保证，不能
+                # 依赖调用方先猴补一个假的 remove_worktree —— 一旦漏补，演练就会
+                # 真删现场（实测 2026-11-11：dry 误删探针目录）。候选名通过
+                # candidates 回给调用方（ops/disk_reap.py 用它打印清单）。
+                reaped += 1
+                if candidates is not None:
+                    candidates.append(d.name)
+                _note(f"[safety] 会回收闲置 worktree {d.name}"
+                      f"（分支 {branch} 无未落提交；演练不动现场）")
+                if _pressure_reap:
+                    _note(f"[safety] 会保留分支 {branch}（压力回收不删分支）")
+                continue
             ok, detail = workspace_guard.remove_worktree(
                 repo, d, force_regenerable=_pressure_reap)
             if ok:
+                # remove_worktree 的返回值只是 git 的退出码，它不校验目录是否真消失。
+                # 实测 2026-11-11：日志写「回收闲置 worktree」而现场仍在。真删之后
+                # 必须复核一次，否则日志会把「没删掉」记成「已回收」。
+                if d.exists():
+                    log(f"[safety] 回收 worktree 未生效 {d.name}"
+                        f"（git 报成功但目录仍在）：{detail}")
+                    continue
                 reaped += 1
                 scratch = assessment.get("scratch") or ""
                 note = f"；已清机器残留 {scratch}" if scratch else ""
@@ -3605,9 +3635,9 @@ def _reap_dead_worktrees() -> int:
                     # 只回收目录，分支一律保留：重装/回溯时仍能从分支找回全部内容。
                     log(f"[safety] 保留分支 {branch}（压力回收不删分支）")
             else:
-                log(f"[safety] 回收 worktree 跳过 {d.name}：{detail}")
+                _note(f"[safety] 回收 worktree 跳过 {d.name}：{detail}")
     except Exception as exc:  # fail-open
-        log(f"[safety] worktree 回收失败（忽略）：{exc}")
+        _note(f"[safety] worktree 回收失败（忽略）：{exc}")
     return reaped
 
 
