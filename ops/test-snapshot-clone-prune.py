@@ -2,7 +2,9 @@
 # -*- coding: utf-8 -*-
 """Regression: snapshot pruning may never remove unique Codex history."""
 import importlib.util
+import os
 import tempfile
+import time
 from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
@@ -41,26 +43,41 @@ def main():
         source.mkdir()
         write(newer / "append.jsonl", b'{"n":1}\n{"n":2}\n')
         write(old / "append.jsonl", b'{"n":1}\n')
+        now_ns = time.time_ns()
+        os.utime(old, ns=(now_ns - 10_000_000_000, now_ns - 10_000_000_000))
+        os.utime(newer, ns=(now_ns, now_ns))
         removable, retained = mod.prunable_snapshots(source, snapshots, keep=1)
         check("追加日志的旧前缀可以安全淘汰",
               removable == [old] and not retained, (removable, retained))
+        now_ns = time.time_ns()
+        os.utime(old, ns=(now_ns - 10_000_000_000, now_ns - 10_000_000_000))
+        os.utime(newer, ns=(now_ns, now_ns))
 
         write(old / "deleted.jsonl", b'{"only":"in old snapshot"}\n')
+        os.utime(old, ns=(now_ns - 10_000_000_000, now_ns - 10_000_000_000))
+        os.utime(newer, ns=(now_ns, now_ns))
         removable, retained = mod.prunable_snapshots(source, snapshots, keep=1)
         check("新来源已删除的文件会保护整份快照",
               not removable and retained and retained[0][0] == old,
               (removable, retained))
 
         write(source / "deleted.jsonl", b'{"rewritten":"not the same history"}\n')
+        os.utime(old, ns=(now_ns - 10_000_000_000, now_ns - 10_000_000_000))
+        os.utime(newer, ns=(now_ns, now_ns))
         removable, retained = mod.prunable_snapshots(source, snapshots, keep=1)
         check("同路径但内容改写不被误判为已覆盖",
               not removable and retained and retained[0][0] == old,
               (removable, retained))
 
         write(source / "deleted.jsonl", b'{"only":"in old snapshot"}\n{"new":true}\n')
+        os.utime(old, ns=(now_ns - 10_000_000_000, now_ns - 10_000_000_000))
+        os.utime(newer, ns=(now_ns, now_ns))
         removable, retained = mod.prunable_snapshots(source, snapshots, keep=1)
         check("当前文件包含旧内容完整前缀时允许淘汰",
               removable == [old] and not retained, (removable, retained))
+        now_ns = time.time_ns()
+        os.utime(old, ns=(now_ns - 10_000_000_000, now_ns - 10_000_000_000))
+        os.utime(newer, ns=(now_ns, now_ns))
 
         os_link = old / "rewritten.jsonl"
         if os_link.exists() or os_link.is_symlink():
@@ -72,6 +89,23 @@ def main():
         check("symlink 目标改变时保留旧快照",
               not removable and retained and retained[0][0] == old,
               (removable, retained))
+
+    with tempfile.TemporaryDirectory(prefix="snapshot-prune-mtime-") as tmp:
+        root = Path(tmp)
+        source = root / "sessions"
+        snapshots = root / "snapshots"
+        older_name = snapshots / "99999999-late-name"
+        newer_mtime = snapshots / "00000000-old-name"
+        source.mkdir()
+        write(older_name / "same.jsonl", b"old\n")
+        write(newer_mtime / "same.jsonl", b"old\nnew\n")
+        old_ns = time.time_ns() - 10_000_000_000
+        new_ns = time.time_ns()
+        os.utime(older_name, ns=(old_ns, old_ns))
+        os.utime(newer_mtime, ns=(new_ns, new_ns))
+        removable, retained = mod.prunable_snapshots(source, snapshots, keep=1)
+        check("保留窗口按修改时间而不是目录名",
+              removable == [older_name] and not retained, (removable, retained))
 
     snapshot_sh = (OPS / "guards/snapshot.sh").read_text(encoding="utf-8")
     check("快照使用 APFS clone 而不是会跟随追加写入的硬链接",
