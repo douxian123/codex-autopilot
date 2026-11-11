@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Bound expensive verification commands without blocking normal work.
 
-Only explicit compiler, bundler, and browser verification commands need a
-lease. Existing commands are never killed. Any failure is fail-open.
+PreToolUse takes a lease keyed by the harness call id. PostToolUse and
+PostToolUseFailure release it. Existing commands are never killed. Every
+unexpected condition fails open so this guard cannot block normal work.
 """
 
 from __future__ import annotations
@@ -12,7 +13,6 @@ import fcntl
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -32,19 +32,22 @@ LEASE_MAX_AGE_SECONDS = int(
     os.environ.get("CODEX_RESOURCE_ADMISSION_MAX_AGE_SECONDS", str(6 * 60 * 60))
 )
 TEST_PID_ENV = "CODEX_RESOURCE_ADMISSION_PID"
+PRE_EVENTS = {"PreToolUse"}
+POST_EVENTS = {"PostToolUse", "PostToolUseFailure"}
 
+COMMAND_SEPARATORS = r"(?:^|[;&|()\n])\s*"
 HEAVY_PATTERNS = (
-    re.compile(r"(^|[;&|()\s])(?:npx\s+|pnpm\s+exec\s+|yarn\s+)?(?:tsc|tsgo)(?:\s|$)"),
-    re.compile(r"(^|[;&|()\s])(?:npx\s+|pnpm\s+exec\s+|yarn\s+)?vite\s+(?:build|preview)(?:\s|$)"),
-    re.compile(r"(^|[;&|()\s])(?:npx\s+|pnpm\s+exec\s+|yarn\s+)?playwright(?:\s|$)"),
-    re.compile(r"(^|[;&|()\s])(?:npx\s+|pnpm\s+exec\s+|yarn\s+)?vitest(?:\s|$)"),
-    re.compile(r"(^|[;&|()\s])(?:npx\s+|pnpm\s+exec\s+|yarn\s+)?tsx(?:\s+\S+)*\s+scripts/verify\S*"),
-    re.compile(r"(^|[;&|()\s])scripts/verify\S*(?:browser|playwright)\S*"),
-    re.compile(r"(^|[;&|()\s])verify-\S*(?:browser|playwright)\S*"),
-)
-
-EXEMPT_PATTERNS = (
-    re.compile(r"(^|[;&|()\s])(?:ls|rg|grep|find|cat|sed|head|tail|df|du|ps|git\s+(?:status|log|diff|show|branch))(?:\s|$)"),
+    re.compile(COMMAND_SEPARATORS + r"(?:npx|npm\s+exec|pnpm\s+exec|yarn\s+exec)\s+(?:--\s+)?(?:tsc|tsgo)(?:\s|$)"),
+    re.compile(COMMAND_SEPARATORS + r"(?:npx|npm\s+exec|pnpm\s+exec|yarn\s+exec)\s+(?:--\s+)?vite\s+(?:build|preview)(?:\s|$)"),
+    re.compile(COMMAND_SEPARATORS + r"(?:npx|npm\s+exec|pnpm\s+exec|yarn\s+exec)\s+(?:--\s+)?playwright(?:\s|$)"),
+    re.compile(COMMAND_SEPARATORS + r"(?:npx|npm\s+exec|pnpm\s+exec|yarn\s+exec)\s+(?:--\s+)?vitest(?:\s|$)"),
+    re.compile(COMMAND_SEPARATORS + r"(?:\./)?node_modules/\.bin/(?:tsc|tsgo|vite|playwright|vitest)(?:\s|$)"),
+    re.compile(COMMAND_SEPARATORS + r"(?:tsc|tsgo)(?:\s|$)"),
+    re.compile(COMMAND_SEPARATORS + r"vite\s+(?:build|preview)(?:\s|$)"),
+    re.compile(COMMAND_SEPARATORS + r"(?:playwright|vitest)(?:\s|$)"),
+    re.compile(COMMAND_SEPARATORS + r"(?:npx|npm\s+exec|pnpm\s+exec|yarn\s+exec)\s+(?:--\s+)?tsx\S*\s+.*scripts/verify\S*"),
+    re.compile(COMMAND_SEPARATORS + r"(?:npx|npm\s+exec|pnpm\s+exec|yarn\s+exec)\s+(?:--\s+)?tsx\S*\s+.*verify-\S*(?:browser|playwright)\S*"),
+    re.compile(COMMAND_SEPARATORS + r"[^\n]*(?:scripts/verify\S*(?:browser|playwright)\S*|verify-\S*(?:browser|playwright)\S*)"),
 )
 
 
@@ -73,10 +76,13 @@ def _command_text(event: dict[str, Any]) -> str:
     return command if isinstance(command, str) else ""
 
 
+def _tool_name(event: dict[str, Any]) -> str:
+    value = event.get("tool_name")
+    return value if isinstance(value, str) else ""
+
+
 def _is_heavy(command: str) -> bool:
     if not command.strip():
-        return False
-    if any(pattern.search(command) for pattern in EXEMPT_PATTERNS):
         return False
     return any(pattern.search(command) for pattern in HEAVY_PATTERNS)
 
@@ -108,7 +114,10 @@ def _owner_alive(owner: dict[str, Any]) -> bool:
             return False
         except PermissionError:
             return True
-    return _pid_alive(int(owner.get("pid") or 0))
+    pid = int(owner.get("pid") or 0)
+    if pid > 1:
+        return _pid_alive(pid)
+    return True
 
 
 def _state_path() -> Path:
@@ -151,27 +160,28 @@ def _prune(state: dict[str, Any]) -> None:
     ]
 
 
-def _cwd_from_event(event: dict[str, Any]) -> str:
-    cwd = event.get("cwd")
-    if isinstance(cwd, str) and cwd:
-        return cwd
-    return os.getcwd()
+def _event_name(event: dict[str, Any]) -> str:
+    return str(event.get("hook_event_name") or "")
 
 
-def _owner_from_event(event: dict[str, Any]) -> dict[str, Any]:
-    pid = int(os.environ.get(TEST_PID_ENV, "0") or 0)
-    pgid = 0
-    if pid > 1:
-        try:
-            pgid = os.getpgid(pid)
-        except ProcessLookupError:
-            pgid = 0
-    return {
-        "pid": pid,
-        "pgid": pgid,
-        "session_id": str(event.get("session_id") or "unknown"),
-        "cwd": _cwd_from_event(event),
-    }
+def _call_id(event: dict[str, Any]) -> str:
+    for key in ("tool_use_id", "toolUseId", "call_id", "callId"):
+        value = event.get(key)
+        if isinstance(value, str) and value:
+            return value
+    tool_input = event.get("tool_input")
+    if isinstance(tool_input, dict):
+        for key in ("tool_use_id", "toolUseId", "call_id", "callId"):
+            value = tool_input.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return ""
+
+
+def _lease_id(event: dict[str, Any]) -> str:
+    call_id = _call_id(event)
+    session_id = str(event.get("session_id") or "unknown")
+    return f"{session_id}:{call_id}" if call_id else ""
 
 
 def _deny_reason(state: dict[str, Any], free_gib: float) -> str:
@@ -187,6 +197,48 @@ def _deny_reason(state: dict[str, Any], free_gib: float) -> str:
     )
 
 
+def _release(state: dict[str, Any], lease_id: str) -> None:
+    if not lease_id:
+        return
+    state["leases"] = [lease for lease in state["leases"] if lease.get("id") != lease_id]
+
+
+def _admit_pre(event: dict[str, Any]) -> None:
+    command = _command_text(event)
+    if not _is_heavy(command):
+        return
+    lease_id = _lease_id(event)
+    if not lease_id:
+        return
+    free_gib = _free_gib()
+    with _locked_state() as state:
+        _prune(state)
+        if any(lease.get("id") == lease_id for lease in state["leases"]):
+            return
+        if len(state["leases"]) >= MAX_LEASES or free_gib < MIN_FREE_GIB:
+            _emit_deny(_deny_reason(state, free_gib))
+            return
+        test_pid = int(os.environ.get(TEST_PID_ENV, "0") or 0)
+        state["leases"].append(
+            {
+                "id": lease_id,
+                "session_id": str(event.get("session_id") or "unknown"),
+                "created_at": time.time(),
+                "cwd": str(event.get("cwd") or os.getcwd()),
+                "pid": test_pid if test_pid > 1 else 0,
+                "pgid": 0,
+            }
+        )
+
+
+def _release_post(event: dict[str, Any]) -> None:
+    lease_id = _lease_id(event)
+    if not lease_id:
+        return
+    with _locked_state() as state:
+        _release(state, lease_id)
+
+
 def main() -> int:
     if DISABLED_FILE.exists():
         return 0
@@ -196,19 +248,11 @@ def main() -> int:
         event = json.load(sys.stdin)
         if not isinstance(event, dict) or event.get("tool_name") not in {"exec_command", "Bash"}:
             return 0
-        command = _command_text(event)
-        if not _is_heavy(command):
-            return 0
-        owner = _owner_from_event(event)
-        free_gib = _free_gib()
-        with _locked_state() as state:
-            _prune(state)
-            if len(state["leases"]) >= MAX_LEASES or free_gib < MIN_FREE_GIB:
-                _emit_deny(_deny_reason(state, free_gib))
-                return 0
-            if owner["pid"] > 1:
-                owner["created_at"] = time.time()
-                state["leases"].append(owner)
+        name = _event_name(event)
+        if name in PRE_EVENTS:
+            _admit_pre(event)
+        elif name in POST_EVENTS:
+            _release_post(event)
         return 0
     except Exception:
         return 0
