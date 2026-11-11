@@ -94,6 +94,10 @@ def main():
         run([sys.executable, str(OPS / "test-orphan-residue.py")],
             cwd=str(OPS.parent), check=True,
             env={**os.environ, "ORPHAN_TEST_ROOT": str(orphan_root)})
+        # 多个会话同时启动 tsc / Vite build / Playwright 会把交互编辑与
+        # 视频导出挤进 swap。准入器只延后新的重验证，不终止已有工作。
+        run([sys.executable, str(OPS / "test-resource-admission.py")],
+            cwd=str(OPS.parent), check=True)
         # launchd 直接执行的入口必须只是转发：它不在任何不可变版本目录里，
         # 一旦有人在里面写实现，就会和 releases 里的实现各自腐烂。
         run([sys.executable, str(OPS / "test-reap-entry-forwards.py")],

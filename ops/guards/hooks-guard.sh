@@ -19,12 +19,19 @@ export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 HOOKS_JSON="$HOME/.codex/hooks.json"
 CANON="$HOME/.codex/hooks.json.bak-20261009-impl"   # 权威好版本(md5 一致的三份备份之一)
 LOG="$HOME/.codex/hooks/hooks-guard.log"
+RESOURCE_INSTALLER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-resource-hooks.py"
 
 log() { mkdir -p "$(dirname "$LOG")" 2>/dev/null; echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG" 2>/dev/null || true; }
 
 # ---- 一键关闭(用户明确要求) ----
 if [ -e "$HOME/.codex/hooks/DISABLED" ]; then exit 0; fi
 if [ "${CODEX_LOOP_GUARD:-}" = "off" ]; then exit 0; fi
+
+# ---- 先确保资源准入是追加式挂载,不依赖会过期的权威备份 ----
+if [ -x /usr/bin/python3 ] && [ -f "$RESOURCE_INSTALLER" ]; then
+  /usr/bin/python3 "$RESOURCE_INSTALLER" >>"$LOG" 2>&1 || \
+    log "资源准入挂载失败(fail-open,不阻断 Codex)"
+fi
 
 # ---- 判定:文件存在、是有效 JSON、且 hooks 非空 ----
 # ⚠️ 必须自包含判定:不能外包给 check-guard-mounted.sh —— 那个脚本用绝对 ~/.codex
