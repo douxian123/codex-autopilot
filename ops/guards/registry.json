@@ -53,7 +53,7 @@
       "label": "com.danta.codex-disk-reap",
       "script": "ops/disk_reap.py",
       "siblings": [],
-      "interval_s": 3600,
+      "interval_s": 60,
       "class": "repoint"
     },
     {

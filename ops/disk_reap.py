@@ -26,7 +26,10 @@ CODEX_SIGN_CLONE_TARGETS = (
     "com.google.Chrome.code_sign_clone",
     "com.bot.pc.doubao.browser.code_sign_clone",
 )
-CODEX_SIGN_CLONE_GRACE_MIN = float(os.environ.get("KG_CODESIGN_CLONE_GRACE_MIN", "20"))
+# 系统 Chrome 在自动化里会频繁生成签名临时副本。20 分钟宽限期会让它们
+# 在短时间门禁里层层堆积；2 分钟仍远高于一次浏览器启动所需时间，同时把
+# 20 秒级生产速度下的稳态副本数压到个位数。
+CODEX_SIGN_CLONE_GRACE_MIN = float(os.environ.get("KG_CODESIGN_CLONE_GRACE_MIN", "2"))
 
 def _resolve_ops() -> Path:
     """Locate the runtime ops/ that is ACTUALLY INSTALLED right now.
@@ -102,6 +105,9 @@ REAP_MIN_IDLE_H = float(os.environ.get("KG_REAP_MIN_IDLE_H", "1"))
 STRIP_IDLE_H = float(os.environ.get("KG_STRIP_IDLE_H", "24"))
 # 旧会话原始 JSONL 的压缩门槛与预算。只压缩“未被进程引用”的旧文件，
 # 压缩后先做完整性校验，校验失败绝不删除原文件。
+#
+# 默认绝不压缩：Codex 的线程索引读取的是 .jsonl，换成 .zst 即使字节无损，
+# 也会让用户在历史线程列表里找不到对话。这个动作只允许显式 opt-in。
 SESSION_COMPACT_MIN_AGE_H = float(os.environ.get("KG_SESSION_COMPACT_MIN_AGE_H", "6"))
 SESSION_COMPACT_MIN_MB = float(os.environ.get("KG_SESSION_COMPACT_MIN_MB", "20"))
 SESSION_COMPACT_MAX_FILES = int(os.environ.get("KG_SESSION_COMPACT_MAX_FILES", "8"))
@@ -156,7 +162,8 @@ def compact_session_logs(dry: bool = False) -> tuple[int, int]:
     transcript before the compressed archive has been decompressed and compared
     byte-for-byte with the source.
     """
-    if os.environ.get("KG_SESSION_COMPACT", "1").strip().lower() in ("0", "off", "false"):
+    if os.environ.get("KG_SESSION_COMPACT", "0").strip().lower() not in (
+            "1", "on", "true", "yes"):
         return 0, 0
     if free_gb() >= SESSION_COMPACT_UNDER_FREE_GB:
         return 0, 0
@@ -265,6 +272,27 @@ def _path_in_use(path: str) -> bool:
         return True
 
 
+def _open_paths_snapshot() -> list[str] | None:
+    """Capture open paths once so a clone sweep does not run lsof per clone."""
+    try:
+        out = subprocess.run(
+            ["lsof", "-n", "-F", "n"],
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        if out.returncode not in (0, 1):
+            return None
+        return [line[1:] for line in out.stdout.splitlines() if line.startswith("n")]
+    except Exception:
+        return None
+
+
+def _path_in_open_paths(path: str, open_paths: list[str]) -> bool:
+    needle = path.rstrip("/") + "/"
+    return any(needle in open_path for open_path in open_paths)
+
+
 def _tree_size(path: str) -> int:
     total = 0
     for root, _dirs, files in os.walk(path):
@@ -281,6 +309,10 @@ def reap_code_sign_clones(dry: bool = False) -> tuple[int, int]:
     removed = 0
     freed = 0
     cutoff = time.time() - CODEX_SIGN_CLONE_GRACE_MIN * 60
+    open_paths = _open_paths_snapshot()
+    if open_paths is None:
+        log("无法读取进程打开文件，本轮保留全部签名临时副本")
+        return 0, 0
     for xdir in _code_sign_clone_xdirs():
         for parent_name in CODEX_SIGN_CLONE_TARGETS:
             root = os.path.join(xdir, parent_name)
@@ -301,7 +333,7 @@ def reap_code_sign_clones(dry: bool = False) -> tuple[int, int]:
                         continue
                 except OSError:
                     continue
-                if _path_in_use(path):
+                if _path_in_open_paths(path, open_paths):
                     log(f"签名临时副本仍在使用，跳过：{path}")
                     continue
                 size = _tree_size(path)

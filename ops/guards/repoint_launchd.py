@@ -97,11 +97,15 @@ def _plist_dir(home: Path) -> Path:
     return home / "Library" / "LaunchAgents"
 
 
-def _existing_program_args(plist_path: Path) -> list[str]:
+def _existing_plist(plist_path: Path) -> dict:
     try:
-        data = plistlib.loads(plist_path.read_bytes())
+        return plistlib.loads(plist_path.read_bytes())
     except Exception:
-        return []
+        return {}
+
+
+def _existing_program_args(plist_path: Path) -> list[str]:
+    data = _existing_plist(plist_path)
     args = data.get("ProgramArguments")
     if isinstance(args, list):
         return [str(a) for a in args]
@@ -200,11 +204,18 @@ def plan(home: Path, only: list[str] | None = None) -> list[dict]:
         script = base / entry["script"]
         row = {"label": label, "plist": plist_path, "script": script,
                "class": entry.get("class", "managed"),
-               "state": "absent", "current": [], "desired": []}
+               "state": "absent", "current": [], "desired": [],
+               "current_interval": None, "desired_interval": None}
         if not plist_path.exists():
             rows.append(row)
             continue
-        row["current"] = _existing_program_args(plist_path)
+        plist_data = _existing_plist(plist_path)
+        args = plist_data.get("ProgramArguments")
+        if isinstance(args, list):
+            row["current"] = [str(a) for a in args]
+        else:
+            prog = plist_data.get("Program")
+            row["current"] = [str(prog)] if prog else []
         if entry.get("class") == "managed":
             # 由 install.sh 的 5.5 段负责；这里只核验它确实指着当前版本。
             ok = any(str(script) == arg for arg in row["current"])
@@ -220,7 +231,21 @@ def plan(home: Path, only: list[str] | None = None) -> list[dict]:
             rows.append(row)
             continue
         row["desired"] = desired_program_args(script, row["current"])
-        row["state"] = "ok" if row["current"] == row["desired"] else "stale"
+        desired_interval = int(entry.get("interval_s") or 0)
+        if desired_interval > 0:
+            row["desired_interval"] = desired_interval
+            current_interval = plist_data.get("StartInterval")
+            row["current_interval"] = (
+                int(current_interval)
+                if isinstance(current_interval, (int, float))
+                else None
+            )
+        args_ok = row["current"] == row["desired"]
+        interval_ok = (
+            row["desired_interval"] is None
+            or row["current_interval"] == row["desired_interval"]
+        )
+        row["state"] = "ok" if args_ok and interval_ok else "stale"
         rows.append(row)
     return rows
 
@@ -238,8 +263,11 @@ def check(home: Path, only: list[str] | None = None) -> int:
         if row["state"] == "missing-script":
             print(f"  FAIL     {row['label']} 指向的脚本不在版本目录：{row['script']}")
         else:
-            print(f"  FAIL     {row['label']} 仍在跑旧路径：{row['current']}")
+            print(f"  FAIL     {row['label']} 未跟上当前配置：")
+            print(f"           当前：{row['current']} interval={row['current_interval']}")
             print(f"           应指向：{row['desired']}")
+            if row["desired_interval"] is not None:
+                print(f"           应间隔：{row['desired_interval']} 秒")
     if bad:
         print(f"\n{bad} 条定时任务没有跟上当前安装版本。")
         print("修法：在干净快照里跑一次 ./install.sh（它会重写这些 plist 并 reload）。")
@@ -261,8 +289,8 @@ def install(home: Path, only: list[str] | None = None,
             continue
         plist_path: Path = row["plist"]
         print(f"→ {row['label']}")
-        print(f"   旧：{row['current']}")
-        print(f"   新：{row['desired']}")
+        print(f"   旧：{row['current']} interval={row['current_interval']}")
+        print(f"   新：{row['desired']} interval={row['desired_interval']}")
         if dry_run:
             changed += 1
             continue
@@ -271,6 +299,8 @@ def install(home: Path, only: list[str] | None = None,
             plist_path.name + time.strftime(".bak-%Y%m%d-%H%M%S-guard-repoint"))
         backup.write_bytes(plist_path.read_bytes())
         data["ProgramArguments"] = row["desired"]
+        if row["desired_interval"] is not None:
+            data["StartInterval"] = row["desired_interval"]
         tmp = plist_path.with_name(plist_path.name + ".tmp")
         tmp.write_bytes(plistlib.dumps(data, sort_keys=False))
         os.replace(tmp, plist_path)

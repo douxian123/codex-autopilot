@@ -5995,7 +5995,7 @@ def test_disk_reap_reaps_stale_code_sign_clones():
         os.utime(active, (old, old))
 
         mod._code_sign_clone_xdirs = lambda: iter([str(Path(tmp) / "X")])
-        mod._path_in_use = lambda path: Path(path).name == "code_sign_clone.active"
+        mod._open_paths_snapshot = lambda: [str(active / "payload")]
         removed, freed = mod.reap_code_sign_clones(dry=True)
         assert removed == 1 and freed > 0, (removed, freed)
         assert stale.exists() and active.exists() and fresh.exists()
@@ -6006,7 +6006,7 @@ def test_disk_reap_reaps_stale_code_sign_clones():
         assert active.exists(), "活跃副本不能被删除"
         assert fresh.exists(), "未过 grace 的新副本不能被删除"
 
-        mod._path_in_use = lambda path: True
+        mod._open_paths_snapshot = lambda: None
         another = xdir / "code_sign_clone.another"
         another.mkdir(parents=True)
         os.utime(another, (old, old))
@@ -6318,9 +6318,17 @@ def test_compact_session_logs_is_lossless_and_under_pressure_only():
         mod.LOG = root / "disk-reap-test.log"
         with mock.patch.dict("os.environ", {"CODEX_HOME": str(root / ".codex")}), \
              mock.patch.object(mod, "free_gb", return_value=20.0):
+            _os.environ.pop("KG_SESSION_COMPACT", None)
             assert mod.compact_session_logs() == (0, 0)
             assert old.exists() and not old.with_name(old.name + ".zst").exists()
         with mock.patch.dict("os.environ", {"CODEX_HOME": str(root / ".codex")}), \
+             mock.patch.object(mod, "free_gb", return_value=1.0):
+            _os.environ.pop("KG_SESSION_COMPACT", None)
+            assert mod.compact_session_logs() == (0, 0)
+            assert old.exists() and not old.with_name(old.name + ".zst").exists()
+        with mock.patch.dict("os.environ",
+                             {"CODEX_HOME": str(root / ".codex"),
+                              "KG_SESSION_COMPACT": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0):
             n, freed = mod.compact_session_logs()
         assert n == 1 and freed > 0
