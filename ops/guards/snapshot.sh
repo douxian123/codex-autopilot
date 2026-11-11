@@ -13,28 +13,57 @@ GUARD="$HOME/.codex-guard"
 SNAP="$GUARD/snapshots"
 SRC="$HOME/.codex/sessions"
 LOG="$GUARD/guard.log"
-KEEP=48   # 至少保留最近 48 份；更老的仅在内容被新文件完整包含时才淘汰
+KEEP=8    # 至少保留最近 8 份；更老的仅在内容被新文件完整包含时才淘汰
+MIN_FREE_GIB="${MIN_FREE_GIB:-20}"   # 工作盘低于此值时停止新建保护快照
+MAX_SNAPSHOT_LOGICAL_GIB="${MAX_SNAPSHOT_LOGICAL_GIB:-32}"
+LOCK="$GUARD/.snapshot.lock"
 
 [ -e "$GUARD/OFF" ] && exit 0
 [ -d "$SRC" ] || exit 0
 
 mkdir -p "$SNAP" 2>/dev/null || exit 0
 
-TS=$(date +%Y%m%d-%H%M%S)
-DEST="$SNAP/$TS"
-if cp -cR "$SRC" "$DEST" 2>>"$LOG"; then
-  echo "$(date '+%F %T') snapshot ok -> $DEST $(find "$DEST" -name '*.jsonl' | wc -l | tr -d ' ') files" >>"$LOG"
-else
-  echo "$(date '+%F %T') snapshot FAILED" >>"$LOG"
-  rm -rf "$DEST" 2>/dev/null
+# 单实例运行，避免 launchd 与手动测试同时改写/淘汰快照。
+if ! mkdir "$LOCK" 2>/dev/null; then
+  if find "$LOCK" -prune -mmin +120 -print 2>/dev/null | grep -q .; then
+    rm -r "$LOCK" 2>/dev/null || exit 0
+    mkdir "$LOCK" 2>/dev/null || exit 0
+  else
+    echo "$(date '+%F %T') snapshot skipped: another run is active" >>"$LOG"
+    exit 0
+  fi
 fi
+trap 'rm -r "$LOCK" 2>/dev/null' EXIT
 
-# 只淘汰“每个文件都已被当前 sessions 或更新快照完整包含”的旧目录。
+# 先淘汰“每个文件都已被当前 sessions 或更新快照完整包含”的旧目录。
 # 删除、截断、改写过的内容都属于唯一历史，条件不满足时永久保留。
 if [ -f "$SELF_DIR/snapshot_prune.py" ] && [ -x /usr/bin/python3 ]; then
   /usr/bin/python3 "$SELF_DIR/snapshot_prune.py" \
     --source "$SRC" --snapshots "$SNAP" --keep "$KEEP" >>"$LOG" 2>&1 || \
     echo "$(date '+%F %T') snapshot prune skipped (helper failed; no snapshots removed by shell)" >>"$LOG"
+fi
+
+free_gib=$(df -Pk "$GUARD" 2>/dev/null | awk 'NR==2 {printf "%.0f", $4 / 1048576}')
+[ -n "${free_gib:-}" ] || free_gib=0
+snapshot_gib=$(du -sk "$SNAP" 2>/dev/null | awk 'NR==1 {printf "%.0f", $1 / 1048576}')
+[ -n "${snapshot_gib:-}" ] || snapshot_gib=0
+if [ "$free_gib" -lt "$MIN_FREE_GIB" ]; then
+  echo "$(date '+%F %T') snapshot skipped: free=${free_gib}GiB threshold=${MIN_FREE_GIB}GiB" >>"$LOG"
+  exit 0
+fi
+if [ "$snapshot_gib" -ge "$MAX_SNAPSHOT_LOGICAL_GIB" ]; then
+  echo "$(date '+%F %T') snapshot skipped: logical=${snapshot_gib}GiB cap=${MAX_SNAPSHOT_LOGICAL_GIB}GiB" >>"$LOG"
+  exit 0
+fi
+
+TS=$(date +%Y%m%d-%H%M%S)
+FINAL="$SNAP/$TS"
+PARTIAL="$SNAP/.${TS}.partial.$$"
+if cp -cR "$SRC" "$PARTIAL" 2>>"$LOG" && mv "$PARTIAL" "$FINAL"; then
+  echo "$(date '+%F %T') snapshot ok -> $FINAL $(find "$FINAL" -name '*.jsonl' | wc -l | tr -d ' ') files" >>"$LOG"
+else
+  echo "$(date '+%F %T') snapshot FAILED" >>"$LOG"
+  rm -r "$PARTIAL" 2>/dev/null
 fi
 
 # 日志滚动，避免无限增长
