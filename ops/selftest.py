@@ -2674,6 +2674,41 @@ def test_verify_and_truth():
         if op.returncode != 0:
             raise AssertionError(f"open 失败:\n{op.stdout}\n{op.stderr}")
 
+        # fail-closed：既无证据也无 commit 时，close 必须被拒，且不得把状态改成 done。
+        add2 = truthctl(repo, "add", "ledger", "没有证据也想关",
+                        extra_env={"KG_TRUTH_KIND": "bug", "KG_TRUTH_DETAIL": "凭空标 done"})
+        if add2.returncode != 0:
+            raise AssertionError(f"ledger add2 失败:\n{add2.stdout}\n{add2.stderr}")
+        ledger2 = (repo / "ops" / "truth" / "ledger.jsonl").read_text(encoding="utf-8")
+        lid2 = _json.loads(ledger2.splitlines()[-1])["id"]
+        bad = truthctl(repo, "close", lid2, "我觉得修好了",
+                       extra_env={"KG_TRUTH_EVIDENCE": "", "KG_TRUTH_COMMIT": ""})
+        if bad.returncode == 0:
+            raise AssertionError(f"无证据的 close 竟然成功:\n{bad.stdout}")
+        if "拒绝" not in (bad.stdout + bad.stderr):
+            raise AssertionError(f"无证据的 close 未给出拒绝理由:\n{bad.stdout}\n{bad.stderr}")
+        latest2 = {}
+        for line in (repo / "ops" / "truth" / "ledger.jsonl").read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                r = _json.loads(line)
+                latest2[r["id"]] = r
+        if latest2[lid2].get("status") == "done":
+            raise AssertionError(f"无证据的 close 竟把状态写成 done: {latest2[lid2]}")
+        # 只给 commit（daemon 的三处自动收口就是这样调的）必须能成功，且派生证据。
+        ok_commit = truthctl(repo, "close", lid2, "靠 commit 收口",
+                             extra_env={"KG_TRUTH_EVIDENCE": "", "KG_TRUTH_COMMIT": "deadbee"})
+        if ok_commit.returncode != 0:
+            raise AssertionError(f"仅带 commit 的 close 失败:\n{ok_commit.stdout}\n{ok_commit.stderr}")
+        latest3 = {}
+        for line in (repo / "ops" / "truth" / "ledger.jsonl").read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                r = _json.loads(line)
+                latest3[r["id"]] = r
+        if latest3[lid2].get("status") != "done":
+            raise AssertionError(f"仅带 commit 的 close 未收口: {latest3[lid2]}")
+        if "deadbee" not in str(latest3[lid2].get("evidence", "")):
+            raise AssertionError(f"commit 未派生进 evidence: {latest3[lid2].get('evidence')}")
+
         # 综合：决策/进展/问题/验收合成产品主线，且主线文件真的落盘。
         syn = truthctl(repo, "synthesize")
         if syn.returncode != 0:
@@ -5656,6 +5691,20 @@ def test_closure_rate():
             "标 done 却没有证据的必须按未闭环并单独报出来"
         assert "33.3%" in closure_rate.human_line(res), closure_rate.human_line(res)
 
+        # 台账只追加 + 同 id 后写覆盖：同一条需求重开再关，只能算一条需求。
+        # 直接数物理行会把分母虚高（实测 knowledge-graph 851 行只有 317 个 id）。
+        write([
+            {"id": "L-0001", "type": "ledger", "status": "open"},
+            {"id": "L-0001", "type": "ledger", "status": "done",
+             "evidence": "cmd -> exit 0"},
+            {"id": "L-0002", "type": "ledger", "status": "open"},
+        ])
+        res = closure_rate.compute(tmp)
+        assert res["denominator"] == 2, \
+            f"分母必须按 id 收敛，不能数物理行: {res}"
+        assert res["numerator"] == 1, res
+        assert res["rate_pct"] == 50.0, res
+
         # 分母为 0：必须是 no_data +「取不到」，绝不能算成 0% 或「正常」。
         write([])
         res = closure_rate.compute(tmp)
@@ -6033,6 +6082,18 @@ def test_daemon_liveness_shared_judge():
     assert live is True and pid == 4321 and project == str(Path("/tmp/proj-a").resolve()), \
         (live, pid, project)
     print("selftest ok: 守护存活判据只有一份，面板与 CLI 共用；没装且开关关着不误报。")
+
+    # 状态面（模型通过 autopilot_status 读到的那段文本）不许把配置位当现实念。
+    # 2026-11-11 实测：daemon_enabled=true 但 launchd 无 job、无进程，文本仍印
+    # 「后台常驻=开」。这一格必须反映「是不是真在跑」。
+    label = central_mcp._daemon_switch_label
+    assert label(False, {"live": True}) == "关", "用户关了就报关，不能被 live 带跑"
+    assert label(True, {"live": True}) == "开", "真在跑就报开"
+    off = label(True, {"live": False})
+    assert off != "开", "开关位为真但进程不在时，不能只报「开」"
+    assert "没进程" in off, off
+    assert label(True, None) != "开", "连 daemon 字段都没有时也不许报「开」"
+
 
 
 def test_product_eval():

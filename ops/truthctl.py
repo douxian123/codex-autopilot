@@ -24,7 +24,7 @@ truthctl 管「这个项目现在到底是什么状态」。
   truthctl product set "<模块>" "<行为>"  更新一个模块（why/files 走环境变量）
   truthctl distill             回看这一轮人额外说了什么，列候选判断
   truthctl distill add "<判断>"  把判断背后的判断逻辑写回（why/scope 走环境变量）
-  truthctl close <L-id> "<结论>"  把问题台账里的一条标成 done，并追加进展
+  truthctl close <L-id> "<结论>"  标 done（必须带证据：KG_TRUTH_EVIDENCE 或 KG_TRUTH_COMMIT）
   truthctl reopen <L-id> "<原因>"  把已关闭的问题重新打开
   truthctl accept "<标题>" [--human --steps "..."]  登记验收项，分清机器自证/人工验收
   truthctl synthesize          把决策/进展/问题/验收综合成 docs/PRODUCT_MAINLINE.md
@@ -873,7 +873,18 @@ def cmd_distill(args):
           '（product/design/arch/process）。')
 
 
-def _set_ledger_status(rid, status, note, evidence=''):
+def _coerce_evidence(evidence):
+    """evidence 历史上出现过 str / list / None 三种类型；统一成单个字符串。"""
+    if not evidence:
+        return ''
+    if isinstance(evidence, str):
+        return evidence.strip()
+    if isinstance(evidence, (list, tuple)):
+        return '\n'.join(str(x) for x in evidence).strip()
+    return str(evidence).strip()
+
+
+def _set_ledger_status(rid, status, note, evidence='', commit=''):
     # JSONL 只追加：同 id 的新记录覆盖旧记录，得到当前状态
     with _truth_lock():
         rec = _latest_ledger(_read(TRUTH / FILES['ledger'])).get(rid)
@@ -884,22 +895,45 @@ def _set_ledger_status(rid, status, note, evidence=''):
         merged['ts'] = time.strftime('%Y-%m-%d %H:%M:%S')
         if note:
             merged['detail'] = (merged.get('detail', '') + '\n' if merged.get('detail') else '') + note
-        if evidence:
-            merged['evidence'] = evidence
         if status == 'done':
+            # fail-closed：标 done = 声明「这件事有可复核的证据证明已经关掉」。
+            # 只有自由文本结论、既无证据又无可追溯 commit 的，一律拒绝——
+            # 凭空标 done 会把首问闭环率这类度量喂成假的（实测 169 条 done 里
+            # 有 89 条既无 evidence 也无 commit）。
+            ev = _coerce_evidence(evidence)
+            commit = str(commit or '').strip()
+            if not ev and not commit:
+                sys.exit(
+                    '拒绝把 %s 标成 done：没有证据。\n'
+                    '  KG_TRUTH_EVIDENCE="<命令/退出码/复现结果>"，或\n'
+                    '  KG_TRUTH_COMMIT=<已合入 main 的 commit sha>（会据此派生证据）。'
+                    % rid)
+            if not ev and commit:
+                ev = 'commit %s（已合入 main，可用 git show %s 复核）' % (commit, commit)
+            merged['evidence'] = ev
             merged['closed'] = merged['ts']
+        elif evidence:
+            merged['evidence'] = _coerce_evidence(evidence)
         _append(merged)
         return merged
 
 
 def cmd_close(args):
-    """把一条问题台账标成 done，并追加一条进展：从「收到」走到「已关闭」。"""
+    """把一条问题台账标成 done，并追加一条进展：从「收到」走到「已关闭」。
+
+    fail-closed：必须带可复核证据——KG_TRUTH_EVIDENCE（命令/退出码/复现结果）
+    或 KG_TRUTH_COMMIT（已合入 main 的 commit sha，会据此派生证据）。
+    只有自由文本结论、两者都没有的，拒绝关闭。
+    """
     if not args:
-        sys.exit('用法: truthctl close <L-id> "<结论/证据>"（KG_TRUTH_COMMIT 可选）')
+        sys.exit('用法: truthctl close <L-id> "<结论>"'
+                 '（需 KG_TRUTH_EVIDENCE 或 KG_TRUTH_COMMIT 至少一个）')
     rid = args[0]
     note = ' '.join(args[1:]) if len(args) > 1 else ''
-    rec = _set_ledger_status(rid, 'done', note, os.environ.get('KG_TRUTH_EVIDENCE', ''))
-    commit = os.environ.get('KG_TRUTH_COMMIT') or None
+    raw_commit = os.environ.get('KG_TRUTH_COMMIT') or ''
+    rec = _set_ledger_status(rid, 'done', note,
+                             os.environ.get('KG_TRUTH_EVIDENCE', ''), raw_commit)
+    commit = raw_commit.strip() or None
     prog = _append_new('progress', title='关闭 %s：%s' % (rid, rec.get('title', '')),
                        summary=note, commit=commit, landed=bool(commit),
                        lane=rec.get('lane'), files=rec.get('files') or [],
