@@ -129,6 +129,26 @@ def free_gb():
         return -1.0
 
 
+def _zstd_path() -> str | None:
+    """Find the zstd binary even under launchd's minimal PATH.
+
+    launchd starts this reaper with PATH=/usr/bin:/bin:/usr/sbin:/sbin, which
+    does not include /opt/homebrew/bin -- the only place zstd is installed on
+    this machine. Measured 2026-11-11: every hourly run logged
+    `FileNotFoundError: 'zstd'` once per candidate file and compressed nothing,
+    so the disk-pressure path it was written for silently did nothing while the
+    disk stayed full -- and a full disk is exactly what keeps the reaper in its
+    15-minute idle mode. Resolve the binary explicitly instead of trusting PATH.
+    """
+    found = shutil.which("zstd")
+    if found:
+        return found
+    for cand in ("/opt/homebrew/bin/zstd", "/usr/local/bin/zstd", "/usr/bin/zstd"):
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return None
+
+
 def compact_session_logs(dry: bool = False) -> tuple[int, int]:
     """Compress old Codex JSONL transcripts with an integrity check.
 
@@ -162,6 +182,12 @@ def compact_session_logs(dry: bool = False) -> tuple[int, int]:
             continue
         candidates.append((st.st_mtime, st.st_size, path))
     candidates.sort(reverse=True)
+    zstd = None
+    if not dry:
+        zstd = _zstd_path()
+        if not zstd:
+            log("找不到 zstd，跳过旧会话压缩（原文件全部保留）")
+            return 0, 0
     compressed = 0
     freed = 0
     for _mtime, size, path in candidates[:SESSION_COMPACT_MAX_FILES]:
@@ -175,13 +201,13 @@ def compact_session_logs(dry: bool = False) -> tuple[int, int]:
         tmp_archive = path.with_name(path.name + ".zst.tmp")
         try:
             proc = subprocess.run(
-                ["zstd", "-19", "-f", "-o", str(tmp_archive), str(path)],
+                [zstd, "-19", "-f", "-o", str(tmp_archive), str(path)],
                 capture_output=True, text=True, timeout=600)
             if proc.returncode != 0 or not tmp_archive.is_file():
                 log(f"会话压缩失败，保留原文件：{path} rc={proc.returncode} {proc.stderr[:200]}")
                 continue
             check = subprocess.run(
-                ["zstd", "-dc", str(tmp_archive)],
+                [zstd, "-dc", str(tmp_archive)],
                 capture_output=True, timeout=600)
             if check.returncode != 0 or check.stdout != path.read_bytes():
                 log(f"会话压缩校验失败，保留原文件：{path}")
