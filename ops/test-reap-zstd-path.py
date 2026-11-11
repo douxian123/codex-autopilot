@@ -62,13 +62,28 @@ def main():
     with mock.patch.dict("os.environ", {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}, clear=False):
         found = mod._zstd_path()
     check("精简 PATH 下仍能定位 zstd", bool(found) and os.access(found, os.X_OK), found)
+    check("签名临时副本默认宽限期为 2 分钟",
+          mod.CODEX_SIGN_CLONE_GRACE_MIN == 2.0,
+          mod.CODEX_SIGN_CLONE_GRACE_MIN)
 
-    # 2) 精简 PATH + 低盘 → 真压缩且无损。
+    # 2) 默认必须保持关闭：低盘压力也不能擅自替换 Codex 可读取的历史格式。
+    with tempfile.TemporaryDirectory(prefix="reap-zstd-") as tmp:
+        root = Path(tmp)
+        old = make_old_session(root)
+        with mock.patch.dict("os.environ", {"CODEX_HOME": str(root / ".codex")}), \
+             mock.patch.object(mod, "free_gb", return_value=1.0):
+            os.environ.pop("KG_SESSION_COMPACT", None)
+            n, freed = mod.compact_session_logs()
+        check("默认不压缩或替换历史会话", n == 0 and freed == 0 and old.is_file(),
+              (n, freed, old.exists()))
+
+    # 3) 显式 opt-in + 精简 PATH + 低盘 → 才允许真压缩且无损。
     with tempfile.TemporaryDirectory(prefix="reap-zstd-") as tmp:
         root = Path(tmp)
         old = make_old_session(root)
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
+                              "KG_SESSION_COMPACT": "1",
                               "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0):
             n, freed = mod.compact_session_logs()
@@ -76,11 +91,13 @@ def main():
         check("原文件已替换为 .zst", (not old.exists())
               and old.with_name(old.name + ".zst").is_file())
 
-    # 3) 反向：真的没有 zstd 时，保留全部原文件且不留半截产物。
+    # 4) 反向：显式开启但真的没有 zstd 时，仍保留全部原文件且不留半截产物。
     with tempfile.TemporaryDirectory(prefix="reap-zstd-") as tmp:
         root = Path(tmp)
         old = make_old_session(root)
-        with mock.patch.dict("os.environ", {"CODEX_HOME": str(root / ".codex")}), \
+        with mock.patch.dict("os.environ",
+                             {"CODEX_HOME": str(root / ".codex"),
+                              "KG_SESSION_COMPACT": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
              mock.patch.object(mod, "_zstd_path", return_value=None):
             n, freed = mod.compact_session_logs()
