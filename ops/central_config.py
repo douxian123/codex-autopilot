@@ -103,10 +103,16 @@ def load(repo) -> dict:
 
 
 def trunk_dir(repo, cfg) -> Path:
-    """落盘用的主干工作树路径。默认放在仓库同级、名字加 -trunk。"""
+    """落盘用的主干工作树路径。默认放在仓库同级、名字加 -trunk。
+
+    `trunk_dir` 是显式路径，解析后必须原样使用。配置里的状态根本身经常就是
+    一个叫 `*-trunk` 的目录；旧实现若再把它的名字拼上 `-trunk`，就会去找一个
+    不存在的目录，并让所有落盘门禁报 `cwd 不存在`。相对路径仍按状态根解析。
+    """
     repo = Path(repo)
     if cfg.get("trunk_dir"):
-        return Path(cfg["trunk_dir"]).expanduser()
+        path = Path(cfg["trunk_dir"]).expanduser()
+        return (path if path.is_absolute() else repo / path).resolve()
     return repo.parent / (repo.name + "-trunk")
 
 
