@@ -20,8 +20,15 @@ def _is_prefix(candidate: Path, covering: Path) -> bool:
         return False
 
     try:
-        wanted = candidate.stat().st_size
-        if covering.stat().st_size < wanted:
+        candidate_stat = candidate.stat()
+        covering_stat = covering.stat()
+        if (
+            candidate_stat.st_dev == covering_stat.st_dev
+            and candidate_stat.st_ino == covering_stat.st_ino
+        ):
+            return True
+        wanted = candidate_stat.st_size
+        if covering_stat.st_size < wanted:
             return False
         if wanted == 0:
             return True

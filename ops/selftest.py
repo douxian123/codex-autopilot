@@ -2977,7 +2977,8 @@ def test_auto_exec():
         # 宿主磁盘余量不属于这些用例的断言对象：真实低盘时它们会假失败。
         # 磁盘闸本身由 test_parallel_exec_slots 用显式 mock 单独锁住，
         # 这里只把普通派发路径固定在“余量充足”。
-        central_daemon._disk_free_gb = lambda: 20.0
+        central_daemon._disk_free_gb = (
+            lambda: central_daemon.EXEC_DISK_RESUME_FREE_GB + 1.0)
         # 每个 fixture 的 worktree 都叫 L-0001-item；上一个 fixture 的 worker
         # 可能还在退出过程中。模块级进程缓存若不重置，会把旧 worktree 误当成本
         # fixture 的活进程，跳过派发并直接清掉新分支。
@@ -3632,7 +3633,8 @@ def test_exec_model_fallback_relaunch_is_async():
         repo.mkdir(); wt.mkdir()
         # 本用例验「fallback 重挂是异步的」，不验磁盘闸；宿主真实低盘会让它假失败。
         # 磁盘闸对重启的约束由 test_disk_hold_withholds_worker_restart 单独锁住。
-        central_daemon._disk_free_gb = lambda: 20.0
+        central_daemon._disk_free_gb = (
+            lambda: central_daemon.EXEC_DISK_RESUME_FREE_GB + 1.0)
         log_path = base / "worker.log"
         log_path.write_text(
             "ERROR: 403 Forbidden insufficient balance\n", encoding="utf-8")
@@ -3697,6 +3699,7 @@ def test_parallel_exec_slots():
     import importlib
     import json as _json
     import time as _time
+    import central_daemon
 
     def exercise(slots):
         with tempfile.TemporaryDirectory(prefix=f"codex-autopilot-parallel-{slots}-") as tmp:
@@ -3777,7 +3780,8 @@ def test_parallel_exec_slots():
                 assert not workers.get("exec_jobs"), workers
 
                 # Crossing the resume threshold releases the configured slots.
-                central_daemon._disk_free_gb = lambda: 10.01
+                central_daemon._disk_free_gb = (
+                    lambda: central_daemon.EXEC_DISK_RESUME_FREE_GB + 0.01)
                 started, workers = central_daemon.dispatch_exec(False, blocked, workers)
                 assert started == [], started
                 jobs = workers["exec_jobs"]
@@ -3819,7 +3823,8 @@ def test_parallel_exec_slots():
 
     exercise(3)
     exercise(10)
-    print("selftest ok: 低盘阻断新 worker、保留在途任务，恢复到 10GB 后自动放行 3/10 槽位。")
+    print("selftest ok: 低盘阻断新 worker、保留在途任务，"
+          f"恢复到 {central_daemon.EXEC_DISK_RESUME_FREE_GB:g}GB 后自动放行 3/10 槽位。")
 
 
 def test_disk_hold_withholds_worker_restart():
@@ -3868,6 +3873,68 @@ def test_disk_hold_withholds_worker_restart():
                 assert "proc" not in job, job
 
     print("selftest ok: 低盘时重试/重派也不重启 worker，保留现场等空间恢复再续跑。")
+
+
+def test_worktree_admission_fails_closed_before_creation():
+    """Disk and inventory admission must reject before `git worktree add`.
+
+    The old worker disk gate protected an existing checkout from starting a
+    session, but the daemon could still create its worktree first. That kept
+    200+ checkouts on disk and wrote another few hundred MB even when dispatch
+    was subsequently held. Lock the cheaper invariant: a rejected admission
+    performs no worktree creation at all.
+    """
+    import importlib
+    import subprocess
+    import sys
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-worktree-cap-") as tmp:
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.email",
+                        "selftest@example.invalid"], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.name",
+                        "selftest"], check=True)
+        (repo / "README").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(repo), "add", "README"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "base"], check=True)
+
+        target = Path(tmp) / "blocked-worktree"
+        with mock.patch.object(central_daemon, "EXEC_WORKTREE_CAP", 1), \
+             mock.patch.object(central_daemon, "_disk_free_gb", return_value=100.0), \
+             mock.patch.object(central_daemon, "_disk_pressure", return_value=0):
+            out = central_daemon._add_worktree_admitted(
+                repo, target, "codex/blocked", base="main")
+            assert out["ok"] is False, out
+            assert out["admission"]["reason"] == "worktree_cap", out
+            assert out["admission"]["worktree_count"] == 1, out
+            assert not target.exists(), target
+
+        with mock.patch.object(central_daemon, "EXEC_WORKTREE_CAP", 2), \
+             mock.patch.object(central_daemon, "_disk_free_gb", return_value=100.0), \
+             mock.patch.object(central_daemon, "_disk_pressure", return_value=0):
+            out = central_daemon._add_worktree_admitted(
+                repo, target, "codex/allowed", base="main")
+            assert out["ok"] is True, out
+            assert target.is_dir(), target
+
+        unknown = Path(tmp) / "unknown-worktree"
+        with mock.patch.object(central_daemon, "_disk_free_gb", return_value=None):
+            denied = central_daemon._add_worktree_admitted(
+                repo, unknown, "codex/unknown", base="main")
+            assert denied["ok"] is False, denied
+            assert denied["admission"]["reason"] == "disk_unknown", denied
+            assert not unknown.exists(), unknown
+
+    print("selftest ok: worktree 在低盘/超量/空间未知时先拒绝，不会留下目录或分支。")
 
 
 def test_git_gc_never_prunes_shared_partial_clone():
@@ -4402,7 +4469,8 @@ def test_resolve_exec_parallel():
         importlib.reload(central_daemon)
 
         # 本用例只验证 resolve 派发，不验证磁盘闸；宿主真实低盘会让它假失败。
-        central_daemon._disk_free_gb = lambda: 20.0
+        central_daemon._disk_free_gb = (
+            lambda: central_daemon.EXEC_DISK_RESUME_FREE_GB + 1.0)
         # 当前门禁沙箱禁止读取宿主的全部进程表，_resolve_worktree_owned 会
         # fail-closed 成 True；本用例要验证的是「无 worker 时重新入队」，
         # 占用探测由 _resolve_open_items 的独立行为和真实 daemon 负责。
@@ -5361,7 +5429,8 @@ def test_reap_scan_is_sliced_and_throttled():
             central_daemon._knob = lambda n, d=True: n == "reap_worktrees"
             central_daemon._worktree_repo = fake_worktree_repo
             central_daemon._live_exec_slugs = lambda *a, **k: frozenset()
-            central_daemon._disk_free_gb = lambda: 20.0
+            central_daemon._disk_free_gb = (
+                lambda: central_daemon.EXEC_DISK_RESUME_FREE_GB + 1.0)
 
             first = central_daemon._reap_dead_worktrees()
             assert first == 0, first
@@ -6428,6 +6497,7 @@ if __name__ == "__main__":
     test_exec_model_fallback_relaunch_is_async()
     test_parallel_exec_slots()
     test_disk_hold_withholds_worker_restart()
+    test_worktree_admission_fails_closed_before_creation()
     test_git_gc_never_prunes_shared_partial_clone()
     test_proc_run_never_hangs_on_inherited_pipe()
     test_run_kgctl_streams_progress_live()

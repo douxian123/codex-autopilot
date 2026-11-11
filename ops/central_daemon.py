@@ -44,6 +44,8 @@
 """
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -134,12 +136,18 @@ EXEC_DEFAULT_MAX_WORKERS = 10
 # 自动派发必须有磁盘准入：停止线以下不启动新 worker，恢复线以上才放行。
 # 双阈值避免磁盘余量在边界附近抖动时反复停开；在途 worker 不会被终止。
 EXEC_DISK_STOP_FREE_GB = float(
-    os.environ.get("KG_EXEC_DISK_STOP_FREE_GB", "6"))
+    os.environ.get("KG_EXEC_DISK_STOP_FREE_GB", "20"))
 EXEC_DISK_RESUME_FREE_GB = float(
-    os.environ.get("KG_EXEC_DISK_RESUME_FREE_GB", "10"))
+    os.environ.get("KG_EXEC_DISK_RESUME_FREE_GB", "24"))
 if EXEC_DISK_RESUME_FREE_GB < EXEC_DISK_STOP_FREE_GB:
     EXEC_DISK_RESUME_FREE_GB = EXEC_DISK_STOP_FREE_GB
 EXEC_DISK_HOLD_IN_MEMORY = False
+# The existing disk gate controls Codex workers. This second gate controls the
+# source of the expensive artifact itself: a Git worktree. A machine can have
+# adequate free space and still be unable to support another checkout. The cap
+# includes the main worktree, and the same lock file is used by the project's
+# new-task helper so two processes cannot both take the last slot.
+EXEC_WORKTREE_CAP = int(os.environ.get("KG_EXEC_WORKTREE_CAP", "160"))
 # 基础设施抖动 vs 需求真做不出来：底层模型代理（127.0.0.1:15721）偶发 502 /
 # Transport channel closed，会让 codex 进程以非 0 退出，但需求本身没问题。同一
 # worktree 上指数退避重跑即可，默认 3 次；重试仍失败记 codex_infra_fail，与
@@ -1884,12 +1892,13 @@ def _prepare_exec(item: dict, cfg: dict, blocked: dict,
     if force_session and _git(repo, "rev-parse", "--verify", branch)[0] == 0:
         if not existing_wt.exists():
             _git(repo, "worktree", "prune")
-            _rc, _out, _err = _git(repo, "worktree", "add", str(existing_wt), branch)
-            if _rc != 0:
+            _added = _add_worktree_admitted(repo, existing_wt, branch)
+            if not _added["ok"]:
+                _reason = _added.get("admission", {}).get("reason") or "worktree_add_fail"
                 blocked[rid] = {"reason": "worktree_preserved",
                                 "worktree": str(existing_wt), "branch": branch,
-                                "ts": _now()}
-                log(f"[exec] {rid} 限流后重挂 worktree 失败：{_err[:200]}")
+                                "admission": _added.get("admission"), "ts": _now()}
+                log(f"[exec] {rid} 限流后重挂 worktree 被拒（{_reason}）：{_added['err'][:200]}")
                 return {"id": rid, "outcome": "worktree_preserved",
                         "branch": branch, "worktree": str(existing_wt)}
             _link_side_dirs(existing_wt, conf)
@@ -1923,8 +1932,8 @@ def _prepare_exec(item: dict, cfg: dict, blocked: dict,
                 # same branch instead of blocking dispatch forever on a
                 # phantom path; nothing is deleted.
                 _git(repo, "worktree", "prune")
-                _rc, _out, _err = _git(repo, "worktree", "add", str(existing_wt), branch)
-                if _rc == 0:
+                _added = _add_worktree_admitted(repo, existing_wt, branch)
+                if _added["ok"]:
                     log(f"[exec] {rid} 复用保留分支 {branch}（原 worktree 已不存在）")
                     _link_side_dirs(existing_wt, conf)
                     _codex2 = _codex_bin()
@@ -1940,10 +1949,12 @@ def _prepare_exec(item: dict, cfg: dict, blocked: dict,
                             "result": {"id": rid, "branch": branch,
                                        "worktree": str(existing_wt)}}
                 else:
+                    _reason = _added.get("admission", {}).get("reason") or "worktree_add_fail"
                     blocked[rid] = {"reason": "worktree_preserved",
                                     "worktree": str(existing_wt), "branch": branch,
-                                    "ts": _now()}
-                    log(f"[exec] {rid} 复用分支建 worktree 失败：{_err[:200]}")
+                                    "admission": _added.get("admission"), "ts": _now()}
+                    log(f"[exec] {rid} 复用分支建 worktree 被拒（{_reason}）："
+                        f"{_added['err'][:200]}")
                     return {"id": rid, "outcome": "worktree_preserved",
                             "branch": branch, "worktree": str(existing_wt)}
             blocked[rid] = {
@@ -1964,11 +1975,15 @@ def _prepare_exec(item: dict, cfg: dict, blocked: dict,
     _, base, _ = _git(repo, "rev-parse", f"origin/{main_branch}")
     if not base:
         _, base, _ = _git(repo, "rev-parse", main_branch)
-    rc, out, err = _git(repo, "worktree", "add", "-b", branch, str(wt), base)
-    if rc != 0:
-        log(f"[exec] 建 worktree 失败 {rid}: {err[:300]}")
-        blocked[rid] = {"reason": "worktree_fail", "ts": _now()}
-        return {"id": rid, "outcome": "worktree_fail"}
+    added = _add_worktree_admitted(repo, wt, branch, base=base)
+    if not added["ok"]:
+        admission = added.get("admission") or {}
+        reason = admission.get("reason") or "worktree_fail"
+        log(f"[exec] 建 worktree 被拒 {rid}: {reason} "
+            f"free={admission.get('free_gb')} count={admission.get('worktree_count')} "
+            f"cap={admission.get('worktree_cap')} err={added['err'][:300]}")
+        blocked[rid] = {"reason": reason, "admission": admission, "ts": _now()}
+        return {"id": rid, "outcome": reason}
     _link_side_dirs(wt, conf)
 
     codex = _codex_bin()
@@ -3320,6 +3335,78 @@ def _disk_free_gb() -> float | None:
         return int(out.strip().splitlines()[-1].split()[3]) / 1024 / 1024
     except Exception:
         return None
+
+
+def _worktree_count(repo) -> int | None:
+    """Count every live worktree, including the shared checkout."""
+    try:
+        rc, out, _err = _git(repo, "worktree", "list", "--porcelain", timeout=30)
+        if rc != 0:
+            return None
+        return sum(1 for line in out.splitlines() if line.startswith("worktree "))
+    except Exception:
+        return None
+
+
+@contextlib.contextmanager
+def _worktree_admission_lock(repo):
+    """Serialize capacity check + worktree creation across daemon processes."""
+    rc, out, err = _git(repo, "rev-parse", "--git-common-dir", timeout=30)
+    if rc != 0 or not out.strip():
+        raise RuntimeError(err.strip() or "cannot resolve git common dir")
+    common = Path(out.strip())
+    if not common.is_absolute():
+        common = Path(repo) / common
+    lock_path = common / ".codex-worktree-admission.lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def _worktree_admission(repo) -> tuple[bool, dict]:
+    """Fail closed when disk or inventory cannot support another checkout."""
+    free = _disk_free_gb()
+    count = _worktree_count(repo)
+    detail = {"free_gb": free, "worktree_count": count,
+              "worktree_cap": EXEC_WORKTREE_CAP}
+    if free is None:
+        return False, {**detail, "reason": "disk_unknown"}
+    if _disk_pressure():
+        return False, {**detail, "reason": "disk_pressure"}
+    if count is None:
+        return False, {**detail, "reason": "worktree_count_unknown"}
+    if count >= EXEC_WORKTREE_CAP:
+        return False, {**detail, "reason": "worktree_cap"}
+    return True, detail
+
+
+def _add_worktree_admitted(repo, worktree: Path, branch: str,
+                           base: str | None = None) -> dict:
+    """Create a worktree only while holding the shared admission lock.
+
+    ``base`` means create the branch as part of the add. Without it, branch
+    already exists and the worktree is being re-attached.
+    """
+    try:
+        with _worktree_admission_lock(repo):
+            allowed, detail = _worktree_admission(repo)
+            if not allowed:
+                return {"ok": False, "admission": detail,
+                        "rc": 75, "out": "", "err": detail["reason"]}
+            if base is None:
+                rc, out, err = _git(repo, "worktree", "add", str(worktree), branch)
+            else:
+                rc, out, err = _git(
+                    repo, "worktree", "add", "-b", branch, str(worktree), base)
+            return {"ok": rc == 0, "rc": rc, "out": out, "err": err,
+                    "admission": detail}
+    except Exception as exc:
+        return {"ok": False, "rc": 75, "out": "", "err": str(exc),
+                "admission": {"reason": "admission_lock_error"}}
 
 
 def _reap_backend_orphans() -> int:
