@@ -209,6 +209,14 @@ def process_reference(worktree: Path, commands: str | None = None) -> str:
         return ""
     candidates = {str(worktree), worktree.as_posix(), str(worktree.resolve())}
     candidates.add(os.path.realpath(worktree))
+    # macOS: /var、/tmp、/etc 都是 /private/* 的符号链接。git 报出的 worktree 路径常带
+    # /private，而进程 argv 里常写不带 /private 的那一份。两边都要算命中，否则一个正被
+    # dev server / gate 占用的树会被判成「闲置」——2026-11-11 实测过这条误删路径。
+    for path in tuple(candidates):
+        if path.startswith("/private/"):
+            candidates.add(path[len("/private"):])
+        else:
+            candidates.add("/private" + path)
     needles = {path.rstrip("/").lower() for path in candidates if path}
     for raw in commands.splitlines():
         line = raw.strip().lower()
