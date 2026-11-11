@@ -89,6 +89,27 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 
 > 注意：Codex 的 personal marketplace 以 `$HOME` 为根，插件实体必须在 `~/plugins/<name>/`，清单在 `~/.agents/plugins/marketplace.json`，这是两个目录，别写混。
 
+### 换一台机器
+
+整套环境（配置、凭据、skills、插件、账本运行态）可以用一条命令搬到另一台机器，**同名用户名的机器最快**：两台连同一个 WiFi，源机起一个临时 HTTP，目标机 `curl | tar` 边收边解，源机不落任何中间产物（源机常常磁盘告急，打包再传会把它顶爆）。
+
+```bash
+# 源机（自动挡仓库里）
+python3 ops/portable_migrate.py plan            # 先算账：传哪些、多大、哪些再生件不传
+python3 ops/portable_migrate.py serve           # 起临时 HTTP，打印目标机要跑的那条命令
+#   ↑ 输出里那条 curl 的链接带一次性随机令牌（本次口令，Ctrl-C 即失效）
+
+# 目标机：粘贴源机打印的 curl | tar 命令，然后
+python3 ~/.codex-autopilot/portable_migrate.py remap --to "$HOME" --go   # 目标机用户名不同时才需要
+```
+
+三档粒度：`--tier core`（只带必需）/ `standard`（默认，+运行时，本机实测约 420M）/ `all`（含 ~12G 再生件，一般不用）。会话历史这类再生件默认不传。
+
+两点要知道：
+
+- 包里含 `~/.codex/auth.json`（登录凭据），走的是**明文 HTTP**，只在可信 WiFi 上跑，传完立刻 `Ctrl-C`。链接里的随机令牌就是本次口令，没带令牌的请求一律 404。
+- `remap` 负责把写死的绝对路径从源机 `$HOME` 改到目标机 `$HOME`（本机实测命中 430+ 文件、4600+ 处）。源机与目标机用户名相同就跳过它。工具本体随包自带，落地后就能跑 `remap`。
+
 ## 怎么用
 
 装好之后，**那个普通的 Codex 输入框就是总输入框**。你只做一件事：把感受原样说出来。分类、路由、排期、追踪由它接手。
