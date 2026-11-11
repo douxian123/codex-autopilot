@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "exec_command|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env python3 /Users/danta/.codex/hooks/resource-admission.py",
+            "timeout": 3,
+            "statusMessage": "Checking verification capacity"
+          }
+        ]
+      }
+    ]
+  }
+}
