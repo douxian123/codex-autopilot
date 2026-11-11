@@ -5686,6 +5686,20 @@ def test_closure_rate():
             "标 done 却没有证据的必须按未闭环并单独报出来"
         assert "33.3%" in closure_rate.human_line(res), closure_rate.human_line(res)
 
+        # 台账只追加 + 同 id 后写覆盖：同一条需求重开再关，只能算一条需求。
+        # 直接数物理行会把分母虚高（实测 knowledge-graph 851 行只有 317 个 id）。
+        write([
+            {"id": "L-0001", "type": "ledger", "status": "open"},
+            {"id": "L-0001", "type": "ledger", "status": "done",
+             "evidence": "cmd -> exit 0"},
+            {"id": "L-0002", "type": "ledger", "status": "open"},
+        ])
+        res = closure_rate.compute(tmp)
+        assert res["denominator"] == 2, \
+            f"分母必须按 id 收敛，不能数物理行: {res}"
+        assert res["numerator"] == 1, res
+        assert res["rate_pct"] == 50.0, res
+
         # 分母为 0：必须是 no_data +「取不到」，绝不能算成 0% 或「正常」。
         write([])
         res = closure_rate.compute(tmp)
