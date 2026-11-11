@@ -575,14 +575,10 @@ def main():
     session_n, session_freed = compact_session_logs(dry=DRY)
     try:
         if DRY:
+            # 演练的候选清单由 _reap_dead_worktrees 自己回填，调用方不再猴补
+            # remove_worktree —— 那条猴补一旦漏掉，演练就会真删现场。
             picked = []
-            orig = d.workspace_guard.remove_worktree
-            d.workspace_guard.remove_worktree = (
-                lambda repo, wt, **kw: (picked.append(wt.name) or (True, "dry")))
-            try:
-                n = d._reap_dead_worktrees()
-            finally:
-                d.workspace_guard.remove_worktree = orig
+            n = d._reap_dead_worktrees(dry=True, candidates=picked)
             t = _reap_kg_tmp(dry=True, guard=d.workspace_guard)
             o = _dry_orphan_residue(d)
             sn, sf = reap_regenerable_duplicates(
@@ -592,7 +588,7 @@ def main():
                 f"（{session_freed / 1e9:.2f}GB）；会剥离 {sn} 棵树的重复副本"
                 f"（{sf / 1e9:.2f}GB）-> {picked}")
         else:
-            n = d._reap_dead_worktrees()
+            n = d._reap_dead_worktrees(dry=False)
             k = d._reap_backend_orphans()
             t = _reap_kg_tmp(guard=d.workspace_guard)
             # 顺序有讲究：必须在 worktree 回收之后。前者刚把树删掉的现场不会
