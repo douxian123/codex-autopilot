@@ -5875,6 +5875,85 @@ def test_task_worktree_name_predicate_is_shared_and_complete():
     print("selftest ok: 工作树名字判据单一化，kg29-* 这类拼法不再漏扫。")
 
 
+def test_strip_regenerable_files_is_per_file_and_lossless():
+    """逐文件剥离：一个未跟踪小文件不再钉死整份 ~250MB 可还原副本（2026-11-13）。
+
+    2026-11-13 实测：15 棵在用 worktree 各押着一份 byte-identical 的
+    `backend/evidence`（约 250MB），却因为同一目录里有一个未跟踪/已改动的文件，
+    被整目录判据整块挡住。逐文件口径可多回收 2.39GB，字节全在 HEAD 里。
+
+    本测试钉住四条不变式：
+      1. 干净跟踪文件逐个可剥；同目录的未跟踪文件保留、连目录都留着；
+      2. 已改动/已暂存/已删除的跟踪文件绝不剥；
+      3. 剥离后可 `git checkout -- <dir>` 原样还原；
+      4. 整目录 pristine 时，逐文件口径与旧口径释放的字节一致（不退化）。
+    """
+    import sys
+    from pathlib import Path
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import workspace_guard as wg
+
+    def _git(cwd, *a):
+        return subprocess.run(["git", "-C", str(cwd), *a],
+                              capture_output=True, text=True)
+
+    with tempfile.TemporaryDirectory(prefix="wg-perfile-") as tmp:
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q", "-b", "main")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        ev = repo / "backend" / "evidence"
+        ev.mkdir(parents=True)
+        (ev / "a.json").write_text('{"a":1}')
+        (ev / "b.json").write_text('{"b":2}')
+        (repo / "src").mkdir()
+        (repo / "src" / "app.ts").write_text("v1\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "init")
+
+        # 1) 副本里放一个人间未跟踪文件 -> 那份 250MB 副本仍应可剥（干净的部分）
+        wt = Path(tmp) / "wt"
+        _git(repo, "worktree", "add", "-q", "-b", "codex/pf", str(wt))
+        (wt / "backend" / "evidence" / "human-note.md").write_text("人工备注")
+        strippable = wg.regenerable_strippable_files(wt)
+        assert "backend/evidence" in strippable, strippable
+        assert set(strippable["backend/evidence"]) == {
+            "backend/evidence/a.json", "backend/evidence/b.json"}, strippable
+        freed = wg.strip_regenerable_files(wt)
+        assert freed.get("backend/evidence", 0) > 0, freed
+        assert not (wt / "backend" / "evidence" / "a.json").exists(), "干净文件应被剥离"
+        assert (wt / "backend" / "evidence" / "human-note.md").exists(), \
+            "人间未跟踪文件绝不能被删"
+        _git(wt, "checkout", "--", "backend/evidence")
+        assert (wt / "backend" / "evidence" / "a.json").read_text() == '{"a":1}', \
+            "被剥离的字节必须能从 HEAD 原样还原"
+
+        # 2) 已改动的跟踪文件绝不剥
+        wt2 = Path(tmp) / "wt2"
+        _git(repo, "worktree", "add", "-q", "-b", "codex/pf2", str(wt2))
+        (wt2 / "backend" / "evidence" / "b.json").write_text('{"b":"EDIT"}')
+        s2 = wg.regenerable_strippable_files(wt2)
+        names2 = s2.get("backend/evidence", [])
+        assert "backend/evidence/b.json" not in names2, "已改动文件绝不能被列入可剥"
+        assert "backend/evidence/a.json" in names2, names2
+        wg.strip_regenerable_files(wt2)
+        assert (wt2 / "backend" / "evidence" / "b.json").read_text() == '{"b":"EDIT"}', \
+            "已改动文件的一个字节都不能丢"
+
+        # 3) 整目录 pristine 时，逐文件口径 == 旧口径的字节数
+        wt3 = Path(tmp) / "wt3"
+        _git(repo, "worktree", "add", "-q", "-b", "codex/pf3", str(wt3))
+        whole = sum(f.stat().st_size for f in (wt3 / "backend" / "evidence").rglob("*")
+                    if f.is_file())
+        got = wg.strip_regenerable_files(wt3)
+        assert got["backend/evidence"] == whole, (got, whole)
+
+    print("selftest ok: 逐文件剥离只动与 HEAD 相同的跟踪文件，人间产物与改动一律保留。")
+
+
 def test_mcp_contract():
     """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
     import json as _json
@@ -6776,6 +6855,7 @@ if __name__ == "__main__":
     test_strip_regenerable_duplicate_is_opt_in_and_lossless()
     test_strip_duplicate_decouples_from_tree_dirtiness()
     test_task_worktree_name_predicate_is_shared_and_complete()
+    test_strip_regenerable_files_is_per_file_and_lossless()
     test_mcp_contract()
     test_closure_rate()
     test_product_eval()

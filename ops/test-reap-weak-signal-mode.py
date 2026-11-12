@@ -98,6 +98,13 @@ class RecordingGuard:
         self.stripped.append(worktree)
         return {"evidence": 123}
 
+    def regenerable_strippable_files(self, _worktree):
+        return {"evidence": ["evidence/x.json"]}
+
+    def strip_regenerable_files(self, worktree):
+        self.stripped.append(worktree)
+        return {"evidence": 123}
+
     def worktree_removable(self, *_a, **kw):
         self.modes.append(kw.get("live_guard_mode"))
         return {"ok": False, "reason": "recorded"}

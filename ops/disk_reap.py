@@ -583,24 +583,27 @@ def reap_regenerable_duplicates(dry: bool = False, guard=None,
         # cwd。命中就跳过这一棵，别的树照常剥离。
         if guard.live_guard_blocker(d, "all"):
             continue
-        state = guard.regenerable_dirs_state(d)
-        if not any(v == "pristine" for v in state.values()):
+        # 逐文件判据（2026-11-13）：旧口径按整目录判 pristine，副本里只要有一个
+        # 人的未跟踪/改动文件，整份 ~250MB 可还原副本就被钉死。实测 15 棵在用
+        # 的树各押着这样一份，逐文件口径可多回收 2.39GB，字节全在 HEAD 里。
+        # 判据只收紧不放松 —— 只有「git 跟踪、且 HEAD==index==工作区」的单个
+        # 文件才算数，未跟踪/忽略/已暂存/已改动/已删除一律跳过、连目录都不进。
+        strippable = guard.regenerable_strippable_files(d)
+        if not strippable:
             continue
         if dry:
             approx = 0
-            for rel, how in state.items():
-                if how != "pristine":
-                    continue
-                try:
-                    approx += sum(_alloc_size(str(f))
-                                  for f in (d / rel).rglob("*") if f.is_file())
-                except OSError:
-                    pass
+            for rel, names in strippable.items():
+                for name in names:
+                    try:
+                        approx += _alloc_size(str(d / name))
+                    except OSError:
+                        pass
             if approx:
                 stripped_n += 1
                 freed += approx
             continue
-        got = guard.strip_regenerable_tracked(d)
+        got = guard.strip_regenerable_files(d)
         if got:
             stripped_n += 1
             freed += sum(got.values())

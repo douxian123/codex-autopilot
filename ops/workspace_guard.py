@@ -159,6 +159,104 @@ def strip_regenerable_tracked(worktree: Path) -> dict[str, int]:
     return stripped
 
 
+def regenerable_strippable_files(worktree: Path) -> dict[str, list[str]]:
+    """Tracked, byte-clean files under regenerable dirs that may be stripped.
+
+    Per-file refinement of `regenerable_dirs_state`: that function works at whole
+    directory granularity, so one untracked note or one edited file inside
+    `backend/evidence` used to pin the entire ~250MB duplicate. Measured on this
+    machine 2026-11-13: 15 live worktrees were each holding a full ~250MB copy
+    that was byte-identical to HEAD, blocked only by a single stray file next to
+    it -- 2.39GB that the whole-dir rule could never see.
+
+    This is strictly narrower than the directory rule, never a relaxation: a file
+    qualifies only when git tracks it, its status is clean (HEAD == index ==
+    worktree), so the exact bytes exist in HEAD and ``git checkout -- <file>``
+    restores them. Anything untracked, ignored, staged, modified or deleted is
+    reported nowhere and therefore never deleted. Returns {rel_dir: [rel_file]}.
+    """
+    strippable: dict[str, list[str]] = {}
+    for rel in REGENERABLE_TRACKED_DIRS:
+        if not (worktree / rel).exists():
+            continue
+        tracked = run_git(worktree, "ls-files", "-z", "--", rel)
+        if tracked.returncode != 0:
+            continue
+        names = [n for n in (tracked.stdout or "").split("\0") if n]
+        if not names:
+            continue
+        diff = run_git(worktree, "status", "--porcelain", "-uall",
+                       "--ignored=matching", "-z", "--", rel)
+        dirty = set()
+        records = (diff.stdout or "").split("\0")
+        i = 0
+        while i < len(records):
+            entry = records[i]
+            i += 1
+            if not entry:
+                continue
+            code = entry[:2]
+            path = entry[3:]
+            dirty.add(path)
+            # In `-z` a rename/copy splits into two records: the target here and
+            # the source in the next one. Mark both so neither can be stripped.
+            if code[:1] in ("R", "C") and i < len(records) and records[i]:
+                dirty.add(records[i])
+                i += 1
+        keep: list[str] = []
+        for name in names:
+            if name in dirty:
+                continue
+            path = worktree / name
+            if path.is_file() and not path.is_symlink():
+                keep.append(name)
+        if keep:
+            strippable[rel] = keep
+    return strippable
+
+
+def strip_regenerable_files(worktree: Path) -> dict[str, int]:
+    """Delete tracked byte-clean files under regenerable dirs, one file at a time.
+
+    The file-level counterpart of `strip_regenerable_tracked`. It never removes
+    an untracked, ignored, staged, modified or deleted file -- only files that
+    `regenerable_strippable_files` has confirmed exist identically in HEAD. It
+    then prunes only the directories that end up empty, so a stray human file
+    keeps its own directory. Restorable with `git checkout -- <dir>`. Returns
+    {rel_dir: freed_bytes}.
+    """
+    strippable = regenerable_strippable_files(worktree)
+    freed: dict[str, int] = {}
+    for rel, names in strippable.items():
+        total = 0
+        for name in names:
+            path = worktree / name
+            try:
+                total += path.stat().st_size
+                path.unlink()
+            except OSError:
+                continue
+        # Prune directories this strip emptied, deepest first. rmdir only removes
+        # empty dirs, so a parent still holding an untracked file survives.
+        base = worktree / rel
+        try:
+            for sub in sorted((p for p in base.rglob("*") if p.is_dir()),
+                              key=lambda p: -len(p.parts)):
+                try:
+                    sub.rmdir()
+                except OSError:
+                    pass
+            try:
+                base.rmdir()
+            except OSError:
+                pass
+        except OSError:
+            pass
+        if total:
+            freed[rel] = total
+    return freed
+
+
 def restore_regenerable_tracked(worktree: Path) -> list[str]:
     """Restore tracked files under regenerable output dirs from HEAD.
 
