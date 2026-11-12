@@ -129,6 +129,51 @@ def main():
         n4 = cd._reap_dead_worktrees()
         check("创建时间不可读时保留现场", fresh3.exists(), f"reaped={n4}")
 
+        # ---- 5. 手工 kgctl reap --go 也要过同一组闸（2026-11-13 实测缺口）----
+        # 实测：/private/tmp/kg-t01-binding 03:37 建好，03:39 被 `kgctl reap --go`
+        # 连目录一起删掉，而那个会话正拿它当工作目录。守护进程通道早就有判活 +
+        # 创建宽限，只有这条手工通道漏了。
+        import importlib.util as _ilu
+        kg = load("kg_reap_guard", "kgctl.py")
+
+        fresh_manual = base / "kg-manual-fresh"
+        add_worktree(repo, fresh_manual, "codex/manual-fresh")
+        os.environ["KG_REAP_CREATION_GRACE_H"] = "1"
+        check("手工 reap：宽限期内的树被保留",
+              kg._reap_wt_keep_reason(fresh_manual) == "creation-grace",
+              kg._reap_wt_keep_reason(fresh_manual))
+
+        # 反向断言：宽限期关掉后，同一棵树不再被这条判据保留，
+        # 否则加固就变成「把每棵新树永久钉住」。
+        os.environ["KG_REAP_CREATION_GRACE_H"] = "0"
+        reason_off = kg._reap_wt_keep_reason(fresh_manual)
+        check("手工 reap：宽限期=0 时不再因新建保留",
+              reason_off != "creation-grace", reason_off)
+        os.environ["KG_REAP_CREATION_GRACE_H"] = "1"
+
+        # 真判活：写一条把树当 cwd 的会话记录，必须被认成「有人在用」。
+        # 与 test-reap-weak-signal-mode 用的是同一条 live_guard 证据链。
+        import json as _json
+        session_root = base / "manual-sessions"
+        session_root.mkdir(exist_ok=True)
+        roll = session_root / "2026" / "11" / "13"
+        roll.mkdir(parents=True, exist_ok=True)
+        (roll / "rollout-manual.jsonl").write_text(_json.dumps({
+            "type": "session_meta",
+            "payload": {"cwd": str(fresh_manual),
+                        "runtime_workspace_roots": [str(fresh_manual)]},
+        }) + "\n")
+        os.environ["KG_SESSION_ROOTS"] = str(session_root)
+        os.environ["KG_LIVE_SESSION_MAX_AGE_S"] = "10800"
+        import live_guard as _lg
+        _lg.reset_caches()
+        # 先把创建宽限关掉，否则先命中的永远是 creation-grace，测不到会话判据。
+        os.environ["KG_REAP_CREATION_GRACE_H"] = "0"
+        check("手工 reap：有活跃会话把树当 cwd 时保留",
+              kg._reap_wt_keep_reason(fresh_manual) == "live-session",
+              kg._reap_wt_keep_reason(fresh_manual))
+        os.environ["KG_REAP_CREATION_GRACE_H"] = "1"
+
     finally:
         shutil.rmtree(base, ignore_errors=True)
 

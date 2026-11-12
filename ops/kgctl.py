@@ -2405,27 +2405,85 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
     if "--open" in args and sys.platform == "darwin":
         proc_run(["open", str(DASHBOARD)], check=False)
 
+def _reap_wt_keep_reason(wt: Path) -> str:
+    """Return why `cmd_reap` must not remove this worktree right now, or "".
+
+    手工 `kgctl reap --go` 曾经只问一句「ahead==0？」，于是会把**刚创建、另一个
+    会话正在里面干活**的树连目录一起删掉。2026-11-13 实测：`/private/tmp/
+    kg-t01-binding` 03:37 建好、03:39 被这条命令删掉，而那个会话正拿它当工作目录
+    —— 分支指针和 tip 都在 main 里（内容零损失），但那个会话的文件系统现场没了。
+    守护进程那条通道（central_daemon._reap_dead_worktrees）早就有判活 + 创建宽限，
+    只有这条手工通道漏了。这里补上同一组闸，判据只让它少删，绝不多删：
+
+      1. 创建宽限期（默认 1h，KG_REAP_CREATION_GRACE_H 可调）——刚建好的树不碰；
+      2. 有活进程引用它（cwd / 命令行）——正在干活的人不打断；
+      3. 有活跃会话把它当工作目录 —— 只读会话的 argv 里没有树路径，只能问内核 + 会话记录。
+
+    任何一条命中都返回原因；读不到证据时**不**返回原因（与旧行为一致：证据不足
+    不构成额外保留），因此这条加固不会让回收停摆。既然目录不删，分支指针也不删：
+    分支是它在 git 里的名字，删了就等于从别人脚底下抽掉现场。
+    """
+    try:
+        here = Path(__file__).resolve().parent
+        if str(here) not in sys.path:
+            sys.path.insert(0, str(here))
+        import workspace_guard as _wg
+    except Exception:
+        return ""  # 缺守卫模块绝不阻塞回收：与旧行为一致
+
+    grace_h = float(os.environ.get("KG_REAP_CREATION_GRACE_H", "1"))
+    if grace_h > 0:
+        try:
+            st = wt.stat()
+            birth = getattr(st, "st_birthtime", None) or st.st_ctime
+            if (time.time() - float(birth)) / 3600 < grace_h:
+                return "creation-grace"
+        except OSError:
+            return "stat-failed"
+
+    try:
+        if _wg.process_reference(wt):
+            return "live-process"
+    except Exception:
+        pass
+    try:
+        if _wg.live_guard_blocker(wt, "all"):
+            return "live-session"
+    except Exception:
+        pass
+    return ""
+
+
 def cmd_reap(args):
     go = "--go" in args
     rows = scan()
     merged = [r for r in rows if r["kind"] == "MERGED"]
     wts = worktree_map()
     print("回收预演（ahead=0 的分支 + 它们独占的 worktree）")
+    planned = []
     for r in sorted(merged, key=lambda x: -x["behind"]):
         wt = wts.get(r["branch"], "")
         own = wt and Path(wt) != REPO
         dirty = ""
+        keep = ""
         if own:
             st = proc_run(["git", "-C", wt, "status", "--porcelain"],
                                 capture_output=True, text=True).stdout.strip()
             dirty = f"  脏={len(st.splitlines())} 项，只删分支、不删 worktree" if st else ""
+            # 判活/宽限只影响「目录 + 分支」要不要一起留，不影响别的分支。
+            keep = _reap_wt_keep_reason(Path(wt))
+            if keep:
+                dirty = f"  保留：{keep}"
+        planned.append((r, wt, own, keep))
         print(f"  {'分支+worktree' if own else '仅分支'}  {r['branch']:44s} {wt}{dirty}")
     print(f"\n共 {len(merged)} 项。{'【已执行】' if go else '默认只预演；确认后加 --go'}")
     if not go:
         return
-    for r in merged:
-        wt = wts.get(r["branch"], "")
-        if wt and Path(wt) != REPO:
+    for r, wt, own, keep in planned:
+        if own and keep:
+            # 现场还在用：目录和它的分支名都留着，这一项本轮跳过。
+            continue
+        if own:
             st = proc_run(["git", "-C", wt, "status", "--porcelain"],
                                 capture_output=True, text=True).stdout.strip()
             if not st:
