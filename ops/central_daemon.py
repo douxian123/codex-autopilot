@@ -83,6 +83,7 @@ from plugin_binding import apply_plugin_env  # noqa: E402
 import central_config  # noqa: E402
 import control_state  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
+import live_guard  # noqa: E402
 import workspace_guard  # noqa: E402
 
 # KG_REPO（账本）/ KG_TRUNK（落盘主干）优先取显式环境变量，其次读插件 .mcp.json。
@@ -3409,48 +3410,270 @@ def _add_worktree_admitted(repo, worktree: Path, branch: str,
                 "admission": {"reason": "admission_lock_error"}}
 
 
+# 工作区里由 `npm run dev` / `tsx watch` / `vite` 拉起来、却早已没人用的 dev server。
+#
+# 为什么要单列这段（2026-11-12 实测）：这些进程的 argv 里**不含树路径**
+# （形如 `node .../kg-x/backend/node_modules/.bin/tsx watch src/index.ts`），
+# 旧判据要求命令行含 `dist/index.js` **且** 内核 cwd 带 `-exec-`，两条都匹配不上，
+# 于是每小时日志恒为「孤儿后端 0 个」，而它们已经空转 8 小时。实测这些 `tsx watch`
+# 连子进程都没有（`pgrep -P` 为空）—— 启动失败后只剩 watcher 在原地打转。
+# 判据因此改为读内核 cwd（argv 骗不了），再逐条加保守条件。
+BACKEND_DEV_MARKERS = (
+    "tsx watch",
+    "vite",
+    "next dev",
+    "dist/index.js",
+    "npm run dev",
+)
+# 一个 dev server 闲置这么久且没有任何在用信号，才允许回收。
+BACKEND_MIN_IDLE_H = float(os.environ.get("KG_REAP_BACKEND_IDLE_H", "3"))
+# 每轮最多回收几棵树，以及最多检查几棵。回收是渐进的，派活不能被它饿死。
+BACKEND_MAX_PER_ROUND = int(os.environ.get("KG_REAP_BACKEND_MAX_PER_ROUND", "4"))
+BACKEND_MAX_SCAN = int(os.environ.get("KG_REAP_BACKEND_MAX_SCAN", "12"))
+BACKEND_TIME_BUDGET_S = float(os.environ.get("KG_REAP_BACKEND_BUDGET_S", "20"))
+
+
+def _workspace_dev_servers() -> list:
+    """工作区内还在跑的 dev server：[{pid, cwd, wt, cmd}]。
+
+    证据全部取自内核：cwd 来自 `lsof`，命令行来自 `ps`；缺任何一条就丢弃。
+    只认 cwd 落在 `~/.newmax/workspace/<kg-*>` 下的进程，用户在别的目录起的
+    服务（哪怕是同一个 node）永远进不了这个列表。
+    """
+    root = _workspace_root()
+    try:
+        root_r = root.resolve()
+    except Exception:
+        return []
+    try:
+        ps_out = proc_run(["ps", "-axo", "pid=,command="], capture_output=True,
+                          text=True, timeout=10).stdout or ""
+    except Exception:
+        return []
+    cmd_by_pid = {}
+    for line in ps_out.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            cmd_by_pid[parts[0]] = parts[1]
+    cwd_by_pid = live_guard.cwd_map()
+    if not cwd_by_pid:
+        return []
+    found = []
+    for pid, cwd in cwd_by_pid.items():
+        cmd = cmd_by_pid.get(pid, "")
+        if not cmd or not any(m in cmd for m in BACKEND_DEV_MARKERS):
+            continue
+        try:
+            c = Path(cwd).resolve()
+        except Exception:
+            continue
+        if c != root_r and root_r not in c.parents:
+            continue
+        rel = c.relative_to(root_r)
+        if not rel.parts or not rel.parts[0].startswith("kg-"):
+            continue
+        found.append({"pid": pid, "cwd": str(c),
+                      "wt": root_r / rel.parts[0], "cmd": cmd})
+    return found
+
+
+def _process_family(pids) -> set:
+    """把这些 pid 连同它们的**后代**一起展开成一个集合。
+
+    目的只有一个：判断「这棵树里还有没有别的活人」。dev server 自己（拉它的
+    `npm run dev`、它 fork 出来的 esbuild 子进程）的 cwd 也落在这棵树里，如果不先
+    把它们认出来，它们就会给「自己」作证 —— 2026-11-12 实测：加上判活之后，12 个
+    候选进程里 11 个都因为「cwd 在树里」被自己否决，回收器又变回空转。
+
+    只向下展开，**刻意不向祖先走**：一个 cwd 落在这棵树里的 shell（人或 agent 起的）
+    就是「这里有人在」的真实信号，把它算进「自己人」而放过回收，方向就反了。
+    只向下展开同样能解掉自证问题，而且只会让回收更少。
+    """
+    out = set()
+    try:
+        ps_out = proc_run(["ps", "-axo", "pid=,ppid="], capture_output=True,
+                          text=True, timeout=10).stdout or ""
+    except Exception:
+        return {str(p) for p in pids}
+    kids: dict = {}
+    for line in ps_out.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            kids.setdefault(parts[1], []).append(parts[0])
+    stack = [str(p) for p in pids]
+    while stack:
+        cur = stack.pop()
+        if cur in out:
+            continue
+        out.add(cur)
+        stack.extend(kids.get(cur, []))
+    return out
+
+
+def _dev_server_in_use(pids, tree_pids, wt: Path) -> str:
+    """这台 dev server 还有人在用就返回原因，没人用返回 ""。
+
+    `pids` 是这棵树里属于 dev server 家族的进程，`tree_pids` 是 cwd 落在树里的
+    全部 pid。判活时要先把 dev server 自己摘出去，否则它会否决自己。
+
+    每一条都是「宁可少杀」的方向：命中任何一条就跳过这一棵，别的照常。
+    """
+    if (wt.name in workspace_guard.PROTECTED_NAMES
+            or wt.name.startswith(workspace_guard.PROTECTED_PREFIXES)):
+        return "protected"
+    # 有活跃会话（含只读会话）把这棵树当 cwd —— 2026-11-10 删掉 18 棵在用的树
+    # 就是漏了这条；这里用最强模式，且不依赖调用方记得传参。
+    try:
+        if live_guard.sessions_working_in(wt):
+            return "live-session"
+    except Exception:
+        pass
+    # 树里还有 dev server 家族之外的活进程（人工 shell、门禁、编辑器）-> 放过。
+    family = _process_family(pids)
+    strangers = sorted(set(tree_pids) - family)
+    if strangers:
+        return f"live-pid:{' '.join(strangers[:4])}"
+    # 树上还挂着 `codex exec` -> 它自己会拉起后端，轮不到回收器动手。
+    if any(f"-{wt.name}-" in f"-{s}-" for s in _live_exec_slugs()):
+        return "exec"
+    # 有人在连它（浏览器页面、HMR websocket、curl 长连接）-> 立刻停手。
+    for pid in pids:
+        try:
+            est = proc_run(["lsof", "-a", "-p", str(pid), "-iTCP",
+                            "-sTCP:ESTABLISHED", "-P", "-n"],
+                           capture_output=True, text=True, timeout=8).stdout or ""
+        except Exception:
+            return "probe-failed"
+        if len(est.strip().splitlines()) > 1:
+            return "connected"
+    return ""
+
+
 def _reap_backend_orphans() -> int:
-    """杀掉挂在「已无 codex exec 的 exec worktree」上的 node 后端。
+    """回收工作区内已经没人用的 node dev server（`tsx watch` / `vite` / `next dev`）。
 
     2026-10-22 实录：两个 `node dist/index.js` 各自 100% CPU 烧了 6 小时，
     父进程早死、worktree 没人管，直到把整机拖到 load 11。
-    只认 cwd 在 *-exec-* worktree 里的 node，绝不碰用户在别的目录起的服务。
-    fail-open：任何异常只记日志。
+    2026-11-12 实录：旧判据（只认 `dist/index.js` 且 cwd 带 `-exec-`）漏掉了
+    工作区里的 `tsx watch` / `vite`，它们空转 8 小时、`SIGTERM` 还杀不动
+    （用户在会话里发的 `kill 83627` 挂了 2 小时没返回），每小时日志恒为 0。
+
+    判据全部是「宁可少杀」：保护前缀、活跃会话、在跑的 exec、有人在连、
+    闲置不足阈值，命中任一条就放过。fail-open：任何异常只记日志。
     """
     if not _knob("reap_backends", True):
         return 0
+    if BACKEND_MIN_IDLE_H <= 0:
+        return 0
     killed = 0
     try:
-        live = _live_exec_slugs()
-        out = proc_run(["ps", "-axo", "pid=,command="], capture_output=True,
-                             text=True, timeout=10).stdout
-        for line in out.splitlines():
-            if "dist/index.js" not in line:
-                continue
-            pid = line.strip().split(None, 1)[0]
-            if not pid.isdigit():
-                continue
-            cwd = ""
+        cutoff = time.time() - BACKEND_MIN_IDLE_H * 3600
+        # 按树归并：同一棵树上可能有 backend + frontend 两个 dev server。
+        by_tree: dict = {}
+        for item in _workspace_dev_servers():
+            by_tree.setdefault(str(item["wt"]), []).append(item)
+        # 预算：回收排在派活之前同步跑。每棵闲置树要跑一次 git + 一次 lsof，
+        # 无上限地扫完几十棵树会把 tick 拖住，所以既限个数也限时间。
+        deadline = time.time() + BACKEND_TIME_BUDGET_S
+        examined = 0
+        for items in by_tree.values():
+            if killed >= BACKEND_MAX_PER_ROUND or examined >= BACKEND_MAX_SCAN:
+                break
+            if time.time() > deadline:
+                log(f"[safety] dev server 回收达时间预算 "
+                    f"{BACKEND_TIME_BUDGET_S:.0f}s（已回收 {killed} 棵）")
+                break
+            examined += 1
+            wt = items[0]["wt"]
             try:
-                cw = proc_run(["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"],
-                                    capture_output=True, text=True, timeout=8).stdout
-                cwd = next((l[1:] for l in cw.splitlines() if l.startswith("n")), "")
+                if not wt.is_dir():
+                    continue
+                # 树本身还热（目录 mtime / 最后一次提交）就不动：判活之外再加一道
+                # 与 worktree 回收同源的粗筛，避免把刚起来还在初始化的服务当成孤儿。
+                if _wt_last_activity(wt) > cutoff:
+                    continue
+                tree_pids = live_guard.live_processes_in(wt)
             except Exception:
                 continue
-            if "-exec-" not in cwd:
+            pids = [it["pid"] for it in items]
+            reason = _dev_server_in_use(pids, tree_pids, wt)
+            if reason:
+                log(f"[safety] 闲置 dev server 保留（{wt.name}）：{reason}")
                 continue
-            wt_name = Path(cwd).parts[-2] if cwd.endswith("backend") else Path(cwd).name
-            if any(f"-{wt_name}-" in f"-{s}-" for s in live):
-                continue  # 还有 exec 在跑，不能杀
-            try:
-                os.kill(int(pid), signal.SIGTERM)
-                killed += 1
-                log(f"[safety] 回收孤儿后端 pid={pid}（worktree 已无 exec）：{cwd}")
-            except Exception as exc:
-                log(f"[safety] 回收孤儿后端 pid={pid} 失败：{exc}")
+            # 每个 pid 都要确认真的退出：TERM 收不动就用 KILL 兜底，
+            # 不能出现「日志说回收了、进程还在」。
+            stopped = [p for p in pids if _terminate_pid(p)]
+            if len(stopped) != len(pids):
+                log(f"[safety] 闲置 dev server 未能全部回收（{wt.name}）："
+                    f"已停 {len(stopped)}/{len(pids)}")
+                continue
+            killed += 1
+            log(f"[safety] 回收闲置 dev server {len(pids)} 个进程"
+                f"（{wt.name}，闲置 >{BACKEND_MIN_IDLE_H:.0f}h）：{items[0]['cwd']}")
     except Exception as exc:  # fail-open
         log(f"[safety] 孤儿后端扫描失败（忽略）：{exc}")
     return killed
+
+
+def _proc_exited(pid) -> bool:
+    """这个 pid 是否已经不是一个活着的进程（僵尸也算已退出）。
+
+    不能用 `os.kill(pid, 0)`：被 SIGKILL 之后进程会先变成僵尸（等父进程收尸），
+    而 `kill -0` 对僵尸依然成功 —— 2026-11-12 单测实测，回收明明成功，判定却
+    返回「还活着」，于是日志写「未能全部回收」而现场其实是干净的。这里读
+    `ps -o stat=`：拿不到就是没了；拿到 `Z` 开头同样算没了。
+    读不到状态时按「还活着」处理，宁可少报成功。
+
+    刻意不复用本模块既有的 `_pid_alive`（那是给守护自身单实例锁用的）：
+    把它改成「僵尸算死」会改变锁的语义，不属于本次回收修复的范围。
+    """
+    try:
+        out = proc_run(["ps", "-p", str(int(pid)), "-o", "stat="],
+                       capture_output=True, text=True, timeout=8).stdout or ""
+    except Exception:
+        return True
+    state = out.strip()
+    if not state:
+        return True   # ps 查不到这个 pid：已经没了
+    return state.startswith("Z")   # 僵尸 = 已经死了，等父进程收尸而已
+
+
+def _terminate_pid(pid: str, grace_s: float = 10.0) -> bool:
+    """先 TERM 再 KILL。返回 True 表示确认已退出。
+
+    为什么要 KILL 兜底（2026-11-12 实测）：`tsx watch` 不理会 SIGTERM，
+    用户在会话里发的 `kill 83627` 因此卡在 `while kill -0` 里 2 小时没返回。
+    只发 TERM 的回收器会「报告回收成功、进程还在」—— 比不回收更坏。
+    只对这一个 pid 动手，不碰它的进程组，绝不会误伤组里别的进程。
+    """
+    try:
+        target = int(pid)
+    except Exception:
+        return False
+    try:
+        os.kill(target, signal.SIGTERM)
+    except ProcessLookupError:
+        return True
+    except Exception:
+        return False
+    deadline = time.time() + max(0.0, grace_s)
+    while time.time() < deadline:
+        time.sleep(0.2)
+        if _proc_exited(target):
+            return True
+    try:
+        os.kill(target, signal.SIGKILL)
+    except ProcessLookupError:
+        return True
+    except Exception:
+        return False
+    # SIGKILL 之后内核回收 pid 需要一小段时间，给它一点确认窗口。
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        time.sleep(0.2)
+        if _proc_exited(target):
+            return True
+    return False
 
 
 def _wt_last_activity(wt: Path) -> float:

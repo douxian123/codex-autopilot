@@ -114,6 +114,7 @@ def main():
             "test-reap-live-session-guard.py",
             "test-reap-weak-signal-mode.py",
             "test-reap-creation-grace.py",
+            "test-reap-backend-orphans.py",
         )
         for guard in reap_guards:
             print(f"  run  {guard}", flush=True)

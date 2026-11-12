@@ -141,6 +141,20 @@ def path_within(child, parent: Path) -> bool:
     return target == base or target.startswith(base + os.sep)
 
 
+def cwd_map() -> dict:
+    """{pid: cwd} 的公开视图，来自一次 `lsof`（内部有 30s 缓存）。
+
+    给「按内核 cwd 找进程」的调用方用：回收器要认出工作区里的 dev server，而
+    它们的命令行长什么样完全不可靠（`tsx watch` 的 argv 里没有树路径）。
+    探针不可用时返回空字典 —— 与模块其它探针一致，空结果只意味着「没证据」，
+    永远不会被当成删除许可。
+    """
+    try:
+        return _live_cwd_pids()
+    except Exception:
+        return {}
+
+
 def live_processes_in(worktree: Path) -> list:
     """PIDs whose current working directory is inside `worktree`."""
     cwd_by_pid = _live_cwd_pids()
