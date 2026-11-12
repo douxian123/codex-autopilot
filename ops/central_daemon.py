@@ -3153,7 +3153,15 @@ REAP_TIME_BUDGET_PRESSURE_S = float(
                                # worktree 至少闲置这么久才回收（按目录 mtime 与分支最后提交取较新者）
 REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "5"))
 # 空间自救阈值：可用低于它就回收零损失现场 + git gc（**不降低并发**）。
-REAP_PRESSURE_FREE_GB = float(os.environ.get("KG_REAP_PRESSURE_FREE_GB", "12"))
+#
+# 2026-11-12 死区根因：准入闸在 EXEC_DISK_STOP_FREE_GB=20 以下关闭新派发、
+# 到 EXEC_DISK_RESUME_FREE_GB=24 才恢复；而压力阈值默认 12，远低于准入停止线。
+# 磁盘落在 12~20GiB 时，准入已关闭（工作停摆），回收器却认为「没压力」，继续
+# 按 600s 常规节奏慢扫 —— 这正是「周期性爆盘叠着周期性停摆」。默认值跟随准入
+# 恢复线，让回收器在准入关闭的同一时刻就进入紧张节奏（更短间隔/更大预算/
+# 更多每轮上限），安全判据一条不放松；仍可用 KG_REAP_PRESSURE_FREE_GB 覆盖。
+REAP_PRESSURE_FREE_GB = float(os.environ.get(
+    "KG_REAP_PRESSURE_FREE_GB", str(EXEC_DISK_RESUME_FREE_GB)))
 
 
 def _safety_path() -> Path:
@@ -3778,6 +3786,14 @@ def _reap_dead_worktrees(dry: bool = False,
         else:
             log(msg)
 
+    def _skip(msg: str) -> None:
+        # 跳过原因只在演练时回显。生产路径每 15s 扫一片、每片几十棵树，逐条打印
+        # 会把 daemon.log 刷成噪声还多写盘 —— 而 daemon.log 正是「磁盘为什么一直
+        # 满」时最该保持干净可读的东西。dry-run 是人手动跑的，回显到 stdout 恰好
+        # 让人看见「卡在哪、为什么一个都没回收」。
+        if dry:
+            print(f"{_now()} [dry-run] 跳过 {msg}", flush=True)
+
     _pressure_reap = False
     if not _knob("reap_worktrees", True):
         if not _knob("reap_on_disk_pressure", True):
@@ -3857,8 +3873,10 @@ def _reap_dead_worktrees(dry: bool = False,
             if not d.is_dir():
                 continue
             if "resolve" in d.name:
+                _skip(f"{d.name}：名字带 resolve，交给冲突裁决流程")
                 continue
             if any(f"-{d.name}-" in f"-{s}-" for s in live):
+                _skip(f"{d.name}：有活着的 codex exec 在用")
                 continue
             # 判活（2026-11-10 事故）：桌面会话的 cwd 就是这棵树，但它既不会
             # 被 `_live_exec_slugs` 认出来（那只看 `codex exec -C <tree>`），
@@ -3866,28 +3884,35 @@ def _reap_dead_worktrees(dry: bool = False,
             # 一模一样。压力模式闲置门槛只有 15 分钟，一天因此删掉 18 棵在用的树
             # （分支保留才捞得回来）。信号取自内核 cwd 与会话日志，不依赖
             # 调用方记得传 commands，所以传参失误也不会再关掉它。
-            if workspace_guard.live_guard_blocker(d, "all"):
+            _blocker = workspace_guard.live_guard_blocker(d, "all")
+            if _blocker:
+                _skip(f"{d.name}：判活命中（{_blocker}）")
                 continue
             # 廉价预筛：先看目录 mtime。一个 worktree 只要有文件被写过，顶层目录
             # 或子目录 mtime 就会前进；先按 mtime 砍掉明显「刚动过」的现场，
             # 能省掉后面 4~6 次 git 子进程。最终判定仍由下面的 git 检查兜底。
             try:
                 if d.stat().st_mtime > cutoff:
+                    _skip(f"{d.name}：目录 mtime 未过闲置门槛")
                     continue
             except OSError:
                 continue
             repo = _worktree_repo(d)
             if repo is None:
+                _skip(f"{d.name}：不是可识别的 worktree（no-repo）")
                 continue
             if _wt_last_activity(d) > cutoff:
+                _skip(f"{d.name}：分支最近活动未过闲置门槛")
                 continue
             # 创建宽限期：刚建好的现场先不回收，哪怕它此刻 clean 且 ahead=0。
             # 压力模式下 idle 门槛只有 15 分钟，新建/迁移完成后人还没来得及写字的
             # 空档最危险；宽限只看创建时间，只减少回收、不增加回收。
             if _within_creation_grace(d):
+                _skip(f"{d.name}：仍在创建宽限期内")
                 continue
             brc, branch, _ = _git(d, "rev-parse", "--abbrev-ref", "HEAD")
             if brc != 0 or not branch or branch in ("HEAD", "main"):
+                _skip(f"{d.name}：分支名为 {branch or '?'}（HEAD/main 不回收）")
                 continue
             # drop_scratch 只在这一条路径上打开，而且只在压力模式打开。
             # 位置很重要：这里是「回收闲置现场」的扫描，判据是「这棵树还有没有
@@ -3915,6 +3940,8 @@ def _reap_dead_worktrees(dry: bool = False,
                 # 整棵树原地不动。`git checkout -- <dir>` 可随时原样还原。
                 accept_stripped_regenerable=_pressure_reap)
             if not assessment.get("ok"):
+                _skip(f"{d.name}：安全判据未通过"
+                      f"（{assessment.get('reason') or 'dirty'}）")
                 continue
             if dry:
                 # 演练：绝不调用删除。dry 的安全性必须由这条分支自己保证，不能

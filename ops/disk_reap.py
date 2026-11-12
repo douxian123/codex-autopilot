@@ -298,12 +298,32 @@ def _path_in_open_paths(path: str, open_paths: list[str]) -> bool:
     return any(needle in open_path for open_path in open_paths)
 
 
+def _alloc_size(path: str) -> int:
+    """On-disk bytes for one file: allocated blocks, not logical length.
+
+    `st_size` reports how many bytes the file logically holds; on APFS a large
+    file can be sparse or share blocks with a clone, so summing st_size makes
+    the "reclaimed X GB" line badly overstate what the volume got back. That
+    inflation is what made the reaper look like it was freeing space while the
+    disk kept filling. `st_blocks * 512` is the kernel's own allocation count,
+    so the reported number tracks real consumption. Falls back to st_size when
+    the filesystem does not expose block counts.
+    """
+    st = os.lstat(path)
+    blocks = getattr(st, "st_blocks", None)
+    # 显式判 None 而不是判真假：真正的稀疏文件与空文件 st_blocks 就是 0，
+    # 那是「真的没占盘」，不能当成「这个文件系统不报块数」再回落逻辑长度。
+    if blocks is not None:
+        return int(blocks) * 512
+    return int(st.st_size)
+
+
 def _tree_size(path: str) -> int:
     total = 0
     for root, _dirs, files in os.walk(path):
         for name in files:
             try:
-                total += os.lstat(os.path.join(root, name)).st_size
+                total += _alloc_size(os.path.join(root, name))
             except OSError:
                 pass
     return total
@@ -529,7 +549,7 @@ def reap_regenerable_duplicates(dry: bool = False, guard=None,
                 if how != "pristine":
                     continue
                 try:
-                    approx += sum(f.stat().st_size
+                    approx += sum(_alloc_size(str(f))
                                   for f in (d / rel).rglob("*") if f.is_file())
                 except OSError:
                     pass
