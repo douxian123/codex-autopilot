@@ -5393,6 +5393,55 @@ def test_reap_pressure_threshold_never_below_admission_stop_line():
     print("selftest ok: 回收压力阈值不低于准入停止线，12~20GiB 死区被钉死。")
 
 
+def test_disk_reap_pressure_threshold_follows_admission_resume_line():
+    """独立的 disk_reap.py 也必须跟着准入恢复线，不能再留自己的 15GB。
+
+    2026-11-12 第二段死区：准入闸在 20 以下关、24 才恢复，而每小时独立跑的
+    ops/disk_reap.py 把「压力」写死在 15GB。磁盘落在 15~24GiB 时，工作已经
+    停摆，这个 60s 一次的回收器却仍用 6 小时闲置窗口慢扫 kg tmp —— 与
+    central_daemon 里已修的那段是同一类病灶，只是换了一个进程。
+
+    本门禁钉死：默认（无覆盖环境变量）必须 >= 准入停止线；覆盖开关仍然有效。
+    """
+    import importlib
+    import os
+    import sys
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    import disk_reap
+
+    saved = os.environ.pop("KG_TMP_PRESSURE_FREE_GB", None)
+    try:
+        importlib.reload(disk_reap)
+        assert disk_reap.KG_TMP_PRESSURE_FREE_GB >= (
+            central_daemon.EXEC_DISK_STOP_FREE_GB
+        ), (disk_reap.KG_TMP_PRESSURE_FREE_GB,
+            central_daemon.EXEC_DISK_STOP_FREE_GB)
+        assert disk_reap.KG_TMP_PRESSURE_FREE_GB == (
+            central_daemon.EXEC_DISK_RESUME_FREE_GB
+        ), (disk_reap.KG_TMP_PRESSURE_FREE_GB,
+            central_daemon.EXEC_DISK_RESUME_FREE_GB)
+    finally:
+        if saved is not None:
+            os.environ["KG_TMP_PRESSURE_FREE_GB"] = saved
+        importlib.reload(disk_reap)
+
+    # 覆盖开关必须仍然有效（用户可以显式设 KG_TMP_PRESSURE_FREE_GB）
+    os.environ["KG_TMP_PRESSURE_FREE_GB"] = "13.5"
+    try:
+        importlib.reload(disk_reap)
+        assert disk_reap.KG_TMP_PRESSURE_FREE_GB == 13.5, (
+            disk_reap.KG_TMP_PRESSURE_FREE_GB)
+    finally:
+        os.environ.pop("KG_TMP_PRESSURE_FREE_GB", None)
+        importlib.reload(disk_reap)
+
+    print("selftest ok: disk_reap 压力阈值跟随准入恢复线，15~24GiB 死区被钉死。")
+
+
 def test_pressure_reap_gets_its_own_time_budget():
     """压力回收必须有自己的时间预算，否则永远追不上派工写入。
 
@@ -6567,6 +6616,7 @@ if __name__ == "__main__":
     test_pressure_reap_gets_its_own_time_budget()
     test_pressure_reap_engages_even_when_regular_reaping_is_on()
     test_reap_pressure_threshold_never_below_admission_stop_line()
+    test_disk_reap_pressure_threshold_follows_admission_resume_line()
     test_reap_scan_is_sliced_and_throttled()
     test_regenerable_tracked_restore_is_opt_in_and_lossless()
     test_strip_regenerable_duplicate_is_opt_in_and_lossless()
