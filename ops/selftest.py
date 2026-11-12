@@ -5342,6 +5342,57 @@ def test_pressure_reap_engages_even_when_regular_reaping_is_on():
     print("selftest ok: 盘紧时即使常规回收开着，也走压力节奏与压力预算。")
 
 
+def test_reap_pressure_threshold_never_below_admission_stop_line():
+    """回收压力阈值不能低于准入停止线，否则就是「准入已关、回收器以为没压力」的死区。
+
+    2026-11-12 根因（用户反复撞的那次）：准入闸在 EXEC_DISK_STOP_FREE_GB=20 以下
+    关闭新派发、到 EXEC_DISK_RESUME_FREE_GB=24 才恢复；而 REAP_PRESSURE_FREE_GB
+    默认 12，远低于停止线。磁盘落在 12~20GiB 时，工作已经停摆，回收器却仍按
+    600s 常规节奏慢扫 —— 这正是「周期性爆盘叠着周期性停摆」。
+
+    本门禁钉死两点，防止默认值回退：
+      1) 压力阈值必须 >= 准入停止线（不然回收压力区就被准入关闸区甩在后面）；
+      2) 默认必须跟随准入恢复线，做到「准入一关，回收立刻进入紧张节奏」。
+    安全判据不受影响：调高压力阈值只让回收器更早进入紧张节奏，判据一条没放松。
+    """
+    import importlib
+    import os
+    import sys
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+
+    saved_env = os.environ.pop("KG_REAP_PRESSURE_FREE_GB", None)
+    try:
+        importlib.reload(central_daemon)
+        assert central_daemon.REAP_PRESSURE_FREE_GB >= (
+            central_daemon.EXEC_DISK_STOP_FREE_GB
+        ), (central_daemon.REAP_PRESSURE_FREE_GB,
+            central_daemon.EXEC_DISK_STOP_FREE_GB)
+        assert central_daemon.REAP_PRESSURE_FREE_GB == (
+            central_daemon.EXEC_DISK_RESUME_FREE_GB
+        ), (central_daemon.REAP_PRESSURE_FREE_GB,
+            central_daemon.EXEC_DISK_RESUME_FREE_GB)
+    finally:
+        if saved_env is not None:
+            os.environ["KG_REAP_PRESSURE_FREE_GB"] = saved_env
+        importlib.reload(central_daemon)
+
+    # 覆盖开关必须仍然有效（用户可显式设 KG_REAP_PRESSURE_FREE_GB）
+    os.environ["KG_REAP_PRESSURE_FREE_GB"] = "13.5"
+    try:
+        importlib.reload(central_daemon)
+        assert central_daemon.REAP_PRESSURE_FREE_GB == 13.5, (
+            central_daemon.REAP_PRESSURE_FREE_GB)
+    finally:
+        os.environ.pop("KG_REAP_PRESSURE_FREE_GB", None)
+        importlib.reload(central_daemon)
+
+    print("selftest ok: 回收压力阈值不低于准入停止线，12~20GiB 死区被钉死。")
+
+
 def test_pressure_reap_gets_its_own_time_budget():
     """压力回收必须有自己的时间预算，否则永远追不上派工写入。
 
@@ -6515,6 +6566,7 @@ if __name__ == "__main__":
     test_hydrate_drops_unverifiable_exec_slots()
     test_pressure_reap_gets_its_own_time_budget()
     test_pressure_reap_engages_even_when_regular_reaping_is_on()
+    test_reap_pressure_threshold_never_below_admission_stop_line()
     test_reap_scan_is_sliced_and_throttled()
     test_regenerable_tracked_restore_is_opt_in_and_lossless()
     test_strip_regenerable_duplicate_is_opt_in_and_lossless()
