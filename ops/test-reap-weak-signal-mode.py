@@ -70,6 +70,11 @@ class RecordingGuard:
     PROTECTED_NAMES = {"knowledge-graph", "kg-trunk", "kg-land-main"}
     PROTECTED_PREFIXES = ("kg-live-",)
 
+    @staticmethod
+    def is_task_worktree_name(name):
+        import re as _re
+        return bool(_re.match(r"^(?:kg[-_0-9]|knowledge-graph[-_])", name))
+
     def __init__(self, blocker=""):
         self.blocker = blocker
         self.modes = []

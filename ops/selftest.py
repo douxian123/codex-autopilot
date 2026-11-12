@@ -5826,6 +5826,55 @@ def test_strip_duplicate_decouples_from_tree_dirtiness():
     print("selftest ok: 剥离副本与整树回收解耦，但安全边界一条没放松。")
 
 
+def test_task_worktree_name_predicate_is_shared_and_complete():
+    """工作树名字判据必须只有一份，且覆盖工具真正产出的拼法（2026-11-12）。
+
+    为什么单列这条：剥离通道（disk_reap）与 dev-server 判活扫描（central_daemon）
+    各自硬写了一份 `startswith("kg-")`，孤儿残留通道又用第三份正则。三份里有两份
+    漏掉 `kg29-` 这种不带短横线的拼法 —— 实测这台机器上 `kg29-mainchk`、
+    `kg29-t01c` 都是注册 worktree，各带一份 262MB、pristine、闲置很久的
+    `backend/evidence`+`evidence`，而没有任何通道会去看它们。这正是
+    2026-11-13 那个「容量明明存在、分类器拒绝承认」死结的同一类病因。
+
+    本测试钉住：
+      1. 谓词认 `kg-` / `kg_` / `kg29-` / `kg29-t01c` / `knowledge-graph-*`；
+      2. 谓词认 `kg-live-3000`（由各个调用点用 PROTECTED_* 另行拒绝，
+         谓词本身只回答「这是不是机器建的任务树」）；
+      3. 谓词拒绝别的东西：`kg` 裸名、`kgx-1`、`my-kg-1`、`knowledge`；
+      4. 两处调用点确实走同一个谓词，不再各留一份前缀字面量。
+    """
+    from pathlib import Path
+    ops = Path(__file__).resolve().parent
+    import sys as _sys
+    if str(ops) not in _sys.path:
+        _sys.path.insert(0, str(ops))
+    import workspace_guard as wg
+
+    for good in ("kg-1", "kg_1", "kg29-mainchk", "kg29-t01c", "kg-live-3000",
+                 "kg-trunk", "knowledge-graph-trunk", "knowledge-graph-resolve-x",
+                 "kg-36题质量证据复跑闭环"):
+        assert wg.is_task_worktree_name(good), f"应认出任务树：{good}"
+    # `knowledge-graph`（裸名）是主仓名，靠 PROTECTED_NAMES 保护，而不是靠
+    # 谓词认出来 —— 旧正则同样不认它，所以这不是回归。
+    for bad in ("kg", "kgx-1", "my-kg-1", "knowledge", "knowledge-graph",
+                "", "ka-1", "KG-1"):
+        assert not wg.is_task_worktree_name(bad), f"不应认出：{bad!r}"
+
+    # 谓词与孤儿残留分类器必须同源：一份编译好的正则，不能再各写各的。
+    assert wg.MACHINE_TASK_DIR_RE is wg.TASK_WORKTREE_NAME_RE,         "MACHINE_TASK_DIR_RE 必须复用同一份正则，避免再次漂移"
+
+    # 两处调用点不得再出现各自的前缀字面量。
+    for name in ("disk_reap.py", "central_daemon.py"):
+        text = (ops / name).read_text()
+        # 只看会真正执行的代码行：注释里提到旧写法属于历史说明，不算回归。
+        code = "\n".join(ln.split("#", 1)[0] for ln in text.splitlines())
+        needle = "startswith(" + chr(34) + "kg-" + chr(34) + ")"
+        assert needle not in code, name + " 的代码里不该再有硬写的前缀字面量"
+        assert "is_task_worktree_name(" in text, name + " 必须走共享谓词"
+
+    print("selftest ok: 工作树名字判据单一化，kg29-* 这类拼法不再漏扫。")
+
+
 def test_mcp_contract():
     """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
     import json as _json
@@ -6726,6 +6775,7 @@ if __name__ == "__main__":
     test_regenerable_tracked_restore_is_opt_in_and_lossless()
     test_strip_regenerable_duplicate_is_opt_in_and_lossless()
     test_strip_duplicate_decouples_from_tree_dirtiness()
+    test_task_worktree_name_predicate_is_shared_and_complete()
     test_mcp_contract()
     test_closure_rate()
     test_product_eval()

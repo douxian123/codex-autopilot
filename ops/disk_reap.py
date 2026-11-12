@@ -560,7 +560,11 @@ def reap_regenerable_duplicates(dry: bool = False, guard=None,
     stripped_n = 0
     freed = 0
     for d in sorted(root.iterdir()):
-        if not d.is_dir() or d.is_symlink() or not d.name.startswith("kg-"):
+        # 名字判据走共享谓词（2026-11-12）：这里原本硬写 `startswith("kg-")`，
+        # 与 central_daemon 的另一份副本各自维护、并且和孤儿残留分类器不一致。
+        # 实测后果：kg29-mainchk / kg29-t01c 两棵树的 262MB 副本从没被这条通道
+        # 看到过。判据本身没放松 —— 保护名、活进程、闲置、pristine 全在下面。
+        if not d.is_dir() or d.is_symlink() or not guard.is_task_worktree_name(d.name):
             continue
         if not (d / ".git").exists():
             continue

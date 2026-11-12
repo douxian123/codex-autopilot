@@ -28,6 +28,36 @@ PROTECTED_NAMES = {"knowledge-graph", "kg-trunk", "kg-land-main"}
 # `kg-live-3000` is the copy the owner actually runs on 3000/3001, and it would
 # otherwise have become reclaimable the moment it sat idle for a day.
 PROTECTED_PREFIXES = ("kg-live-",)
+
+# Naming test for "this directory is a machine-created task worktree".
+#
+# It exists as one shared predicate because two scanners used to hard-code their
+# own copy of the prefix, and the two copies drifted out of agreement with the
+# orphan-residue classifier (MACHINE_TASK_DIR_RE below). Measured 2026-11-12 on
+# the real machine: `kg29-mainchk` and `kg29-t01c` are registered worktrees,
+# each carrying a byte-identical 262MB `backend/evidence`+`evidence` copy,
+# pristine and long idle -- and no reap channel would ever look at them, because
+# both spell it `kg29-` rather than `kg-`. That is the same failure class as the
+# 2026-11-13 strip deadlock: capacity existed, the classifier refused to see it.
+#
+# The prefix must cover the spellings the tooling actually emits (`kg-`, `kg_`,
+# `kgNN-`, `kgNN_`) plus the older `knowledge-graph-*` family, and nothing else.
+# This is only the *name* test: protected names/prefixes are checked separately
+# by every caller, so widening this set cannot by itself bypass a protection.
+TASK_WORKTREE_NAME_RE = re.compile(r"^(?:kg[-_0-9]|knowledge-graph[-_])")
+
+
+def is_task_worktree_name(name: str) -> bool:
+    """Is `name` a machine-created task-worktree directory name?
+
+    Callers still owe the rest of the chain (has `.git`, not protected, idle,
+    no live process, and -- for content deletion -- pristine). This function
+    only replaces the ad-hoc `name.startswith("kg-")` prefix tests so all
+    channels finally agree on what a task worktree is called.
+    """
+    return bool(TASK_WORKTREE_NAME_RE.match(name))
+
+
 GENERATED_DIRS = (
     "frontend/node_modules",
     "backend/node_modules",
@@ -613,7 +643,9 @@ def remove_worktree(repo: Path, worktree: Path,
 # Machine-generated task directory names. Only names matching this are eligible
 # for orphan-residue reclamation, so a hand-made directory that happens to be
 # empty (or that someone parked `logs/` in) is never touched.
-MACHINE_TASK_DIR_RE = re.compile(r"^(?:kg[-_]|knowledge-graph[-_])")
+# Same name set as `is_task_worktree_name`; kept as one compiled regex so the
+# orphan-residue channel cannot drift away from the two live-tree channels again.
+MACHINE_TASK_DIR_RE = TASK_WORKTREE_NAME_RE
 
 # Top-level dirs that are rebuildable build output when they appear at the root
 # of a worktree (not only under frontend/ or backend/). Vite writes the cache

@@ -3445,8 +3445,9 @@ def _workspace_dev_servers() -> list:
     """工作区内还在跑的 dev server：[{pid, cwd, wt, cmd}]。
 
     证据全部取自内核：cwd 来自 `lsof`，命令行来自 `ps`；缺任何一条就丢弃。
-    只认 cwd 落在 `~/.newmax/workspace/<kg-*>` 下的进程，用户在别的目录起的
-    服务（哪怕是同一个 node）永远进不了这个列表。
+    只认 cwd 落在 `~/.newmax/workspace/<机器建的任务树>` 下的进程（名字判据见
+    `workspace_guard.is_task_worktree_name`），用户在别的目录起的服务（哪怕是
+    同一个 node）永远进不了这个列表。
     """
     root = _workspace_root()
     try:
@@ -3478,7 +3479,9 @@ def _workspace_dev_servers() -> list:
         if c != root_r and root_r not in c.parents:
             continue
         rel = c.relative_to(root_r)
-        if not rel.parts or not rel.parts[0].startswith("kg-"):
+        # 共享谓词，与 disk_reap 的剥离通道同源（2026-11-12）。放宽这里只会
+        # 让判活扫到更多树 —— 方向是「宁可少杀」，不是少保护。
+        if not rel.parts or not workspace_guard.is_task_worktree_name(rel.parts[0]):
             continue
         found.append({"pid": pid, "cwd": str(c),
                       "wt": root_r / rel.parts[0], "cmd": cmd})
