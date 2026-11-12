@@ -5725,6 +5725,107 @@ def test_strip_regenerable_duplicate_is_opt_in_and_lossless():
 
     print("selftest ok: 重复的可重建副本可剥离、可无损还原，人间改动全保留。")
 
+
+def test_strip_duplicate_decouples_from_tree_dirtiness():
+    """剥离重复副本必须与「整棵树要不要回收」解耦（2026-11-13 死结）。
+
+    为什么单列这条：剥离通道的 docstring 一直写着它「与回收整棵树解耦」，
+    但代码里却挂着 `dirty_outside_regenerable` 这道「整棵树」的闸。后果实测在
+    这台机器上：163 棵 kg-* 树里，凡是**别处**有任何真实改动的，整棵直接被跳过，
+    它那份 235MB 的 evidence 副本于是永远不释放 —— 回收器连续几小时
+    「剥离重复副本 0 棵树（0.00GB）」，磁盘又满。144/152 棵闲置树都卡在这里。
+
+    本测试钉住解耦后的三条语义：
+      1. 副本本身 pristine、树别处有真实改动 -> **副本照剥**（树本身当然不动）；
+      2. 副本自己里出现未跟踪的人间文件 -> 该副本绝不剥（安全判据没放松）；
+      3. 「整棵树回收」的闸没被放松：别处有真实改动时 worktree_removable 仍拒绝。
+    """
+    import importlib.util
+    import os
+    import sys
+    import tempfile
+    from pathlib import Path
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import workspace_guard as wg
+
+    spec = importlib.util.spec_from_file_location("dr_decouple", ops / "disk_reap.py")
+    dr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(dr)
+
+    def _git(cwd, *a):
+        return subprocess.run(["git", "-C", str(cwd), *a],
+                              capture_output=True, text=True)
+
+    with tempfile.TemporaryDirectory(prefix="strip-decouple-") as tmp:
+        root = Path(tmp) / "workspace"
+        root.mkdir()
+        repo = Path(tmp) / "repo"
+        repo.mkdir()
+        _git(repo, "init", "-q", "-b", "main")
+        _git(repo, "config", "user.email", "t@t")
+        _git(repo, "config", "user.name", "t")
+        (repo / "backend" / "evidence").mkdir(parents=True)
+        (repo / "backend" / "evidence" / "head.json").write_text('{"k":"head"}')
+        (repo / "src").mkdir()
+        (repo / "src" / "app.ts").write_text("v1\n")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "init")
+
+        # 1) 树别处有真实改动，但 evidence 副本仍与 HEAD 相同 -> 副本照剥。
+        wt = root / "kg-real-edit-elsewhere"
+        _git(repo, "worktree", "add", "-q", "-b", "codex/elsewhere", str(wt))
+        (wt / "src" / "app.ts").write_text("v2 human edit\n")
+        assert wg.regenerable_dirs_state(wt)["backend/evidence"] == "pristine"
+        assert wg.dirty_outside_regenerable(wt), "本棵必须在「别处」有脏，才测得到解耦"
+
+        old_root = os.environ.get("KG_WORKSPACE_ROOT")
+        os.environ["KG_WORKSPACE_ROOT"] = str(root)
+        os.environ["KG_STRIP_DUPLICATES"] = "1"
+        try:
+            n, freed = dr.reap_regenerable_duplicates(dry=False, guard=wg, idle_h=0.0)
+        finally:
+            if old_root is None:
+                os.environ.pop("KG_WORKSPACE_ROOT", None)
+            else:
+                os.environ["KG_WORKSPACE_ROOT"] = old_root
+
+        assert n >= 1 and freed > 0, (n, freed)
+        assert not (wt / "backend" / "evidence").exists(), \
+            "别处有真实改动时，副本仍应被剥离（这正是死结的修复）"
+        # 人的真实改动一个字都不能丢，且可从 HEAD 原样还原被剥的副本。
+        assert (wt / "src" / "app.ts").read_text() == "v2 human edit\n", \
+            "人间改动绝不能被碰"
+        _git(wt, "checkout", "--", "backend/evidence")
+        assert (wt / "backend" / "evidence" / "head.json").read_text() == '{"k":"head"}', \
+            "被剥离的副本必须能从 HEAD 无损还原"
+
+        # 2) 副本自己里出现未跟踪的人间文件 -> 该副本绝不剥。
+        wt2 = root / "kg-copy-has-human-file"
+        _git(repo, "worktree", "add", "-q", "-b", "codex/copyhuman", str(wt2))
+        (wt2 / "backend" / "evidence" / "human-note.md").write_text("人工备注")
+        state2 = wg.regenerable_dirs_state(wt2)["backend/evidence"]
+        assert state2 != "pristine", state2
+        os.environ["KG_WORKSPACE_ROOT"] = str(root)
+        try:
+            assert wg.strip_regenerable_tracked(wt2) == {}, "副本内有未跟踪文件时不得剥离"
+        finally:
+            if old_root is None:
+                os.environ.pop("KG_WORKSPACE_ROOT", None)
+            else:
+                os.environ["KG_WORKSPACE_ROOT"] = old_root
+        assert (wt2 / "backend" / "evidence" / "human-note.md").exists(), \
+            "副本内的人间产物绝不能被删"
+
+        # 3) 反向断言：整棵树回收的闸没被放松 —— 别处有真实改动仍拒绝回收。
+        a = wg.worktree_removable(repo, wt, "codex/elsewhere", "main", commands="",
+                                  accept_stripped_regenerable=True)
+        assert a["ok"] is False and a["reason"] == "dirty", a
+
+    print("selftest ok: 剥离副本与整树回收解耦，但安全边界一条没放松。")
+
+
 def test_mcp_contract():
     """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
     import json as _json
@@ -6624,6 +6725,7 @@ if __name__ == "__main__":
     test_reap_scan_is_sliced_and_throttled()
     test_regenerable_tracked_restore_is_opt_in_and_lossless()
     test_strip_regenerable_duplicate_is_opt_in_and_lossless()
+    test_strip_duplicate_decouples_from_tree_dirtiness()
     test_mcp_contract()
     test_closure_rate()
     test_product_eval()

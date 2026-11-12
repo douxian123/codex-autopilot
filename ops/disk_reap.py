@@ -140,6 +140,15 @@ REAP_TIME_BUDGET_S = float(os.environ.get("KG_REAP_TIME_BUDGET_S", "60"))
 REAP_MIN_IDLE_H = float(os.environ.get("KG_REAP_MIN_IDLE_H", "1"))
 # 剥离重复副本的闲置门槛：默认 24h，避免动到正在进行的现场。
 STRIP_IDLE_H = float(os.environ.get("KG_STRIP_IDLE_H", "24"))
+# 磁盘紧张时的剥离门槛（小时）。与 kg tmp 用同一条纪律：只收紧「多久算闲置」，
+# 一条安全判据都不放松（仍要求与 HEAD 逐字节相同、无活进程/会话引用）。
+#
+# 为什么必须收紧（2026-11-13 实测）：默认 24h 意味着这条通道在这台机器上几乎
+# 永远无事可做 —— 树要么闲置 15 分钟就被整棵回收，要么因为主人还在动而不断刷新
+# mtime，于是「闲置满 24h 且仍留着重复副本」的树几乎不存在。日志里连续几小时
+# 「剥离重复副本 0 棵树（0.00GB）」就是这个原因，不是没有可剥离的字节。
+STRIP_IDLE_PRESSURE_H = float(
+    os.environ.get("KG_STRIP_IDLE_PRESSURE_H", "1"))
 # 旧会话原始 JSONL 的压缩门槛与预算。只压缩“未被进程引用”的旧文件，
 # 压缩后先做完整性校验，校验失败绝不删除原文件。
 #
@@ -531,7 +540,7 @@ def reap_regenerable_duplicates(dry: bool = False, guard=None,
     这条路与「回收整棵树」解耦：一棵树可能因为主人在别处还有真实改动而长期
     留在盘上（本来就该留），但它那份 235MB 的重复缓存没有任何理由跟着留。
     判据一条没放松 —— 只动「与 HEAD 逐字节相同」的副本：
-      * 可再生产物之外/之内出现任何未跟踪文件或真实改动 -> 整棵树原地不动；
+      * 副本自身之内出现任何未跟踪文件或真实改动 -> 该副本不动（树照常留）；
       * 有活进程引用 -> 跳过；
       * 闲置不足 idle_h -> 跳过；
       * 受保护名字（主仓、kg-trunk、kg-live-*）-> 跳过。
@@ -573,8 +582,6 @@ def reap_regenerable_duplicates(dry: bool = False, guard=None,
         state = guard.regenerable_dirs_state(d)
         if not any(v == "pristine" for v in state.values()):
             continue
-        if guard.dirty_outside_regenerable(d):
-            continue
         if dry:
             approx = 0
             for rel, how in state.items():
@@ -596,6 +603,14 @@ def reap_regenerable_duplicates(dry: bool = False, guard=None,
             log(f"剥离可重建重复副本 {d.name}：{', '.join(got)}"
                 f"（{sum(got.values()) / 1e9:.2f}GB，可从 HEAD 还原）")
     return stripped_n, freed
+
+
+def _strip_idle_hours() -> float:
+    """Idle window for stripping duplicates; tighter (never weaker) under pressure."""
+    hours = STRIP_IDLE_H
+    if free_gb() < KG_TMP_PRESSURE_FREE_GB:
+        hours = min(hours, STRIP_IDLE_PRESSURE_H)
+    return max(0.0, hours)
 
 
 def _kg_tmp_age_hours() -> float:
@@ -680,7 +695,7 @@ def main():
             t = _reap_kg_tmp(dry=True, guard=d.workspace_guard)
             o = _dry_orphan_residue(d)
             sn, sf = reap_regenerable_duplicates(
-                dry=True, guard=d.workspace_guard, idle_h=STRIP_IDLE_H)
+                dry=True, guard=d.workspace_guard, idle_h=_strip_idle_hours())
             log(f"dry-run: 会回收 {clone_n} 个签名临时副本 / {n} 个 worktree / "
                 f"{t} 个 kg tmp / {o} 个孤儿残留；会压缩 {session_n} 个旧会话"
                 f"（{session_freed / 1e9:.2f}GB）；会剥离 {sn} 棵树的重复副本"
@@ -695,7 +710,7 @@ def main():
             # 顺序有讲究：剥离放在 worktree 回收之后。刚被整棵回收的树不必再
             # 剥离；而回收失败的树正好在这里把它那份重复副本清掉。
             sn, sf = reap_regenerable_duplicates(
-                guard=d.workspace_guard, idle_h=STRIP_IDLE_H)
+                guard=d.workspace_guard, idle_h=_strip_idle_hours())
             after = free_gb()
             log(f"回收签名临时副本 {clone_n} 个（{clone_freed / 1e9:.2f}GB）/ worktree {n} 个 / "
                 f"孤儿后端 {k} 个 / kg tmp {t} 个 / 孤儿残留目录 {o} 个 / "

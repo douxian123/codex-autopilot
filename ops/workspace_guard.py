@@ -374,11 +374,20 @@ def dirty_paths(worktree: Path) -> list[tuple[str, str]]:
 def dirty_outside_regenerable(worktree: Path) -> list[tuple[str, str]]:
     """Dirty entries that are NOT under a regenerable dir.
 
-    The gate for stripping: as long as this is empty (or only untracked
-    scratch, which the caller may drop), the only thing standing between this
-    tree and reclamation is a byte-for-byte duplicate of content that lives in
-    git. Anything else here means a human is mid-flight and the tree is left
-    exactly as it is, evidence copies and all.
+    The gate for *reclaiming the whole tree*: as long as this is empty, nothing
+    but a byte-for-byte duplicate of content that lives in git stands between
+    this tree and reclamation. Anything else here means a human is mid-flight,
+    so the tree itself is left exactly as it is.
+
+    It is deliberately NOT the gate for *stripping the duplicate* (2026-11-13
+    root cause). Those are two different questions -- "may I remove the tree?"
+    and "may I drop this one reproducible copy?" -- and coupling them is what
+    kept the disk pinned: a tree with any real edit anywhere was skipped
+    entirely, so its 235MB evidence copy was never released either. Measured on
+    the real machine: 144 of 152 idle trees were blocked this way, and the strip
+    channel released 0.00GB hour after hour. Per-directory safety lives inside
+    `regenerable_dirs_state` / `strip_regenerable_tracked`, which still refuse
+    the moment the copy itself has a human edit or an untracked file.
     """
     out = []
     for code, path in dirty_paths(worktree):
