@@ -102,24 +102,34 @@ KG_TMP_AGE_PRESSURE_H = float(
     os.environ.get("KG_TMP_AGE_PRESSURE_H", "1"))
 
 
+# 本模块的可用空间单位是 GB(1e9)，central_daemon 是 GiB(1024**3)。
+# 两个进程在同一条准入线上判盘，单位不一致就会留下盲区：把 24(GiB) 直接搬
+# 成 24(GB) 少算 1.65GiB —— 准入已经关闸停派、回收器却还以为「没压力」。
+_GIB = 1024 ** 3
+_GB = 1000 ** 3
+
+
 def _admission_resume_free_gb(fallback: float = 24.0) -> float:
-    """准入恢复线（回收压力阈值必须跟着它走）。
+    """准入门槛（本模块单位 GB），跟着 central_daemon 的准入恢复线走。
 
     为什么不能各自留一个数（2026-11-12 根因，与 central_daemon 同一条）：
     准入闸在 EXEC_DISK_STOP_FREE_GB=20 以下关掉新派发、到
     EXEC_DISK_RESUME_FREE_GB=24 才恢复；而这个每小时独立跑的回收器原本把
     「压力」定在 15GB。磁盘落在 15~24GiB 时，工作已经停摆，回收器却仍按
     6 小时闲置窗口慢扫 kg tmp —— 又是一段「准入已关、回收器以为没压力」的死区。
-    这里让默认值跟随准入恢复线，做到「准入一关，回收立刻进入紧张节奏」。
+
+    单位也要对齐：调用方拿到的是 central 的 GiB 数，这里换算成 GB 再返回，
+    让两边的**字节**阈值完全相同（否则仍差 1.65GiB）。
     只把紧张节奏提前，安全判据一条不放松（进程引用、worktree 守卫照旧）。
     """
     try:
         if str(OPS) not in sys.path:
             sys.path.insert(0, str(OPS))
         import central_daemon
-        return float(central_daemon.EXEC_DISK_RESUME_FREE_GB)
+        gib = float(central_daemon.EXEC_DISK_RESUME_FREE_GB)
+        return gib * _GIB / _GB
     except Exception:
-        return float(fallback)
+        return float(fallback) * _GIB / _GB
 
 
 KG_TMP_PRESSURE_FREE_GB = float(

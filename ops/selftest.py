@@ -5416,14 +5416,18 @@ def test_disk_reap_pressure_threshold_follows_admission_resume_line():
     saved = os.environ.pop("KG_TMP_PRESSURE_FREE_GB", None)
     try:
         importlib.reload(disk_reap)
-        assert disk_reap.KG_TMP_PRESSURE_FREE_GB >= (
-            central_daemon.EXEC_DISK_STOP_FREE_GB
-        ), (disk_reap.KG_TMP_PRESSURE_FREE_GB,
+        # 两边单位不同（本模块 GB=1e9，central 是 GiB=1024**3），必须按字节
+        # 比。只比数字会留下 1.65GiB 的盲区：准入已关、回收器还以为没压力。
+        reap_bytes = disk_reap.KG_TMP_PRESSURE_FREE_GB * 1000 ** 3
+        stop_bytes = central_daemon.EXEC_DISK_STOP_FREE_GB * 1024 ** 3
+        resume_bytes = central_daemon.EXEC_DISK_RESUME_FREE_GB * 1024 ** 3
+        assert reap_bytes >= stop_bytes, (
+            disk_reap.KG_TMP_PRESSURE_FREE_GB,
             central_daemon.EXEC_DISK_STOP_FREE_GB)
-        assert disk_reap.KG_TMP_PRESSURE_FREE_GB == (
-            central_daemon.EXEC_DISK_RESUME_FREE_GB
-        ), (disk_reap.KG_TMP_PRESSURE_FREE_GB,
-            central_daemon.EXEC_DISK_RESUME_FREE_GB)
+        assert abs(reap_bytes - resume_bytes) < 1.0, (
+            disk_reap.KG_TMP_PRESSURE_FREE_GB,
+            central_daemon.EXEC_DISK_RESUME_FREE_GB,
+            reap_bytes, resume_bytes)
     finally:
         if saved is not None:
             os.environ["KG_TMP_PRESSURE_FREE_GB"] = saved
