@@ -8,6 +8,7 @@ covers append-only JSONL logs, while preserving deleted, truncated, rewritten,
 or otherwise unique historical content.
 """
 import argparse
+import gzip
 import hashlib
 import os
 import re
@@ -146,34 +147,64 @@ def archive_unique(
     archive_bytes: List[int],
     archive_cap: int,
 ) -> Tuple[bool, str]:
-    """Move unique bytes into the protection archive without exceeding its cap."""
+    """Compress and verify unique bytes before removing the snapshot copy."""
     key = content_key(path)
     if key in known_content:
         path.unlink()
         return True, ""
 
-    needed = path.stat().st_size
-    if archive_cap >= 0 and archive_bytes[0] + needed > archive_cap:
-        return False, "archive capacity reached"
-
     archive.mkdir(parents=True, exist_ok=True)
-    staged = archive / f".incoming-{key[0][:20]}-{os.getpid()}"
-    if staged.exists():
-        staged.unlink()
-    os.replace(path, staged)
-
     rel = safe_rel(Path(*path.parts[-8:]))
-    destination = archive / rel.parent / f"{rel.name}.{key[0][:16]}"
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination = archive / rel.parent / f"{rel.name}.{key[0][:16]}.gz"
     if destination.exists():
         try:
-            if content_key(destination) == key:
-                staged.unlink()
+            with gzip.open(destination, "rb") as stream:
+                digest = hashlib.sha256()
+                size = 0
+                while True:
+                    chunk = stream.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    size += len(chunk)
+            if (digest.hexdigest(), size) == key:
+                path.unlink()
                 known_content[key] = destination
                 return True, ""
         except OSError:
             pass
+        return False, "existing archive failed verification"
+
+    staged = archive / f".incoming-{key[0][:20]}-{os.getpid()}.gz"
+    if staged.exists():
+        staged.unlink()
+    with path.open("rb") as source, gzip.open(staged, "wb") as target:
+        shutil.copyfileobj(source, target, length=1024 * 1024)
+    try:
+        with gzip.open(staged, "rb") as stream:
+            digest = hashlib.sha256()
+            size = 0
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                size += len(chunk)
+        if (digest.hexdigest(), size) != key:
+            staged.unlink()
+            return False, "archive verification failed"
+    except OSError:
+        staged.unlink()
+        return False, "archive verification failed"
+
+    needed = staged.stat().st_size
+    if archive_cap >= 0 and archive_bytes[0] + needed > archive_cap:
+        staged.unlink()
+        return False, "archive capacity reached"
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
     os.replace(staged, destination)
+    path.unlink()
     known_content[key] = destination
     global_queue.append(destination)
     archive_bytes[0] += needed
@@ -234,17 +265,43 @@ def archive_usage(archive: Path) -> int:
     )
 
 
-def prunable_snapshots(source: Path, snapshots: Path, keep: int = 48) -> Tuple[List[Path], List[Tuple[Path, str]]]:
+def tree_usage_bytes(root: Path) -> int:
+    total = 0
+    for path in root.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            try:
+                total += path.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def prunable_snapshots(
+    source: Path,
+    snapshots: Path,
+    keep: int = 2,
+    max_snapshot_bytes: Optional[int] = None,
+) -> Tuple[List[Path], List[Tuple[Path, str]]]:
     dirs = sorted(
         (p for p in snapshots.iterdir() if p.is_dir() and not p.is_symlink()),
         key=lambda p: (p.stat().st_mtime_ns, p.name),
         reverse=True,
     )
+    protected_count = min(len(dirs), max(1, keep))
+    candidates: List[Path] = []
+    if max_snapshot_bytes is not None:
+        retained_bytes = sum(tree_usage_bytes(path) for path in dirs[:protected_count])
+        while retained_bytes > max_snapshot_bytes and protected_count > 1:
+            protected_count -= 1
+            extra = dirs[protected_count]
+            candidates.append(extra)
+            retained_bytes -= tree_usage_bytes(extra)
+    candidates.extend(dirs[protected_count:])
+    candidates = list(dict.fromkeys(candidates))
     removable: List[Path] = []
     retained: List[Tuple[Path, str]] = []
-    for index, candidate in enumerate(dirs):
-        if index < keep:
-            continue
+    for candidate in sorted(candidates, key=lambda p: p.name):
+        index = dirs.index(candidate)
         newer = [source, *dirs[:index]]
         safe, reason = snapshot_is_covered(candidate, newer)
         if safe:
@@ -258,9 +315,10 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--snapshots", type=Path, required=True)
-    parser.add_argument("--keep", type=int, default=48)
+    parser.add_argument("--keep", type=int, default=2)
     parser.add_argument("--archive", type=Path)
-    parser.add_argument("--archive-cap-mib", type=int, default=2048)
+    parser.add_argument("--archive-cap-mib", type=int, default=4096)
+    parser.add_argument("--max-snapshot-mib", type=int, default=8192)
     parser.add_argument("--keep-archive", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
@@ -292,7 +350,8 @@ def main() -> int:
         name_index.add_tree(d)
 
     removable, retained = prunable_snapshots(
-        args.source, args.snapshots, max(1, args.keep))
+        args.source, args.snapshots, max(1, args.keep),
+        args.max_snapshot_mib * 1024 * 1024)
     removed = 0
     for path in removable:
         print(f"snapshot prune remove {path.name} (file-level history check)")
