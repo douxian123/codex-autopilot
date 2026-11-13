@@ -6751,7 +6751,9 @@ def test_compact_session_logs_is_lossless_and_under_pressure_only():
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
                               "KG_SESSION_COMPACT": "1"}), \
-             mock.patch.object(mod, "free_gb", return_value=1.0):
+             mock.patch.object(mod, "free_gb", return_value=1.0), \
+             mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
+             mock.patch.object(mod, "SESSION_COMPACT_RECENT_WRITE_MIN", 0.0):
             n, freed = mod.compact_session_logs()
         archive = root / ".codex/session-archive/2026/01/01/old.jsonl.zst"
         assert n == 1 and freed > 0
@@ -6768,7 +6770,9 @@ def test_compact_session_logs_is_lossless_and_under_pressure_only():
                              {"CODEX_HOME": str(root / ".codex"),
                               "KG_SESSION_COMPACT": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
-             mock.patch.object(mod, "_path_is_open", side_effect=[False, True]):
+             mock.patch.object(mod, "_path_is_open", side_effect=[False, True]), \
+             mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
+             mock.patch.object(mod, "SESSION_COMPACT_RECENT_WRITE_MIN", 0.0):
             assert mod.compact_session_logs() == (0, 0)
         assert active.is_file() and not active.with_name(active.name + ".zst").exists()
 
