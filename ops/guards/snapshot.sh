@@ -13,7 +13,9 @@ GUARD="$HOME/.codex-guard"
 SNAP="$GUARD/snapshots"
 SRC="$HOME/.codex/sessions"
 LOG="$GUARD/guard.log"
-KEEP=3    # 保留最近 3 个有效快照；更老的按文件级历史保护规则淘汰
+KEEP=2    # 默认保留最近 2 个有效快照；独有旧版本先压缩归档再淘汰
+SNAPSHOT_BUDGET_GIB="${SNAPSHOT_BUDGET_GIB:-8}"  # 超限时缩到最近 1 份
+ARCHIVE_CAP_GIB="${ARCHIVE_CAP_GIB:-4}"          # 压缩归档上限，不静默丢历史
 MIN_FREE_GIB="${MIN_FREE_GIB:-20}"   # 工作盘低于此值时停止新建保护快照
 LOCK="$GUARD/.snapshot.lock"
 
@@ -34,11 +36,13 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 fi
 trap 'rm -r "$LOCK" 2>/dev/null' EXIT
 
-# 先淘汰“每个文件都已被当前 sessions 或更新快照完整包含”的旧目录。
-# 删除、截断、改写过的内容都属于唯一历史，条件不满足时永久保留。
+# 先把旧快照中的独有内容压缩、回读校验并归档，再移除快照目录。
+# 归档失败时保留原快照；总预算超限时从最旧一份开始收缩。
 if [ -f "$SELF_DIR/snapshot_prune.py" ] && [ -x /usr/bin/python3 ]; then
   /usr/bin/python3 "$SELF_DIR/snapshot_prune.py" \
-    --source "$SRC" --snapshots "$SNAP" --keep "$KEEP" >>"$LOG" 2>&1 || \
+    --source "$SRC" --snapshots "$SNAP" --keep "$KEEP" \
+    --max-snapshot-mib "$((SNAPSHOT_BUDGET_GIB * 1024))" \
+    --archive-cap-mib "$((ARCHIVE_CAP_GIB * 1024))" >>"$LOG" 2>&1 || \
     echo "$(date '+%F %T') snapshot prune skipped (helper failed; no snapshots removed by shell)" >>"$LOG"
 fi
 
