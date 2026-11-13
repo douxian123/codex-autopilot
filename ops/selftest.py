@@ -3896,6 +3896,40 @@ def test_disk_hold_withholds_worker_restart():
     print("selftest ok: 低盘时重试/重派也不重启 worker，保留现场等空间恢复再续跑。")
 
 
+def test_disk_probe_refreshes_state_even_when_gate_stays_open():
+    """Persisted free space must track every probe, even without a transition."""
+    import importlib
+    import json as _json
+    import sys
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-disk-probe-") as tmp:
+        home = Path(tmp)
+        (home / "state.json").write_text(_json.dumps({
+            "exec_disk_held": False,
+            "exec_disk_free_gb": 20.0,
+            "exec_disk_threshold_gb": 10.0,
+            "exec_disk_state_at": "2000-01-01 00:00:00",
+        }), encoding="utf-8")
+        os.environ["KG_DAEMON_HOME"] = str(home)
+        importlib.reload(central_daemon)
+        free = central_daemon.EXEC_DISK_RESUME_FREE_GB + 1.0
+        central_daemon._disk_free_gb = lambda: free
+
+        assert central_daemon._disk_pressure() == 0
+        state = _json.loads((home / "state.json").read_text(encoding="utf-8"))
+        assert state["exec_disk_held"] is False, state
+        assert state["exec_disk_free_gb"] == round(free, 2), state
+        assert state["exec_disk_threshold_gb"] == (
+            central_daemon.EXEC_DISK_STOP_FREE_GB), state
+        assert state["exec_disk_state_at"] != "2000-01-01 00:00:00", state
+    print("selftest ok: 磁盘闸未暂停时也持续刷新实测余量与当前阈值。")
+
+
 def test_worktree_admission_fails_closed_before_creation():
     """Disk and inventory admission must reject before `git worktree add`.
 
@@ -6869,6 +6903,7 @@ if __name__ == "__main__":
     test_exec_model_fallback_relaunch_is_async()
     test_parallel_exec_slots()
     test_disk_hold_withholds_worker_restart()
+    test_disk_probe_refreshes_state_even_when_gate_stays_open()
     test_worktree_admission_fails_closed_before_creation()
     test_git_gc_never_prunes_shared_partial_clone()
     test_proc_run_never_hangs_on_inherited_pipe()

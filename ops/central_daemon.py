@@ -3316,8 +3316,14 @@ def _disk_pressure() -> int:
             log("[exec] 磁盘余量读取失败，按 fail-closed 暂停派发新 worker")
         return 1
     now_held = free < threshold
-    if now_held != held or "exec_disk_held" not in state:
-        EXEC_DISK_HOLD_IN_MEMORY = now_held
+    transitioned = now_held != held or "exec_disk_held" not in state
+    reading_changed = any(
+        state.get(key) != value for key, value in (
+            ("exec_disk_held", now_held),
+            ("exec_disk_free_gb", round(free, 2)),
+            ("exec_disk_threshold_gb", threshold),
+        ))
+    if transitioned or reading_changed:
         state["exec_disk_held"] = now_held
         state["exec_disk_free_gb"] = round(free, 2)
         state["exec_disk_threshold_gb"] = threshold
@@ -3326,6 +3332,8 @@ def _disk_pressure() -> int:
             save_state(state)
         except OSError as exc:
             log(f"[exec] 磁盘闸状态暂不能持久化：{exc}")
+    if transitioned:
+        EXEC_DISK_HOLD_IN_MEMORY = now_held
         if now_held:
             log(f"[exec] 磁盘准入关闭（可用 {free:.2f}GB，"
                 f"恢复线 {EXEC_DISK_RESUME_FREE_GB:.2f}GB），"
