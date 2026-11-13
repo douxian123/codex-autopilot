@@ -66,15 +66,15 @@ def main():
           mod.CODEX_SIGN_CLONE_GRACE_MIN == 2.0,
           mod.CODEX_SIGN_CLONE_GRACE_MIN)
 
-    # 2) 默认必须保持关闭：低盘压力也不能擅自替换 Codex 可读取的历史格式。
+    # 2) 默认在低盘压力下启用；高盘时不动任何历史。
     with tempfile.TemporaryDirectory(prefix="reap-zstd-") as tmp:
         root = Path(tmp)
         old = make_old_session(root)
         with mock.patch.dict("os.environ", {"CODEX_HOME": str(root / ".codex")}), \
-             mock.patch.object(mod, "free_gb", return_value=1.0):
+             mock.patch.object(mod, "free_gb", return_value=100.0):
             os.environ.pop("KG_SESSION_COMPACT", None)
             n, freed = mod.compact_session_logs()
-        check("默认不压缩或替换历史会话", n == 0 and freed == 0 and old.is_file(),
+        check("高盘时空闲时不动历史会话", n == 0 and freed == 0 and old.is_file(),
               (n, freed, old.exists()))
 
     # 3) 显式 opt-in + 精简 PATH + 低盘 → 才允许真归档且无损。
@@ -85,7 +85,9 @@ def main():
                              {"CODEX_HOME": str(root / ".codex"),
                               "KG_SESSION_COMPACT": "1",
                               "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}), \
-             mock.patch.object(mod, "free_gb", return_value=1.0):
+             mock.patch.object(mod, "free_gb", return_value=1.0), \
+             mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
+             mock.patch.object(mod, "SESSION_COMPACT_RECENT_WRITE_MIN", 0.0):
             n, freed = mod.compact_session_logs()
         archive = root / ".codex/session-archive/2026/01/01/old.jsonl.zst"
         check("精简 PATH 下真的归档了旧会话", n == 1 and freed > 0, (n, freed))
@@ -102,7 +104,9 @@ def main():
                              {"CODEX_HOME": str(root / ".codex"),
                               "KG_SESSION_COMPACT": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
-             mock.patch.object(mod, "_zstd_path", return_value=None):
+             mock.patch.object(mod, "_zstd_path", return_value=None), \
+             mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
+             mock.patch.object(mod, "SESSION_COMPACT_RECENT_WRITE_MIN", 0.0):
             n, freed = mod.compact_session_logs()
         check("缺 zstd 时不删任何原文件", n == 0 and freed == 0 and old.is_file())
         check("缺 zstd 时不留半截 .zst / .tmp",
@@ -117,7 +121,9 @@ def main():
                              {"CODEX_HOME": str(root / ".codex"),
                               "KG_SESSION_COMPACT": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
-             mock.patch.object(mod, "_path_is_open", return_value=True):
+             mock.patch.object(mod, "_path_is_open", return_value=True), \
+             mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
+             mock.patch.object(mod, "SESSION_COMPACT_RECENT_WRITE_MIN", 0.0):
             n, freed = mod.compact_session_logs()
         check("被打开时保留原文件且不创建归档", n == 0 and old.is_file()
               and not (root / ".codex/session-archive").exists(), (n, freed))
@@ -129,12 +135,43 @@ def main():
                              {"CODEX_HOME": str(root / ".codex"),
                               "KG_SESSION_COMPACT": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
-             mock.patch.object(mod, "_path_is_open", side_effect=[False, True]):
+             mock.patch.object(mod, "_path_is_open", side_effect=[False, True]), \
+             mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
+             mock.patch.object(mod, "SESSION_COMPACT_RECENT_WRITE_MIN", 0.0):
             n, freed = mod.compact_session_logs()
         archive_root = root / ".codex/session-archive"
         leftovers = list(archive_root.rglob("*.zst")) + list(archive_root.rglob("*.tmp")) if archive_root.exists() else []
         check("压缩后、删除前再次打开时不替换原文件",
               n == 0 and old.is_file() and not leftovers, (n, freed, leftovers))
+
+    # 6) 默认低盘压力会自动启用；最近仍在写入的旧会话绝不进候选。
+    with tempfile.TemporaryDirectory(prefix="reap-zstd-") as tmp:
+        root = Path(tmp)
+        old = make_old_session(root)
+        old_ts = time.time() - 25 * 3600
+        os.utime(old, (old_ts, old_ts))
+        sessions = old.parent
+        hot = sessions / "hot.jsonl"
+        hot.write_bytes(b'{"type":"event","payload":"hot"}\n' * 900_000)
+        # Keep hot much newer than old. The previous fixture gave both files
+        # the same mtime, which cannot test a recency exclusion.
+        hot_ts = time.time() - 3600
+        os.utime(hot, (hot_ts, hot_ts))
+        with mock.patch.dict("os.environ", {"CODEX_HOME": str(root / ".codex")}), \
+             mock.patch.object(mod, "free_gb", return_value=1.0), \
+             mock.patch.object(mod, "SESSION_COMPACT_MAX_FILES", 1):
+            os.environ.pop("KG_SESSION_COMPACT", None)
+            n, freed = mod.compact_session_logs()
+        check("低盘默认不自动迁移历史会话", n == 0 and freed == 0 and old.is_file(), (n, freed))
+        with mock.patch.dict("os.environ",
+                             {"CODEX_HOME": str(root / ".codex"),
+                              "KG_SESSION_COMPACT": "1"}), \
+             mock.patch.object(mod, "free_gb", return_value=1.0), \
+             mock.patch.object(mod, "SESSION_COMPACT_MAX_FILES", 1):
+            n, freed = mod.compact_session_logs()
+        check("显式开启后每轮受预算限制",
+              n == 1 and freed > 0 and not old.exists(), (n, freed))
+        check("最近仍在写入的大会话保持原样", hot.is_file())
 
     if failures:
         print(f"\nreap zstd path unit: FAIL ({len(failures)})")

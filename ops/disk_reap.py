@@ -152,13 +152,20 @@ STRIP_IDLE_PRESSURE_H = float(
 # 旧会话原始 JSONL 的压缩门槛与预算。只压缩“未被进程引用”的旧文件，
 # 压缩后先做完整性校验，校验失败绝不删除原文件。
 #
-# 默认绝不压缩：Codex 的线程索引读取的是 .jsonl，换成 .zst 即使字节无损，
-# 也会让用户在历史线程列表里找不到对话。这个动作只允许显式 opt-in。
+# 默认保持关闭。官方 thread history 并不保证覆盖原始 JSONL 的全部内容，
+# 把源文件移出 sessions/ 可能让历史线程失去可回放来源；该通道只允许显式 opt-in。
+# 启用时门槛必须同时满足：至少 6 小时没写、最近 24 小时无活动、无人打开、
+# 每轮最多 2 个。归档移到独立目录，不放进 sessions/。
 SESSION_COMPACT_MIN_AGE_H = float(os.environ.get("KG_SESSION_COMPACT_MIN_AGE_H", "6"))
+SESSION_COMPACT_QUIET_H = float(os.environ.get("KG_SESSION_COMPACT_QUIET_H", "24"))
+# A file can be old by mtime but be touched again while the reaper inspects it.
+# Require two minutes of write quiescence in addition to the long idle gate.
+SESSION_COMPACT_RECENT_WRITE_MIN = float(
+    os.environ.get("KG_SESSION_COMPACT_RECENT_WRITE_MIN", "2.0"))
 SESSION_COMPACT_MIN_MB = float(os.environ.get("KG_SESSION_COMPACT_MIN_MB", "20"))
-SESSION_COMPACT_MAX_FILES = int(os.environ.get("KG_SESSION_COMPACT_MAX_FILES", "8"))
+SESSION_COMPACT_MAX_FILES = int(os.environ.get("KG_SESSION_COMPACT_MAX_FILES", "2"))
 SESSION_COMPACT_UNDER_FREE_GB = float(
-    os.environ.get("KG_SESSION_COMPACT_UNDER_FREE_GB", "15"))
+    os.environ.get("KG_SESSION_COMPACT_UNDER_FREE_GB", "24"))
 
 
 def log(msg):
@@ -251,13 +258,18 @@ def compact_session_logs(dry: bool = False) -> tuple[int, int]:
     if not sessions.is_dir():
         return 0, 0
     archive_root = codex_home / "session-archive"
-    cutoff = time.time() - SESSION_COMPACT_MIN_AGE_H * 3600
+    now = time.time()
+    cutoff = now - SESSION_COMPACT_MIN_AGE_H * 3600
+    quiet_cutoff = now - SESSION_COMPACT_QUIET_H * 3600
+    recent_write_cutoff = now - SESSION_COMPACT_RECENT_WRITE_MIN * 60
     min_bytes = int(SESSION_COMPACT_MIN_MB * 1024 * 1024)
     candidates = []
     for path in sessions.rglob("*.jsonl"):
         try:
             st = path.stat()
-            if st.st_size < min_bytes or st.st_mtime > cutoff:
+            if (st.st_size < min_bytes or st.st_mtime > cutoff
+                    or st.st_mtime > quiet_cutoff
+                    or st.st_mtime > recent_write_cutoff):
                 continue
             if _path_is_open(path):
                 log(f"旧会话仍被进程使用，跳过：{path}")
@@ -265,7 +277,9 @@ def compact_session_logs(dry: bool = False) -> tuple[int, int]:
             candidates.append((st.st_mtime, st.st_size, path))
         except OSError:
             continue
-    candidates.sort(reverse=True)
+    # Oldest first. Recent/large transcripts are the ones Codex is most likely
+    # to reopen, and a bounded round should not keep retrying the same hot files.
+    candidates.sort()
     zstd = None
     if not dry:
         zstd = _zstd_path()
