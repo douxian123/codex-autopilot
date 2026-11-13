@@ -77,7 +77,7 @@ def main():
         check("默认不压缩或替换历史会话", n == 0 and freed == 0 and old.is_file(),
               (n, freed, old.exists()))
 
-    # 3) 显式 opt-in + 精简 PATH + 低盘 → 才允许真压缩且无损。
+    # 3) 显式 opt-in + 精简 PATH + 低盘 → 才允许真归档且无损。
     with tempfile.TemporaryDirectory(prefix="reap-zstd-") as tmp:
         root = Path(tmp)
         old = make_old_session(root)
@@ -87,9 +87,12 @@ def main():
                               "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0):
             n, freed = mod.compact_session_logs()
-        check("精简 PATH 下真的压掉了旧会话", n == 1 and freed > 0, (n, freed))
-        check("原文件已替换为 .zst", (not old.exists())
-              and old.with_name(old.name + ".zst").is_file())
+        archive = root / ".codex/session-archive/2026/01/01/old.jsonl.zst"
+        check("精简 PATH 下真的归档了旧会话", n == 1 and freed > 0, (n, freed))
+        check("sessions 里不残留 .zst，归档在独立目录",
+              not old.exists()
+              and not old.with_name(old.name + ".zst").exists()
+              and archive.is_file())
 
     # 4) 反向：显式开启但真的没有 zstd 时，仍保留全部原文件且不留半截产物。
     with tempfile.TemporaryDirectory(prefix="reap-zstd-") as tmp:
@@ -105,6 +108,33 @@ def main():
         check("缺 zstd 时不留半截 .zst / .tmp",
               not old.with_name(old.name + ".zst").exists()
               and not old.with_name(old.name + ".zst.tmp").exists())
+
+    # 5) 文件被进程打开时绝不替换；压缩后、删除前再次打开也保守保留。
+    with tempfile.TemporaryDirectory(prefix="reap-zstd-") as tmp:
+        root = Path(tmp)
+        old = make_old_session(root)
+        with mock.patch.dict("os.environ",
+                             {"CODEX_HOME": str(root / ".codex"),
+                              "KG_SESSION_COMPACT": "1"}), \
+             mock.patch.object(mod, "free_gb", return_value=1.0), \
+             mock.patch.object(mod, "_path_is_open", return_value=True):
+            n, freed = mod.compact_session_logs()
+        check("被打开时保留原文件且不创建归档", n == 0 and old.is_file()
+              and not (root / ".codex/session-archive").exists(), (n, freed))
+
+    with tempfile.TemporaryDirectory(prefix="reap-zstd-") as tmp:
+        root = Path(tmp)
+        old = make_old_session(root)
+        with mock.patch.dict("os.environ",
+                             {"CODEX_HOME": str(root / ".codex"),
+                              "KG_SESSION_COMPACT": "1"}), \
+             mock.patch.object(mod, "free_gb", return_value=1.0), \
+             mock.patch.object(mod, "_path_is_open", side_effect=[False, True]):
+            n, freed = mod.compact_session_logs()
+        archive_root = root / ".codex/session-archive"
+        leftovers = list(archive_root.rglob("*.zst")) + list(archive_root.rglob("*.tmp")) if archive_root.exists() else []
+        check("压缩后、删除前再次打开时不替换原文件",
+              n == 0 and old.is_file() and not leftovers, (n, freed, leftovers))
 
     if failures:
         print(f"\nreap zstd path unit: FAIL ({len(failures)})")

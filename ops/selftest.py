@@ -6704,8 +6704,7 @@ def test_compact_session_logs_is_lossless_and_under_pressure_only():
     import tempfile
     from unittest import mock
     with tempfile.TemporaryDirectory(
-            prefix="codex-autopilot-session-compact-",
-            dir="/Users/danta/.newmax/workspace") as tmp:
+            prefix="codex-autopilot-session-compact-") as tmp:
         root = Path(tmp)
         sessions = root / ".codex/sessions/2026/01/01"
         sessions.mkdir(parents=True)
@@ -6739,9 +6738,24 @@ def test_compact_session_logs_is_lossless_and_under_pressure_only():
                               "KG_SESSION_COMPACT": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0):
             n, freed = mod.compact_session_logs()
+        archive = root / ".codex/session-archive/2026/01/01/old.jsonl.zst"
         assert n == 1 and freed > 0
         assert not old.exists()
-        assert old.with_name(old.name + ".zst").is_file()
+        assert not old.with_name(old.name + ".zst").exists()
+        assert archive.is_file()
+
+        # 活跃会话不能被归档；压缩后、删除前的复查失败也必须保留原文件。
+        active = sessions / "active.jsonl"
+        active.write_bytes(b'{"type":"event","payload":"active"}\n' * 900_000)
+        active_ts = active.stat().st_mtime
+        _os.utime(active, (active_ts - 7 * 3600, active_ts - 7 * 3600))
+        with mock.patch.dict("os.environ",
+                             {"CODEX_HOME": str(root / ".codex"),
+                              "KG_SESSION_COMPACT": "1"}), \
+             mock.patch.object(mod, "free_gb", return_value=1.0), \
+             mock.patch.object(mod, "_path_is_open", side_effect=[False, True]):
+            assert mod.compact_session_logs() == (0, 0)
+        assert active.is_file() and not active.with_name(active.name + ".zst").exists()
 
 
 def test_portable_serve_requires_token():

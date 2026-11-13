@@ -201,12 +201,42 @@ def _zstd_path() -> str | None:
     return None
 
 
+def _path_is_open(path: Path) -> bool:
+    """True when any process currently holds this exact file open.
+
+    A text search through process command lines cannot see normal file opens.
+    If lsof itself fails, keep the file: an unknown reference must fail closed.
+    """
+    try:
+        proc = subprocess.run(
+            ["lsof", "-n", "-F", "n", "--", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if proc.returncode not in (0, 1):
+            return True
+        target = str(path.resolve())
+        return any(
+            line.startswith("n") and line[1:] == target
+            for line in proc.stdout.splitlines()
+        )
+    except Exception:
+        return True
+
+
+def _session_archive_path(path: Path, sessions: Path, archive_root: Path) -> Path:
+    """Keep the date hierarchy while moving archives outside Codex's scan root."""
+    return archive_root / path.relative_to(sessions).with_name(path.name + ".zst")
+
+
 def compact_session_logs(dry: bool = False) -> tuple[int, int]:
-    """Compress old Codex JSONL transcripts with an integrity check.
+    """Archive old Codex JSONL transcripts outside the active session tree.
 
     Session history is valuable user context, so this path never removes a
     transcript before the compressed archive has been decompressed and compared
-    byte-for-byte with the source.
+    byte-for-byte with the source. Moving the .zst away from sessions/ matters:
+    leaving it beside the source hid the thread from Codex's .jsonl index.
     """
     if os.environ.get("KG_SESSION_COMPACT", "0").strip().lower() not in (
             "1", "on", "true", "yes"):
@@ -220,20 +250,21 @@ def compact_session_logs(dry: bool = False) -> tuple[int, int]:
         sessions = home / ".codex/sessions"
     if not sessions.is_dir():
         return 0, 0
+    archive_root = codex_home / "session-archive"
     cutoff = time.time() - SESSION_COMPACT_MIN_AGE_H * 3600
     min_bytes = int(SESSION_COMPACT_MIN_MB * 1024 * 1024)
-    procs = _process_lines()
     candidates = []
     for path in sessions.rglob("*.jsonl"):
         try:
             st = path.stat()
+            if st.st_size < min_bytes or st.st_mtime > cutoff:
+                continue
+            if _path_is_open(path):
+                log(f"旧会话仍被进程使用，跳过：{path}")
+                continue
+            candidates.append((st.st_mtime, st.st_size, path))
         except OSError:
             continue
-        if st.st_size < min_bytes or st.st_mtime > cutoff:
-            continue
-        if _referenced(path, procs) or _referenced(path.with_name(path.name + ".zst"), procs):
-            continue
-        candidates.append((st.st_mtime, st.st_size, path))
     candidates.sort(reverse=True)
     zstd = None
     if not dry:
@@ -244,15 +275,16 @@ def compact_session_logs(dry: bool = False) -> tuple[int, int]:
     compressed = 0
     freed = 0
     for _mtime, size, path in candidates[:SESSION_COMPACT_MAX_FILES]:
-        archive = path.with_name(path.name + ".zst")
+        archive = _session_archive_path(path, sessions, archive_root)
         if archive.exists():
             continue
         if dry:
             compressed += 1
             freed += size
             continue
-        tmp_archive = path.with_name(path.name + ".zst.tmp")
+        tmp_archive = archive.with_name(archive.name + ".tmp")
         try:
+            archive.parent.mkdir(parents=True, exist_ok=True)
             proc = subprocess.run(
                 [zstd, "-19", "-f", "-o", str(tmp_archive), str(path)],
                 capture_output=True, text=True, timeout=600)
@@ -265,11 +297,24 @@ def compact_session_logs(dry: bool = False) -> tuple[int, int]:
             if check.returncode != 0 or check.stdout != path.read_bytes():
                 log(f"会话压缩校验失败，保留原文件：{path}")
                 continue
+            # Recheck immediately before the only destructive operation. The
+            # source is removed last, after the archive is durable in place.
+            if _path_is_open(path):
+                log(f"旧会话压缩期间被打开，停止替换：{path}")
+                try:
+                    tmp_archive.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                continue
             tmp_archive.replace(archive)
-            path.unlink()
+            try:
+                path.unlink()
+            except Exception:
+                archive.unlink(missing_ok=True)
+                raise
             compressed += 1
             freed += max(0, size - archive.stat().st_size)
-            log(f"压缩旧会话 {path.name}: {size} -> {archive.stat().st_size} bytes")
+            log(f"归档旧会话 {path.name}: {size} -> {archive.stat().st_size} bytes ({archive})")
         except Exception as exc:
             log(f"会话压缩异常，保留原文件 {path}: {type(exc).__name__}: {exc}")
         finally:
@@ -279,7 +324,6 @@ def compact_session_logs(dry: bool = False) -> tuple[int, int]:
             except OSError:
                 pass
     return compressed, freed
-
 
 def _code_sign_clone_xdirs():
     """Yield temporary X directories where macOS app signing clones live."""
