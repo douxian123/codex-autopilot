@@ -218,6 +218,17 @@ def main() -> None:
         raw_state = json.loads(leases_path.read_text(encoding="utf-8"))
         raw_state["leases"] = []
         leases_path.write_text(json.dumps(raw_state), encoding="utf-8")
+        subprocess.run(
+            [sys.executable, str(GUARD)],
+            input=json.dumps({
+                **pressure_event,
+                "tool_use_id": "call-pressure-clear",
+            }),
+            text=True,
+            capture_output=True,
+            env={**pressure_env, "CODEX_RESOURCE_ADMISSION_MIN_FREE_MEM_GIB": "0"},
+            check=False,
+        )
         pressure_result = subprocess.run(
             [sys.executable, str(GUARD)],
             input=json.dumps(pressure_event),
@@ -231,6 +242,51 @@ def main() -> None:
               pressure_result.stdout + pressure_result.stderr)
         check("高内存压力拒绝不占槽",
               all(item["id"] != "test-session:call-pressure" for item in leases(state)))
+
+        tight_env = {
+            **pressure_env,
+            "CODEX_RESOURCE_ADMISSION_MIN_FREE_MEM_GIB": "0",
+            "CODEX_RESOURCE_ADMISSION_MAX_COMPRESSOR_GIB": "999",
+            "CODEX_RESOURCE_ADMISSION_MAX_SWAP_USED_GIB": "1",
+        }
+        first_tight = subprocess.run(
+            [sys.executable, str(GUARD)],
+            input=json.dumps({**pressure_event, "tool_use_id": "tight-1"}),
+            text=True,
+            capture_output=True,
+            env=tight_env,
+            check=False,
+        )
+        check("压力下第一个重验证延迟而不是误占槽",
+              "内存压缩" in first_tight.stdout,
+              first_tight.stdout + first_tight.stderr)
+        normal_env = {
+            **pressure_env,
+            "CODEX_RESOURCE_ADMISSION_MIN_FREE_MEM_GIB": "0",
+            "CODEX_RESOURCE_ADMISSION_MAX_COMPRESSOR_GIB": "999",
+            "CODEX_RESOURCE_ADMISSION_MAX_SWAP_USED_GIB": "999",
+        }
+        first_normal = subprocess.run(
+            [sys.executable, str(GUARD)],
+            input=json.dumps({**pressure_event, "tool_use_id": "normal-1"}),
+            text=True,
+            capture_output=True,
+            env=normal_env,
+            check=False,
+        )
+        check("无压力时第一个重验证放行",
+              not first_normal.stdout.strip(), first_normal.stdout + first_normal.stderr)
+        second_tight = subprocess.run(
+            [sys.executable, str(GUARD)],
+            input=json.dumps({**pressure_event, "tool_use_id": "tight-2"}),
+            text=True,
+            capture_output=True,
+            env=tight_env,
+            check=False,
+        )
+        check("压力下不会增加第二个槽位",
+              "内存压缩" in second_tight.stdout,
+              second_tight.stdout + second_tight.stderr)
         leases_path.write_text(
             json.dumps({"leases": [
                 {"id": "test-session:call-1", "created_at": time.time(), "pid": 0},

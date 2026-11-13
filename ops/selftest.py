@@ -1072,6 +1072,10 @@ def test_installer():
     assert "--install" in _install_src and "NO_DAEMON_REPOINT" in _install_src, \
         "install.sh 缺少「装完把守护改指新版本」这一步"
     assert "daemon.plist" in _install_src, "install.sh 没有检查本机是否已装守护"
+    assert "install-resource-hooks.py" in _install_src, \
+        "install.sh 缺少「安装时主动刷新资源准入 hook」这一步"
+    assert "资源准入 hook 安装失败" in _install_src, \
+        "资源准入 hook 安装失败时没有明确中止安装"
     installed_version = _installed_version()
     release_path = f"./plugins/codex-autopilot/releases/{installed_version}"
     with tempfile.TemporaryDirectory(prefix="autopilot-install-test-") as tmp:
@@ -1112,6 +1116,17 @@ def test_installer():
         assert sentinel.read_text(encoding="utf-8") == "keep\n"
         release = release_dir
         assert (release / "ops" / "central_mcp.py").is_file()
+        resource_hook = home / ".codex" / "hooks" / "resource-admission.py"
+        assert resource_hook.is_file(), "安装后没有落地资源准入 hook"
+        installed_hooks = _json.loads(
+            (home / ".codex" / "hooks.json").read_text(encoding="utf-8"))
+        for event in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
+            groups = installed_hooks["hooks"][event]
+            assert any(
+                "resource-admission.py" in hook["command"]
+                for group in groups
+                for hook in group.get("hooks", [])
+            ), f"{event} 没有挂上资源准入 hook"
         # Companion 源码必须随版本目录一起装：以后能从这个目录重建菜单栏应用。
         assert (release / "companion" / "build.sh").is_file()
         assert (release / "companion" / "Info.plist").is_file()

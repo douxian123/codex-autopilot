@@ -625,6 +625,21 @@ if [ -f "$DEST/ops/guards/repoint_launchd.py" ]; then
   fi
 fi
 
+# 5.8) 主动刷新资源准入 hook。
+#   只靠每 15 分钟一次的 hooks-guard 兜底，会让新版本装好后的前十五分钟继续裸跑；
+#   hooks 安装失败必须明确报错，不能把「版本已装、限流没装」当成成功。
+if [ -f "$DEST/ops/guards/install-resource-hooks.py" ]; then
+  echo
+  echo "刷新资源准入 hook（限制 tsc / Vite / Playwright 等重验证并发）…"
+  if ! "$PY" "$DEST/ops/guards/install-resource-hooks.py"; then
+    echo "× 资源准入 hook 安装失败。" >&2
+    echo "  版本目录已保留；修复 Python/hooks.json 权限后重跑：" >&2
+    echo "  $PY $DEST/ops/guards/install-resource-hooks.py" >&2
+    exit 1
+  fi
+fi
+
+
 # 6) 可选：用官方 CLI 刷新已安装插件，避免桌面端继续用旧缓存。
 #    Codex 会把插件快照到 ~/.codex/plugins/cache/personal/<name>/<version>/；
 #    只改 marketplace 文件和插件目录，缓存不会自动更新。

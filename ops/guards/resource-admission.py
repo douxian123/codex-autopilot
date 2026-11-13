@@ -27,7 +27,14 @@ STATE_DIR = Path(
     )
 )
 DISABLED_FILE = Path.home() / ".codex" / "hooks" / "RESOURCE_ADMISSION_DISABLED"
-MAX_LEASES = max(1, int(os.environ.get("CODEX_RESOURCE_ADMISSION_SLOTS", "2")))
+DEFAULT_MAX_LEASES = max(1, int(os.environ.get("CODEX_RESOURCE_ADMISSION_SLOTS", "2")))
+PRESSURE_MAX_LEASES = max(
+    1,
+    min(
+        DEFAULT_MAX_LEASES,
+        int(os.environ.get("CODEX_RESOURCE_ADMISSION_PRESSURE_SLOTS", "1")),
+    ),
+)
 MIN_FREE_GIB = float(os.environ.get("CODEX_RESOURCE_ADMISSION_MIN_FREE_GIB", "8"))
 # Heavy verification gates can also flood RAM before they fill the disk.
 # Keep this fail-open and only gate new heavy commands; never kill live work.
@@ -247,7 +254,10 @@ def _lease_id(event: dict[str, Any]) -> str:
 
 
 def _deny_reason(
-    state: dict[str, Any], free_gib: float, pressure: dict[str, float] | None
+    state: dict[str, Any],
+    free_gib: float,
+    pressure: dict[str, float] | None,
+    max_leases: int,
 ) -> str:
     if free_gib < MIN_FREE_GIB:
         return (
@@ -266,7 +276,7 @@ def _deny_reason(
             "已有命令不会被终止；请先让当前验证结束或释放内存。"
         )
     return (
-        f"[资源准入] 已有 {len(state['leases'])}/{MAX_LEASES} 个重验证在运行，"
+        f"[资源准入] 已有 {len(state['leases'])}/{max_leases} 个重验证在运行，"
         "为避免再次占满内存和磁盘，新的验证已延后。"
         "已有命令不会被终止；等待其中一个退出后重试。"
     )
@@ -299,12 +309,13 @@ def _admit_pre(event: dict[str, Any]) -> None:
                 or pressure["free_mem_gib"] < MIN_FREE_MEM_GIB
             )
         )
+        max_leases = PRESSURE_MAX_LEASES if pressure_blocked else DEFAULT_MAX_LEASES
         if (
-            len(state["leases"]) >= MAX_LEASES
+            len(state["leases"]) >= max_leases
             or free_gib < MIN_FREE_GIB
             or pressure_blocked
         ):
-            _emit_deny(_deny_reason(state, free_gib, pressure))
+            _emit_deny(_deny_reason(state, free_gib, pressure, max_leases))
             return
         test_pid = int(os.environ.get(TEST_PID_ENV, "0") or 0)
         state["leases"].append(
