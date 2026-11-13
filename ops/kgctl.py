@@ -2454,6 +2454,78 @@ def _reap_wt_keep_reason(wt: Path) -> str:
     return ""
 
 
+def _reap_protected_name(name: str) -> bool:
+    """True when this worktree name is on the shared do-not-touch list.
+
+    Same list the strip channel uses (`workspace_guard.PROTECTED_NAMES` plus
+    `PROTECTED_PREFIXES`, e.g. `kg-live-*` serving the running stack). The
+    manual reap channel never had this gate; adding it can only make reaping
+    more conservative, never less.
+    """
+    try:
+        here = Path(__file__).resolve().parent
+        if str(here) not in sys.path:
+            sys.path.insert(0, str(here))
+        import workspace_guard as _wg
+    except Exception:
+        return True  # 守卫不在时保守：当保护名处理
+    try:
+        return name in _wg.PROTECTED_NAMES or name.startswith(_wg.PROTECTED_PREFIXES)
+    except Exception:
+        return True
+
+
+def _reap_stripped_only(wt: Path) -> bool:
+    """True when a worktree's only dirt is deletions inside regenerable dirs.
+
+    This is exactly what the strip channel leaves behind
+    (`strip_regenerable_files` removes tracked copies of `backend/evidence` /
+    `evidence` that are byte-identical to HEAD). Those bytes are reproducible
+    from HEAD by definition, so such a tree carries zero human work and can be
+    reclaimed. Deliberately narrow in the other direction: one untracked file,
+    one edit anywhere, or one non-deletion entry returns False and the tree is
+    left exactly as it is.
+
+    Delegates to workspace_guard.only_regenerable_deletions so the two reaper
+    channels share one predicate instead of drifting apart.
+    """
+    try:
+        here = Path(__file__).resolve().parent
+        if str(here) not in sys.path:
+            sys.path.insert(0, str(here))
+        import workspace_guard as _wg
+    except Exception:
+        return False
+    try:
+        return bool(_wg.only_regenerable_deletions(wt))
+    except Exception:
+        return False
+
+
+def _reap_remove_worktree(wt: str) -> tuple[bool, str]:
+    """Remove a stripped worktree, verifying the directory really disappeared.
+
+    `git worktree remove` refuses a tree that reads dirty; `force_regenerable`
+    retries with --force but ONLY when the whole diff is deletions inside the
+    regenerable dirs (same predicate as above). After the call we re-check
+    `exists()` because git's exit code alone has been observed reporting success
+    while the directory stayed on disk.
+    """
+    try:
+        here = Path(__file__).resolve().parent
+        if str(here) not in sys.path:
+            sys.path.insert(0, str(here))
+        import workspace_guard as _wg
+    except Exception as exc:
+        return False, f"workspace_guard unavailable: {exc}"
+    ok, detail = _wg.remove_worktree(REPO, Path(wt), force_regenerable=True)
+    if not ok:
+        return False, detail
+    if Path(wt).exists():
+        return False, "git reported success but directory still exists"
+    return True, ""
+
+
 def cmd_reap(args):
     go = "--go" in args
     rows = scan()
@@ -2483,12 +2555,26 @@ def cmd_reap(args):
         if own and keep:
             # 现场还在用：目录和它的分支名都留着，这一项本轮跳过。
             continue
+        if own and _reap_protected_name(Path(wt).name):
+            # 保护名（主仓、kg-trunk、kg-live-* 等正在服务的树）：目录和分支都留。
+            # 这条只让回收少删，绝不多删；与 disk_reap 的保护名判据同一份名单。
+            continue
         if own:
             st = proc_run(["git", "-C", wt, "status", "--porcelain"],
                                 capture_output=True, text=True).stdout.strip()
             if not st:
                 proc_run(["git", "-C", str(REPO), "worktree", "remove", wt],
                                capture_output=True, text=True)
+            elif _reap_stripped_only(Path(wt)):
+                # 剥离态：整棵树的脏项只剩「可再生目录（backend/evidence、
+                # evidence 等）里与 HEAD 相同的跟踪文件被删」。那些字节全在
+                # git 里，`git checkout -- <dir>` 可逐字节还原，树里没有人的
+                # 工作。旧口径只认 st 为空，于是剥离过的树永远显示脏、永远
+                # 回收不掉 —— 实测 190 棵树常年压在盘上。判据只认这一种形态：
+                # 一个未跟踪文件、一处真实改动、一条非删除，都仍按脏保留。
+                removed, detail = _reap_remove_worktree(wt)
+                if not removed:
+                    print(f"  剥离态回收未生效 {Path(wt).name}：{detail}")
         proc_run(["git", "-C", str(REPO), "branch", "-D", r["branch"]],
                        capture_output=True, text=True)
     print("已回收。分支只是指针，成果在 main 里。")
