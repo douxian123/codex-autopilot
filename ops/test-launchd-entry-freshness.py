@@ -186,6 +186,12 @@ def main():
 
     # 5) registry 自身必须是有效的、每个 script 都真实存在于源码里
     real_reg = json.loads((OPS / "guards" / "registry.json").read_text(encoding="utf-8"))
+    disk_reap = next(
+        entry for entry in real_reg["entries"]
+        if entry.get("label") == "com.danta.codex-disk-reap")
+    check("磁盘回收任务不会在升级时被重置回每分钟扫描",
+          disk_reap.get("interval_s") == 900,
+          f"实际 {disk_reap.get('interval_s')}")
     for entry in real_reg["entries"]:
         script = OPS.parent / entry["script"]
         check(f"registry 里的 {entry['script']} 真实存在于本仓", script.exists(), str(script))
