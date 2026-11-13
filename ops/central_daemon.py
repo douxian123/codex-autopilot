@@ -4706,17 +4706,31 @@ def _python_for_plist() -> str:
     return sys.executable or "/usr/bin/python3"
 
 
-def plist_script_path():
-    """读已装 launchd plist 里实际会跑的那个脚本路径；没装/读不了返回 None。"""
+def plist_program_arguments():
+    """读已装 launchd plist 的 ProgramArguments；没装/读不了返回 None。"""
     try:
         with PLIST_PATH.open("rb") as fh:
             data = plistlib.load(fh)
     except (OSError, ValueError, plistlib.InvalidFileException):
         return None
-    for arg in data.get("ProgramArguments") or []:
+    args = data.get("ProgramArguments")
+    return [str(arg) for arg in args] if isinstance(args, list) else None
+
+
+def plist_script_path():
+    """读已装 launchd plist 里实际会跑的那个脚本路径；没装/读不了返回 None。"""
+    for arg in plist_program_arguments() or []:
         if str(arg).endswith("central_daemon.py"):
             return str(arg)
     return None
+
+
+def plist_maintenance_only():
+    """已装守护是否处于维护模式；没装/读不了返回 None（不冒充已知）。"""
+    args = plist_program_arguments()
+    if args is None:
+        return None
+    return "--maintenance-only" in args
 
 
 def plist_drift():
@@ -4740,7 +4754,36 @@ def plist_drift():
     return (not same), running, here
 
 
-def build_plist(interval_min: int) -> dict:
+def _env_flag(name: str):
+    """Read a tri-state boolean env knob: None when unset or empty."""
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return None
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _maintenance_only_choice(explicit):
+    """Decide the daemon mode without silently changing what is installed.
+
+    Precedence: explicit caller/CLI > environment override > installed plist >
+    full autopilot. The installed-plist step matters because preview.80 rewrote
+    the launchd job without `--maintenance-only`, so a routine reinstall turned
+    the zero-touch daemon back into a route/land daemon. Reading the installed
+    job makes the mode sticky; an explicit env value still lets an operator opt
+    out on purpose.
+    """
+    if explicit is not None:
+        return bool(explicit)
+    env_choice = _env_flag("KG_DAEMON_MAINTENANCE_ONLY")
+    if env_choice is not None:
+        return env_choice
+    installed = plist_maintenance_only()
+    if installed is not None:
+        return installed
+    return False
+
+
+def build_plist(interval_min: int, maintenance_only=None) -> dict:
     # 守护永远跑插件目录里的这份脚本。KG_TRUNK 是落盘用的主干 worktree，它的 ops/
     # 可能是旧副本；如果 plist 指向 `$KG_TRUNK/ops/central_daemon.py`，插件升级后
     # 守护又会跑旧代码 —— 这正是自包含安装要消掉的问题。KG_TRUNK 只作为运行时旋钮
@@ -4782,8 +4825,7 @@ def build_plist(interval_min: int) -> dict:
         env["KG_TRUNK"] = str(trunk)
     elif trunk_env:
         env["KG_TRUNK"] = str(Path(trunk_env).expanduser())
-    maintenance_only = os.environ.get("KG_DAEMON_MAINTENANCE_ONLY", "").lower() in (
-        "1", "true", "yes", "on")
+    maintenance_only = _maintenance_only_choice(maintenance_only)
     args = [_python_for_plist(), str(script),
             "--loop", "--interval", str(interval_min),
             "--max-land", str(DEFAULT_MAX_LAND)]
@@ -4847,15 +4889,16 @@ def wait_for_job_gone(uid: int, timeout: float = 30.0) -> bool:
     return _job_pid(uid) is None
 
 
-def install(interval_min: int) -> int:
+def install(interval_min: int, maintenance_only=None) -> int:
     if sys.platform != "darwin":
         log("install 只支持 macOS（launchd）。其它平台请用 `--loop` 自己托管。")
         return 1
     trunk = Path(os.environ.get("KG_TRUNK", str(CODE_ROOT))).expanduser()
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     before = plist_script_path()
+    plist_data = build_plist(interval_min, maintenance_only)
     with PLIST_PATH.open("wb") as fh:
-        plistlib.dump(build_plist(interval_min), fh)
+        plistlib.dump(plist_data, fh)
     log(f"已写 {PLIST_PATH}")
     if before and Path(before).resolve() != (HERE / "central_daemon.py").resolve():
         # 不静默：把「从哪一份切到哪一份」写进日志，事后能核对守护到底加载了谁。
@@ -4878,7 +4921,11 @@ def install(interval_min: int) -> int:
     if rc != 0:
         log("× launchctl bootstrap 失败；请检查上面的 plist 和 python 路径")
         return 1
-    log(f"已启用 {PLIST_LABEL}（每 {interval_min} 分钟一轮，nice={os.environ.get('KG_DAEMON_NICE', '10')}）")
+    mode = ("维护模式"
+            if "--maintenance-only" in (plist_data.get("ProgramArguments") or [])
+            else "完整自动挡")
+    log(f"已启用 {PLIST_LABEL}（每 {interval_min} 分钟一轮，{mode}，"
+        f"nice={os.environ.get('KG_DAEMON_NICE', '10')}）")
     return 0
 
 
@@ -4931,6 +4978,13 @@ def show_status() -> int:
     print("=== 自动挡常驻（KgCentralDaemon）===")
     print(f"守护状态       {'launchd 已加载' if loaded else '未加载'}"
           f"{'' if loaded else '（用 --install 打开）'}")
+    installed_mode = plist_maintenance_only()
+    if installed_mode is True:
+        print("守护模式       维护模式（只刷新磁盘闸 + 零损失回收；不 route/land/exec）")
+    elif installed_mode is False:
+        print("守护模式       完整自动挡")
+    else:
+        print("守护模式       （未安装/读不到 plist）")
     drifted, running_script, this_script = plist_drift()
     if drifted:
         print(f"⚠ 版本不一致   守护跑的是 {running_script}")
@@ -5167,11 +5221,26 @@ def main() -> int:
         help=f"每轮最多 land 几个（默认 {DEFAULT_MAX_LAND}）")
     ap.add_argument("--status", action="store_true", help="看守护 / 队列状态")
     ap.add_argument("--install", action="store_true", help="装成 launchd 守护并启用")
+    ap.add_argument(
+        "--install-maintenance-only", action="store_true",
+        help="安装时强制零触碰维护模式（不带则继承已装 plist 的模式）",
+    )
+    ap.add_argument(
+        "--install-full", action="store_true",
+        help="安装时强制完整自动挡模式（不带则继承已装 plist 的模式）",
+    )
     ap.add_argument("--uninstall", action="store_true", help="停用并删除 launchd 守护")
     args = ap.parse_args()
 
+    if args.install_maintenance_only and args.install_full:
+        ap.error("--install-maintenance-only 与 --install-full 不能同时使用")
     if args.install:
-        return install(args.interval)
+        explicit = None
+        if args.install_maintenance_only:
+            explicit = True
+        elif args.install_full:
+            explicit = False
+        return install(args.interval, explicit)
     if args.uninstall:
         return uninstall()
     if args.status:

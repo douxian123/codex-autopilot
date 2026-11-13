@@ -1716,6 +1716,64 @@ def test_daemon_maintenance_mode_is_zero_touch():
     print("selftest ok: 维护模式只刷新磁盘闸和安全回收，route/land/port/resolve/exec 全不调用。")
 
 
+def test_daemon_install_preserves_maintenance_mode():
+    """重装/升级不能把零触碰维护模式静默改回完整自动挡。
+
+    preview.80 的真实故障：`install.sh` 重写 launchd plist 时没有带上
+    `--maintenance-only`，于是「只做磁盘维护」的守护在下次安装后变成会
+    route/land 的完整自动挡。这里锁住三件事：
+      1. 已装 plist 是维护模式时，普通重装继续是维护模式；
+      2. 显式环境变量/CLI 仍可有意覆盖（既能强制维护，也能强制完整）；
+      3. 模式写进 plist，下一次安装不依赖上一次进程的环境。
+    """
+    import importlib
+    import plistlib as _plistlib
+    from unittest import mock
+
+    sys.path.insert(0, str(OPS))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    tmp = Path(tempfile.mkdtemp(prefix="kg-plist-mode-"))
+    real_plist = central_daemon.PLIST_PATH
+    central_daemon.PLIST_PATH = tmp / "com.codex-autopilot.daemon.plist"
+    try:
+        script = str(central_daemon.HERE / "central_daemon.py")
+        central_daemon.PLIST_PATH.write_bytes(_plistlib.dumps({
+            "Label": central_daemon.PLIST_LABEL,
+            "ProgramArguments": ["/usr/bin/python3", script,
+                                 "--loop", "--maintenance-only"],
+        }))
+
+        # 普通重装：环境变量为空，继承已装 plist 的维护模式。
+        calls = []
+        with mock.patch.dict(os.environ, {"KG_DAEMON_MAINTENANCE_ONLY": ""}), \
+             mock.patch.object(central_daemon, "launchctl",
+                              side_effect=lambda *a, **k: calls.append(a) or 0), \
+             mock.patch.object(central_daemon, "wait_for_job_gone", return_value=True), \
+             mock.patch.object(central_daemon, "log"):
+            assert central_daemon.plist_maintenance_only() is True
+            assert central_daemon.install(15) == 0
+
+        after = central_daemon.plist_program_arguments()
+        assert after is not None and "--maintenance-only" in after, (
+            "普通重装把维护模式丢了；launchd 又会 route/land"
+        )
+
+        # 显式覆盖：环境变量 false 才能退出维护模式；CLI 显式 true 能强制。
+        with mock.patch.dict(os.environ, {"KG_DAEMON_MAINTENANCE_ONLY": "0"}):
+            assert "--maintenance-only" not in central_daemon.build_plist(15)["ProgramArguments"]
+        assert "--maintenance-only" in central_daemon.build_plist(
+            15, True)["ProgramArguments"]
+        assert "--maintenance-only" not in central_daemon.build_plist(
+            15, False)["ProgramArguments"]
+    finally:
+        central_daemon.PLIST_PATH = real_plist
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+    print("selftest ok: 已装维护模式在重装后仍是维护模式，显式开关才能改变它。")
+
+
 def test_daemon_control_action():
     """后台常驻开关必须真启停 launchd，而不是只改偏好位。
 
@@ -6923,6 +6981,7 @@ if __name__ == "__main__":
     test_daemon_project_binding()
     test_daemon_plist_repoints_on_upgrade()
     test_daemon_maintenance_mode_is_zero_touch()
+    test_daemon_install_preserves_maintenance_mode()
     test_daemon_control_action()
     test_daemon_liveness_shared_judge()
     test_companion_contract()
