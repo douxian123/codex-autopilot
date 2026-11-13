@@ -1605,12 +1605,15 @@ def test_daemon_project_binding():
         "KG_SHARED": "/tmp/autopilot-shared-code",
         "KG_REPO": "/tmp/autopilot-state-root",
         "KG_TRUNK": "/tmp/autopilot-trunk",
+        "KG_DAEMON_MAINTENANCE_ONLY": "1",
     }):
         plist = central_daemon.build_plist(15)
         assert plist["EnvironmentVariables"]["KG_SHARED"] == "/tmp/autopilot-shared-code", \
             "launchd 丢了共享检出，自包含状态根的门禁找不到 node_modules"
+        assert "--maintenance-only" in plist["ProgramArguments"], \
+            "维护模式安装了，但 launchd 启动参数没有带上它"
     print("selftest ok: launchd 状态通过 launchctl 查询，跨项目 daemon 不冒充当前项目；"
-          "共享检出会传给启动后的门禁。")
+          "共享检出会传给启动后的门禁；维护模式参数会随 plist 持久化。")
 
 
 def test_daemon_plist_repoints_on_upgrade():
@@ -1672,6 +1675,40 @@ def test_daemon_plist_repoints_on_upgrade():
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
     print("selftest ok: 升级后守护改指新版本目录，旧 plist 漂移可被 --status 看出。")
+
+
+def test_daemon_maintenance_mode_is_zero_touch():
+    """维护模式只能刷新磁盘与安全回收，不能路由或碰项目分支。"""
+    import importlib
+    from unittest import mock
+
+    sys.path.insert(0, str(OPS))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    with mock.patch.object(central_daemon.control_state, "is_enabled", return_value=True), \
+         mock.patch.object(central_daemon.control_state, "is_paused", return_value=False), \
+         mock.patch.object(central_daemon, "_disk_pressure") as disk, \
+         mock.patch.object(central_daemon, "maybe_reap") as reap, \
+         mock.patch.object(central_daemon, "_reap_backend_orphans") as backends, \
+         mock.patch.object(central_daemon, "_reap_dead_worktrees") as worktrees, \
+         mock.patch.object(central_daemon, "_reap_orphan_residue") as residue, \
+         mock.patch.object(central_daemon, "_git_gc_maintenance") as gc, \
+         mock.patch.object(central_daemon, "_disk_free_gb", return_value=8.0), \
+         mock.patch.object(central_daemon, "run_kgctl") as kgctl, \
+         mock.patch.object(central_daemon, "load_state", return_value={}), \
+         mock.patch.object(central_daemon, "save_state"):
+        result = central_daemon.run_maintenance_cycle()
+
+    assert result["maintenance_only"] is True
+    disk.assert_called_once_with()
+    reap.assert_called_once_with()
+    backends.assert_called_once_with()
+    worktrees.assert_called_once_with()
+    residue.assert_called_once_with()
+    gc.assert_called_once_with()
+    kgctl.assert_not_called()
+    print("selftest ok: 维护模式只刷新磁盘闸和安全回收，route/land/port/resolve/exec 全不调用。")
 
 
 def test_daemon_control_action():
@@ -6880,6 +6917,7 @@ if __name__ == "__main__":
     test_installer_shell_portability()
     test_daemon_project_binding()
     test_daemon_plist_repoints_on_upgrade()
+    test_daemon_maintenance_mode_is_zero_touch()
     test_daemon_control_action()
     test_daemon_liveness_shared_judge()
     test_companion_contract()

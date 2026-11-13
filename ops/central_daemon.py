@@ -4782,11 +4782,16 @@ def build_plist(interval_min: int) -> dict:
         env["KG_TRUNK"] = str(trunk)
     elif trunk_env:
         env["KG_TRUNK"] = str(Path(trunk_env).expanduser())
+    maintenance_only = os.environ.get("KG_DAEMON_MAINTENANCE_ONLY", "").lower() in (
+        "1", "true", "yes", "on")
+    args = [_python_for_plist(), str(script),
+            "--loop", "--interval", str(interval_min),
+            "--max-land", str(DEFAULT_MAX_LAND)]
+    if maintenance_only:
+        args.append("--maintenance-only")
     return {
         "Label": PLIST_LABEL,
-        "ProgramArguments": [_python_for_plist(), str(script),
-                             "--loop", "--interval", str(interval_min),
-                             "--max-land", str(DEFAULT_MAX_LAND)],
+        "ProgramArguments": args,
         "RunAtLoad": True,
         "KeepAlive": True,
         "ThrottleInterval": 60,
@@ -5069,12 +5074,88 @@ def loop(interval_min: int, max_land: int, dry: bool) -> int:
     return 0
 
 
+def maintenance_loop(interval_min: int) -> int:
+    """Run the host-maintenance lane as a launchd-managed daemon."""
+    if not acquire_lock():
+        log(f"已有实例在跑（{DAEMON_LOCK}），本次退出")
+        return 1
+    signal.signal(signal.SIGTERM, _sigint)
+    signal.signal(signal.SIGINT, _sigint)
+    try:
+        try:
+            os.nice(int(os.environ.get("KG_DAEMON_NICE", "10")))
+        except (OSError, ValueError):
+            pass
+        log(f"维护守护启动 pid={os.getpid()} interval={interval_min}min；"
+            "不 route/land/port/resolve/exec")
+        while not _stop:
+            heartbeat_lock()
+            try:
+                run_maintenance_cycle()
+            except Exception as exc:
+                log(f"× 维护周期异常（守护继续运行）：{exc!r}")
+            sleep_for = max(5, interval_min * 60)
+            log(f"维护下一轮 {sleep_for/60:.1f} 分钟后")
+            slept = 0.0
+            while slept < sleep_for and not _stop:
+                time.sleep(min(5.0, sleep_for - slept))
+                slept += 5.0
+    finally:
+        release_lock()
+        log("维护守护退出")
+    return 0
+
+
+def run_maintenance_cycle() -> dict:
+    """Refresh the admission state and run zero-loss cleanup only.
+
+    Maintenance mode never routes intake or touches project branches. It
+    keeps the host healthy while broad auto-landing behavior stays disabled,
+    and still respects the global control gates.
+    """
+    if not control_state.is_enabled():
+        log("[maintenance] 自动挡已关闭：本轮不启动安全维护")
+        return {"ts": time.time(), "iso": _now(), "maintenance_only": True,
+                "disabled": True, "landed": [], "failures": []}
+    if control_state.is_paused():
+        log("[maintenance] 自动挡已暂停：本轮不启动安全维护")
+        return {"ts": time.time(), "iso": _now(), "maintenance_only": True,
+                "paused": True, "landed": [], "failures": []}
+
+    _disk_pressure()
+    maybe_reap()
+    failures = []
+    try:
+        _reap_backend_orphans()
+        _reap_dead_worktrees()
+        _reap_orphan_residue()
+        if (_disk_free_gb() or 0) < REAP_PRESSURE_FREE_GB:
+            _git_gc_maintenance()
+    except Exception as exc:
+        failures.append(("(maintenance)", repr(exc)))
+        log(f"[maintenance] 安全回收异常（已隔离，不触碰项目工作）：{exc!r}")
+
+    result = {"ts": time.time(), "iso": _now(), "maintenance_only": True,
+              "summary": {}, "landed": [], "failures": failures}
+    state = load_state()
+    state["last_run"] = result
+    try:
+        save_state(state)
+    except OSError as exc:
+        log(f"[maintenance] 本轮结果暂不能持久化：{exc}")
+    return result
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="自动挡常驻执行器（安全子集：合无冲突分支 + 移植小改动 + 拆冲突为任务）")
     ap.add_argument("--once", action="store_true", help="跑一个周期就退出")
     ap.add_argument("--loop", action="store_true", help="常驻，按 --interval 循环")
     ap.add_argument("--dry-run", action="store_true", help="只预演，不真的 land")
+    ap.add_argument(
+        "--maintenance-only", action="store_true",
+        help="常驻时只刷新磁盘闸并执行零损失回收；不 route/land/port/resolve/exec",
+    )
     ap.add_argument("--interval", type=int, default=int(
         os.environ.get("KG_DAEMON_INTERVAL", DEFAULT_INTERVAL_MIN)),
         help=f"常驻周期，分钟（默认 {DEFAULT_INTERVAL_MIN}）")
@@ -5093,6 +5174,8 @@ def main() -> int:
     if args.status:
         return show_status()
     if args.loop:
+        if args.maintenance_only:
+            return maintenance_loop(args.interval)
         return loop(args.interval, args.max_land, args.dry_run)
     # 默认（含 --once）：跑一个周期。
     run_cycle(args.dry_run, args.max_land)
