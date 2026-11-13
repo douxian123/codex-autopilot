@@ -224,6 +224,9 @@ def main():
     check("快照先写 partial 再原子改名",
           'PARTIAL="$SNAP/.${TS}.partial.$$"' in snapshot_sh
           and 'mv "$PARTIAL" "$FINAL"' in snapshot_sh)
+    check("新快照创建后在同一轮执行预算裁剪",
+          snapshot_sh.count("prune_snapshots\n") >= 2
+          and "prune_snapshots\nelse" in snapshot_sh)
 
     if failures:
         print(f"\nsnapshot clone/prune unit: FAIL ({len(failures)})")
