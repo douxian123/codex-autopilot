@@ -36,15 +36,19 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 fi
 trap 'rm -r "$LOCK" 2>/dev/null' EXIT
 
-# 先把旧快照中的独有内容压缩、回读校验并归档，再移除快照目录。
-# 归档失败时保留原快照；总预算超限时从最旧一份开始收缩。
-if [ -f "$SELF_DIR/snapshot_prune.py" ] && [ -x /usr/bin/python3 ]; then
-  /usr/bin/python3 "$SELF_DIR/snapshot_prune.py" \
-    --source "$SRC" --snapshots "$SNAP" --keep "$KEEP" \
-    --max-snapshot-mib "$((SNAPSHOT_BUDGET_GIB * 1024))" \
-    --archive-cap-mib "$((ARCHIVE_CAP_GIB * 1024))" >>"$LOG" 2>&1 || \
-    echo "$(date '+%F %T') snapshot prune skipped (helper failed; no snapshots removed by shell)" >>"$LOG"
-fi
+prune_snapshots() {
+  # 独有内容先压缩、回读校验并归档，再移除快照目录。
+  # 归档失败时保留原快照；总预算超限时从最旧一份开始收缩。
+  if [ -f "$SELF_DIR/snapshot_prune.py" ] && [ -x /usr/bin/python3 ]; then
+    /usr/bin/python3 "$SELF_DIR/snapshot_prune.py" \
+      --source "$SRC" --snapshots "$SNAP" --keep "$KEEP" \
+      --max-snapshot-mib "$((SNAPSHOT_BUDGET_GIB * 1024))" \
+      --archive-cap-mib "$((ARCHIVE_CAP_GIB * 1024))" >>"$LOG" 2>&1 || \
+      echo "$(date '+%F %T') snapshot prune skipped (helper failed; no snapshots removed by shell)" >>"$LOG"
+  fi
+}
+
+prune_snapshots
 
 free_gib=$(df -Pk "$GUARD" 2>/dev/null | awk 'NR==2 {printf "%.0f", $4 / 1048576}')
 [ -n "${free_gib:-}" ] || free_gib=0
@@ -58,6 +62,8 @@ FINAL="$SNAP/$TS"
 PARTIAL="$SNAP/.${TS}.partial.$$"
 if cp -cR "$SRC" "$PARTIAL" 2>>"$LOG" && mv "$PARTIAL" "$FINAL"; then
   echo "$(date '+%F %T') snapshot ok -> $FINAL $(find "$FINAL" -name '*.jsonl' | wc -l | tr -d ' ') files" >>"$LOG"
+  # clone 本身可能让逻辑快照量越过预算；创建后必须在当轮再裁剪。
+  prune_snapshots
 else
   echo "$(date '+%F %T') snapshot FAILED" >>"$LOG"
   rm -r "$PARTIAL" 2>/dev/null
