@@ -4865,6 +4865,10 @@ def install(interval_min: int) -> int:
     if not wait_for_job_gone(uid):
         log("× 旧实例在 30s 内没退干净；稍后重试 --install")
         return 1
+    # launchd 会把被面板/系统禁用的 label 直接拒绝在 bootstrap 阶段
+    # (实测 2026-11-13：print-disabled 显示 disabled，bootstrap 返回 EIO=5)。
+    # enable 必须先于 bootstrap；放在后面会在这一阶段永远走不到。
+    launchctl("enable", f"gui/{uid}/{PLIST_LABEL}")
     # bootstrap 带 RunAtLoad，会直接把进程拉起；不要用 kickstart：
     # kickstart -k 要等常驻进程退出才返回，会一直挂住（实测）。
     rc = launchctl("bootstrap", f"gui/{uid}", str(PLIST_PATH))
@@ -4874,7 +4878,6 @@ def install(interval_min: int) -> int:
     if rc != 0:
         log("× launchctl bootstrap 失败；请检查上面的 plist 和 python 路径")
         return 1
-    launchctl("enable", f"gui/{uid}/{PLIST_LABEL}")
     log(f"已启用 {PLIST_LABEL}（每 {interval_min} 分钟一轮，nice={os.environ.get('KG_DAEMON_NICE', '10')}）")
     return 0
 

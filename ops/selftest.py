@@ -1670,6 +1670,11 @@ def test_daemon_plist_repoints_on_upgrade():
             central_daemon.HERE / "central_daemon.py")
         assert any("bootout" in " ".join(str(x) for x in c) for c in calls), \
             f"--install 没有先停旧实例：{calls}"
+        joined = [" ".join(str(x) for x in c) for c in calls]
+        enable_i = next((i for i, c in enumerate(joined) if "enable" in c), None)
+        bootstrap_i = next((i for i, c in enumerate(joined) if "bootstrap" in c), None)
+        assert enable_i is not None and bootstrap_i is not None and enable_i < bootstrap_i, \
+            f"被 launchd 禁用的 label 必须先 enable 再 bootstrap：{calls}"
     finally:
         central_daemon.PLIST_PATH = real_plist
         import shutil
