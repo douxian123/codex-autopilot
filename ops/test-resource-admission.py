@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import atexit
+import importlib.util
 import json
 import os
 import subprocess
@@ -68,6 +70,12 @@ def leases(state: Path) -> list[dict]:
 
 
 def main() -> None:
+    # 关闭标记会让 hook 全程放行；测试期间临时摘掉，退出时原样补回。
+    disabled_marker = Path.home() / ".codex" / "hooks" / "RESOURCE_ADMISSION_DISABLED"
+    if disabled_marker.exists():
+        atexit.register(lambda p=disabled_marker: p.touch())
+        disabled_marker.unlink(missing_ok=True)
+
     check("资源准入 hook 独立存在", GUARD.is_file())
     check("hooks 片段存在", HOOKS.is_file())
     hook_config = json.loads(HOOKS.read_text(encoding="utf-8"))
@@ -78,6 +86,26 @@ def main() -> None:
         check(f"{event} 指向资源准入脚本",
               any("resource-admission.py" in hook["command"]
                   for group in groups for hook in group.get("hooks", [])))
+
+    spec = importlib.util.spec_from_file_location("resource_admission_guard", GUARD)
+    guard_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(guard_module)
+    for command in (
+        "tsx scripts/verify-browser.mjs",
+        "node scripts/verify-browser.mjs",
+        "./scripts/verify-browser.mjs",
+        "npx tsx scripts/verify-browser.mjs",
+        "npx playwright test",
+    ):
+        check(f"重验证命令被识别: {command}", guard_module._is_heavy(command))
+    for command in (
+        "git diff -- ops/guards/resource-admission.py",
+        "sed -n '1,80p' scripts/verify-browser.mjs",
+        "rg verify-browser ops",
+        "python3 ops/test-resource-admission.py",
+        "ls -la",
+    ):
+        check(f"只读命令不被识别: {command}", not guard_module._is_heavy(command))
 
     with tempfile.TemporaryDirectory(prefix="verification-lock-test-") as raw:
         root = Path(raw)
@@ -194,6 +222,14 @@ def main() -> None:
             encoding="utf-8",
         )
         pressure_probe.chmod(0o755)
+        # 真实 Swap 用量随机器起伏，读它会让用例随机红；用固定探针让它确定化。
+        swap_probe = state / "vm_swapusage"
+        swap_probe.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\n' 'total = 4096.00M  used = 3072.00M  free = 1024.00M  (encrypted)'\n",
+            encoding="utf-8",
+        )
+        swap_probe.chmod(0o755)
         pressure_env = os.environ.copy()
         pressure_env.update({
             "CODEX_RESOURCE_ADMISSION_STATE_DIR": str(state),
@@ -203,6 +239,7 @@ def main() -> None:
             "CODEX_RESOURCE_ADMISSION_MAX_SWAP_USED_GIB": "999",
             "CODEX_RESOURCE_ADMISSION_SLOTS": "2",
             "CODEX_RESOURCE_ADMISSION_MEMORY_PROBE": str(pressure_probe),
+            "CODEX_RESOURCE_ADMISSION_SWAP_PROBE": str(swap_probe),
         })
         pressure_event = {
             "hook_event_name": "PreToolUse",

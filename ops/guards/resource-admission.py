@@ -13,6 +13,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -64,10 +65,13 @@ HEAVY_PATTERNS = (
     re.compile(COMMAND_SEPARATORS + r"(?:tsc|tsgo)(?:\s|$)"),
     re.compile(COMMAND_SEPARATORS + r"vite\s+(?:build|preview)(?:\s|$)"),
     re.compile(COMMAND_SEPARATORS + r"(?:playwright|vitest)(?:\s|$)"),
-    re.compile(COMMAND_SEPARATORS + r"(?:npx|npm\s+exec|pnpm\s+exec|yarn\s+exec)\s+(?:--\s+)?tsx\S*\s+.*scripts/verify\S*"),
-    re.compile(COMMAND_SEPARATORS + r"(?:npx|npm\s+exec|pnpm\s+exec|yarn\s+exec)\s+(?:--\s+)?tsx\S*\s+.*verify-\S*(?:browser|playwright)\S*"),
-    re.compile(COMMAND_SEPARATORS + r"[^\n]*(?:scripts/verify\S*(?:browser|playwright)\S*|verify-\S*(?:browser|playwright)\S*)"),
 )
+
+VERIFICATION_SCRIPT = re.compile(
+    r"(?:^|/)(?:scripts/verify[^\s;&|]*|verify-[^\s;&|]*(?:browser|playwright)[^\s;&|]*)"
+)
+SCRIPT_RUNTIMES = {"node", "tsx", "bun", "deno", "bash", "sh", "zsh"}
+PACKAGE_RUNNERS = {"npx", "pnpm", "yarn", "bunx"}
 
 
 def _emit_deny(reason: str) -> None:
@@ -100,10 +104,46 @@ def _tool_name(event: dict[str, Any]) -> str:
     return value if isinstance(value, str) else ""
 
 
+def _run_command(segment: str) -> bool:
+    try:
+        tokens = shlex.split(segment)
+    except ValueError:
+        tokens = segment.split()
+    if not tokens:
+        return False
+    while tokens and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]):
+        tokens.pop(0)
+    if not tokens:
+        return False
+    indexes = [
+        index for index, token in enumerate(tokens)
+        if VERIFICATION_SCRIPT.search(token)
+    ]
+    if not indexes:
+        return False
+    index = indexes[0]
+    first = tokens[0].rsplit("/", 1)[-1]
+    if index == 0:
+        return True
+    if first in SCRIPT_RUNTIMES:
+        return True
+    if first in PACKAGE_RUNNERS:
+        return True
+    if first == "npm" and len(tokens) > 1 and tokens[1] == "exec":
+        return True
+    return False
+
+
 def _is_heavy(command: str) -> bool:
     if not command.strip():
         return False
-    return any(pattern.search(command) for pattern in HEAVY_PATTERNS)
+    if any(pattern.search(command) for pattern in HEAVY_PATTERNS):
+        return True
+    return any(
+        _run_command(segment)
+        for segment in re.split(r"[;&|()\n]+", command)
+        if segment.strip()
+    )
 
 
 def _free_gib(path: Path = Path.home()) -> float:
@@ -141,8 +181,9 @@ def _memory_pressure() -> dict[str, float] | None:
     compressor_gib = int(compressor_match.group(1)) * page_size
     swap_used_gib = 0.0
     try:
+        swap_probe = os.environ.get("CODEX_RESOURCE_ADMISSION_SWAP_PROBE")
         swap_output = subprocess.run(
-            ["sysctl", "-n", "vm.swapusage"],
+            [swap_probe] if swap_probe else ["sysctl", "-n", "vm.swapusage"],
             text=True, capture_output=True, timeout=2, check=False
         ).stdout
         total_match = re.search(r"total = ([\d.]+)M", swap_output)
