@@ -27,7 +27,12 @@ STATE_DIR = Path(
         str(Path.home() / ".codex" / "hooks" / "resource-admission"),
     )
 )
-DISABLED_FILE = Path.home() / ".codex" / "hooks" / "RESOURCE_ADMISSION_DISABLED"
+DISABLED_FILE = Path(
+    os.environ.get(
+        "CODEX_RESOURCE_ADMISSION_DISABLED_FILE",
+        str(Path.home() / ".codex" / "hooks" / "RESOURCE_ADMISSION_DISABLED"),
+    )
+)
 MAX_LEASES = max(1, int(os.environ.get("CODEX_RESOURCE_ADMISSION_SLOTS", "2")))
 MIN_FREE_GIB = float(os.environ.get("CODEX_RESOURCE_ADMISSION_MIN_FREE_GIB", "8"))
 # Heavy verification gates can also flood RAM before they fill the disk.
