@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import atexit
 import importlib.util
 import json
 import os
@@ -29,6 +28,7 @@ def run_hook(
 ):
     env = os.environ.copy()
     env["CODEX_RESOURCE_ADMISSION_STATE_DIR"] = str(state_dir)
+    env["CODEX_RESOURCE_ADMISSION_DISABLED_FILE"] = str(state_dir / "DISABLED")
     env["CODEX_RESOURCE_ADMISSION_SLOTS"] = str(slots)
     env["CODEX_RESOURCE_ADMISSION_MIN_FREE_GIB"] = "0"
     env["CODEX_RESOURCE_ADMISSION_MIN_FREE_MEM_GIB"] = "0"
@@ -70,12 +70,7 @@ def leases(state: Path) -> list[dict]:
 
 
 def main() -> None:
-    # 关闭标记会让 hook 全程放行；测试期间临时摘掉，退出时原样补回。
-    disabled_marker = Path.home() / ".codex" / "hooks" / "RESOURCE_ADMISSION_DISABLED"
-    if disabled_marker.exists():
-        atexit.register(lambda p=disabled_marker: p.touch())
-        disabled_marker.unlink(missing_ok=True)
-
+    # 全程只碰临时禁用标记（经环境变量注入），绝不触碰用户真实的关闭开关。
     check("资源准入 hook 独立存在", GUARD.is_file())
     check("hooks 片段存在", HOOKS.is_file())
     hook_config = json.loads(HOOKS.read_text(encoding="utf-8"))
@@ -184,7 +179,6 @@ def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="resource-admission-test-") as raw:
         state = Path(raw)
-        (Path.home() / ".codex" / "hooks" / "RESOURCE_ADMISSION_DISABLED").unlink(missing_ok=True)
         for command in (
             "rg resource-admission ops",
             "ls -la",
@@ -233,6 +227,7 @@ def main() -> None:
         pressure_env = os.environ.copy()
         pressure_env.update({
             "CODEX_RESOURCE_ADMISSION_STATE_DIR": str(state),
+            "CODEX_RESOURCE_ADMISSION_DISABLED_FILE": str(state / "DISABLED"),
             "CODEX_RESOURCE_ADMISSION_MIN_FREE_GIB": "0",
             "CODEX_RESOURCE_ADMISSION_MIN_FREE_MEM_GIB": "0",
             "CODEX_RESOURCE_ADMISSION_MAX_COMPRESSOR_GIB": "4",
@@ -364,7 +359,7 @@ def main() -> None:
         )
         check("没有调用 ID 时 fail-open", not result.stdout.strip(), result.stderr)
 
-        disabled = Path.home() / ".codex" / "hooks" / "RESOURCE_ADMISSION_DISABLED"
+        disabled = state / "DISABLED"
         if not disabled.exists():
             try:
                 disabled.write_text("test\n", encoding="utf-8")
