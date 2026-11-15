@@ -537,6 +537,8 @@ if [ -d "$HOME/.codex-autopilot/ops" ]; then
 
 真正的实现在 `releases/<version>/ops/disk_reap.py`，那份会跟着发版一起更新。
 """
+from __future__ import annotations
+
 import json
 import os
 import runpy

@@ -12,6 +12,9 @@
   反向断言同样重要：真找不到 zstd 时必须「保留全部原文件并只报一次」，
   绝不能在缺工具时误删任何会话历史。
 """
+
+from __future__ import annotations
+
 import importlib.util
 import os
 import tempfile

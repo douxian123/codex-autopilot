@@ -43,6 +43,8 @@
 方向、不发布。这些仍然要停下来问人。
 """
 
+from __future__ import annotations
+
 import argparse
 import contextlib
 import fcntl

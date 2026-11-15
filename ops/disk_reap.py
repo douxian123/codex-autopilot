@@ -13,6 +13,9 @@
 纪律：fail-open（任何异常只记一行日志、退出码 0）、可一键关（KG_REAP=0）、
 只删安全对象（有未提交改动/未落提交的一律跳过）。用法：--dry-run 只打印不执行。
 """
+
+from __future__ import annotations
+
 import json
 import os
 import re
