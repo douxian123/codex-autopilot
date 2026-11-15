@@ -839,7 +839,8 @@ _IMPERATIVE_TAIL_RE = re.compile(
     r"^\s*(删|改|重写|重建|替换|补|加|去掉|移除|简化|合并|提交|推|跑|重跑|再跑|"
     r"渲染|实测|核对|核验|检查|校验|确认|验证|收尾|收口|落盘|推进|修|接|调|拉|"
     r"写|读|看|查|重出|重渲|重测|换|核|逐|按|取|渲|统|校|放|处理|清理|整理|"
-    r"更新|同步|对齐|定位|排查|复现|生成|导出)")
+    r"更新|同步|对齐|定位|排查|复现|生成|导出|做|重算|重试|改用|注入|拆分|"
+    r"瘦身|量化|回放|跑通|走通)")
 # 第一人称「未完成动作」通判 —— 2026-11-15 12:50 新增,是本次判据放宽的主力。
 #
 # 为什么需要它:前几组词表都是**枚举固定搭配**(「我先/我这就/我去…」)加一组锚点词,
@@ -859,7 +860,7 @@ _FIRST_PERSON_ACTION_RE = re.compile(
     r"生成|创建|删|替换|重写|重建|重跑|重测|重出|重渲|做掉|改掉|移|继续|接着|"
     # 2026-11-15 23:30 补:实测会话里「我重新核一遍」「我把…一起统一」「我按…
     # 逐条对」这类高频未完成动作,因动词不在原枚举里被第一人称通判整条漏掉。
-    r"核|逐|按|取|渲|统|校|放|处理|统一)")
+    r"核|逐|按|取|渲|统|校|放|处理|统一|重算|重试|改用|注入|拆分|量化|回放|走)")
 _FIRST_PERSON_DONE_RE = re.compile(
     # 2026-11-16 01:10:裸 `已` 收窄为**完整的完成搭配**。
     # 触发原因(全量正文语料 9415 轮复测):裸 `已` 会命中「已打开」「已证明」
@@ -873,7 +874,14 @@ _FIRST_PERSON_DONE_RE = re.compile(
     # 单调收紧:只会多拦,不存在回退。
     r"(已完成|已合并|已提交|已推送|已修复|已通过|已修改|已写入|已部署|已落盘|"
     r"已核验|已生效|已确认|"
-    r"完成|通过|全绿|成功|好了|搞定|闭环|落盘|合入|合并到|提交了|推送了|"
+    # 2026-11-16 02:50:裸 `完成`/`通过` 加**否定环视**。
+    # 触发原因(本轮活体会话实测):模型看着活规则写「收到活规则。…现在扩动作
+    # 词表…然后落盘回归。」末句是标准的「宣布下一步」,整条却因为正文里一个
+    # 「完成」被 `_FIRST_PERSON_DONE_RE` 当成已完成放行。同形态在语料里稳定存在:
+    # 「未完成」「没完成」「尚未完成」这些**否定**写法都会命中裸「完成」。
+    # 改成 `(?<!未)(?<!没)完成`:仍然认「完成」「已完成」,但不再把否定当完成。
+    # 这是单调收紧,见下方量化(只多拦,不放回任何已拦回合)。
+    r"(?<!未)(?<!没)完成|(?<!未)(?<!没)通过|全绿|成功|好了|搞定|闭环|落盘|合入|合并到|提交了|推送了|"
     r"绿了|无误|不误|交付|"
     # 2026-11-15 14:30 补:「改完了/跑完了/做完了/修好了」这类**动补式完成**不含
     # 「已/完成」二字,会被第一人称通判当未完成动作误拦(实测「我把这个改完了。」
@@ -886,8 +894,17 @@ _EN_PLAN_TAIL_RE = re.compile(
     r"\b(let me|i'?ll|i will|i'?m going to|i am going to|now i|next i|"
     r"i need to|i'?m about to|i can now|i should|let'?s)\b", re.I)
 _EN_DONE_RE = re.compile(
-    r"(all green|tests? (pass|passed)|committed|merged|pushed|deployed|shipped|"
-    r"verified|works now|it works|done\b)", re.I)
+    # 2026-11-16 03:05:裸 `deployed` 收窄为**带宾语的部署完成搭配**。
+    # 触发原因(本轮活体会话实测):英文收尾句
+    #   「All fail-open paths hold. Now let me produce a clean diff summary and
+    #     confirm the three deployed copies are identical.」
+    # 末句是标准的「宣布下一步」,整条却因为 `deployed` 恰好出现在 "the three
+    # deployed copies"(过去分词作定语,描述**已存在的副本**,不是「我刚部署完」)
+    # 被当成完成证据放行,下一轮宿主只能自动续跑。
+    # 改成只认「deployed to / deployed the / deployed it」这类**及物完成**用法。
+    # 其余标记保持原样。这是单调收紧:只会多拦,不放回任何已拦回合。
+    r"(all green|tests? (pass|passed)|committed|merged|pushed|deployed to|"
+    r"deployed the|deployed it|shipped|verified|works now|it works|done\b)", re.I)
 # 交付证据 / 交给用户拍板 / 明确说明做不到 —— 分两层判,2026-11-15 12:20 拆开。
 #
 # 为什么要拆:拆之前 `_STOP_RESULT_RE` 扫的是**整条正文**,于是
@@ -1032,6 +1049,26 @@ def _is_plan_tail_stall(message: str, tools: int | None = None) -> bool:
         # 控诉集召回 7/15→8/15、边界误伤 14→14(不增)。单调收紧:只多拦不放回。
         if tools is not None and len(body) <= 200 \
                 and _SELF_ANNOUNCE_RE.search(body) \
+                and not _FIRST_PERSON_DONE_RE.search(body) \
+                and not _STOP_EVIDENCE_RE.search(body) \
+                and not _USER_ADDRESS_RE.search(body) \
+                and "？" not in body and "?" not in body:
+            return True
+        # 第七类(2026-11-16 02:55):英文计划尾的**零工具**形态。
+        #
+        # 触发原因(本轮活体会话实测):模型偶尔整个收尾句用英文写,例如
+        #   「All fail-open paths hold. Now let me produce a clean diff summary
+        #     and confirm the three deployed copies are identical.」
+        # 这一轮 0 工具调用,英文计划尾(_EN_PLAN_TAIL_RE)在第四类里被
+        # `tools >= 1` 闸挡住,于是整条放行,下一轮宿主只能自动续跑。
+        # 原设计把英文通判只挂在 tools>=1,是因为它是宽判据;但零工具回合里
+        # 「没有交付证据 + 第一人称未来动作 + 非问句 + 没在对用户说话」这四道闸
+        # 同时成立时,它同样是「宣布下一步就停」的同一语义,与语言无关。
+        # 收紧口径与第四类完全一致,只多认这一形态,不放回任何已拦回合。
+        # 全量量化见提交说明:只多拦,边界误伤不增(单调收紧)。
+        if tools == 0 and len(body) <= 400 \
+                and _EN_PLAN_TAIL_RE.search(body) \
+                and not _EN_DONE_RE.search(body) \
                 and not _FIRST_PERSON_DONE_RE.search(body) \
                 and not _STOP_EVIDENCE_RE.search(body) \
                 and not _USER_ADDRESS_RE.search(body) \
