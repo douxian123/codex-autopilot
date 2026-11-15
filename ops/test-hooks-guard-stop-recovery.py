@@ -102,12 +102,77 @@ def scenario(name, hooks, *, canon=True, expect_restore=True):
             check(f"{name}: 恢复后 Stop 挂在 loop-guard.py", "loop-guard.py" in stop)
 
 
+def loop_guard_scenarios():
+    """Stop 执行体 loop-guard.py 自己的存活：
+    hooks.json 完好但执行体被删/截断，看门狗必须把它补回来，且绝不覆盖好文件。"""
+    with tempfile.TemporaryDirectory(prefix="loop-guard-test-") as tmp:
+        root = Path(tmp)
+        home = root / "home"
+        plugin = root / "plugin"
+        gdir = plugin / "ops" / "guards"
+        gdir.mkdir(parents=True)
+        for src in ("hooks-guard.sh", "install-resource-hooks.py",
+                    "resource-admission.py", "resource-hooks.json"):
+            shutil.copy2(GUARDS / src, gdir / src)
+        (gdir / "hooks-guard.sh").chmod(0o755)
+
+        hooks_dir = home / ".codex" / "hooks"
+        hooks_dir.mkdir(parents=True)
+        (home / ".codex" / "hooks.json").write_text(
+            json.dumps({"hooks": STOP_OK}), encoding="utf-8")
+        (home / ".codex" / "hooks.json.bak-20261009-impl").write_text(
+            json.dumps({"hooks": STOP_OK}), encoding="utf-8")
+
+        target = hooks_dir / "loop-guard.py"
+        lastgood = hooks_dir / "loop-guard.py.last-good"
+        target.write_text("#! /usr/bin/env python3\n# stop marker\n", encoding="utf-8")
+        env = {**os.environ, "HOME": str(home)}
+
+        def run_guard():
+            return subprocess.run(["/bin/bash", str(gdir / "hooks-guard.sh")],
+                                  capture_output=True, text=True, env=env)
+
+        # 1) 正常态：留 last-good，且不误恢复
+        run_guard()
+        check("执行体: 正常态生成 last-good", lastgood.is_file())
+        check("执行体: 正常态不误恢复", not list((home / ".codex").glob(
+            "hooks.json.bak-*-guard-restore")))
+
+        # 2) 执行体被移走：从 last-good 补回，内容一致
+        good = target.read_text(encoding="utf-8")
+        target.unlink()
+        run_guard()
+        check("执行体: 缺失后补回", target.is_file())
+        check("执行体: 补回内容与 last-good 一致",
+              target.is_file() and target.read_text(encoding="utf-8") == good)
+
+        # 3) 执行体被截断成空：同样补回
+        target.write_text("", encoding="utf-8")
+        run_guard()
+        check("执行体: 截断成空后补回", target.is_file() and target.stat().st_size > 0)
+
+        # 4) 无 last-good 且执行体缺失：fail-open，绝不凭空造内容
+        lastgood.unlink()
+        empty_home = root / "home2"
+        (empty_home / ".codex" / "hooks").mkdir(parents=True)
+        (empty_home / ".codex" / "hooks.json").write_text(
+            json.dumps({"hooks": STOP_OK}), encoding="utf-8")
+        env2 = {**os.environ, "HOME": str(empty_home)}
+        proc = subprocess.run(["/bin/bash", str(gdir / "hooks-guard.sh")],
+                              capture_output=True, text=True, env=env2)
+        created = (empty_home / ".codex" / "hooks" / "loop-guard.py")
+        check("执行体: 无 last-good 时不凭空造文件", not created.exists())
+        check("执行体: 无 last-good 时守卫仍正常退出", proc.returncode == 0,
+              f"rc={proc.returncode}")
+
+
 def main():
     # 0) 守卫源码本身必须带 Stop 判据。否则下面几条可能因为整段逻辑被删而"通过"。
     body = GUARD.read_text(encoding="utf-8")
     check("守卫源码含 Stop 判据", 'h.get("Stop")' in body)
     check("守卫源码认 loop-guard.py + stop",
           '"loop-guard.py" in cmd' in body and '"stop" in cmd' in body)
+    check("守卫源码守执行体", "last-good" in body)
 
     scenario("完整 hooks", {**STOP_OK,
                           "PostToolUse": [{"matcher": ".*", "hooks": []}]},
@@ -118,6 +183,8 @@ def main():
              {"Stop": [{"hooks": [{"type": "command", "command": "python3 other.py stop"}]}]})
     scenario("权威备份缺失", {"PostToolUse": [{"matcher": ".*", "hooks": []}]},
              canon=False, expect_restore=False)
+
+    loop_guard_scenarios()
 
     if failures:
         print("\n失败项：")
