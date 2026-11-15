@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Regression: hooks-guard 必须能发现「Stop 熔断被摘掉」的 hooks.json。
+"""Regression: hooks-guard 必须保住 hooks.json 的「非空合法」底线。
 
-为什么这条单测本身必要
-----------------------
-看门狗最容易的腐化方式是「永远绿」。本脚本守护的正是已经发生过 5 次的病：
-某次会话把 hooks.json 写成丢了 Stop 的版本，于是所有对话裸奔空转。
+2026-11-16 政策变更（本次重写的原因）
+------------------------------------
+Stop 事件已**主动摘除**：它的 decision:block 被 Codex 客户端落成 role=user 的
+HookPrompt（桌面端渲染成「钩子反馈」卡片），把对话刷爆；`suppressOutput` 只压
+stdout，挡不住这条落盘。且在 Plan Mode 会话里实测到该注入会让模型回「我不能改」
+直接停住，等于制造「跑两句就停」。
 
-2026-11-15 实测到的结构性盲区：旧判定只要求「hooks 非空」，但它会**先**跑
-install-resource-hooks.py；那个 installer 只要 hooks 是 dict 就往里追加
-resource 条目 → hooks 立刻变非空 → 旧判定直接 PASS → Stop 永远不会被恢复。
+于是看门狗的职责从「Stop 必须在」收窄成「hooks.json 存在 + 合法 JSON + hooks
+非空」。这样既修掉满屏钩子，又保留「被清成 {"hooks":{}} 就自动补回」这层保护
+（历史上有过 5 次这种事故）。
 
 所以这里用假 HOME + 假插件根，逐个断言：
-  1. 完整 hooks（Stop 挂在 loop-guard.py stop）  → 不恢复
-  2. 只有 PostToolUse、丢了 Stop                → 必须恢复
-  3. hooks 为空                                  → 必须恢复
-  4. Stop 存在但指向别的脚本                      → 必须恢复
-  5. 权威备份缺失 + 丢了 Stop                    → fail-open，绝不猜
+  1. 完整 hooks（PreToolUse 等，无 Stop）         → 不恢复
+  2. 只有 PostToolUse                             → 不恢复
+  3. hooks 为空                                   → 必须恢复
+  4. Stop 残留但不属于本脚本（非空）              → 不恢复
+  5. 权威备份缺失 + hooks 为空                    → fail-open，绝不猜
+  6. 权威备份不是合法 JSON                        → 拒绝照坏件恢复
+  7. 权威备份合法且非空（无 Stop）+ hooks 为空    → 必须恢复
 
 判定「是否恢复」看的是守卫留下的备份文件 hooks.json.bak-<TS>-guard-restore，
 而不是 hooks.json 的内容 —— 因为 installer 每次都会追加 resource 条目，
@@ -60,6 +64,21 @@ STOP_OK = {
     ]
 }
 
+# 新政下的「正常挂载」样本：loop-guard 三条挂载齐、且**不含** Stop。
+# 注意必须写成真实的 loop-guard 命令 —— 判据要求 command 里有 loop-guard.py,
+# 用空 hooks 数组当样本会被（正确地）判成需要恢复。
+def _lg(alias):
+    return [{"hooks": [{"type": "command",
+                        "command": f"/usr/bin/env python3 loop-guard.py {alias}",
+                        "timeout": 3}]}]
+
+
+HOOKS_OK = {
+    "PreToolUse": _lg("pre-tool-use"),
+    "PostToolUse": _lg("post-tool-use"),
+    "UserPromptSubmit": _lg("user-prompt-submit"),
+}
+
 
 def scenario(name, hooks, *, canon=True, canon_hooks=None, canon_raw=None,
              expect_restore=True, expect_log=None, forbid_log=None):
@@ -83,9 +102,12 @@ def scenario(name, hooks, *, canon=True, canon_hooks=None, canon_raw=None,
         hooks_json = home / ".codex" / "hooks.json"
         hooks_json.write_text(json.dumps({"hooks": hooks}), encoding="utf-8")
         if canon:
+            # 默认 CANON 用新政下的正常挂载（三条 loop-guard、无 Stop）。
+            # 用旧的「只有 Stop」当默认会让 CANON 校验先失败，
+            # 把「该恢复」的场景误判成「拒绝恢复」，掩盖真实判据。
             (home / ".codex" / "hooks.json.bak-20261009-impl").write_text(
                 canon_raw if canon_raw is not None
-                else json.dumps({"hooks": STOP_OK if canon_hooks is None else canon_hooks}),
+                else json.dumps({"hooks": HOOKS_OK if canon_hooks is None else canon_hooks}),
                 encoding="utf-8")
 
         env = {**os.environ, "HOME": str(home)}
@@ -107,8 +129,10 @@ def scenario(name, hooks, *, canon=True, canon_hooks=None, canon_raw=None,
             check(f"{name}: 日志不含 {forbid_log!r}", forbid_log not in log_text)
         if expect_restore and restored:
             after = json.loads(hooks_json.read_text(encoding="utf-8"))
-            stop = json.dumps(after.get("hooks", {}).get("Stop", []))
-            check(f"{name}: 恢复后 Stop 挂在 loop-guard.py", "loop-guard.py" in stop)
+            restored_hooks = after.get("hooks", {})
+            check(f"{name}: 恢复后 hooks 非空", bool(restored_hooks))
+            check(f"{name}: 恢复后也未把 Stop 装回来",
+                  "Stop" not in restored_hooks)
 
 
 def loop_guard_scenarios():
@@ -134,9 +158,9 @@ def loop_guard_scenarios():
         hooks_dir = home / ".codex" / "hooks"
         hooks_dir.mkdir(parents=True)
         (home / ".codex" / "hooks.json").write_text(
-            json.dumps({"hooks": STOP_OK}), encoding="utf-8")
+            json.dumps({"hooks": HOOKS_OK}), encoding="utf-8")
         (home / ".codex" / "hooks.json.bak-20261009-impl").write_text(
-            json.dumps({"hooks": STOP_OK}), encoding="utf-8")
+            json.dumps({"hooks": HOOKS_OK}), encoding="utf-8")
         return home, gdir
 
     def run(gdir, home):
@@ -199,37 +223,47 @@ def loop_guard_scenarios():
 
 
 def main():
-    # 0) 守卫源码本身必须带 Stop 判据。否则下面几条可能因为整段逻辑被删而"通过"。
+    # 0) 守卫源码本身必须证明「Stop 已不再被要求」。否则下面几条可能因为整段
+    #    逻辑被删而"通过"，就无法区分「按新政摘除」和「误删保护」。
     body = GUARD.read_text(encoding="utf-8")
-    check("守卫源码含 Stop 判据", 'h.get("Stop")' in body)
-    check("守卫源码认 loop-guard.py + stop",
-          '"loop-guard.py" in cmd' in body and '"stop" in cmd' in body)
+    check("守卫源码不再要求 Stop 判据", 'h.get("Stop")' not in body)
+    check("守卫源码保留 hooks 非空判据", "isinstance(h, dict) and h" in body)
     check("守卫源码守执行体", "last-good" in body)
-    check("守卫源码验 CANON 自身含 Stop",
-          "权威备份本身不含 Stop 熔断" in body)
+    check("守卫源码改为要求三条 loop-guard 挂载",
+          'for event in ("PreToolUse", "PostToolUse", "UserPromptSubmit")' in body)
+    check("守卫源码仍拒收坏 CANON",
+          "权威备份缺 loop-guard 挂载或不是合法 JSON" in body)
 
-    scenario("完整 hooks", {**STOP_OK,
-                          "PostToolUse": [{"matcher": ".*", "hooks": []}]},
+    # 1) 正常态:三条 loop-guard 挂载齐、无 Stop → 不恢复
+    scenario("完整 hooks（无 Stop）", HOOKS_OK, expect_restore=False)
+    # 2) 缺 PreToolUse 一条 → 必须恢复（Stop 摘除后覆盖面反而更广）
+    scenario("缺 PreToolUse 一条",
+             {"PostToolUse": HOOKS_OK["PostToolUse"],
+              "UserPromptSubmit": HOOKS_OK["UserPromptSubmit"]},
+             expect_restore=True,
+             expect_log="已恢复 hooks.json 挂载")
+    # 3) 被清成空 → 必须恢复
+    scenario("hooks 为空", {}, expect_restore=True,
+             expect_log="已恢复 hooks.json 挂载")
+    # 4) Stop 残留但指向别的脚本（三条挂载齐）→ 不恢复，也不把 Stop 当回事
+    scenario("Stop 指向别的脚本（非空）",
+             {**HOOKS_OK,
+              "Stop": [{"hooks": [{"type": "command", "command": "python3 other.py stop"}]}]},
              expect_restore=False)
-    scenario("丢了 Stop", {"PostToolUse": [{"matcher": ".*", "hooks": []}]})
-    scenario("hooks 为空", {})
-    scenario("Stop 指向别的脚本",
-             {"Stop": [{"hooks": [{"type": "command", "command": "python3 other.py stop"}]}]})
-    scenario("权威备份缺失", {"PostToolUse": [{"matcher": ".*", "hooks": []}]},
-             canon=False, expect_restore=False)
-    # 2026-11-15 补:权威备份自己坏了 -> 拒绝照坏件恢复,且绝不误记「已恢复」。
-    scenario("权威备份丢了 Stop",
-             {"PostToolUse": [{"matcher": ".*", "hooks": []}]},
-             canon_hooks={"PostToolUse": [{"matcher": ".*", "hooks": []}]},
-             expect_restore=False,
-             expect_log="权威备份本身不含 Stop 熔断",
-             forbid_log="已恢复 hooks.json 挂载")
-    scenario("权威备份不是合法 JSON",
-             {"PostToolUse": [{"matcher": ".*", "hooks": []}]},
+    # 5) 权威备份缺失 + hooks 为空 → fail-open，绝不猜
+    scenario("权威备份缺失 + hooks 为空", {}, canon=False, expect_restore=False,
+             expect_log="权威备份缺失")
+    # 6) 权威备份不是合法 JSON → 拒绝照坏件恢复，且绝不误记「已恢复」
+    scenario("权威备份不是合法 JSON", {},
              canon_raw="{ this is not json",
              expect_restore=False,
-             expect_log="权威备份本身不含 Stop 熔断",
+             expect_log="权威备份缺 loop-guard 挂载或不是合法 JSON",
              forbid_log="已恢复 hooks.json 挂载")
+    # 7) 权威备份合法且三条挂载齐（无 Stop）+ hooks 为空 → 必须恢复
+    scenario("权威备份合法（无 Stop）+ hooks 为空", {},
+             canon_hooks=HOOKS_OK,
+             expect_restore=True,
+             expect_log="已恢复 hooks.json 挂载")
 
     loop_guard_scenarios()
 
