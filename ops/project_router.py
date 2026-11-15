@@ -36,12 +36,27 @@
 **归属不明时不许静默落进当前账本。** 猜错比说「我不确定」贵得多 —— 活会被派去改
 错的仓库。判成 `ambiguous` 的记录进全局待路由箱（`~/.codex-autopilot/routing/inbox.jsonl`），
 等人或后续规则认领，不混进任何一个项目的真相层。
+
+项目身份是「仓库」，不是「目录」
+--------------------------------
+2026-11-16 冒烟实测挖出第二个坑：用户平时在 **worktree** 里干活（共享主检出只读），
+而 worktree 是主检出的**兄弟目录** ——「cwd 在项目根之下」这个判断对它永远不成立。
+后果有两个，都真实发生过：
+
+  1. worktree 里说的一句话判不出归属，直接掉进待路由箱；
+  2. worktree 自己看着也像状态根，于是被**重复登记成第二个项目**（目录名被人当成了
+     项目名）；`.mcp.json` 里配的 `KG_TRUNK`（落盘主干）同理。
+
+所以身份改用 git 的 `--git-common-dir`：同一个仓库的所有 worktree（含主干、含临时
+任务 worktree）共享同一个 common dir，天然就是同一个项目。不是 git 仓库时回退到
+路径包含关系，行为不变。
 """
 
 from __future__ import annotations
 
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
 
@@ -55,6 +70,65 @@ MIN_SCORE = 40
 # alpha（47 vs 46）——用户同时点了两个项目，系统却装作看懂了。凡是最高分和次高分
 # 咬在这么近的范围内，就是「说不清」，必须交出来而不是猜。
 NEAR_TIE_MARGIN = 15
+
+# 同一条路径的仓库身份只算一次，避免每条线索都去 fork 一次 git。
+_IDENT_CACHE: dict = {}
+
+
+def git_common_dir(path):
+    """`git rev-parse --git-common-dir`；不是 git 仓库 / 拿不到就返回 None。"""
+    try:
+        key = str(Path(str(path)).expanduser().resolve())
+    except (OSError, ValueError):
+        return None
+    if key in _IDENT_CACHE:
+        return _IDENT_CACHE[key]
+    common = None
+    try:
+        out = subprocess.run(
+            ["git", "-C", key, "rev-parse", "--path-format=absolute",
+             "--git-common-dir"],
+            capture_output=True, text=True, timeout=5)
+        if out.returncode == 0 and out.stdout.strip():
+            common = str(Path(out.stdout.strip()).resolve())
+    except (OSError, subprocess.SubprocessError, ValueError):
+        common = None
+    _IDENT_CACHE[key] = common
+    return common
+
+
+def identity(path):
+    """项目身份：git common dir；不是 git 仓库时退回解析后的绝对路径。"""
+    common = git_common_dir(path)
+    if common:
+        return common
+    try:
+        return str(Path(str(path)).expanduser().resolve())
+    except (OSError, ValueError):
+        return str(path)
+
+
+def _identity_of(path):
+    """给一个文件/目录算身份：文件用它的父目录算。"""
+    p = Path(str(path)).expanduser()
+    try:
+        if not p.is_dir():
+            p = p.parent
+    except OSError:
+        p = p.parent
+    return identity(p)
+
+
+def _same_project(path, project) -> bool:
+    """这个路径属于这个项目吗？先看仓库身份，再看目录包含（非 git 回退）。"""
+    ident = project.get("identity")
+    if ident:
+        try:
+            if _identity_of(path) == ident:
+                return True
+        except (OSError, ValueError):
+            pass
+    return _is_under(path, project["root"])
 
 
 def _home() -> Path:
@@ -98,6 +172,8 @@ def load_registry(path=None) -> list:
         row["root"] = str(Path(str(row["root"])).expanduser().resolve())
         row["clues"] = [str(c) for c in (row.get("clues") or []) if str(c).strip()]
         row["aliases"] = [str(a) for a in (row.get("aliases") or []) if str(a).strip()]
+        # 老注册表没有这个字段：读的时候补算，不进磁盘也不影响判定。
+        row["identity"] = str(row.get("identity") or identity(row["root"]))
         out.append(row)
     return out
 
@@ -113,19 +189,47 @@ def save_registry(projects, path=None) -> Path:
 
 
 def register(name, root, clues=None, aliases=None, path=None) -> dict:
-    """登记一个项目。同一个状态根只留一条，重复登记是更新而不是追加。"""
+    """登记一个项目。同一个**仓库**只留一条，重复登记是更新而不是追加。
+
+    2026-11-16 修复：早先只按状态根路径去重，于是 `foo` 和 `foo-trunk` /
+    `foo-worktree-x`（同一个仓库的不同 worktree）各占一条，用户在注册表里看到
+    `foo`、`foo-trunk` 两个「项目」——正是「候选：stateA、stateA-trunk」那类噪音的
+    来源。现在按 git common dir 归并：同一个仓库的任意 worktree 都算同一个项目。
+    """
     root_resolved = str(Path(str(root)).expanduser().resolve())
+    root_ident = identity(root_resolved)
     projects = load_registry(path)
     merged = None
     for row in projects:
-        if row["root"] == root_resolved:
+        if row["root"] == root_resolved or (root_ident and row.get("identity") == root_ident):
             merged = row
             break
     if merged is None:
-        merged = {"name": str(name), "root": root_resolved, "clues": [], "aliases": []}
+        merged = {"name": str(name), "root": root_resolved,
+                  "identity": root_ident, "clues": [], "aliases": []}
         projects.append(merged)
     else:
+        # 显式 register 可以改名；自动登记走 ensure_registered，不会覆盖。
         merged["name"] = str(name)
+        merged["identity"] = root_ident
+
+    # 归并掉后来发现是同一仓库的重复条目（老注册表里可能已经存了两条）。
+    deduped = []
+    seen = {}
+    for row in projects:
+        key = row.get("identity") or row["root"]
+        if key in seen:
+            keep = seen[key]
+            for c in row.get("clues") or []:
+                if c not in keep["clues"]:
+                    keep["clues"].append(c)
+            for a in row.get("aliases") or []:
+                if a not in keep["aliases"]:
+                    keep["aliases"].append(a)
+            continue
+        seen[key] = row
+        deduped.append(row)
+    projects = deduped
     for c in (clues or []):
         if str(c).strip() and str(c) not in merged["clues"]:
             merged["clues"].append(str(c))
@@ -158,8 +262,9 @@ def ensure_registered(root, name=None, clues=None, path=None) -> dict | None:
     except OSError:
         return None
     root_resolved = str(p)
+    root_ident = identity(root_resolved)
     for row in load_registry(path):
-        if row["root"] == root_resolved:
+        if row["root"] == root_resolved or (root_ident and row.get("identity") == root_ident):
             return row  # 已登记过：保留用户给的名字和线索，只当候选
     return register(name or p.name, p, clues=clues, path=path)
 
@@ -179,7 +284,7 @@ def resolve_hint(hint, registry=None) -> dict | None:
             return p
     for p in registry:
         try:
-            if _is_under(hint, p["root"]):
+            if _same_project(hint, p):
                 return p
         except (OSError, ValueError):
             continue
@@ -257,11 +362,11 @@ def match(text, files=None, registry=None, cwd=None, min_score=MIN_SCORE) -> dic
                 hinted.append(_entry(p, 40 + min(len(token), 20),
                                      "原话里出现了这个项目的线索词「%s」" % token))
         # L2 文件路径。
-        fhits = [f for f in files if _is_under(f, p["root"])]
+        fhits = [f for f in files if _same_project(f, p)]
         if fhits:
             filed.append(_entry(p, 100, "文件路径属于这个项目：%s" % fhits[0]))
         # L3 cwd。
-        if cwd and _is_under(cwd, p["root"]):
+        if cwd and _same_project(cwd, p):
             cwdded.append(_entry(p, 100, "会话目录在这个项目里：%s" % p["root"]))
 
     for layer, entries in (("named", named), ("files", filed),
@@ -285,7 +390,12 @@ def stash_ambiguous(record, path=None) -> Path:
 
 
 def discover(base, max_depth=2) -> list:
-    """只读扫描：把某个目录下看起来像状态根的项目列出来，供 `projects scan` 用。"""
+    """只读扫描：把某个目录下看起来像状态根的项目列出来，供 `projects scan` 用。
+
+    同一个仓库的多个 worktree 归成一条（主检出优先当 root），否则 `projects scan`
+    会把 `foo` / `foo-trunk` / `foo-worktree-x` 列成三个「项目」——用户真实工作区
+    里这类兄弟目录遍地都是，那种清单等于没有清单。
+    """
     base = Path(str(base)).expanduser().resolve()
     found = []
     if not base.is_dir():
@@ -295,7 +405,8 @@ def discover(base, max_depth=2) -> list:
         cur, depth = stack.pop()
         try:
             if state_root.looks_like_state_root(cur):
-                found.append({"name": cur.name, "root": str(cur)})
+                found.append({"name": cur.name, "root": str(cur),
+                              "identity": identity(cur)})
                 continue
         except OSError:
             continue
@@ -307,4 +418,17 @@ def discover(base, max_depth=2) -> list:
                     stack.append((child, depth + 1))
         except OSError:
             continue
-    return sorted(found, key=lambda r: r["root"])
+
+    # 按仓库身份归并；root 取「最短路径」那条（主检出通常最短，worktree 是兄弟目录）。
+    grouped = {}
+    for row in found:
+        key = row["identity"]
+        if key not in grouped:
+            grouped[key] = dict(row, sites=[row["root"]])
+            continue
+        keep = grouped[key]
+        keep["sites"].append(row["root"])
+        if len(row["root"]) < len(keep["root"]):
+            keep["name"] = row["name"]
+            keep["root"] = row["root"]
+    return sorted(grouped.values(), key=lambda r: r["root"])

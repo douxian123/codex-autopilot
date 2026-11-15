@@ -16,6 +16,9 @@
   6. 同一个状态根重复登记只留一条；`ensure_registered` 不许把用户显式起的好名字
      覆盖成目录名（冒烟实测踩到过：alpha 被写成 stateA）
   7. 过短的线索（单字）不触发匹配
+  8. 项目身份是**仓库**而不是目录：同一个 git 仓库的 worktree / 落盘主干都算同一个
+     项目。用户的真实工作方式就是「共享检出只读、在 worktree 里干活」——冒烟实测
+     worktree 里说话会判不出归属，而 `<项目>-trunk` 会被重复登记成第二个项目。
 """
 
 import importlib.util
@@ -54,6 +57,18 @@ def make_state_root(base, name):
     (root / "ops" / "tasks").mkdir(parents=True)
     (root / "ops" / "truth").mkdir(parents=True)
     (root / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+    return root
+
+
+def git_init(root):
+    """把 state root 变成一个真 git 仓库：仓库身份判定要求 worktree 能跑通。"""
+    env = os.environ.copy()
+    env["GIT_AUTHOR_NAME"] = env["GIT_COMMITTER_NAME"] = "t"
+    env["GIT_AUTHOR_EMAIL"] = env["GIT_COMMITTER_EMAIL"] = "t@t"
+    subprocess.run(["git", "init", "-q", str(root)], check=True,
+                   capture_output=True, env=env)
+    subprocess.run(["git", "-C", str(root), "commit", "-q", "--allow-empty",
+                    "-m", "init"], check=True, capture_output=True, env=env)
     return root
 
 
@@ -201,6 +216,47 @@ def main():
                       extra_env={"KG_INBOX_PROJECT": "beta"})
         check("显式指派能生效",
               "beta" in (p.stdout + p.stderr), p.stdout[:200])
+
+        # ---- 12. 项目身份是仓库：worktree / 落盘主干都算同一个项目 ----
+        # 用户真实工作方式 = 共享主检出只读、在 worktree 里干活。早先按「目录包含」
+        # 判归属时，worktree 是主检出的兄弟目录，判定永远不成立 → 掉进待路由箱；
+        # 而 <项目>-trunk 自己看着像状态根 → 被重复登记成第二个项目。
+        wtbase = base / "wt"
+        wtbase.mkdir()
+        repo = git_init(make_state_root(wtbase, "kg"))
+        git_env = os.environ.copy()
+        git_env["GIT_AUTHOR_NAME"] = git_env["GIT_COMMITTER_NAME"] = "t"
+        git_env["GIT_AUTHOR_EMAIL"] = git_env["GIT_COMMITTER_EMAIL"] = "t@t"
+        worktree = wtbase / "kg-worktree-1"
+        trunk = wtbase / "kg-trunk"
+        subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q",
+                        "-b", "fx", str(worktree)], check=True,
+                       capture_output=True, env=git_env)
+        subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q",
+                        "-b", "trunkbranch", str(trunk)], check=True,
+                       capture_output=True, env=git_env)
+        (trunk / "ops" / "tasks").mkdir(parents=True, exist_ok=True)
+        (trunk / "ops" / "truth").mkdir(parents=True, exist_ok=True)
+
+        # 只注册主检出；worktree 与 trunk 必须被认出属于同一个项目。
+        pr.register("kg", repo, path=home / "projects.json")
+        p = run_kgctl(repo, trunk, "inbox", "worktree 里发现一个 bug",
+                      extra_env={"KG_INBOX_CWD": str(worktree)})
+        out = p.stdout + p.stderr
+        check("在 worktree 里说话 → 归到主项目，不掉进待路由箱",
+              "属于「kg」" in out and "待路由箱" not in out, out[:300])
+        check("worktree 的投稿写进主检出账本",
+              len((repo / "ops" / "tasks" / "inbox.jsonl").read_text(
+                  encoding="utf-8").splitlines()) == 1,
+              (repo / "ops" / "tasks" / "inbox.jsonl").read_text(encoding="utf-8"))
+        p = run_kgctl(repo, trunk, "inbox", "主干里的一句话",
+                      extra_env={"KG_INBOX_CWD": str(trunk)})
+        check("落盘主干说话也归到主项目（不被当成第二个项目）",
+              "属于「kg」" in (p.stdout + p.stderr), (p.stdout + p.stderr)[:300])
+        names = [r["name"] for r in pr.load_registry(home / "projects.json")]
+        check("同一仓库的 worktree / trunk 不会各占一条注册项",
+              names.count("kg") == 1
+              and not any(n.startswith("kg-") for n in names), names)
     finally:
         shutil.rmtree(base, ignore_errors=True)
         os.environ.pop("KG_AUTOPILOT_HOME", None)
