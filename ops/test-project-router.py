@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""回归：「万法归一」入口的**归属判定**不许猜。
+
+为什么有这条（用户实测 2026-11-16）：
+  插件 `.mcp.json` 写死了一个 `KG_REPO`，于是用户在 A 项目窗口里说 B 项目的事，
+  记录照样落进 A 的账本。用户原话：「为什么我在别的窗口说别的东西都会落到另一个
+  账本里…这不对呀」。修法是从「安装时写死」改成「每次投稿现算归属」。
+
+这条门禁锁住的正是「现算」不能腐化成「猜」：
+  1. 原话点名了一个项目 → 路由到它（最强证据）
+  2. 原话同时点名了两个 → ambiguous，**不许**靠名字长度那 1 分差硬选一个
+  3. 同一层证据咬得太近 → ambiguous（近似并列也不许猜）
+  4. 判成 ambiguous 时，**任何项目账本都不许被写入**，只能进全局待路由箱
+  5. 分层顺序：原话点名 > 文件路径 > cwd > 泛线索词。cwd 不能盖过用户点名
+  6. 同一个状态根重复登记只留一条；`ensure_registered` 不许把用户显式起的好名字
+     覆盖成目录名（冒烟实测踩到过：alpha 被写成 stateA）
+  7. 过短的线索（单字）不触发匹配
+"""
+
+import importlib.util
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+OPS = Path(__file__).resolve().parent
+KGCTL = OPS / "kgctl.py"
+failures = []
+
+
+def check(label, cond, detail=""):
+    if cond:
+        print(f"  ok   {label}")
+    else:
+        failures.append(f"{label} {detail}")
+        print(f"  FAIL {label} {detail}")
+
+
+def load_router():
+    spec = importlib.util.spec_from_file_location("project_router_under_test",
+                                                  OPS / "project_router.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def make_state_root(base, name):
+    root = base / name
+    (root / "ops" / "tasks").mkdir(parents=True)
+    (root / "ops" / "truth").mkdir(parents=True)
+    (root / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+    return root
+
+
+def run_kgctl(repo, trunk, *args, extra_env=None):
+    env = os.environ.copy()
+    env["KG_REPO"] = str(repo)
+    env["KG_TRUNK"] = str(trunk)
+    if extra_env:
+        env.update({k: str(v) for k, v in extra_env.items() if v is not None})
+    return subprocess.run([sys.executable, str(KGCTL), *args],
+                          cwd=str(OPS.parent), env=env,
+                          capture_output=True, text=True)
+
+
+def main():
+    base = Path(tempfile.mkdtemp(prefix="project-router-test-"))
+    home = base / "home"
+    home.mkdir()
+    os.environ["KG_AUTOPILOT_HOME"] = str(home)
+    os.environ.pop("KG_DAEMON_HOME", None)
+    pr = load_router()
+
+    try:
+        alpha = make_state_root(base, "stateA")
+        beta = make_state_root(base, "stateB")
+
+        # ---- 1. 注册与幂等：同一个状态根只留一条，显式名字不被覆盖 ----
+        pr.register("alpha", alpha, clues=["智能体"], path=home / "projects.json")
+        pr.register("alpha", alpha, clues=["智能体", "对话编排"],
+                    path=home / "projects.json")
+        reg = pr.load_registry(home / "projects.json")
+        check("同一状态根重复登记只留一条", len(reg) == 1, f"len={len(reg)}")
+        check("重复登记的线索按并集累积，不重复不丢失",
+              reg[0]["clues"] == ["智能体", "对话编排"], reg[0]["clues"])
+
+        # ensure_registered 只知道目录名；不能拿它覆盖用户显式起的好名字。
+        kept = pr.ensure_registered(alpha, path=home / "projects.json")
+        check("ensure_registered 保留用户显式命名的项目名",
+              kept["name"] == "alpha", kept["name"])
+        # 目录名 stateA 绝不能出现在注册表里（那就是「候选：stateA」那个 bug）。
+        names = [r["name"] for r in pr.load_registry(home / "projects.json")]
+        check("目录名不会成为候选名", "stateA" not in names, names)
+
+        pr.register("beta", beta, clues=["搜索面板"], path=home / "projects.json")
+        registry = pr.load_registry(home / "projects.json")
+
+        # ---- 2. 原话点名一个：resolved ----
+        got = pr.match("beta项目的搜索面板要加缓存", [], registry)
+        check("点名一个项目 → resolved",
+              got["decision"] == "resolved" and got["project"] == "beta", got)
+        check("resolved 时给出命中理由与层级",
+              got["layer"] == "named" and got["reasons"], got)
+
+        # ---- 3. 同时点名两个：ambiguous，不许靠分数差硬选 ----
+        got = pr.match("alpha项目和beta项目都要改缓存", [], registry)
+        check("同时点名两个项目 → ambiguous",
+              got["decision"] == "ambiguous", got)
+        cand = {c["name"] for c in got.get("candidates") or []}
+        check("ambiguous 的候选必须把两个都列出来",
+              cand == {"alpha", "beta"}, cand)
+
+        # ---- 4. 近似并列：咬得太近也不许猜 ----
+        near = [
+            {"name": "aa", "root": "/x/aa", "clues": [], "aliases": []},
+            {"name": "aab", "root": "/x/aab", "clues": [], "aliases": []},
+        ]
+        got = pr.match("刚才那个 aab 的事情", [], near)
+        check("名字长度差带来的近似并列 → ambiguous",
+              got["decision"] == "ambiguous", got)
+
+        # ---- 5. 分层：点名必须压过 cwd ----
+        got = pr.match("beta项目要改缓存", [], registry, cwd=str(alpha))
+        check("原话点名压过 cwd（点名 beta，人在 alpha）",
+              got["decision"] == "resolved" and got["project"] == "beta", got)
+        # cwd 单独出现时仍然是有效证据。
+        got = pr.match("那个面板要加缓存", [], registry, cwd=str(beta))
+        check("只有 cwd 时也能定项目",
+              got["decision"] == "resolved" and got["project"] == "beta", got)
+        check("cwd 命中的层级标成 cwd", got["layer"] == "cwd", got)
+        # 文件路径压过 cwd。
+        got = pr.match("随便说点什么", [str(alpha / "ops" / "tasks" / "inbox.jsonl")],
+                       registry, cwd=str(beta))
+        check("文件路径压过 cwd",
+              got["decision"] == "resolved" and got["project"] == "alpha", got)
+        check("文件路径命中的层级标成 files", got["layer"] == "files", got)
+
+        # ---- 6. 泛线索词是最弱的一层，且过短不触发 ----
+        got = pr.match("智能体那块顺手看一下", [], registry)
+        check("自定义线索词可以单独定位项目",
+              got["decision"] == "resolved" and got["project"] == "alpha", got)
+        check("线索词命中的层级标成 clue", got["layer"] == "clue", got)
+        short = [{"name": "q", "root": "/x/q", "clues": ["啊"], "aliases": []}]
+        got = pr.match("啊这个不太对", [], short)
+        check("单字线索不触发匹配", got["decision"] == "none", got)
+
+        # ---- 7. 谁都不像：none ----
+        got = pr.match("把按钮再往左挪 8 像素", [], registry)
+        check("没有线索时 → none", got["decision"] == "none", got)
+
+        # ---- 8. 端到端：ambiguous 不许写进任何项目账本 ----
+        before = {p: (p / "ops" / "tasks" / "inbox.jsonl").read_text(encoding="utf-8")
+                  for p in (alpha, beta)}
+        p = run_kgctl(alpha, base / "stateA-trunk", "inbox",
+                      "alpha项目和beta项目都要改缓存")
+        out = p.stdout + p.stderr
+        after = {q: (q / "ops" / "tasks" / "inbox.jsonl").read_text(encoding="utf-8")
+                 for q in (alpha, beta)}
+        check("ambiguous 时两个项目账本都没被写入", before == after, out[:200])
+        check("ambiguous 时明确告诉用户「没写进任何项目账本」",
+              "没写进任何项目账本" in out, out[:200])
+        routing = pr.routing_inbox_path()
+        rows = [json.loads(l) for l in routing.read_text(encoding="utf-8").splitlines()
+                if l.strip()] if routing.exists() else []
+        check("ambiguous 的记录进了全局待路由箱", len(rows) == 1, rows)
+        check("待路由记录标成 ambiguous 并带候选",
+              rows and rows[0].get("status") == "ambiguous"
+              and len(rows[0].get("candidates") or []) == 2, rows)
+
+        # ---- 9. 端到端：点名一个项目 → 写进那个项目的账本，不写别的 ----
+        p = run_kgctl(alpha, base / "stateA-trunk", "inbox", "beta项目要加缓存")
+        out = p.stdout + p.stderr
+        beta_lines = (beta / "ops" / "tasks" / "inbox.jsonl").read_text(
+            encoding="utf-8").splitlines()
+        check("点名 beta 时写进 beta 的账本", len(beta_lines) == 1, beta_lines)
+        check("点名 beta 时不写进当前绑定的 alpha",
+              (alpha / "ops" / "tasks" / "inbox.jsonl").read_text(
+                  encoding="utf-8").strip() == "", out[:200])
+
+        # ---- 10. 端到端：多项目下「谁都没提」不许回退到绑定项目 ----
+        before_alpha = (alpha / "ops" / "tasks" / "inbox.jsonl").read_text(
+            encoding="utf-8")
+        p = run_kgctl(alpha, base / "stateA-trunk", "inbox", "把按钮往左挪 8 像素")
+        out = p.stdout + p.stderr
+        check("多项目下判不清 → 不许静默落回绑定账本",
+              (alpha / "ops" / "tasks" / "inbox.jsonl").read_text(
+                  encoding="utf-8") == before_alpha, out[:200])
+
+        # ---- 11. 显式指派：KG_INBOX_PROJECT 解析不了就必须停 ----
+        p = run_kgctl(alpha, base / "stateA-trunk", "inbox", "指派给一个不存在的项目",
+                      extra_env={"KG_INBOX_PROJECT": "nosuch"})
+        out = p.stdout + p.stderr
+        check("指派了注册表里没有的项目 → 不许悄悄落回绑定账本",
+              "没写进任何项目账本" in out, out[:200])
+        p = run_kgctl(alpha, base / "stateA-trunk", "inbox", "指派给 beta",
+                      extra_env={"KG_INBOX_PROJECT": "beta"})
+        check("显式指派能生效",
+              "beta" in (p.stdout + p.stderr), p.stdout[:200])
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+        os.environ.pop("KG_AUTOPILOT_HOME", None)
+
+    print()
+    if failures:
+        print(f"FAILED {len(failures)} 项：")
+        for f in failures:
+            print(f"  - {f}")
+        return 1
+    print("selftest ok: 归属判定分层有序，说不清时绝不写进任何项目账本。")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -91,6 +91,7 @@ from plugin_binding import apply_plugin_env, binding_health, binding_line  # noq
 from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, looks_like_state_root, resolve_state_root  # noqa: E402
 import central_config  # noqa: E402
+import project_router  # noqa: E402
 from daemon_liveness import (daemon_liveness, liveness_line,  # noqa: E402
                              liveness_problem)
 
@@ -1090,7 +1091,14 @@ def load_lanes():
 
 
 def cmd_inbox(args):
-    """零散需求不需要用户分类：一律追加进同一账本，由自动挡负责路由。"""
+    """零散需求不需要用户分类：追加进账本，由自动挡负责路由。
+
+    但「追加进哪个账本」必须先判归属。插件安装时 `.mcp.json` 里写死了一个
+    `KG_REPO`，于是不管用户在哪个窗口、说的是哪个项目，记录都会落进那一个账本 ——
+    2026-11-16 用户原话：「为什么我在别的窗口说别的东西都会落到另一个账本里…这不
+    对呀」。修法是：投稿时按 cwd / 文件路径 / 文本线索现算归属（见
+    ops/project_router.py）；**判不清就进全局待路由箱，绝不猜**。
+    """
     OPS.mkdir(parents=True, exist_ok=True)
     if not args:
         lines = INBOX.read_text().splitlines() if INBOX.exists() else []
@@ -1105,20 +1113,210 @@ def cmd_inbox(args):
             shown += 1
         if shown == 0:
             print("inbox 为空（没有待路由项）。新需求直接：kgctl inbox \"…\"")
+        _print_routing_backlog()
         return
     if args[0] in ('-h', '--help'):
         print('用法: kgctl inbox "用户原话"')
         return
     text = " ".join(args)
+    files = [f for f in os.environ.get("KG_INBOX_FILES", "").split(":") if f]
     rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "text": text,
            "source": os.environ.get("KG_INBOX_SOURCE", "user"),
-           "files": [f for f in os.environ.get("KG_INBOX_FILES", "").split(":") if f],
+           "files": files,
            "kind": os.environ.get("KG_INBOX_KIND", "unknown"),  # visual|ux|bug|arch|unknown
            "routed": False, "lane": None}
-    with INBOX.open("a") as fh:
+    route = _route_record(text, files)
+    if route["decision"] == "ambiguous":
+        _stash_ambiguous(rec, route)
+        return "ambiguous"
+    target_root = Path(route["root"]) if route.get("root") else REPO
+    target_inbox = _inbox_path(target_root)
+    target_inbox.parent.mkdir(parents=True, exist_ok=True)
+    if route.get("project"):
+        rec["project"] = route["project"]
+        rec["project_root"] = str(target_root)
+    with target_inbox.open("a") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    where = route.get("project") or target_root.name
     print(f"已记入唯一入口 {rec['ts']}：{text[:80]}", flush=True)
-    print("（无需分类；自动挡路由时按 files 落到既有泳道）", flush=True)
+    if target_root.resolve() != REPO.resolve():
+        print(f"（归属判定：这条属于「{where}」，已写进 {target_inbox}）", flush=True)
+        return "routed-elsewhere"
+    else:
+        print(f"（归属判定：属于「{where}」；无需分类，自动挡按 files 落到既有泳道）",
+              flush=True)
+    return "ok"
+
+
+def _inbox_path(root) -> Path:
+    """某个状态根对应的输入账本。路由到别的项目时不能再写死模块级 INBOX。"""
+    return Path(root) / "ops" / "tasks" / "inbox.jsonl"
+
+
+def _route_record(text, files):
+    """算这条投稿属于哪个项目。只做判定 + 登记当前项目，不写任何账本。"""
+    try:
+        project_router.ensure_registered(REPO)
+        hint = os.environ.get("KG_INBOX_PROJECT") or ""
+        cwd_hint = os.environ.get("KG_INBOX_CWD") or ""
+        if cwd_hint:
+            _register_from_cwd(cwd_hint)
+        registry = project_router.load_registry()
+        if hint:
+            pinned = project_router.resolve_hint(hint, registry)
+            if pinned:
+                return {"decision": "resolved", "project": pinned["name"],
+                        "root": pinned["root"], "score": 1000,
+                        "reasons": [f"调用方明确指定了「{hint}」"], "candidates": []}
+            # 调用方说得出项目，注册表里却没有 —— 宁可停在这里，也不许悄悄
+            # 回退到安装时写死的那个账本（那正是用户抱怨的那条路径）。
+            return {"decision": "ambiguous", "project": None, "root": None,
+                    "score": 0, "candidates": [],
+                    "reasons": [f"调用方指定了「{hint}」，但注册表里没有这个项目"]}
+        got = project_router.match(text, files, registry, cwd=cwd_hint or None)
+        if got["decision"] == "none" and (cwd_hint or registry):
+            # 调用方给了 cwd / 已经有多项目注册表，却仍然谁都不像 —— 这时候回退到
+            # 安装时写死的账本，就是用户抱怨的那个 bug。宁可停，不许猜。
+            if cwd_hint or len(registry) > 1:
+                got = dict(got)
+                got["decision"] = "ambiguous"
+                got["reasons"] = [
+                    (f"调用方给的 cwd「{cwd_hint}」不在任何已注册项目里" if cwd_hint
+                     else "有多个已注册项目，但这条猜不出属于哪个")]
+        return got
+    except Exception as exc:  # 归属判定本身不该让投稿失败
+        return {"decision": "none", "project": None, "root": None, "score": 0,
+                "reasons": [], "candidates": [],
+                "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _register_from_cwd(cwd_hint):
+    """cwd 指向一个还没注册过的项目时，顺手把它登记进来。
+
+    这是「在别的项目窗口里说话」能真正工作的那一环：MCP 进程是全局单例，看不到
+    用户开的是哪个窗口，只能靠调用方把 cwd 传进来。传进来的 cwd 若指向一个合法的
+    状态根（同时有 ops/tasks 和 ops/truth），就说明用户是在那个项目里说话 —— 登记
+    它，下一次投稿它就在候选里。
+
+    只在「确实像状态根」时才登记：普通目录、临时目录、插件安装缓存都不算。
+    """
+    try:
+        base = Path(cwd_hint).expanduser()
+        if not base.is_dir():
+            return None
+    except (OSError, ValueError):
+        return None
+    for cand in _state_root_candidates(base):
+        try:
+            if looks_like_state_root(cand):
+                return project_router.ensure_registered(cand)
+        except OSError:
+            continue
+    return None
+
+
+def _state_root_candidates(base):
+    """从 cwd 往上找可能的项目根：git 顶层、以及主工作树旁边的 -trunk。"""
+    cands = []
+    out = proc_run(["git", "-C", str(base), "rev-parse", "--show-toplevel"],
+                   capture_output=True, text=True)
+    if out.returncode == 0 and out.stdout.strip():
+        top = Path(out.stdout.strip()).resolve()
+        cands.append(top)
+        trunk_env = os.environ.get("KG_TRUNK")
+        if trunk_env:
+            cands.append(Path(trunk_env).expanduser())
+        cands.append(top.parent / (top.name + "-trunk"))
+    cands.append(base)
+    return cands
+
+
+def cmd_projects(args):
+    """多项目注册表：让「万法归一」的入口真的能认出不止一个项目。"""
+    sub = args[0] if args else "list"
+    if sub in ("-h", "--help"):
+        print("用法：kgctl projects [list | register <名字> <状态根> | scan <目录> | forget <名字>]")
+        return
+    if sub == "list":
+        registry = project_router.load_registry()
+        print(f"注册表 {project_router.registry_path()}")
+        if not registry:
+            print("（空。first run：kgctl projects register <项目名> <该项目的状态根>）")
+        for p in registry:
+            mark = " ← 当前绑定" if Path(p["root"]).resolve() == REPO.resolve() else ""
+            print(f"  {p['name']}{mark}")
+            print(f"    root  {p['root']}")
+            if p.get("clues"):
+                print(f"    线索  {'、'.join(p['clues'])}")
+        backlog = project_router.routing_inbox_path()
+        if backlog.exists():
+            print(f"  待路由箱 {backlog}（{len(read_jsonl(backlog))} 条）")
+        return
+    if sub == "register":
+        if len(args) < 3:
+            sys.exit('用法：kgctl projects register <项目名> <该项目的状态根>')
+        name, root = args[1], Path(args[2]).expanduser()
+        if not looks_like_state_root(root):
+            sys.exit(f"× {root} 不像状态根（需要同时有 ops/tasks 和 ops/truth）；"
+                     "先在该项目跑 install.sh，别把没落账的地方注册进来")
+        clues = [c for c in (args[3:] or []) if c.strip()]
+        row = project_router.register(name, root, clues=clues)
+        print(f"已注册「{row['name']}」→ {row['root']}")
+        if clues:
+            print(f"  线索 {'、'.join(clues)}")
+        return
+    if sub == "scan":
+        base = Path(args[1]).expanduser() if len(args) > 1 else Path.home() / ".newmax" / "workspace"
+        found = project_router.discover(base)
+        known = {p["root"] for p in project_router.load_registry()}
+        print(f"扫描 {base}（只读，不自动注册）：")
+        if not found:
+            print("  没找到带 ops/tasks + ops/truth 的项目。")
+        for row in found:
+            mark = "已注册" if row["root"] in known else "未注册"
+            print(f"  [{mark}] {row['name']}  {row['root']}")
+        print("  注册：kgctl projects register <名字> <root>")
+        return
+    if sub == "forget":
+        if len(args) < 2:
+            sys.exit('用法：kgctl projects forget <项目名>')
+        target = args[1]
+        registry = project_router.load_registry()
+        kept = [p for p in registry
+                if p["name"] != target and Path(p["root"]).name != target]
+        if len(kept) == len(registry):
+            sys.exit(f"× 注册表里没有「{target}」")
+        project_router.save_registry(kept)
+        print(f"已从注册表移除「{target}」（不动任何项目文件）")
+        return
+    sys.exit(f"× 不认识的子命令 {sub}；可用 list / register / scan / forget")
+
+
+def _stash_ambiguous(rec, route):
+    """判不清归属：进全局待路由箱 + 用人话说明，**不写任何项目账本**。"""
+    names = "、".join(c["name"] for c in route.get("candidates") or []) or "未知"
+    row = dict(rec)
+    row["candidates"] = route.get("candidates") or []
+    row["reasons"] = route.get("reasons") or []
+    path = project_router.stash_ambiguous(row)
+    print(f"× 分不清这条属于哪个项目（候选：{names}）", flush=True)
+    print(f"  已放全局待路由箱，没写进任何项目账本：{path}", flush=True)
+    print("  想直接指派：重发时带上项目名/路径，或设 KG_INBOX_PROJECT=<项目名>。", flush=True)
+
+
+def _print_routing_backlog():
+    """待路由箱里有东西时，列出来 —— 静默堆积等于丢失。"""
+    try:
+        path = project_router.routing_inbox_path()
+        if not path.exists():
+            return
+        rows = read_jsonl(path)
+        if rows:
+            print(f"\n全局待路由箱 {len(rows)} 条（判不清归属，未写进任何项目账本）：{path}")
+            for r in rows[-5:]:
+                print(f"  - [{r.get('ts','')[-11:]}] {str(r.get('text',''))[:70]}")
+    except Exception:
+        pass
 
 
 
@@ -1134,8 +1332,17 @@ def cmd_intake(args):
         print('用法: kgctl intake "用户原话"')
         return
     _restore_truth_keep_files_from_origin()
-    cmd_inbox(args)
+    outcome = cmd_inbox(args)
     sys.stdout.flush()
+    if outcome == "ambiguous":
+        print("\n这条分不清属于哪个项目，已经放进全局待路由箱；"
+              "**没有**写进任何项目账本，也没有在这个项目上跑路由/落盘。", flush=True)
+        print("指派后再跑一次即可：kgctl intake \"同上，指定 <项目名>\"。", flush=True)
+        return
+    if outcome == "routed-elsewhere":
+        print("\n这条已按归属写进目标项目的账本；路由/落盘由那个项目自己的守护去做，"
+              "不在当前绑定的项目上重复跑。", flush=True)
+        return
     print("\n[1/5] route inbox", flush=True)
     _truth("route", "--go")
     print("\n[2/5] refresh truth", flush=True)
@@ -4213,6 +4420,25 @@ def cmd_status(args):
     print(f"共享检出       {SHARED}（只读诊断，不当账本）")
     print(f"主干           {MAIN} @ {git('log','-1','--format=%h %s',MAIN)[:56]}")
     print(f"唯一入口       待路由 {unrouted} / 累计 {total} 条")
+    # 判不清归属的投稿不写进任何项目账本，只进全局待路由箱。**必须在这里露面**：
+    # 一条需求如果既不在项目账本里、也不在面板上，就等于丢了。
+    try:
+        _backlog_path = project_router.routing_inbox_path()
+        _backlog = read_jsonl(_backlog_path) if _backlog_path.exists() else []
+    except Exception:
+        _backlog, _backlog_path = [], None
+    if _backlog:
+        print(f"全局待路由箱   {len(_backlog)} 条判不清归属（未写进任何项目账本）：{_backlog_path}")
+        for _r in _backlog[-3:]:
+            print(f"  ├ [{str(_r.get('ts',''))[-11:]}] {str(_r.get('text',''))[:60]}")
+        print("  └ 指派：kgctl projects list 看候选；重发时设 KG_INBOX_PROJECT=<项目名>")
+    try:
+        _registered = project_router.load_registry()
+    except Exception:
+        _registered = []
+    if _registered:
+        _names = "、".join(p["name"] for p in _registered[:6])
+        print(f"已注册项目     {len(_registered)} 个（{_names}）")
     print(f"codex 分支     {len(rows)}")
     print(f"  ├ 已合并可回收 {sum(1 for r in rows if r['kind']=='MERGED')}")
     print(f"  ├ 可入队落盘   {sum(1 for r in rows if row_is_landable(r))}")
@@ -4582,6 +4808,7 @@ def cmd_doctor(args):
 
 
 CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route, "suggest": cmd_suggest,
+        "projects": cmd_projects,
         "matrix": cmd_matrix, "queue": cmd_queue, "gate": cmd_gate, "converge": cmd_converge,
         "replan": cmd_replan,
         "context": cmd_context, "dash": cmd_dash,

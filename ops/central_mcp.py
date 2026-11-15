@@ -143,6 +143,10 @@ TOOLS = [
                           "description": "相关文件路径（可选，帮助路由到既有泳道）"},
                 "kind": {"type": "string", "enum": ["visual", "ux", "bug", "arch", "gate", "unknown"],
                          "description": "粗分类，拿不准就用 unknown"},
+                "cwd": {"type": "string",
+                        "description": "当前会话所在目录（强烈建议带上）。归属判定靠它区分不同项目；不带就可能判不清，记录会进全局待路由箱而不是某个项目账本"},
+                "project": {"type": "string",
+                            "description": "明确指定项目名或状态根（用户说了是哪个项目时带上）"},
             },
             "required": ["text"],
             "additionalProperties": False,
@@ -275,6 +279,10 @@ TOOLS = [
                           "description": "相关文件路径（可选，帮助路由到既有泳道）"},
                 "kind": {"type": "string", "enum": ["visual", "ux", "bug", "arch", "gate", "unknown"],
                          "description": "粗分类，拿不准就用 unknown"},
+                "cwd": {"type": "string",
+                        "description": "当前会话所在目录（强烈建议带上）。归属判定靠它区分不同项目；不带就可能判不清，记录会进全局待路由箱而不是某个项目账本"},
+                "project": {"type": "string",
+                            "description": "明确指定项目名或状态根（用户说了是哪个项目时带上）"},
             },
             "required": ["text"],
             "additionalProperties": False,
@@ -619,6 +627,24 @@ def _daemon_live():
         return False, None, None
     st = daemon_liveness.daemon_liveness(os.environ.get("KG_REPO") or REPO)
     return bool(st.get("live")), st.get("pid"), st.get("bound_repo")
+
+
+def _daemon_liveness_problem(daemon_enabled=True):
+    """「开关开着但没进程接活」这类静默死亡的判据，与 kgctl doctor 共用一份。
+
+    2026-11-16 实测：control.json 里 enabled/daemon_enabled=true，launchd 里那个
+    job 早没了，面板却只写「后台常驻=开（但没进程接活）」，首屏不提示、也不说怎么修。
+    这里把 doctor 的那一条搬到面板首屏，让配置位和现实的分歧直接可见。
+    """
+    try:
+        import daemon_liveness
+    except Exception:
+        return None
+    try:
+        st = daemon_liveness.daemon_liveness(os.environ.get("KG_REPO") or REPO)
+        return daemon_liveness.liveness_problem(st, daemon_enabled)
+    except Exception:
+        return None
 
 
 def _ledger_count():
@@ -1539,6 +1565,7 @@ def _status_payload(fast=True):
     job_running, pid, daemon_project = _daemon_live()
     current_project = str(Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve())
     live = bool(job_running and daemon_project == current_project)
+    daemon_problem = _daemon_liveness_problem(bool(ctrl.get("daemon_enabled", True)))
     st = _daemon_state() if live else {}
     summary = st.get("last_summary") or {}
     board = _acceptance_board()
@@ -1618,6 +1645,11 @@ def _status_payload(fast=True):
 
     if not enabled:
         need_action = "需要继续使用自动挡时，重新开启总开关"
+    elif daemon_problem:
+        # 常驻静默死亡排最前：开关全绿而进程不在，自动挡一步都不会自己走。
+        # 它必须盖过「等验收」这类正常待办——那些事项在「需要你介入」卡里仍然列着，
+        # 但用户首先该知道的是「自动」这部分根本没在跑。
+        need_action = daemon_problem
     elif failures:
         need_action = f"需要你拍板：{failures[0]['target']}（{failures[0]['kind']}）"
     elif board["human"]:
@@ -1660,6 +1692,8 @@ def _status_payload(fast=True):
             "project": daemon_project,
             "last_cycle": st.get("last_cycle_iso"),
             "interval_min": st.get("interval_min"),
+            "problem": _daemon_liveness_problem(
+                bool(ctrl.get("daemon_enabled", True))),
         },
         "native": _native_status(),
         "counters": {
@@ -1747,6 +1781,10 @@ def _status_text(payload):
         % (payload["counters"]["received"], payload["counters"]["landed"],
            payload["counters"]["resolved"]),
     ]
+    _dp = (payload.get("daemon") or {}).get("problem")
+    if _dp:
+        # 静默死亡排在最前：开关全绿而进程不在，是用户最容易被骗的一格。
+        lines.append("常驻守护：" + _dp.split("：", 1)[-1])
     en = payload.get("exec_now")
     if en:
         _m = int((en.get("elapsed_sec") or 0) // 60)
@@ -1990,7 +2028,9 @@ def call_tool(name, args):
             return "capture_request 需要 text", 2
         files = args.get("files") or []
         env = {"KG_INBOX_FILES": ":".join(files) if files else None,
-               "KG_INBOX_KIND": args.get("kind") or "unknown"}
+               "KG_INBOX_KIND": args.get("kind") or "unknown",
+               "KG_INBOX_CWD": (args.get("cwd") or "").strip() or None,
+               "KG_INBOX_PROJECT": (args.get("project") or "").strip() or None}
         return kgctl("inbox", text, extra_env=env)
     if name == "sync_control_plane":
         guard = control_state.mutation_guard()
@@ -2061,7 +2101,9 @@ def call_tool(name, args):
             return "intake_request 需要 text", 2
         files = args.get("files") or []
         env = {"KG_INBOX_FILES": ":".join(files) if files else None,
-               "KG_INBOX_KIND": args.get("kind") or "unknown"}
+               "KG_INBOX_KIND": args.get("kind") or "unknown",
+               "KG_INBOX_CWD": (args.get("cwd") or "").strip() or None,
+               "KG_INBOX_PROJECT": (args.get("project") or "").strip() or None}
         return kgctl("intake", text, extra_env=env)
     if name == "convergence_plan":
         argv = ["converge"]
