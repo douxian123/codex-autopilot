@@ -130,6 +130,42 @@ if [ ! -s "$CANON" ]; then
   exit 0
 fi
 
+# 🚨 2026-11-15 18:2x 补:权威备份自身也必须先自证。
+# 修前只判 CANON「非空」,于是若 CANON 自己是被写坏的那一版(丢了 Stop),
+# 守卫照样把坏文件盖回去,还记一条「已恢复挂载」—— 表面成功,熔断实际没回来,
+# 而且要等下一次判定才可能再修,等于把复发通道留在恢复路径上。
+# 所以拿同一套判据先验 CANON:不达标就拒绝恢复并明确记日志,绝不照坏件恢复。
+if ! /usr/bin/python3 - "$CANON" <<'PYEOF' >/dev/null 2>&1
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as f:
+        d = json.load(f)
+except Exception:
+    raise SystemExit(1)
+h = d.get("hooks") if isinstance(d, dict) else None
+if not (isinstance(h, dict) and h):
+    raise SystemExit(1)
+ok = False
+for group in h.get("Stop") or []:
+    if not isinstance(group, dict):
+        continue
+    for hook in group.get("hooks") or []:
+        if not isinstance(hook, dict):
+            continue
+        cmd = str(hook.get("command", ""))
+        if "loop-guard.py" in cmd and "stop" in cmd:
+            ok = True
+            break
+    if ok:
+        break
+raise SystemExit(0 if ok else 1)
+PYEOF
+then
+  log "权威备份本身不含 Stop 熔断,拒绝照它恢复(fail-open,等待人工修 CANON)"
+  osascript -e 'display notification "权威备份已损坏,未自动恢复,请人工检查 hooks.json" with title "hooks-guard"' 2>/dev/null || true
+  exit 0
+fi
+
 TS=$(date +%Y%m%d-%H%M%S)
 cp "$HOOKS_JSON" "$HOME/.codex/hooks.json.bak-$TS-guard-restore" 2>/dev/null || true
 if cp "$CANON" "$HOOKS_JSON" 2>/dev/null; then

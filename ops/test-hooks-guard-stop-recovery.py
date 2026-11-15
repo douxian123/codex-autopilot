@@ -61,7 +61,8 @@ STOP_OK = {
 }
 
 
-def scenario(name, hooks, *, canon=True, expect_restore=True):
+def scenario(name, hooks, *, canon=True, canon_hooks=None, canon_raw=None,
+             expect_restore=True, expect_log=None, forbid_log=None):
     """在假 HOME + 假插件根里跑一次守卫，断言它是否做了恢复。"""
     with tempfile.TemporaryDirectory(prefix="hooks-guard-test-") as tmp:
         root = Path(tmp)
@@ -83,12 +84,16 @@ def scenario(name, hooks, *, canon=True, expect_restore=True):
         hooks_json.write_text(json.dumps({"hooks": hooks}), encoding="utf-8")
         if canon:
             (home / ".codex" / "hooks.json.bak-20261009-impl").write_text(
-                json.dumps({"hooks": STOP_OK}), encoding="utf-8")
+                canon_raw if canon_raw is not None
+                else json.dumps({"hooks": STOP_OK if canon_hooks is None else canon_hooks}),
+                encoding="utf-8")
 
         env = {**os.environ, "HOME": str(home)}
         proc = subprocess.run(["/bin/bash", str(gdir / "hooks-guard.sh")],
                               capture_output=True, text=True, env=env)
         restored = list((home / ".codex").glob("hooks.json.bak-*-guard-restore"))
+        log_path = home / ".codex" / "hooks" / "hooks-guard.log"
+        log_text = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
 
         check(f"{name}: 守卫正常退出", proc.returncode == 0,
               f"rc={proc.returncode} stderr={proc.stderr[:200]}")
@@ -96,6 +101,10 @@ def scenario(name, hooks, *, canon=True, expect_restore=True):
             check(f"{name}: 判定为需要恢复", bool(restored))
         else:
             check(f"{name}: 未误恢复", not restored)
+        if expect_log is not None:
+            check(f"{name}: 日志含 {expect_log!r}", expect_log in log_text)
+        if forbid_log is not None:
+            check(f"{name}: 日志不含 {forbid_log!r}", forbid_log not in log_text)
         if expect_restore and restored:
             after = json.loads(hooks_json.read_text(encoding="utf-8"))
             stop = json.dumps(after.get("hooks", {}).get("Stop", []))
@@ -173,6 +182,8 @@ def main():
     check("守卫源码认 loop-guard.py + stop",
           '"loop-guard.py" in cmd' in body and '"stop" in cmd' in body)
     check("守卫源码守执行体", "last-good" in body)
+    check("守卫源码验 CANON 自身含 Stop",
+          "权威备份本身不含 Stop 熔断" in body)
 
     scenario("完整 hooks", {**STOP_OK,
                           "PostToolUse": [{"matcher": ".*", "hooks": []}]},
@@ -183,6 +194,19 @@ def main():
              {"Stop": [{"hooks": [{"type": "command", "command": "python3 other.py stop"}]}]})
     scenario("权威备份缺失", {"PostToolUse": [{"matcher": ".*", "hooks": []}]},
              canon=False, expect_restore=False)
+    # 2026-11-15 补:权威备份自己坏了 -> 拒绝照坏件恢复,且绝不误记「已恢复」。
+    scenario("权威备份丢了 Stop",
+             {"PostToolUse": [{"matcher": ".*", "hooks": []}]},
+             canon_hooks={"PostToolUse": [{"matcher": ".*", "hooks": []}]},
+             expect_restore=False,
+             expect_log="权威备份本身不含 Stop 熔断",
+             forbid_log="已恢复 hooks.json 挂载")
+    scenario("权威备份不是合法 JSON",
+             {"PostToolUse": [{"matcher": ".*", "hooks": []}]},
+             canon_raw="{ this is not json",
+             expect_restore=False,
+             expect_log="权威备份本身不含 Stop 熔断",
+             forbid_log="已恢复 hooks.json 挂载")
 
     loop_guard_scenarios()
 
