@@ -621,6 +621,24 @@ def _daemon_live():
     return bool(st.get("live")), st.get("pid"), st.get("bound_repo")
 
 
+def _daemon_liveness_problem(daemon_enabled=True):
+    """「开关开着但没进程接活」这类静默死亡的判据，与 kgctl doctor 共用一份。
+
+    2026-11-16 实测：control.json 里 enabled/daemon_enabled=true，launchd 里那个
+    job 早没了，面板却只写「后台常驻=开（但没进程接活）」，首屏不提示、也不说怎么修。
+    这里把 doctor 的那一条搬到面板首屏，让配置位和现实的分歧直接可见。
+    """
+    try:
+        import daemon_liveness
+    except Exception:
+        return None
+    try:
+        st = daemon_liveness.daemon_liveness(os.environ.get("KG_REPO") or REPO)
+        return daemon_liveness.liveness_problem(st, daemon_enabled)
+    except Exception:
+        return None
+
+
 def _ledger_count():
     """唯一入口累计收到多少条反馈：项目真相层里 ledger 的行数（只读、秒级）。"""
     repo = os.environ.get("KG_REPO")
@@ -1539,6 +1557,7 @@ def _status_payload(fast=True):
     job_running, pid, daemon_project = _daemon_live()
     current_project = str(Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve())
     live = bool(job_running and daemon_project == current_project)
+    daemon_problem = _daemon_liveness_problem(bool(ctrl.get("daemon_enabled", True)))
     st = _daemon_state() if live else {}
     summary = st.get("last_summary") or {}
     board = _acceptance_board()
@@ -1624,6 +1643,10 @@ def _status_payload(fast=True):
         need_action = f"需要你验收：{board['human'][0].get('title') or '请打开面板查看验收步骤'}"
     elif ctrl.get("error"):
         need_action = "控制文件异常，去高级面板看一眼或恢复默认"
+    elif daemon_problem:
+        # 常驻静默死亡要能直接影响「要不要你做什么」这一行：开关全绿而进程不在，
+        # 用户最该做的是把常驻装回来，不是继续提需求。
+        need_action = daemon_problem
     else:
         need_action = "不需要你做什么，继续照常提需求就行"
 
@@ -1660,6 +1683,8 @@ def _status_payload(fast=True):
             "project": daemon_project,
             "last_cycle": st.get("last_cycle_iso"),
             "interval_min": st.get("interval_min"),
+            "problem": _daemon_liveness_problem(
+                bool(ctrl.get("daemon_enabled", True))),
         },
         "native": _native_status(),
         "counters": {
@@ -1747,6 +1772,10 @@ def _status_text(payload):
         % (payload["counters"]["received"], payload["counters"]["landed"],
            payload["counters"]["resolved"]),
     ]
+    _dp = (payload.get("daemon") or {}).get("problem")
+    if _dp:
+        # 静默死亡排在最前：开关全绿而进程不在，是用户最容易被骗的一格。
+        lines.append("常驻守护：" + _dp.split("：", 1)[-1])
     en = payload.get("exec_now")
     if en:
         _m = int((en.get("elapsed_sec") or 0) // 60)
