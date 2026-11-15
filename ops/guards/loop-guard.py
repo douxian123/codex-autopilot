@@ -1009,7 +1009,19 @@ _EN_DONE_RE = re.compile(
 #      后半句还挂着个「下一步」也只该放行,不该被打断。
 _STOP_EVIDENCE_RE = re.compile(
     r"(已合并|合并到 ?main|已提交|已推送|已写入|已修改|已完成|已修复|已通过|"
-    r"全绿|测试通过|门禁通过|交付完成|落 ?main|\bcommit\b|```|diff --git|"
+    # 2026-11-16 06:30:裸 `\bcommit\b` 从证据里删掉,`sha` 加词边界。
+    # 触发原因(本会话活体实测,英文「宣布下一步就停」11 条漏判里 7 条栽在这里):
+    #   ① 裸 `\bcommit\b` 命中的是**未来时**「…, then commit.」——模型说「我接下来
+    #     会提交」,根本没提交,却被当成交付证据整条放行。会话里 4 条同形态:
+    #      「All four copies now match. Let me verify …, then commit.」
+    #      「Gate is green …. Now let me verify …, then commit and land.」
+    #   ② `sha` 没有词边界,把 "share" 也吞了 ——「All four copies share MD5
+    #      `6a48ced3`. Let me verify …」整条因 "share" 里的 "sha" 被当成 commit sha
+    #      证据放行。改成 `\bsha\b` 后只认独立出现的 sha。
+    # 保留 `committed`(真正的完成态过去式)与 `提交/合入/合并` 语境。
+    # 完成态证据本身仍由末句的 `_STOP_EVIDENCE_RE`(已合并/已提交/…)兜底:
+    # 「All four copies now match. Committed 3f2a91c.」这类真交付照旧放行(反控)。
+    r"全绿|测试通过|门禁通过|交付完成|落 ?main|```|diff --git|"
     # 2026-11-16 01:10:裸 `\b[0-9a-f]{7,40}\b` 收窄为**带 git 语境或满长 sha**。
     # 触发原因(全量正文语料复测):裸 hex 在末句命中 118 次,其中 12 次是
     # **纯日期/纯数字**——最典型的是分支名里的 `...-20261110`、`kg-aha-...-20261109`、
@@ -1020,7 +1032,7 @@ _STOP_EVIDENCE_RE = re.compile(
     # 这类 git 语境才算证据。
     # 全量量化:block +28、goal 召回 68.5%→68.8%、边界样本 11→11(不增)。单调收紧。
     r"\b[0-9a-f]{40}\b|"
-    r"(?:commit|提交|合入|合并|sha|HEAD|版本)[^。\n]{0,20}\b[0-9a-f]{7,39}\b)"
+    r"(?:commit|committed|提交|合入|合并|\bsha\b|HEAD|版本)[^。\n]{0,20}\b[0-9a-f]{7,39}\b)"
 )
 _STOP_CONSENT_RE = re.compile(
     r"(要不要你拍板|请你拍板|需要你决策|等你确认|你选 ?[AB]|你说一句|要不要我|"
@@ -1834,6 +1846,14 @@ def _self_test() -> int:
         ("正控·第一人称通判", "我先定位是判据太窄，还是钩子压根没被调用。", 15, True),
         ("正控·第一人称通判2", "关键：PLAN-GUARD 只开了「开启」，从没打过命中。我看它的判据。", 15, True),
         ("正控·英文计划尾", "I have the complete evidence chain now. Let me confirm the exact Stop hook schema.", 16, True),
+        # 2026-11-16 06:30:裸 `\bcommit\b` / 无词边界 `sha` 让英文「宣布下一步就停」
+        # 漏判的正控。取自本会话实测原句(11 条漏判里 7 条栽在这两个证据串上)。
+        ("正控·英文未来提交then commit", "All four copies now match. Let me verify the live file passes self-test and behaves correctly on the exact stall forms, then commit.", 24, True),
+        ("正控·英文share被当sha证据", "All four copies share MD5 `6a48ced3`. Let me verify the deployed live copy runs cleanly and passes its self-test.", 12, True),
+        ("正控·英文then commit and land", "Gate is green with the pinned assertion. Now let me verify no unused symbols remain, then commit and land.", 25, True),
+        # 反控:这些是**真正的**英文完成态交付,证据必须保留放行,不能被上面的收紧误伤。
+        ("反控·英文已提交真交付", "Done. Committed 3f2a91c and pushed to main.", 9, False),
+        ("反控·英文tests pass合并", "Tests pass. Committed and merged to main.", 5, False),
         ("反控·第一人称但已完成", "我已经把这处改完了。", 9, False),
         # 2026-11-15 14:30:「改完了/跑完了/做完了」这类动补式完成不含「已/完成」,
         # 曾被第一人称通判误拦。补 _FIRST_PERSON_DONE_RE 后必须放行。
