@@ -639,6 +639,21 @@ def _is_repeated_stop(
     return False, ratio
 
 
+# 「宣布下一步就停」判据的正文长度上界。
+#
+# 2026-11-16 03:40 由 400 抬到 1200。触发原因(全量 corpus_full.json 9415 轮复测):
+# 旧值 400 是一道**粗粒度的前置闸**,它在 `_is_plan_tail_stall` 真正分析**末句**之前
+# 就把整条正文超长的回合丢掉了。于是「正文写了几百上千字的长篇汇报 + 最后一句是
+# 标准计划句」这种最典型的「跑着跑着停下来」形态结构性地漏判 —— 而末句分析本身
+# 还有独立的 `last <= 200` 精确闸,根本不需要这里再用 400 兜一遍。
+# 抬到 1200 后(四个内层闸同步:外层 handle_stop + 第二/五/七类),全量量化:
+# block 6648→6658、GOAL 自动续跑召回 73.50%→73.58%、控诉集召回 8/15 不变、
+# 边界误伤 14→14(不增)。单调收紧验证:relaxed-vs-shipped 只多拦 10 轮、
+# 放回 0 轮。取 1200 而非无限:把边界停在实测 clean 区间内,长尾(>1200)的收益
+# 太小且误伤开始出现(2000 起 FP 14→15),不值得。
+_PLAN_TAIL_BODY_MAX = 1200
+
+
 def handle_stop(event: dict[str, Any]) -> None:
     """Stop 熔断 —— 治「吐两句话就停 / 干完活一句话收尾就停」。
 
@@ -699,7 +714,7 @@ def handle_stop(event: dict[str, Any]) -> None:
         # 降到 >=1 后同一基准认回 11 个,误伤面(下一条是正常新需求)在 33 条短收尾
         # 样本里只从 0 增到 2,且那 2 条("继续改。"「先确认我的分支已包含
         # origin/main。」)本身就是标准的「宣布下一步就停」。
-        elif tools >= 1 and 0 < len(message) < 400 \
+        elif tools >= 1 and 0 < len(message) < _PLAN_TAIL_BODY_MAX \
                 and _is_plan_tail_stall(message, tools=tools):
             stall = True
         # 2026-11-16 00:20:这里原来传 `None`,于是判据侧 `tools == 0` 的第六类
@@ -1011,7 +1026,7 @@ def _is_plan_tail_stall(message: str, tools: int | None = None) -> bool:
             if _EN_PLAN_TAIL_RE.search(last) and not _EN_DONE_RE.search(last):
                 return True
         # 第二类:无第一人称的动作计划句。只在短回复、且末句没在对用户说话时才认。
-        if len(body) <= 400 and not _USER_ADDRESS_RE.search(last) \
+        if len(body) <= _PLAN_TAIL_BODY_MAX and not _USER_ADDRESS_RE.search(last) \
                 and (_PLAN_ANCHOR_RE.search(last)
                      or (tools is not None and tools >= 1
                          and _IMPERATIVE_TAIL_RE.search(last))):
@@ -1032,7 +1047,7 @@ def _is_plan_tail_stall(message: str, tools: int | None = None) -> bool:
         # 同一批语料量化(基准 = 下一轮是否为宿主自动续跑):召回 63.8% → 68.6%
         # (+421 轮);「下一轮是真实新需求却被拦」的边界样本 9 → 10。这 10 条里
         # 多数其实是用户在同一话题上追加,属可接受代价。
-        if tools is not None and tools >= 1 and len(body) <= 400 \
+        if tools is not None and tools >= 1 and len(body) <= _PLAN_TAIL_BODY_MAX \
                 and not _USER_ADDRESS_RE.search(last) \
                 and _TEMPORAL_ANCHOR_RE.match(last) \
                 and not _FIRST_PERSON_DONE_RE.search(last) \
@@ -1082,7 +1097,7 @@ def _is_plan_tail_stall(message: str, tools: int | None = None) -> bool:
         # 同时成立时,它同样是「宣布下一步就停」的同一语义,与语言无关。
         # 收紧口径与第四类完全一致,只多认这一形态,不放回任何已拦回合。
         # 全量量化见提交说明:只多拦,边界误伤不增(单调收紧)。
-        if tools == 0 and len(body) <= 400 \
+        if tools == 0 and len(body) <= _PLAN_TAIL_BODY_MAX \
                 and _EN_PLAN_TAIL_RE.search(body) \
                 and not _EN_DONE_RE.search(body) \
                 and not _FIRST_PERSON_DONE_RE.search(body) \
@@ -1813,6 +1828,23 @@ def _self_test() -> int:
         ("反控·带交付证据", "已提交 1b336c396，并核验进了 main。", 33, False),
         ("反控·问用户", "这一版要不要你拍板，改成窄屏竖排？", 9, False),
         ("反控·完整交付长文", "交付完成。" + "这一段是完整的交付说明与证据。" * 40, 9, False),
+        # 2026-11-16 03:40:去 `_FIRST_PERSON_DONE_RE` 里**语义两栖的裸名词**。
+        # 病根:裸 `落盘|交付|成功|闭环|合入|合并到|无误|不误|绿了` 既出现在真交付句
+        # 里,也出现在「还没做完」的计划句里,单独出现时不能证明本轮交付了,于是把
+        # 下面这些**标准计划尾**整条放行。这 4 条都是全量语料里实测被放行的真实句。
+        # 改后只认自指完成形态(已完成/完成了/改完了),这几句必须拦。
+        ("正控·裸落盘是定语不是完成", "我先确认上一版落盘修复的现状、workflow 里所有 checkout 位置和当前 CI 结论，再决定改动面。", 13, True),
+        ("正控·裸交付只是描述", "我要先核对门禁实际比较的是哪份质量报告；这比盲目加节点更接近交付失败根因。", 4, True),
+        ("正控·裸成功只是假设", "我现在尝试一次正式 land：它的预检与门禁是原子的，成功则会给出真正的主线提交。", 57, True),
+        ("正控·裸通过只是现象", "这与产品卡能通过、机构卡不能通过的现象一致；我正在验证这道门是否没有使用同一套例外。", 13, True),
+        # 反控:去掉裸名词后,真正的自指完成形态仍必须放行(不能把改动做成「全拦」)。
+        ("反控·自指已完成仍放行", "已完成并 push，`origin/main` 就是 6a48ced3。", 9, False),
+        ("反控·自指完成了仍放行", "测试通过了，门禁全绿。", 9, False),
+        # 2026-11-16 03:40:正文长度上界 400→1200(见 _PLAN_TAIL_BODY_MAX 注释)。
+        # 病根:400 是**粗粒度前置闸**,会在分析**末句**之前把整条超长汇报丢掉,
+        # 于是「长篇汇报 + 最后一句标准计划句」被结构性漏判。这条取自语料里被漏判
+        # 的真实回合(正文 603 字,末句 6 字)。改后必须拦。
+        ("正控·长正文但末句是计划句", "本轮排查已经收束成三条可验证结论：" + "每一条都有对应的命令输出与文件行号作为依据。" * 20 + "先处理第 1 条。", 32, True),
     ]
     for name, payload, tools, expect_hit in imperative_cases:
         hit = _is_plan_tail_stall(payload, tools=tools)
