@@ -1277,13 +1277,21 @@ def cmd_projects(args):
     if sub == "scan":
         base = Path(args[1]).expanduser() if len(args) > 1 else Path.home() / ".newmax" / "workspace"
         found = project_router.discover(base)
-        known = {p["root"] for p in project_router.load_registry()}
+        # 按**仓库身份**判断「已注册」，不能按 root 字符串比：discover 归并后给出的
+        # root 是同一仓库里路径最短的那个 worktree，未必等于注册表里存的那一个。
+        registered = project_router.load_registry()
+        known_roots = {p["root"] for p in registered}
+        known_idents = {p.get("identity") for p in registered if p.get("identity")}
         print(f"扫描 {base}（只读，不自动注册）：")
         if not found:
             print("  没找到带 ops/tasks + ops/truth 的项目。")
         for row in found:
-            mark = "已注册" if row["root"] in known else "未注册"
-            print(f"  [{mark}] {row['name']}  {row['root']}")
+            known = (row["root"] in known_roots
+                     or (row.get("identity") and row["identity"] in known_idents))
+            mark = "已注册" if known else "未注册"
+            sites = row.get("sites") or [row["root"]]
+            extra = f"（{len(sites)} 个 worktree）" if len(sites) > 1 else ""
+            print(f"  [{mark}] {row['name']}  {row['root']}{extra}")
         print("  注册：kgctl projects register <名字> <root>")
         return
     if sub == "forget":
