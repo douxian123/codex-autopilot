@@ -326,6 +326,13 @@ _HOST_INJECTED_USER_MARKERS = (
     "<codex_apps_client_time_context",
     "<files_pasted_by_the_user",
     "<image",
+    # 2026-11-16 06:00:Codex 把 AGENTS.md 全文作为一条 user 角色消息注入,
+    # 开头固定是 `# AGENTS.md instructions for <path>`,正文包在 <INSTRUCTIONS>
+    # 里,尾部只跟 <environment_context> 这类宿主标签。实测三天语料 199 条,
+    # `</INSTRUCTIONS>` 之后**没有一条**带用户亲手打的字(全是 <environment_context>
+    # 或空),而用户自己的话会作为**另一条** user 消息同轮出现。所以整条判宿主
+    # 不会丢真人回合;修前它被当成真人发言,是同一类「钩子误发」的残留来源。
+    "# AGENTS.md instructions for",
 )
 
 
@@ -1937,6 +1944,14 @@ def _self_test() -> int:
         ("反控·带 request 的粘贴清单算真人",
          '# Files pasted by the user:\n\n## 日志.txt: /tmp/log.txt\n\n'
          '## My request:\n为什么老是跑着跑着停下来？', False),
+        # 2026-11-16 06:00:Codex 注入的 AGENTS.md 全文。三天语料 199 条,
+        # `</INSTRUCTIONS>` 之后没有一条带用户亲手打的字(只有 <environment_context>
+        # 或空),用户自己的话会另起一条 user 消息。所以整条判宿主不丢真人回合。
+        ("注入·AGENTS.md instructions 全文",
+         '# AGENTS.md instructions for /Users/danta/.newmax/workspace/knowledge-graph\n\n'
+         '<INSTRUCTIONS>\nThese AGENTS.md instructions replace all previously provided AGENTS.md instructions.\n\n'
+         '# 全局工作约定\n\n- 一律用中文向用户汇报。\n</INSTRUCTIONS>\n\n'
+         '<environment_context>\n  <cwd>/Users/danta/.newmax/workspace/knowledge-graph</cwd>\n</environment_context>', True),
         # 反控:只有附件清单、`## My request:` 之后为空 —— 仍然是宿主拼的,算注入。
         ("注入·附件清单但 request 为空",
          '# Files mentioned by the user:\n\n## 教程.txt: /Users/danta/Downloads/x.txt\n\n'
@@ -2022,6 +2037,13 @@ def _self_test() -> int:
          ['<codex_internal_context source="goal">\nContinue working toward the active thread goal.',
           "你看你自己又在这跑两行就停下来了，到底是为啥？"],
          False),
+        ("同轮 AGENTS.md 注入+真人消息·真人发言仍要拦",
+         ['# AGENTS.md instructions for /Users/danta/.newmax/workspace/knowledge-graph\n\n'
+          '<INSTRUCTIONS>\nThese AGENTS.md instructions replace all previously provided '
+          'AGENTS.md instructions.\n</INSTRUCTIONS>\n\n<environment_context>\n  <cwd>/tmp/x</cwd>\n'
+          '</environment_context>',
+          "你看你自己又在这跑两行就停下来了，到底是为啥？"],
+         True),
         ("真实用户回合·短计划尾必须拦",
          "你看你自己又在这跑两行就停下来了，到底是为啥？",
          True),
