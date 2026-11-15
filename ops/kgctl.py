@@ -1216,16 +1216,25 @@ def _register_from_cwd(cwd_hint):
 
 
 def _state_root_candidates(base):
-    """从 cwd 往上找可能的项目根：git 顶层、以及主工作树旁边的 -trunk。"""
+    """从 cwd 往上找可能的项目根：git 顶层、以及同仓库的落盘主干。
+
+    `KG_TRUNK` 只有在和当前 cwd **属于同一个仓库**时才算候选。它是安装时写进
+    `.mcp.json` 的、指向某个特定项目的落盘主干；用户换到另一个项目说话时，这个
+    环境变量依然存在，照单全收就会把无关项目登记进注册表（2026-11-16 冒烟实测：
+    注册表里凭空多出一条 `knowledge-graph-trunk`）。
+    """
     cands = []
     out = proc_run(["git", "-C", str(base), "rev-parse", "--show-toplevel"],
                    capture_output=True, text=True)
     if out.returncode == 0 and out.stdout.strip():
         top = Path(out.stdout.strip()).resolve()
         cands.append(top)
+        top_ident = project_router.identity(top)
         trunk_env = os.environ.get("KG_TRUNK")
         if trunk_env:
-            cands.append(Path(trunk_env).expanduser())
+            trunk = Path(trunk_env).expanduser()
+            if top_ident and project_router.identity(trunk) == top_ident:
+                cands.append(trunk)
         cands.append(top.parent / (top.name + "-trunk"))
     cands.append(base)
     return cands
