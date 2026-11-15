@@ -143,6 +143,13 @@ def main():
         # 这条门禁同时锁住异常隔离、模式分级（auto/propose/observe）与预算统一。
         run([sys.executable, str(OPS / "test-pass-registry.py")],
             cwd=str(OPS.parent), check=True)
+        # 归属判定：「万法归一」入口后面那一层。最容易腐化的形态不是「判错」而是
+        # 「判不清时悄悄猜」——插件 .mcp.json 写死一个 KG_REPO，于是用户在 A 项目
+        # 窗口里说 B 项目的事，记录照样落进 A（2026-11-16 用户实测的 bug）。
+        # 这条门禁锁住：分层证据有序、近似并列不猜、判不清时任何项目账本都不许写。
+        run([sys.executable, str(OPS / "test-project-router.py")],
+            cwd=str(OPS.parent), check=True,
+            env={**os.environ, "KG_AUTOPILOT_HOME": str(root / "autopilot-home")})
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()

@@ -143,6 +143,10 @@ TOOLS = [
                           "description": "相关文件路径（可选，帮助路由到既有泳道）"},
                 "kind": {"type": "string", "enum": ["visual", "ux", "bug", "arch", "gate", "unknown"],
                          "description": "粗分类，拿不准就用 unknown"},
+                "cwd": {"type": "string",
+                        "description": "当前会话所在目录（强烈建议带上）。归属判定靠它区分不同项目；不带就可能判不清，记录会进全局待路由箱而不是某个项目账本"},
+                "project": {"type": "string",
+                            "description": "明确指定项目名或状态根（用户说了是哪个项目时带上）"},
             },
             "required": ["text"],
             "additionalProperties": False,
@@ -275,6 +279,10 @@ TOOLS = [
                           "description": "相关文件路径（可选，帮助路由到既有泳道）"},
                 "kind": {"type": "string", "enum": ["visual", "ux", "bug", "arch", "gate", "unknown"],
                          "description": "粗分类，拿不准就用 unknown"},
+                "cwd": {"type": "string",
+                        "description": "当前会话所在目录（强烈建议带上）。归属判定靠它区分不同项目；不带就可能判不清，记录会进全局待路由箱而不是某个项目账本"},
+                "project": {"type": "string",
+                            "description": "明确指定项目名或状态根（用户说了是哪个项目时带上）"},
             },
             "required": ["text"],
             "additionalProperties": False,
@@ -2020,7 +2028,9 @@ def call_tool(name, args):
             return "capture_request 需要 text", 2
         files = args.get("files") or []
         env = {"KG_INBOX_FILES": ":".join(files) if files else None,
-               "KG_INBOX_KIND": args.get("kind") or "unknown"}
+               "KG_INBOX_KIND": args.get("kind") or "unknown",
+               "KG_INBOX_CWD": (args.get("cwd") or "").strip() or None,
+               "KG_INBOX_PROJECT": (args.get("project") or "").strip() or None}
         return kgctl("inbox", text, extra_env=env)
     if name == "sync_control_plane":
         guard = control_state.mutation_guard()
@@ -2091,7 +2101,9 @@ def call_tool(name, args):
             return "intake_request 需要 text", 2
         files = args.get("files") or []
         env = {"KG_INBOX_FILES": ":".join(files) if files else None,
-               "KG_INBOX_KIND": args.get("kind") or "unknown"}
+               "KG_INBOX_KIND": args.get("kind") or "unknown",
+               "KG_INBOX_CWD": (args.get("cwd") or "").strip() or None,
+               "KG_INBOX_PROJECT": (args.get("project") or "").strip() or None}
         return kgctl("intake", text, extra_env=env)
     if name == "convergence_plan":
         argv = ["converge"]

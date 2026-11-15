@@ -219,6 +219,32 @@ if [ "$NO_SEED" -eq 0 ]; then
   done
 fi
 
+# 1b) 把项目登记进多项目注册表。
+# 为什么要有这一步：`.mcp.json` 一次只绑定一个 KG_REPO，于是「在别的项目窗口里
+# 说话，记录却落进这一个账本」——2026-11-16 用户明确指出的 bug。注册表让入口在
+# 投稿时能认出不止一个项目；绑定仍保留作默认项，但不再是唯一候选。
+"$PY" - "$REPO" "$PROJECT" <<'PYEOF'
+import importlib.util, sys
+from pathlib import Path
+repo, project = sys.argv[1], sys.argv[2]
+ops = Path(repo) / "ops"
+sys.path.insert(0, str(ops))
+spec = importlib.util.spec_from_file_location("project_router", ops / "project_router.py")
+mod = importlib.util.module_from_spec(spec)
+sys.modules["project_router"] = mod
+try:
+    spec.loader.exec_module(mod)
+    row = mod.ensure_registered(project)
+    if row is None:
+        print(f"  （{project} 还不是状态根，先跑 install 的 seed 步骤再登记）")
+    else:
+        print(f"  已登记项目「{row['name']}」→ {row['root']}")
+        print(f"  注册表 {mod.registry_path()}")
+        print(f"  再加一个项目：KG_REPO=<该项目> python3 <插件>/ops/kgctl.py projects register <名字> <root>")
+except Exception as exc:  # 登记失败不该让安装失败：绑定本身仍然是旧的可用路径
+    print(f"  （项目登记跳过：{type(exc).__name__}: {exc}）")
+PYEOF
+
 # 2) 先校验，再把不可变版本装进独立目录；绝不删除或覆盖旧安装。
 mkdir -p "$MANIFEST_DIR" "$PLUGIN_ROOT" "$RELEASE_ROOT"
 VERSION="$("$PY" - "$PLUGIN_DIR/.codex-plugin/plugin.json" <<'PYEOF'
