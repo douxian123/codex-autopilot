@@ -838,7 +838,24 @@ def handle_stop(event: dict[str, Any]) -> None:
             "现在立刻执行你刚说的那一步(调用工具去做),不要再用一句话收尾;"
             "如果确实已经做完、或必须我拍板才能继续,就在正文里写清楚。"
         )
-    _emit({"decision": "block", "reason": reason})
+    # 2026-11-16 06:45:加 suppressOutput,治「满屏钩子反馈」。
+    #
+    # 病:decision:block 时客户端会把 reason 渲染成一条 `codex.userMessage.
+    # hookFeedback`(中文「钩子反馈」)卡片贴进对话。实测最近 6 小时 Stop 闸门
+    # 触发 392 次,用户看到的就是「满屏都是这个钩子的对话」。
+    #
+    # 为什么这里加是安全的(三条硬证据,不是猜):
+    #   ① 客户端 binary 里 `stop.command.output` 的 JSON schema **定义了这个字段**
+    #      ("suppressOutput": {default:false, type:boolean});SubagentStop 同样有。
+    #   ② 同一 binary 里三条「unsupported suppressOutput」报错分别只属于
+    #      PreToolUse / PostToolUse / PermissionRequest —— **没有 Stop**。
+    #      即:这三个事件拒收该字段,Stop 收。
+    #   ③ 字段语义是「抑制这条 hook 输出**上屏**」,不是「不让模型收到 reason」:
+    #      reason 仍按 decision:block 塞回模型继续干活,只是不再渲染成卡片。
+    #      因此拦截力一分不减,只是把噪音摘掉。
+    #
+    # 回滚:删掉本 dict 里的 "suppressOutput": True 一行即可。
+    _emit({"decision": "block", "reason": reason, "suppressOutput": True})
 
 
 # 「宣布下一步却不做」的收尾计划句 —— 第一人称、进行时的下一步动作。
@@ -2027,7 +2044,8 @@ def _self_test() -> int:
             "last_assistant_message": "先定位根因。",
         }
 
-    def _stop_blocked(event: dict) -> bool:
+    def _stop_output(event: dict) -> str:
+        """跑一次 handle_stop,返回它写出的原始 stdout(供断言用)。"""
         import tempfile as _tempfile
         with _tempfile.TemporaryDirectory() as state_dir:
             with contextlib.redirect_stdout(io.StringIO()) as buffer:
@@ -2044,7 +2062,10 @@ def _self_test() -> int:
             os.unlink(event["transcript_path"])
         except OSError:
             pass
-        return '"block"' in buffer.getvalue()
+        return buffer.getvalue()
+
+    def _stop_blocked(event: dict) -> bool:
+        return '"block"' in _stop_output(event)
 
     stop_cases = [
         ("宿主驱动·goal 前言回合不注入 nudge",
@@ -2074,6 +2095,25 @@ def _self_test() -> int:
         if got != expect_block:
             ok = False
         print(f"[{flag}] {name}: block={got}(期望 {expect_block})")
+
+    # ---- 2026-11-16 06:45:「钩子反馈」不上屏(用户要求去掉满屏钩子文案) ----
+    # 阻断仍必须发生,但输出要带 suppressOutput:true —— 客户端 schema 里
+    # stop.command.output 有这个字段,PreToolUse/PostToolUse/PermissionRequest
+    # 才报 unsupported。若哪天这两条断言破了,就是有人把噪音改回来了。
+    blocked_raw = _stop_output(_stop_fixture(
+        "你看你自己又在这跑两行就停下来了，到底是为啥？"))
+    suppress_hit = '"suppressOutput": true' in blocked_raw
+    flag = "Y" if suppress_hit else "N"
+    if not suppress_hit:
+        ok = False
+    print(f"[{flag}] Stop 阻断带 suppressOutput(不上屏「钩子反馈」): "
+          f"{suppress_hit}(期望 True)")
+    still_blocks = '"block"' in blocked_raw
+    flag = "Y" if still_blocks else "N"
+    if not still_blocks:
+        ok = False
+    print(f"[{flag}] 加 suppressOutput 后拦截力不减(仍 decision:block): "
+          f"{still_blocks}(期望 True)")
 
     print("SELF-TEST:" + ("PASS" if ok else "FAIL"))
     return 0 if ok else 1
