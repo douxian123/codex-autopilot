@@ -37,6 +37,8 @@ kgctl —— 自动挡的唯一执行入口（stdlib only）
   * `matrix/queue/status/sync/clash/inbox 读` 全部只读。
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import os

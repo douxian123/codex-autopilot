@@ -33,9 +33,17 @@ if [ -x /usr/bin/python3 ] && [ -f "$RESOURCE_INSTALLER" ]; then
     log "资源准入挂载失败(fail-open,不阻断 Codex)"
 fi
 
-# ---- 判定:文件存在、是有效 JSON、且 hooks 非空 ----
+# ---- 判定:文件存在、是有效 JSON、hooks 非空、且 Stop 熔断仍挂在 loop-guard.py 上 ----
 # ⚠️ 必须自包含判定:不能外包给 check-guard-mounted.sh —— 那个脚本用绝对 ~/.codex
 # 路径,在隔离 HOME 下会误判真实文件(2026-10-14 验证时实测踩到)。
+#
+# 🚨 2026-11-15 17:10 修一个结构性盲区:本脚本第 30~34 行会先跑
+# install-resource-hooks.py,它只要 hooks 是 dict 就会往里 setdefault 并追加
+# resource-admission 条目。于是若 hooks.json 被写成「丢了 Stop」的版本,
+# installer 一跑 hooks 就变非空 → 旧判定(`isinstance(h,dict) and h`)直接 PASS
+# → 第 56 行 exit 0 → Stop 永远不会被恢复。这正是脚本开头注释里那 5 次
+# 「Stop 熔断被摘掉、所有对话裸奔空转」的形态,只是丢了 Stop 而非整体清空。
+# 因此判定必须显式要求 Stop 存在、且确实指向 loop-guard.py。
 # 返回 0 = 挂载正常;1 = 需要恢复
 need_restore=0
 if [ ! -s "$HOOKS_JSON" ]; then
@@ -49,7 +57,24 @@ try:
 except Exception:
     raise SystemExit(1)          # 解析失败 = 坏文件,需要恢复
 h = d.get("hooks") if isinstance(d, dict) else None
-raise SystemExit(0 if (isinstance(h, dict) and h) else 1)
+if not (isinstance(h, dict) and h):
+    raise SystemExit(1)          # hooks 为空 = 需要恢复
+# Stop 必须存在,且至少有一个条目挂着 loop-guard.py stop。
+# 只认 command 字符串里的 "loop-guard.py" + "stop",不猜其它形态。
+ok = False
+for group in h.get("Stop") or []:
+    if not isinstance(group, dict):
+        continue
+    for hook in group.get("hooks") or []:
+        if not isinstance(hook, dict):
+            continue
+        cmd = str(hook.get("command", ""))
+        if "loop-guard.py" in cmd and "stop" in cmd:
+            ok = True
+            break
+    if ok:
+        break
+raise SystemExit(0 if ok else 1)
 PYEOF
 fi
 

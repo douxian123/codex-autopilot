@@ -35,6 +35,8 @@
     r.returncode / r.stdout / r.stderr
 """
 
+from __future__ import annotations
+
 import os
 import shutil
 import signal

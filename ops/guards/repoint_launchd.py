@@ -27,6 +27,8 @@
 * 显式：改了哪条、从哪改到哪逐条打印；找不到脚本就报错退出，不装作成功。
 * 不越界：只碰 registry.json 里登记的 label，别人的 launchd 任务一律不动。
 """
+from __future__ import annotations
+
 import json
 import os
 import plistlib

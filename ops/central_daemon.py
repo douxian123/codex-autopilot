@@ -849,8 +849,8 @@ def _resolve_task_item(slug):
         "slug": slug,
         "title": f"解决冲突任务 {slug}",
         "detail": (
-            f"源分支：{rec.get("branch")}；执行分支：{rec.get("resolve_branch")}；"
-            f"工作树：{wt}；待解文件：{chr(44).join(files) or "无"}。保留冲突两侧的真实意图，不要机械二选一。"
+            f"源分支：{rec.get('branch')}；执行分支：{rec.get('resolve_branch')}；"
+            f"工作树：{wt}；待解文件：{chr(44).join(files) or '无'}。保留冲突两侧的真实意图，不要机械二选一。"
         ),
         "files": files,
         "resolve_branch": rec.get("resolve_branch"),

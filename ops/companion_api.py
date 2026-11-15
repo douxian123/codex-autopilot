@@ -19,6 +19,8 @@
   native-probe                    真跑一次原生直连自检并记下结果
 """
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess

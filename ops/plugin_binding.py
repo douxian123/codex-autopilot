@@ -13,6 +13,8 @@ cwd 的 git 仓库，在 Codex 自己的目录或任意 worktree 里解析出错
 的 `.mcp.json` 自动补上；显式环境变量优先，不覆盖。
 """
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess

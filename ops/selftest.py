@@ -132,6 +132,11 @@ def main():
         # 直接 exec 一个 .py，守护进程静默停摆，而改指脚本照样打印「✓」。
         run([sys.executable, str(OPS / "test-repoint-managed-args.py")],
             cwd=str(OPS.parent), check=True)
+        # hooks 看门狗不许「非空即通过」：2026-11-15 实测到，只要 hooks 是
+        # dict，install-resource-hooks.py 就会往里追加条目，于是「丢了 Stop」
+        # 的坏文件会被判成挂载正常 → Stop 熔断永远不恢复 → 所有对话裸奔空转。
+        run([sys.executable, str(OPS / "test-hooks-guard-stop-recovery.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()
