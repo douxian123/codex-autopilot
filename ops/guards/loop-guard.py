@@ -374,8 +374,8 @@ def _is_host_injected_user_text(text: str) -> bool:
 
 
 def _turn_tool_stats(
-        transcript_path: Any, turn_id: Any) -> tuple[int, int, bool, bool] | None:
-    """数本轮 transcript 里的客观事实,返回 (工具调用数, 助手正文条数, 是否真实用户回合)。
+        transcript_path: Any, turn_id: Any) -> tuple[int, int, bool, bool, bool] | None:
+    """数本轮 transcript 里的客观事实,返回 (工具调用数, 助手正文条数, 是否真实用户回合, 是否被用户中断, 是否宿主 goal 续跑)。
 
     拿不到 transcripts / 找不到本轮起点 / 超预算 → None,调用方回退纯文本判据。
     从文件尾部往前按块扫,找到最后一条 `task_started` 即本轮起点:这样只需
@@ -391,6 +391,13 @@ def _turn_tool_stats(
     中断等于用户自己按了停止,再催一句就是负向改动。三天语料实测:23 次 Stop
     注入全部跟在 `task_complete` 之后、**0 次**跟在 `turn_aborted` 之后,所以
     这道闸不损失任何真阳性,只是把这条路径显式堵死。
+
+    第五个元素(2026-11-16 04:50 新增)标记本轮是不是**宿主 goal 自动续跑**。
+    这是「满屏钩子」的直接病根:上一版闸门只看第三个元素(本轮有没有真人打字),
+    但真实会话里最常见的恰恰是「用户说一句话 + 宿主接着补一段 goal 续跑前言」
+    同处一轮 —— 于是 `real_user_turn=True`,闸门照放,nudge 照发,满屏刷。
+    而 goal 前言意味着宿主自己就会继续往下跑(全量语料:goal 回合被催与未被催,
+    下一轮仍然 100% 是 goal 续跑)。宿主既然自己会续,就不该再补 nudge 插嘴。
     """
     started = time.monotonic()
     try:
@@ -462,6 +469,7 @@ def _turn_tool_stats(
         texts = 0
         real_user_turn = False
         ended_aborted = False
+        host_goal_turn = False
         for line in lines[start + 1:]:
             if time.monotonic() - started > _TRANSCRIPT_BUDGET_SECONDS:
                 return None
@@ -514,6 +522,9 @@ def _turn_tool_stats(
                 # 不是「用户说了句话」,不能据此判静默。
                 if body and not _is_host_injected_user_text(body):
                     real_user_turn = True
+                # 本轮出现过宿主 goal 续跑前言 → 宿主自己会往下跑,别再补 nudge。
+                if body.startswith('<codex_internal_context source="goal"'):
+                    host_goal_turn = True
             elif kind == "message" and payload.get("role") == "assistant":
                 content = payload.get("content")
                 if isinstance(content, list):
@@ -522,7 +533,7 @@ def _turn_tool_stats(
                         texts += 1
                 elif str(content or "").strip():
                     texts += 1
-        return tools, texts, real_user_turn, ended_aborted
+        return tools, texts, real_user_turn, ended_aborted, host_goal_turn
     except Exception:
         return None
 
@@ -701,35 +712,32 @@ def handle_stop(event: dict[str, Any]) -> None:
         # 用户自己的动作,再催一句属于负向改动。
         if facts[3]:
             return
-        # 2026-11-16 04:40:宿主驱动回合一律不注入 nudge(这条是本轮主修)。
+        # 2026-11-16 05:10:宿主驱动回合一律不注入 nudge(本轮主修,第二版)。
         #
-        # 为什么:用户主诉「满屏都是这个钩子」「一分多钟、两分多钟就来一条」。
-        # 活体会话 01a1d560 实测:66 次 nudge 注入里 **58 次落在宿主 goal 自动
-        # 续跑回合**上,只有 8 次落在纯真人回合;而 goal 续跑**根本不依赖这条
-        # nudge** —— 被催与未被催的 goal 回合,下一轮仍然 100% 是 goal 续跑
-        # (61/61 与 63/63)。也就是说,在这些回合上注入 nudge 是纯噪音,既没有
-        # 改变续跑,又把对话刷满,还把模型从手上的活里打断出来复述一遍。
+        # 判据 = `facts[4]`(本轮出现过 goal 自动续跑前言) 或 `not facts[2]`
+        # (本轮没有任何真人发言)。两个条件是**并集**:
+        #   · 只留 `facts[4]`:会放回「hook 注入回合」这类纯宿主回合,自测直接
+        #     抓到回归 —— 这正是上一版 v2 初稿的错误。
+        #   · 只留 `not facts[2]`:会漏掉「用户说一句话 + 宿主接着补一段 goal
+        #     续跑前言」同处一轮的真实形态,`facts[2]=True`,闸门照放。用户实测
+        #     「越改越坏、满屏还是这个钩子」的根因就在这。
         #
-        # `facts[2]` 是「本轮 transcript 里有没有**真人** user 消息」(宿主前言 /
-        # goal 续跑 / hook 注入 / 环境上下文 / 文件清单都不算)。它和「宿主是否
-        # 会自己续跑」高度重合:全量 15110 轮里,goal 前言回合被判为宿主驱动,
-        # 纯真人回合被判为真实用户回合。所以这一道闸的语义是:
-        #   「只有真人真的说了话、而模型却没交付时,才提醒;宿主自己驱动的那
-        #     些续跑回合,交给宿主自己去续,不用 hook 插嘴。」
+        # 语义上合起来就是一句:宿主自己已经会往下续、或者这轮压根不是真人回合,
+        # 都不需要 hook 插嘴。
+        #   · 宿主会自己续跑 → hook 再补一句是纯冗余,只会刷屏 + 打断手上的活;
+        #   · 纯宿主回合(hook 注入/环境前言等)→ 再催也是对着宿主自己说话;
+        #   · 真人发言且宿主没有自动续跑 → 才是这条 nudge 真正该起作用的地方。
+        # 全量 15110 轮量化(/tmp/lgmeasure/corpus_full3.json):
+        #   shipped:fires=7788,控诉召回 8/8,边界误伤 17
+        #   04:40 版(只按 facts[2]):fires=302,控诉召回 8/8,误伤 16
+        #   本版(并集):控诉召回不降,误伤不升(逐版数字见 /tmp/gate9.py 输出)。
+        # 关键校验:被抑制的 goal 回合里,下一轮是真人消息的只有 24 个,其中
+        # **抱怨 0 个** —— 抑制这些回合不损失任何控诉召回,也不会把用户逼到下一轮
+        # 来催。被催与未被催的 goal 回合下一轮仍然 100% 是 goal 续跑。
         #
-        # 量化(全量 15110 轮,/tmp/lgmeasure/corpus_full3.json):
-        #   shipped(两条分支到处都发):fires=7788,控诉召回 8/8,边界误伤 17
-        #   本闸(只在真实用户回合发):fires=302,控诉召回 8/8,边界误伤 16
-        #   → 噪音降到 3.9%,控诉召**一句不丢**,误伤还降了 1。
-        # 16 个控诉轮里能命中的 8 个,全部是 `has_goal=False, has_hook=False`
-        # 的纯真人回合,没有一个落在被抑制的宿主回合里 —— 这就是「只减噪、
-        # 不放回任何真阳性」的实测依据。
-        #
-        # 为什么连静默分支一起抑制:goal 回合「调了工具但零正文」时,宿主同样
-        # 会自己续跑,再补一条 nudge 与 plan-tail 那条是同一类冗余噪音。全量
-        # 量化里静默分支 1036 次有 969 次落在宿主回合,抑制后控诉召回不变
-        # (见上)。真实用户回合的静默(「发个问题连回复都没有」)仍然照拦。
-        if not facts[2]:
+        # 静默分支同样受这道闸:goal 回合「调了工具却零正文」时宿主也会自己续跑,
+        # 补 nudge 与 plan-tail 那类是同一类冗余噪音。
+        if facts[4] or not facts[2]:
             return
         # 静默分支只在**宿主也没给收尾正文**时才认。为什么不只看 transcript:
         # transcript 可能在 Stop 触发时还没把最后一条 assistant message 落盘,
@@ -744,7 +752,8 @@ def handle_stop(event: dict[str, Any]) -> None:
         # 三天语料里零工具零正文回合共 51 个,其中只有 3 个是「真实用户回合 +
         # 正常 task_complete」(其余是 goal 内部续跑 36、用户主动中断 5、
         # 环境上下文 2、无用户消息 2、被中断的真实回合 3)。所以补两道闸:
-        #   ① `facts[2]`(真实用户回合)—— 排除 goal 续跑/hook 注入/中断/环境前言;
+        #   ① 上面的 `facts[4]` 已先把 goal 续跑回合挡掉;这里 `facts[2]`
+        #      (真实用户回合)再排除 hook 注入/中断/环境前言那几类;
         #   ② 宿主自己的收尾正文为空 —— 排除「落盘没跟上」的假阴性。
         if facts[1] <= 0 and not message and (
                 tools >= 1 or facts[2]):
@@ -1944,10 +1953,11 @@ def _self_test() -> int:
     # ---- handle_stop 端到端:宿主驱动回合 vs 真实用户回合(2026-11-16 04:40)----
     # 病根:用户主诉「满屏都是这个钩子」。活体会话 01a1d560 实测 66 次 nudge
     # 里 58 次落在宿主 goal 自动续跑回合上,而那些回合宿主本来就会自己续跑 ——
-    # nudge 是纯噪音。这里用最小 transcript 把两道行为钉死:
+    # nudge 是纯噪音。这里用最小 transcript 把三道行为钉死:
     #   A. 宿主驱动(只有 goal 前言,没有真人消息)→ 不拦;
-    #   B. 真实用户回合(有真人消息 + 短计划尾收尾)→ 拦。
-    def _stop_fixture(user_text: str) -> dict:
+    #   B. 真实用户回合(有真人消息 + 短计划尾收尾)→ 拦;
+    #   C. 同轮既有 goal 续跑前言、又有真人消息 → 不拦(第一版漏掉的真实形态)。
+    def _stop_fixture(user_text: Any) -> dict:
         """造一份只含本轮的 transcript,返回 handle_stop 需要的 event。"""
         import tempfile as _tempfile
         rows = [
@@ -1957,20 +1967,25 @@ def _self_test() -> int:
              "payload": {"type": "function_call", "name": "exec_command"}},
             {"type": "response_item",
              "payload": {"type": "function_call", "name": "exec_command"}},
-            {"type": "response_item",
-             "payload": {"type": "message", "role": "user",
-                         "content": [{"type": "input_text", "text": user_text}]}},
+        ]
+        texts = [user_text] if isinstance(user_text, str) else list(user_text)
+        for text in texts:
+            rows.append(
+                {"type": "response_item",
+                 "payload": {"type": "message", "role": "user",
+                             "content": [{"type": "input_text", "text": text}]}})
+        rows.append(
             {"type": "response_item",
              "payload": {"type": "message", "role": "assistant",
-                         "content": [{"type": "output_text", "text": "先定位根因。"}]}},
-        ]
+                         "content": [{"type": "output_text", "text": "先定位根因。"}]}})
         fd, path = _tempfile.mkstemp(suffix=".jsonl")
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             for row in rows:
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+        label = texts[0] if texts else "empty"
         return {
             "hook_event_name": "Stop",
-            "session_id": "self-test-" + user_text[:12],
+            "session_id": "self-test-" + label[:12],
             "transcript_path": path,
             "turn_id": "T1",
             "stop_hook_active": False,
@@ -2002,6 +2017,10 @@ def _self_test() -> int:
          False),
         ("宿主驱动·hook 注入回合不注入 nudge",
          '<hook_prompt hook_run_id="stop:5:/Users/danta/.codex/hooks.json">上一轮你只宣布了下一步',
+         False),
+        ("同轮 goal 前言+真人消息·不再注入 nudge(第一版漏掉的形态)",
+         ['<codex_internal_context source="goal">\nContinue working toward the active thread goal.',
+          "你看你自己又在这跑两行就停下来了，到底是为啥？"],
          False),
         ("真实用户回合·短计划尾必须拦",
          "你看你自己又在这跑两行就停下来了，到底是为啥？",
