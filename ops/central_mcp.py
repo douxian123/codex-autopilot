@@ -1637,16 +1637,17 @@ def _status_payload(fast=True):
 
     if not enabled:
         need_action = "需要继续使用自动挡时，重新开启总开关"
+    elif daemon_problem:
+        # 常驻静默死亡排最前：开关全绿而进程不在，自动挡一步都不会自己走。
+        # 它必须盖过「等验收」这类正常待办——那些事项在「需要你介入」卡里仍然列着，
+        # 但用户首先该知道的是「自动」这部分根本没在跑。
+        need_action = daemon_problem
     elif failures:
         need_action = f"需要你拍板：{failures[0]['target']}（{failures[0]['kind']}）"
     elif board["human"]:
         need_action = f"需要你验收：{board['human'][0].get('title') or '请打开面板查看验收步骤'}"
     elif ctrl.get("error"):
         need_action = "控制文件异常，去高级面板看一眼或恢复默认"
-    elif daemon_problem:
-        # 常驻静默死亡要能直接影响「要不要你做什么」这一行：开关全绿而进程不在，
-        # 用户最该做的是把常驻装回来，不是继续提需求。
-        need_action = daemon_problem
     else:
         need_action = "不需要你做什么，继续照常提需求就行"
 
