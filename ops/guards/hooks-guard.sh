@@ -27,6 +27,11 @@ RESOURCE_INSTALLER="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/install-resour
 # 缺失才从 last-good 恢复(只补空档,绝不覆盖已存在的文件)。
 LOOP_GUARD_TARGET="$HOME/.codex/hooks/loop-guard.py"
 LOOP_GUARD_LASTGOOD="$HOME/.codex/hooks/loop-guard.py.last-good"
+# 第三层恢复源(2026-11-15 18:4x 补):随发版走的那一份。修前只有「现场 + last-good」
+# 两层,两份同时坏掉(或都在别处被清掉)就没有任何恢复源,只能 fail-open 干瞪眼 ——
+# 表现仍是「吐两句话就停」,而且要等人再手工拷。它就在本脚本旁边,跟着 release 更新,
+# 所以把它当兜底:last-good 缺了才用它,且用之前先自证(编译 + 含 stop)。
+LOOP_GUARD_SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/loop-guard.py"
 
 log() { mkdir -p "$(dirname "$LOG")" 2>/dev/null; echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG" 2>/dev/null || true; }
 
@@ -109,16 +114,31 @@ PYEOF
   fi
 fi
 if [ "$LOOP_GUARD_OK" = "0" ]; then
-  if [ -s "$LOOP_GUARD_LASTGOOD" ]; then
-    if cp "$LOOP_GUARD_LASTGOOD" "$LOOP_GUARD_TARGET" 2>/dev/null; then
-      chmod +x "$LOOP_GUARD_TARGET" 2>/dev/null || true
-      log "已从 last-good 补回 loop-guard.py 执行体"
-      osascript -e 'display notification "Stop 熔断执行体缺失,已自动补回" with title "hooks-guard"' 2>/dev/null || true
-    else
-      log "补回 loop-guard.py 失败(fail-open,不影响其它服务)"
+  # 恢复源按可靠性排序:last-good(现场最后一份已知好件)→ 版本目录(随发版)。
+  # 每个候选都必须先自证,绝不照坏件恢复。
+  LOOP_GUARD_FIXED=0
+  for CAND in "$LOOP_GUARD_LASTGOOD" "$LOOP_GUARD_SOURCE"; do
+    [ -s "$CAND" ] || continue
+    if ! /usr/bin/python3 - "$CAND" <<'PYEOF' >/dev/null 2>&1
+import sys
+src = open(sys.argv[1], encoding="utf-8").read()
+compile(src, sys.argv[1], "exec")
+if "stop" not in src:
+    raise SystemExit(1)
+PYEOF
+    then
+      continue
     fi
-  else
-    log "loop-guard.py 缺失且无 last-good 备份,跳过(fail-open,绝不猜内容)"
+    if cp "$CAND" "$LOOP_GUARD_TARGET" 2>/dev/null; then
+      chmod +x "$LOOP_GUARD_TARGET" 2>/dev/null || true
+      log "已从 $CAND 补回 loop-guard.py 执行体"
+      osascript -e 'display notification "Stop 熔断执行体缺失,已自动补回" with title "hooks-guard"' 2>/dev/null || true
+      LOOP_GUARD_FIXED=1
+      break
+    fi
+  done
+  if [ "$LOOP_GUARD_FIXED" = "0" ]; then
+    log "loop-guard.py 缺失且无可用恢复源(last-good/版本目录均不可用),跳过(fail-open,绝不猜内容)"
   fi
 fi
 

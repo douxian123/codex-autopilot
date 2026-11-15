@@ -113,9 +113,13 @@ def scenario(name, hooks, *, canon=True, canon_hooks=None, canon_raw=None,
 
 def loop_guard_scenarios():
     """Stop 执行体 loop-guard.py 自己的存活：
-    hooks.json 完好但执行体被删/截断，看门狗必须把它补回来，且绝不覆盖好文件。"""
-    with tempfile.TemporaryDirectory(prefix="loop-guard-test-") as tmp:
-        root = Path(tmp)
+    hooks.json 完好但执行体被删/截断，看门狗必须把它补回来，且绝不覆盖好文件。
+
+    恢复源三层(2026-11-15 18:4x 补齐第三层):现场 → last-good → 版本目录(随发版)。
+    第三层是为了堵「现场和 last-good 同时坏掉就再没有恢复源」这条复发通道。
+    """
+    def build(root, *, version_source=True):
+        """摊一个假 HOME + 假插件根;version_source 控制版本目录里有没有待用源。"""
         home = root / "home"
         plugin = root / "plugin"
         gdir = plugin / "ops" / "guards"
@@ -123,6 +127,8 @@ def loop_guard_scenarios():
         for src in ("hooks-guard.sh", "install-resource-hooks.py",
                     "resource-admission.py", "resource-hooks.json"):
             shutil.copy2(GUARDS / src, gdir / src)
+        if version_source:
+            shutil.copy2(GUARDS / "loop-guard.py", gdir / "loop-guard.py")
         (gdir / "hooks-guard.sh").chmod(0o755)
 
         hooks_dir = home / ".codex" / "hooks"
@@ -131,48 +137,65 @@ def loop_guard_scenarios():
             json.dumps({"hooks": STOP_OK}), encoding="utf-8")
         (home / ".codex" / "hooks.json.bak-20261009-impl").write_text(
             json.dumps({"hooks": STOP_OK}), encoding="utf-8")
+        return home, gdir
 
-        target = hooks_dir / "loop-guard.py"
-        lastgood = hooks_dir / "loop-guard.py.last-good"
+    def run(gdir, home):
+        return subprocess.run(["/bin/bash", str(gdir / "hooks-guard.sh")],
+                              capture_output=True, text=True,
+                              env={**os.environ, "HOME": str(home)})
+
+    # ---- 第一组:现场完好 → 留 last-good,不误恢复 ----
+    with tempfile.TemporaryDirectory(prefix="loop-guard-good-") as tmp:
+        home, gdir = build(Path(tmp))
+        target = home / ".codex" / "hooks" / "loop-guard.py"
+        lastgood = home / ".codex" / "hooks" / "loop-guard.py.last-good"
         target.write_text("#! /usr/bin/env python3\n# stop marker\n", encoding="utf-8")
-        env = {**os.environ, "HOME": str(home)}
-
-        def run_guard():
-            return subprocess.run(["/bin/bash", str(gdir / "hooks-guard.sh")],
-                                  capture_output=True, text=True, env=env)
-
-        # 1) 正常态：留 last-good，且不误恢复
-        run_guard()
+        run(gdir, home)
         check("执行体: 正常态生成 last-good", lastgood.is_file())
         check("执行体: 正常态不误恢复", not list((home / ".codex").glob(
             "hooks.json.bak-*-guard-restore")))
 
-        # 2) 执行体被移走：从 last-good 补回，内容一致
+        # 现场被移走 → 从 last-good 补回,内容一致
         good = target.read_text(encoding="utf-8")
         target.unlink()
-        run_guard()
-        check("执行体: 缺失后补回", target.is_file())
+        run(gdir, home)
+        check("执行体: 缺失后从 last-good 补回", target.is_file())
         check("执行体: 补回内容与 last-good 一致",
               target.is_file() and target.read_text(encoding="utf-8") == good)
 
-        # 3) 执行体被截断成空：同样补回
+        # 现场被截断成空 → 同样补回
         target.write_text("", encoding="utf-8")
-        run_guard()
+        run(gdir, home)
         check("执行体: 截断成空后补回", target.is_file() and target.stat().st_size > 0)
 
-        # 4) 无 last-good 且执行体缺失：fail-open，绝不凭空造内容
-        lastgood.unlink()
-        empty_home = root / "home2"
-        (empty_home / ".codex" / "hooks").mkdir(parents=True)
-        (empty_home / ".codex" / "hooks.json").write_text(
-            json.dumps({"hooks": STOP_OK}), encoding="utf-8")
-        env2 = {**os.environ, "HOME": str(empty_home)}
-        proc = subprocess.run(["/bin/bash", str(gdir / "hooks-guard.sh")],
-                              capture_output=True, text=True, env=env2)
-        created = (empty_home / ".codex" / "hooks" / "loop-guard.py")
-        check("执行体: 无 last-good 时不凭空造文件", not created.exists())
-        check("执行体: 无 last-good 时守卫仍正常退出", proc.returncode == 0,
+    # ---- 第二组:现场 + last-good 都没了,但版本目录有源 → 第三层必须顶上 ----
+    with tempfile.TemporaryDirectory(prefix="loop-guard-src-") as tmp:
+        home, gdir = build(Path(tmp), version_source=True)
+        target = home / ".codex" / "hooks" / "loop-guard.py"
+        # 刻意不放现场,也不放 last-good:只有版本目录一份。
+        proc = run(gdir, home)
+        log_text = (home / ".codex" / "hooks" / "hooks-guard.log").read_text(
+            encoding="utf-8") if (home / ".codex" / "hooks" / "hooks-guard.log").is_file() else ""
+        check("执行体: 无 last-good 时从版本目录补回", target.is_file())
+        check("执行体: 版本目录补回后守卫正常退出", proc.returncode == 0,
               f"rc={proc.returncode}")
+        check("执行体: 日志记下了补回来源", "补回 loop-guard.py 执行体" in log_text)
+        if target.is_file():
+            src = (GUARDS / "loop-guard.py").read_text(encoding="utf-8")
+            check("执行体: 版本目录补回内容与源一致",
+                  target.read_text(encoding="utf-8") == src)
+
+    # ---- 第三组:三个位置全空 → fail-open,绝不凭空造内容 ----
+    with tempfile.TemporaryDirectory(prefix="loop-guard-none-") as tmp:
+        home, gdir = build(Path(tmp), version_source=False)
+        proc = run(gdir, home)
+        created = home / ".codex" / "hooks" / "loop-guard.py"
+        check("执行体: 无任何恢复源时不凭空造文件", not created.exists())
+        check("执行体: 无任何恢复源时守卫仍正常退出", proc.returncode == 0,
+              f"rc={proc.returncode}")
+        log_text = (home / ".codex" / "hooks" / "hooks-guard.log").read_text(
+            encoding="utf-8") if (home / ".codex" / "hooks" / "hooks-guard.log").is_file() else ""
+        check("执行体: 无源时明确记日志", "无可用恢复源" in log_text)
 
 
 def main():
