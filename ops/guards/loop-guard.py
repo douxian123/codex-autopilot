@@ -702,8 +702,12 @@ def handle_stop(event: dict[str, Any]) -> None:
         elif tools >= 1 and 0 < len(message) < 400 \
                 and _is_plan_tail_stall(message, tools=tools):
             stall = True
-        elif tools == 0 and message and _is_plan_tail_stall(message):
-            stall = True                      # 零工具回合沿用旧判据
+        # 2026-11-16 00:20:这里原来传 `None`,于是判据侧 `tools == 0` 的第六类
+        # (零工具 + 第一人称未来动作宣告)**永远进不去** —— 实测 T9 原句在
+        # transcript 可用时仍漏判,原因就在这一行。改成显式传 0:它只解锁第六类,
+        # 前四类的 gating 全部保持 (第一人称通判要求 tools>=1,仍不作用于零工具)。
+        elif tools == 0 and message and _is_plan_tail_stall(message, tools=0):
+            stall = True                      # 零工具回合:前四类 + 第六类
     elif message and _is_plan_tail_stall(message):
         stall = True
     if not stall:
@@ -805,6 +809,12 @@ _USER_ADDRESS_RE = re.compile(r"(你|您|建议|请你|告诉|回复)")
 _TEMPORAL_ANCHOR_RE = re.compile(
     r"^\s*(现在|接下来|下一步|随后|然后|接着|继续|马上|立刻|这就|先|再|最后|"
     r"换|逐步|逐个|下面|等|待|现在把|现在去|现在直接)")
+# 第六类(2026-11-16 00:10):**零工具**回合里出现的「第一人称未来动作宣告」。
+# 只认这几个明确的前瞻搭配,用来覆盖「连正文都没吐就停」的形态,又不误伤普通
+# 短问答(「这是 X。」「答案是 Y。」都没有这些标记)。依据见调用处注释。
+_SELF_ANNOUNCE_RE = re.compile(
+    r"(我把它|我把这|我这就|我现在(?:去|来|把|做|跑|查|看|改|修|写)|"
+    r"我来(?:做|跑|查|看|改|修|写)|我继续|我接着)")
 # 末句是**解释性收尾**(陈述限制/结论/无必要),不是「宣布下一步」——放行。
 # 实测这类只占命中数的 0.4%,但放行它们能避免把「再跑一遍也不会变,这就是上游的
 # 硬限制」这种完整回答误判成停滞。
@@ -963,6 +973,25 @@ def _is_plan_tail_stall(message: str, tools: int | None = None) -> bool:
                 and not _FIRST_PERSON_DONE_RE.search(last) \
                 and not _STOP_EVIDENCE_RE.search(last) \
                 and len(re.findall(r"[\u4e00-\u9fff]", last)) >= 3:
+            return True
+        # 第六类(2026-11-16 00:10):**零工具 + 第一人称未来动作宣告**。
+        #
+        # 用户第一条主诉的字面形态是「我给他发个问题，甚至连回复都没有，就停下来
+        # 了」。前面四类都 gates 在 tools>=1(为了不误拦「我先读一下这个文件。」
+        # 这类正常小任务收尾),于是这一形态结构性地拦不到。会话 00a1dc17 的 T9
+        # 「我把它画完。这次是完整的"图谱 + 面板"，不是半张。」(0 工具 + 27 字)
+        # 就是活样本 —— 下一轮用户直接骂「要把它画完，干什么？又在这停下来。」
+        #
+        # 收紧口径,只认**明确的第一人称未来动作宣告**(我把它/我这就/我现在/我把这/
+        # 我来/我继续/我接着),且整条无完成标记、无交付证据、无问句、没在对用户
+        # 说话。普通短问答(「这是 X。」)没有这个标记,不会被卷进来。
+        # 全量语料量化:多拦 4 轮,控诉集召回 5/15 → 6/15,边界误伤 10 → 10(不增)。
+        if tools is not None and tools == 0 and len(body) <= 200 \
+                and _SELF_ANNOUNCE_RE.search(body) \
+                and not _FIRST_PERSON_DONE_RE.search(body) \
+                and not _STOP_EVIDENCE_RE.search(body) \
+                and not _USER_ADDRESS_RE.search(body) \
+                and "？" not in body and "?" not in body:
             return True
         return False
     except Exception:
@@ -1676,6 +1705,14 @@ def _self_test() -> int:
         ("反控·结构层·问用户", "现在这版要不要你拍板？", 31, False),
         ("反控·结构层·零工具回退", "现在拆成独立小补丁。", None, False),
         ("反控·结构层·零工具", "现在拆成独立小补丁。", 0, False),
+        # 2026-11-16 00:10:第六类「零工具 + 第一人称未来动作宣告」。
+        # 正控就是会话 00a1dc17 T9 的原句 —— 用户下一轮直接骂「又在这停下来」。
+        ("正控·零工具宣告·T9 原句", "我把它画完。这次是完整的\"图谱 + 面板\"，不是半张。", 0, True),
+        ("正控·零工具宣告·我这就去", "我这就去把那个入口补上。", 0, True),
+        # 反控:普通短问答没有前瞻标记 —— 必须放行;已交付/问用户也要放行。
+        ("反控·零工具·普通短答", "这个问题的答案是 42。", 0, False),
+        ("反控·零工具·已交付", "我已经把它改完了。", 0, False),
+        ("反控·零工具·问用户", "我把它改成窄屏竖排要不要你拍板？", 0, False),
         ("反控·带交付证据", "已提交 1b336c396，并核验进了 main。", 33, False),
         ("反控·问用户", "这一版要不要你拍板，改成窄屏竖排？", 9, False),
         ("反控·完整交付长文", "交付完成。" + "这一段是完整的交付说明与证据。" * 40, 9, False),
