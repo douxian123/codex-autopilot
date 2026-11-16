@@ -80,6 +80,66 @@ def _closure_rate_line(res):
     return "北极星首问闭环率取不到：%s" % (res.get("reason") or "原因未记录")
 
 
+def _harness_health():
+    """状态管家：当前 harness 的上下文健康（压缩频率 / 峰值 input / 用量）。
+
+    真相只有一份：读 `budget_gate` 每拍已经算好的判定（`~/.codex-autopilot/
+    budget-gate.json` 的 `last_report`），不在这里重算一遍——否则面板和守护会
+    各说各话。取不到就说取不到，绝不用「正常」冒充（本项目硬规则 10）。
+
+    只读，不触发换代、不改任何 harness 配置；真正调优由 budget_gate 在越线时按
+    自己的保护条件（窗口空闲 + cooldown）执行，面板只负责让人看得见。
+    """
+    try:
+        base = Path(os.environ.get("KG_DAEMON_HOME")
+                    or (Path.home() / ".codex-autopilot")).expanduser()
+        data = json.loads((base / "budget-gate.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"status": "unknown",
+                "reason": "还没跑过状态体检（守护下一拍会写）", "threads": []}
+    if not isinstance(data, dict):
+        return {"status": "unknown", "reason": "状态体检记录格式不对", "threads": []}
+    report = data.get("last_report") or {}
+    rows = report.get("threads") or []
+    if not rows:
+        return {"status": "no_data", "updated": data.get("last_run"),
+                "reason": "状态体检还没测到长驻窗口", "threads": []}
+    order = {"ok": 0, "warn": 1, "over": 2}
+    worst = max(rows, key=lambda r: order.get(r.get("level"), -1))
+    level = worst.get("level") or "unknown"
+    return {
+        "status": "ok",
+        "level": level,
+        "updated": data.get("last_run"),
+        "headline": _harness_health_line(level, worst),
+        "reasons": worst.get("reasons") or [],
+        "usage": report.get("usage") or {},
+        # 只留面板描述健康所需的最小字段，不把整份 rollout 读数搬上屏。
+        "threads": [{
+            "automation": r.get("automation"),
+            "generation": r.get("generation"),
+            "level": r.get("level"),
+            "peak_input_recent": r.get("peak_input_recent"),
+            "compactions_recent": r.get("compactions_recent"),
+            "tokens_used": r.get("tokens_used"),
+            "reasons": r.get("reasons") or [],
+        } for r in rows],
+        "dispatch_paused": bool(data.get("dispatch_paused")),
+        "dispatch_paused_reason": data.get("dispatch_paused_reason") or "",
+    }
+
+
+def _harness_health_line(level, worst):
+    name = worst.get("automation") or "长驻窗口"
+    if level == "ok":
+        return "上下文健康：正常（%s 没有越线）" % name
+    if level == "warn":
+        return "上下文偏肥：%s 接近越线" % name
+    if level == "over":
+        return "上下文已饱和：%s 需要换代" % name
+    return "上下文健康：读不到判定"
+
+
 def _server_version() -> str:
     """版本以插件清单为准，避免 MCP 里再写死一份导致漂移。
 
@@ -1750,6 +1810,7 @@ def _status_payload(fast=True):
         "judgments": _active_judgments(),
         "last_verification": _last_verification(),
         "closure_rate": _closure_rate_summary(),
+        "harness_health": _harness_health(),
         "mainline": _mainline_summary(),
         # fast=True 是面板/开关那条路：只读缓存，不连宿主，绝不因此变慢。
         "route": _route_summary(timeout=0.0 if fast else None),

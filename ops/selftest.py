@@ -182,6 +182,12 @@ def main():
         # 这条门禁锁住：陈旧进程必须跟随 install-state 找到当前版本，且必须判 broken。
         run([sys.executable, str(OPS / "test-plugin-live-ops.py")],
             cwd=str(OPS.parent), check=True)
+        # 状态管家：harness 的上下文健康（压缩频率 / 峰值 input）本来只写进
+        # daemon.log，用户看不到 —— 于是「配置健不健康」在面板上是个盲区。
+        # 这条门禁锁住：结论来自既有体检记录（取最差的一条）、取不到时绝不
+        # 伪装成「正常」，且面板第二问真的把它显示出来。
+        run([sys.executable, str(OPS / "test-harness-health-on-panel.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()
