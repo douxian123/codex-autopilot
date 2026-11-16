@@ -148,6 +148,7 @@ console.log(JSON.stringify({
   stDoing: read("stDoing"),
   recentBox: read("recentBox"),
   recentNote: read("recentNote"),
+  acceptBox: read("acceptBox"),
   needClass: document.getElementById("need").className,
   recentHtml: document.getElementById("recentBox").innerHTML,
   routeText: read("routeBox"),
@@ -268,15 +269,20 @@ def main(argv):
             fails += has("一眼三问：无工作项时显示控制层权威结论",
                          out["focusDoing"], expected_doing)
         fails += has("一眼三问：当前步骤", out["focusStep"], expected_stage)
-        if human_acc:
-            review = dict(payload)
-            review["state"] = "blocked"
-            review["state_label"] = "需要你验收"
-            review["need_action"] = "需要你验收：真实桌面验收"
-            review["human_acceptance"] = [{"title": "真实桌面验收"}]
-            review_out = run_once(review)
-            fails += has("人工验收升级为明确状态", review_out["stateLabel"], "需要你验收")
-            fails += has("人工验收在提示条里明确出现", review_out["needText"], "需要你验收")
+        # 这段无条件跑：不能因为当前项目恰好没有待验收项，就把「验收项必须带出口」
+        # 这条判据跳过——那正是让验收项又悄悄退回「只有步骤、没有动作」的空档。
+        review = dict(payload)
+        review["state"] = "blocked"
+        review["state_label"] = "需要你验收"
+        review["need_action"] = "需要你验收：真实桌面验收"
+        review["human_acceptance"] = [{"id": "A-9001", "title": "真实桌面验收"}]
+        review_out = run_once(review)
+        fails += has("人工验收升级为明确状态", review_out["stateLabel"], "需要你验收")
+        fails += has("人工验收在提示条里明确出现", review_out["needText"], "需要你验收")
+        # 只列复核步骤、不给出口，是验收项长期挂着的直接原因；每条必须带
+        # 「点它会怎样 / 不点会怎样」和一个真的能收口的按钮。
+        fails += has("验收项带可点的收口动作", review_out["acceptBox"], "我确认通过")
+        fails += has("验收项写明不点的后果", review_out["acceptBox"], "不点就继续")
         fails += has("首屏开关文案与控制层一致", out["masterState"],
                      "已关闭" if not payload.get("enabled") else "正在运行")
         fails += has("原生直连结论如实显示", out["nativeState"],
