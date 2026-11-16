@@ -2963,6 +2963,26 @@ def test_verify_and_truth():
         if not any(r.get("evidence") for r in arecs):
             raise AssertionError("机器自证项没有证据")
 
+        # 人工验收必须有「关闭口」：登记后能被同一 id 收敛成 verified，
+        # 否则面板「需要你验收」会永远是同一批，用户被逼着反复盯盘。
+        hid = human[-1].get("id")
+        conv = truthctl(repo, "accept", "--id", hid, "--status", "verified",
+                        "--note", "用户看过并确认", extra_env={"KG_TRUTH_SOURCE": "user"})
+        if conv.returncode != 0:
+            raise AssertionError(f"accept --id 收敛失败:\n{conv.stdout}\n{conv.stderr}")
+        after = {}
+        for x in (repo / "ops" / "truth" / "acceptance.jsonl").read_text(
+                encoding="utf-8").splitlines():
+            if x.strip():
+                row = _json.loads(x)
+                after[row.get("id")] = row
+        closed = after.get(hid, {})
+        if closed.get("status") != "verified" or closed.get("verified_by") != "user":
+            raise AssertionError(f"验收项没有被收敛成 verified: {closed}")
+        if len([r for r in after.values()
+                if r.get("needs_human") and r.get("status") != "verified"]) != 0:
+            raise AssertionError("人工验收项收敛后仍挂在待办里")
+
         # 产品路线：mainline.json 写 roadmap，synthesize 要渲染出每一步到哪了。
         (repo / "ops" / "truth" / "mainline.json").write_text(_json.dumps({
             "product": "自动挡", "stage": "v0.5",

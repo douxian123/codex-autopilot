@@ -30,6 +30,7 @@ truthctl 管「这个项目现在到底是什么状态」。
   truthctl close <L-id> "<结论>"  标 done（必须带证据：KG_TRUTH_EVIDENCE 或 KG_TRUTH_COMMIT）
   truthctl reopen <L-id> "<原因>"  把已关闭的问题重新打开
   truthctl accept "<标题>" [--human --steps "..."]  登记验收项，分清机器自证/人工验收
+  truthctl accept --id <A-id> --status verified [--note "..."]  收敛一条验收项（人工拍板/机器复核）
   truthctl synthesize          把决策/进展/问题/验收综合成 docs/PRODUCT_MAINLINE.md
 
 add 的环境变量：
@@ -412,16 +413,25 @@ def cmd_accept(args):
     用法：
       truthctl accept "<标题>" [--human] [--steps "1) 打开X 2) 点Y 3) 看到Z"]
                                 [--level P0] [--lane <分支>] [--status todo]
+      truthctl accept --id <A-id> --status verified [--note "..."]
+                                 （收敛一条已有验收项：人工拍板或机器复核后翻状态）
     """
     if not args:
         sys.exit('用法: truthctl accept "<标题>" [--human --steps "..."] [--level P1]')
     human = '--human' in args
     title_parts, steps, level, lane, status = [], '', None, None, None
+    acc_id, note = None, ''
     i = 0
     while i < len(args):
         a = args[i]
         if a == '--human':
             i += 1
+        elif a == '--id' and i + 1 < len(args):
+            acc_id = args[i + 1]
+            i += 2
+        elif a == '--note' and i + 1 < len(args):
+            note = args[i + 1]
+            i += 2
         elif a == '--steps' and i + 1 < len(args):
             steps = args[i + 1]
             i += 2
@@ -437,6 +447,17 @@ def cmd_accept(args):
         else:
             title_parts.append(a)
             i += 1
+    if acc_id:
+        # 收敛路径：同 id 追加一条状态覆盖行，不新开条目。
+        if not status:
+            sys.exit('accept --id 必须带 --status（todo / wip / blocked / verified）')
+        rec = _set_acceptance_status(
+            acc_id, status, note,
+            evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''),
+            source=os.environ.get('KG_TRUTH_SOURCE'))
+        print('已收敛验收 [%s] -> %s：%s'
+              % (rec['id'], rec['status'], rec.get('title', '')[:70]))
+        return
     title = ' '.join(title_parts)
     if not title:
         sys.exit('accept 需要一句标题：truthctl accept "<标题>"')
@@ -998,6 +1019,42 @@ def _set_ledger_status(rid, status, note, evidence='', commit=''):
             merged['closed'] = merged['ts']
         elif evidence:
             merged['evidence'] = _coerce_evidence(evidence)
+        _append(merged)
+        return merged
+
+
+ACCEPTANCE_STATUSES = ('todo', 'wip', 'blocked', 'verified')
+
+
+def _set_acceptance_status(rid, status, note='', evidence='', source=None):
+    """按 id 收敛一条验收项（JSONL 只追加：同 id 的新记录覆盖旧记录）。
+
+    这是「验收关闭口」。之前 acceptance.jsonl 只有 _append_new（永远分配新 id）、
+    cmd_accept（只登记不更新），于是 needs_human 的项一旦登记就再也翻不成
+    verified——面板「需要你介入」会永远挂着同一批，用户被逼着反复盯盘。人工项
+    靠人拍板转 verified，机器项靠证据转 verified，两条都必须能落到同一 id 上。
+    """
+    if status not in ACCEPTANCE_STATUSES:
+        sys.exit('status 必须是 %s' % ' / '.join(ACCEPTANCE_STATUSES))
+    with _truth_lock():
+        rec = _latest_by_id(_read(TRUTH / FILES['acceptance'])).get(rid)
+        if rec is None:
+            sys.exit('验收台账里没有 %s（先 truthctl ls acceptance 看现有条目）' % rid)
+        merged = dict(rec)
+        merged['status'] = status
+        merged['ts'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        if note:
+            merged['note'] = ((merged.get('note') + '\n') if merged.get('note')
+                              else '') + note
+        ev = _coerce_evidence(evidence)
+        if ev:
+            merged['evidence'] = ev
+        if status == 'verified':
+            # fail-closed：标 verified = 声明「这条已有可复核的落点」。
+            # 人工拍板也算证据（人真的看过了）；但要留下是谁、什么时候拍的，
+            # 否则事后没人能复核「谁说这条验过了」。
+            merged['verified_by'] = source or os.environ.get('KG_TRUTH_SOURCE', 'user')
+            merged['verified_at'] = merged['ts']
         _append(merged)
         return merged
 
