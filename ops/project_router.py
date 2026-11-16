@@ -269,26 +269,48 @@ def ensure_registered(root, name=None, clues=None, path=None) -> dict | None:
     return register(name or p.name, p, clues=clues, path=path)
 
 
-def resolve_hint(hint, registry=None) -> dict | None:
-    """把调用方给的 project 提示（名字 / 别名 / 状态根路径）解析成一条注册项。"""
+def resolve_hint(hint, registry=None, detail=None) -> dict | None:
+    """把调用方给的 project 提示（名字 / 别名 / 状态根路径）解析成一条注册项。
+
+    歧义一律返回 None，**绝不取第一个**。本机真实存在两个仓库都叫
+    `codex-autopilot` 的情况（一个在 `~/.newmax/workspace`，一个在
+    `~/Documents/Codex`）；早先的实现在这里 `return` 第一个命中，等于静默把活派去
+    改另一个仓库 —— 正是本文件开头那条硬规则禁止的「猜」。所以这里改成：任何一层
+    只要命中不止一条，就交回调用方判 `ambiguous`，并把原因写进 detail。
+    """
     h = _norm(hint)
     if not h:
         return None
     registry = registry if registry is not None else load_registry()
-    for p in registry:
-        if h == _norm(p["name"]) or h == _norm(p["root"]):
-            return p
+
+    def _uniq(rows, why):
+        if len(rows) == 1:
+            return rows[0]
+        if len(rows) > 1 and detail is not None:
+            detail.append(why)
+        return None
+
+    exact = [p for p in registry if h == _norm(p["root"])]
+    if exact:
+        return _uniq(exact, f"「{hint}」匹配到多个状态根，说不清是哪一个")
+    exact = [p for p in registry if h == _norm(p["name"])]
+    if exact:
+        return _uniq(exact, f"有 {len(exact)} 个项目都叫「{hint}」，说不清是哪一个")
+    fuzzy = []
     for p in registry:
         names = [_norm(p["name"]), *(_norm(a) for a in (p.get("aliases") or []))]
         if h in names or any(n and n in h for n in names):
-            return p
+            fuzzy.append(p)
+    if fuzzy:
+        return _uniq(fuzzy, f"「{hint}」近似匹配到 {len(fuzzy)} 个项目，说不清是哪一个")
+    under = []
     for p in registry:
         try:
             if _same_project(hint, p):
-                return p
+                under.append(p)
         except (OSError, ValueError):
             continue
-    return None
+    return _uniq(under, f"「{hint}」落在 {len(under)} 个项目的路径下，说不清是哪一个")
 
 
 def _norm(value) -> str:

@@ -1128,7 +1128,7 @@ def cmd_inbox(args):
     route = _route_record(text, files)
     if route["decision"] == "ambiguous":
         _stash_ambiguous(rec, route)
-        return "ambiguous"
+        return "ambiguous", route, None
     target_root = Path(route["root"]) if route.get("root") else REPO
     target_inbox = _inbox_path(target_root)
     target_inbox.parent.mkdir(parents=True, exist_ok=True)
@@ -1141,11 +1141,11 @@ def cmd_inbox(args):
     print(f"已记入唯一入口 {rec['ts']}：{text[:80]}", flush=True)
     if target_root.resolve() != REPO.resolve():
         print(f"（归属判定：这条属于「{where}」，已写进 {target_inbox}）", flush=True)
-        return "routed-elsewhere"
+        return "routed-elsewhere", route, target_root
     else:
         print(f"（归属判定：属于「{where}」；无需分类，自动挡按 files 落到既有泳道）",
               flush=True)
-    return "ok"
+    return "ok", route, target_root
 
 
 def _inbox_path(root) -> Path:
@@ -1163,16 +1163,18 @@ def _route_record(text, files):
             _register_from_cwd(cwd_hint)
         registry = project_router.load_registry()
         if hint:
-            pinned = project_router.resolve_hint(hint, registry)
+            why = []
+            pinned = project_router.resolve_hint(hint, registry, detail=why)
             if pinned:
                 return {"decision": "resolved", "project": pinned["name"],
                         "root": pinned["root"], "score": 1000,
                         "reasons": [f"调用方明确指定了「{hint}」"], "candidates": []}
-            # 调用方说得出项目，注册表里却没有 —— 宁可停在这里，也不许悄悄
-            # 回退到安装时写死的那个账本（那正是用户抱怨的那条路径）。
+            # 两种停法都不许猜：① 指定了名字但重名/匹配到多个（why 里有真实原因）；
+            # ② 注册表里根本没有这个名字。绝不回退到安装时写死的那个账本。
+            reason = why[0] if why else f"调用方指定了「{hint}」，但注册表里没有这个项目"
             return {"decision": "ambiguous", "project": None, "root": None,
                     "score": 0, "candidates": [],
-                    "reasons": [f"调用方指定了「{hint}」，但注册表里没有这个项目"]}
+                    "reasons": [reason]}
         got = project_router.match(text, files, registry, cwd=cwd_hint or None)
         if got["decision"] == "none" and (cwd_hint or registry):
             # 调用方给了 cwd / 已经有多项目注册表，却仍然谁都不像 —— 这时候回退到
@@ -1349,7 +1351,8 @@ def cmd_intake(args):
         print('用法: kgctl intake "用户原话"')
         return
     _restore_truth_keep_files_from_origin()
-    outcome = cmd_inbox(args)
+    got = cmd_inbox(args)
+    outcome, route, target_root = (got if isinstance(got, tuple) else (got, None, None))
     sys.stdout.flush()
     if outcome == "ambiguous":
         print("\n这条分不清属于哪个项目，已经放进全局待路由箱；"
@@ -1357,8 +1360,13 @@ def cmd_intake(args):
         print("指派后再跑一次即可：kgctl intake \"同上，指定 <项目名>\"。", flush=True)
         return
     if outcome == "routed-elsewhere":
-        print("\n这条已按归属写进目标项目的账本；路由/落盘由那个项目自己的守护去做，"
-              "不在当前绑定的项目上重复跑。", flush=True)
+        # 只把记录写进目标 inbox 是**半个动作**：没有守护在跑那个项目时，这条需求
+        # 会一直停在「待路由」，既不在任何看板上，也没人分类。所以这里把归类这一步
+        # 当场在目标项目里跑掉（只写它自己的泳道/问题台账，不 land、不 merge）。
+        print("\n[接力] 在目标项目里归类这条投稿", flush=True)
+        _relay_route_to_project(target_root, route)
+        print("\n这条归「%s」，已写进它的账本并完成归类；落盘仍由那个项目自己决定。"
+              % (route.get("project") if route else "?", ), flush=True)
         return
     print("\n[1/5] route inbox", flush=True)
     _truth("route", "--go")
@@ -4537,6 +4545,52 @@ def _truth(sub, *extra):
     rc = proc_run([sys.executable, str(path), sub, *extra],
                         cwd=str(path.parent.parent), env=env)
     return rc.returncode
+
+
+def _relay_route_to_project(target_root, route) -> bool:
+    """把一条已归属别的项目的投稿，在**那个项目里**当场归类。
+
+    为什么要接力（2026-11-16）：早先 `intake` 遇到「属于别的项目」只把记录写进目标
+    `inbox.jsonl` 就返回，指望「那个项目自己的守护」接手分类。但守护是**全局单例**，
+    只认一个状态根（`KG_REPO` 或插件 `.mcp.json`），本机也已经停着没跑；于是这条需求
+    既不在任何项目的看板上、也没人分类，永远停在「待路由」——路由只做了一半。
+
+    这里只跑 `truthctl route --go`（写目标项目自己的泳道 + 问题台账 + 回写 routed），
+    不 land、不 merge、不碰代码，也不动当前绑定项目的任何账本。失败不抛：记录已经
+    落进目标 inbox，下轮仍会被接住，但要如实报出来。
+    """
+    if target_root is None or route is None:
+        return False
+    target_root = Path(target_root)
+    try:
+        if target_root.resolve() == REPO.resolve():
+            return False
+    except OSError:
+        pass
+    # 目标项目自带 truthctl 就用它那份（可能比插件新），否则回退到插件运行时这一份
+    # ——自包含安装下项目里根本没有 ops/ 运行时代码。KG_REPO 显式指到目标项目，
+    # 让账本落到它自己的 truth/ 里。
+    own = target_root / "ops" / "truthctl.py"
+    path = own if own.is_file() else (RUNTIME_OPS / "truthctl.py")
+    if not path.is_file():
+        print(f"  ! 接力跳过：找不到 truthctl（{path}）", flush=True)
+        return False
+    env = os.environ.copy()
+    env["KG_REPO"] = str(target_root)
+    # 目标项目的落盘主干不一定是当前绑定的那个；交给它自己的配置去解析。
+    env.pop("KG_TRUNK", None)
+    out = proc_run([sys.executable, str(path), "route", "--go"],
+                   cwd=str(target_root), env=env,
+                   capture_output=True, text=True)
+    text = (out.stdout or "") + (out.stderr or "")
+    for line in text.strip().splitlines():
+        if line.strip():
+            print("  " + line, flush=True)
+    if out.returncode != 0:
+        print(f"  ! 接力归类没跑通（exit {out.returncode}）；记录已在目标 inbox，"
+              "下次 tick 会再接一次。", flush=True)
+        return False
+    return True
 
 
 def cmd_next(args):
