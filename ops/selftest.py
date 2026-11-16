@@ -244,6 +244,13 @@ def main():
         # 这条锁住：stdout/stderr 都原样透传、退出码不被顺手改绿。
         run([sys.executable, str(OPS / "test-kgctl-truth-output.py")],
             cwd=str(OPS.parent), check=True)
+        # 守护是全局单例、只认一个 KG_REPO；route pass 若只扫绑定项目，用户在别的
+        # 项目窗口提的需求就没人接管 —— 永久停在 routed=false，既不上看板、不进
+        # 台账、也不报错（2026-11-18 实测：codex-autopilot 账本 8 条躺了 7~20 天，
+        # 而守护每 15 分钟都报 rc=0）。这条锁住 --all 真能收下别的已注册项目、
+        # 预演只读不写、不碰绑定项目账本，且守护那层确实挂着 --all。
+        run([sys.executable, str(OPS / "test-route-all-projects.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()
