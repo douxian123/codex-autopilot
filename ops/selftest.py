@@ -188,6 +188,11 @@ def main():
         # 伪装成「正常」，且面板第二问真的把它显示出来。
         run([sys.executable, str(OPS / "test-harness-health-on-panel.py")],
             cwd=str(OPS.parent), check=True)
+        # 产品路线的状态词归一：项目侧写 in_progress，面板只认 doing，于是
+        # 「当前阶段」静默退到 next / 首个未完成项 —— 而 panel_logic_check 当时
+        # 用的是同一套错误取值，两边一起错、门禁照样全绿。这条锁住归一与原值。
+        run([sys.executable, str(OPS / "test-roadmap-status-alias.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()
