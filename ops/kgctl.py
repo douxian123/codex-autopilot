@@ -90,6 +90,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plugin_binding import apply_plugin_env, binding_health, binding_line  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, looks_like_state_root, resolve_state_root  # noqa: E402
+import constraints as constraints_mod  # noqa: E402
 import central_config  # noqa: E402
 import project_router  # noqa: E402
 from daemon_liveness import (daemon_liveness, liveness_line,  # noqa: E402
@@ -2186,6 +2187,10 @@ def _context_payload(branch: str, head: str = "", main_head: str = "") -> dict:
         "active_decisions": [r for r in latest_by_id(read_jsonl(REPO / "ops" / "truth" / "decisions.jsonl")).values()
                              if r.get("status") == "active"],
         "open_issues_overlapping": overlap,
+        # 上下文管家：只带和这条分支实际改动文件相关的约束（scope 为空 = 全局，
+        # 恒命中）。这是「精准调取」——不是把全部上下文喂进去。
+        "constraints": constraints_mod.matching_constraints(
+            REPO / "ops" / "truth" / "constraints.jsonl", files),
         "acceptance_todo": [r for r in latest_by_id(read_jsonl(REPO / "ops" / "truth" / "acceptance.jsonl")).values()
                             if r.get("status") in ("todo", "wip", "blocked")],
         "recent_progress": sorted(latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values(),
@@ -2248,6 +2253,9 @@ def cmd_context(args):
         lines += ["", "## 相关未决问题"]
         lines += [f"- `{x['id']}` {x['title']}（命中 {', '.join(x['files'])}）"
                   for x in payload["open_issues_overlapping"]] or ["- （无文件重叠）"]
+        # 只带和这条分支改动文件相关的约束；这是「说过一次就不再犯」的调取面。
+        lines += ["", "## 必须遵守的约束（按改动文件精准调取）"]
+        lines += [constraints_mod.render_line(r) for r in payload["constraints"]] or ["- （无）"]
         lines += ["", "## 验收 / DoD"]
         lines += [f"- [{x.get('status')}] {x.get('level','')} {x.get('title','')}"
                   for x in payload["acceptance_todo"]] or ["- （无）"]
