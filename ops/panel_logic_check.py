@@ -149,6 +149,8 @@ console.log(JSON.stringify({
   recentBox: read("recentBox"),
   recentNote: read("recentNote"),
   acceptBox: read("acceptBox"),
+  blockedList: read("blockedList"),
+  blockedHtml: document.getElementById("blockedList").innerHTML,
   workTableBox: read("workTableBox"),
   workTableHidden: document.getElementById("workTableFold").hidden,
   needClass: document.getElementById("need").className,
@@ -312,6 +314,27 @@ def main(argv):
         eout = run_once(wempty)
         fails += 0 if eout["workTableHidden"] is True else has(
             "没有工单时不占空间（折叠隐藏）", str(eout["workTableHidden"]), "True")
+
+        # 卡点区块同一个毛病：只列出「什么卡住了」，用户看到了也推不动。
+        # 每条卡点必须带一个真的能点的下一步，并写清点了会怎样 / 不点会怎样。
+        blk = dict(payload)
+        blk["blocked"] = {
+            "failures": [{"target": "codex/lane-z", "kind": "gate_fail"}],
+            "resolve": [{"branch": "codex/lane-z", "reason": "churn"}],
+            "exec": [{"id": "E-9001", "reason": "未授权"}],
+            "port": [],
+        }
+        bout = run_once(blk)
+        fails += has("卡点带可点的下一步动作", bout["blockedList"], "立刻再检查一轮")
+        fails += has("冲突暂缓给放宽闸门的入口", bout["blockedList"], "放宽闸门再拆一次")
+        fails += has("卡点写明不点的后果", bout["blockedList"], "不点就继续")
+        bempty = dict(payload)
+        bempty["blocked"] = {"failures": [], "resolve": [], "exec": [], "port": []}
+        bempty["error"] = None
+        beout = run_once(bempty)
+        fails += has("没有卡点时给出空态说明",
+                     beout["blockedList"] or beout["blockedHtml"], "没有需要你决策的")
+
         fails += has("首屏开关文案与控制层一致", out["masterState"],
                      "已关闭" if not payload.get("enabled") else "正在运行")
         fails += has("原生直连结论如实显示", out["nativeState"],

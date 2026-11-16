@@ -296,6 +296,10 @@
   .list{margin:0;padding:0;list-style:none}
   .list li{padding:8px 0;border-bottom:1px solid var(--line-2);font-size:12.5px;display:flex;gap:8px;align-items:baseline}
   .list li:last-child{border-bottom:0}
+  /* 卡点行要带一条「下一步动作」。动作行是块级子元素，行本身必须能换行，
+     否则它会被当成第三个 flex item 挤在 tag/正文之间，视觉上错位。 */
+  .list li.blkitem{flex-wrap:wrap;align-items:flex-start}
+  .list li.blkitem>.accact{flex:1 1 100%;margin-top:2px}
   .tag{font-size:10.5px;border-radius:6px;padding:2px 8px;background:var(--brand-50);color:var(--brand-700);white-space:nowrap;font-weight:650;flex:0 0 auto;line-height:1.5}
   .tag.warn{background:var(--warn-soft);color:var(--warn)}
   .tag.err{background:var(--err-soft);color:var(--err)}
@@ -1598,19 +1602,54 @@
     var ul = el("blockedList"); if(!ul) return; ul.innerHTML = "";
     var items = [];
     var f = (s.blocked && s.blocked.failures) || [];
-    f.forEach(function(x){ items.push({tag:"需拍板", cls:"warn", text:x.target + " · " + x.kind}); });
+    f.forEach(function(x){ items.push({tag:"需拍板", cls:"warn", text:x.target + " · " + x.kind,
+      act:"retry", why:"点它会立刻让自动挡再检查一轮（不改代码、不动 main）；不点就继续挂着，等下一拍自己重试。"}); });
     var r = (s.blocked && s.blocked.resolve) || [];
-    r.forEach(function(x){ items.push({tag:"冲突暂缓", cls:"", text:x.branch + (x.reason? " · "+x.reason : "")}); });
+    r.forEach(function(x){ items.push({tag:"冲突暂缓", cls:"", text:x.branch + (x.reason? " · "+x.reason : ""),
+      act:"resolve", branch:x.branch,
+      why:"自动挡按默认闸门拆不动它。点它会放宽到 16 个冲突文件 / 3000 行，在独立 worktree 里再拆一次，main 和源分支都不动；不点就继续跳过这条。"}); });
     var xe = (s.blocked && s.blocked.exec) || [];
-    xe.forEach(function(x){ items.push({tag:"实现暂缓", cls:"", text:(x.id||"") + (x.reason? " · "+x.reason : "")}); });
-    if (s.error) items.unshift({tag:"异常", cls:"err", text:s.error});
+    xe.forEach(function(x){ items.push({tag:"实现暂缓", cls:"", text:(x.id||"") + (x.reason? " · "+x.reason : ""),
+      act:"retry", why:"点它会立刻让自动挡再检查一轮（不改代码、不动 main）；不点就继续挂着，等下一拍自己重试。"}); });
+    if (s.error) items.unshift({tag:"异常", cls:"err", text:s.error, act:"retry",
+      why:"点它会立刻让自动挡再检查一轮（不改代码、不动 main）；不点就继续停在异常。"});
     if (!items.length){ ul.innerHTML = '<div class="empty">没有需要你决策的，也没有异常。</div>'; return; }
     items.forEach(function(it){
       var li = document.createElement("li");
+      li.className = "blkitem";
       var tag = document.createElement("span"); tag.className = "tag " + (it.cls||""); tag.textContent = it.tag;
       var g = document.createElement("span"); g.className="grow"; g.textContent = it.text;
-      li.appendChild(tag); li.appendChild(g); ul.appendChild(li);
+      li.appendChild(tag); li.appendChild(g);
+      li.appendChild(buildBlockedAction(it));
+      ul.appendChild(li);
     });
+  }
+
+  // 每条卡点都要带「下一个动作」，并写清点了会怎样 / 不点会怎样。
+  // 只列出卡住的东西、不给出口，和验收项当时是同一个毛病：看到了也推不动。
+  function buildBlockedAction(it){
+    var row = document.createElement("div"); row.className = "accact";
+    var msg = document.createElement("span"); msg.className = "accmsg";
+    msg.textContent = it.why || "点它会推进一步；不点就继续挂着。";
+    var btn = document.createElement("button");
+    btn.className = "btn primary"; btn.type = "button";
+    btn.textContent = it.act === "resolve" ? "放宽闸门再拆一次" : "立刻再检查一轮";
+    btn.addEventListener("click", function(){
+      btn.disabled = true;
+      var was = btn.textContent; btn.textContent = "正在处理…";
+      var call = (it.act === "resolve")
+        ? callTool("resolve_start", {branch: it.branch, confirm: true, max_files: 16, max_lines: 3000})
+        : callTool("autopilot_run_once", {});
+      call.then(function(){
+        toast(it.act === "resolve" ? ("已按更大闸门重拆 " + (it.branch || "")) : "已跑完一轮", "ok");
+        return loadStatus(false);
+      }).catch(function(e){
+        toast("操作没成功：" + (e && e.message || e), "err");
+        btn.disabled = false; btn.textContent = was;
+      });
+    });
+    row.appendChild(msg); row.appendChild(btn);
+    return row;
   }
 
   function toast(msg, cls){
