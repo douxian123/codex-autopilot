@@ -1426,6 +1426,77 @@ def _acceptance_board():
     }
 
 
+def _work_rows(project_name, limit=40):
+    """工单状态表：一行一个未决工作项，串起「来源 → 项目 → 泳道 → 分支 → stage → 证据」。
+
+    stage 只由 `ops/stage_table.py` 那一张表算，面板照抄，不许再各算一套。
+    没有的证据字段留空，不用编的字符串填空。
+    """
+    import stage_table  # noqa: E402  只读纯函数，无副作用
+
+    latest = {}
+    for r in _read_jsonl(_truth_dir() / "ledger.jsonl"):
+        if r.get("id"):
+            latest[r["id"]] = r
+    acc_latest = {}
+    for r in _read_jsonl(_truth_dir() / "acceptance.jsonl"):
+        if r.get("id"):
+            acc_latest[r["id"]] = r
+    bindings = _native_route_map()
+
+    def evidence_text(rec, binding):
+        ev = rec.get("evidence")
+        if isinstance(ev, list) and ev:
+            text = str(ev[0])
+        else:
+            text = ev if isinstance(ev, str) else ""
+        text = " ".join(text.split())
+        if not text and binding:
+            tid = binding.get("thread_id")
+            text = ("Codex window " + str(tid)) if tid else ""
+        return text[:160]
+
+    rows = []
+    for rec in latest.values():
+        if rec.get("status") not in ("open", "doing", "todo", "wip", "blocked"):
+            continue
+        stage = stage_table.item_stage(rec.get("status"))
+        binding = bindings.get(rec.get("id"), {})
+        rows.append({
+            "id": rec.get("id"),
+            "title": rec.get("title") or rec.get("detail") or "",
+            "kind": rec.get("kind"),
+            "source": rec.get("source") or "ledger",
+            "project": rec.get("project_id") or project_name,
+            "lane": rec.get("lane"),
+            "branch": rec.get("branch") or rec.get("lane"),
+            "stage": stage,
+            "stage_label": stage_table.item_stage_label(stage),
+            "evidence": evidence_text(rec, binding),
+        })
+    for rec in acc_latest.values():
+        if not (rec.get("needs_human") and rec.get("status") in ("todo", "wip", "blocked")):
+            continue
+        stage = stage_table.item_stage(rec.get("status"), needs_human=True)
+        rows.append({
+            "id": rec.get("id"),
+            "title": rec.get("title") or "",
+            "kind": "acceptance",
+            "source": rec.get("source") or "acceptance",
+            "project": rec.get("project_id") or project_name,
+            "lane": rec.get("lane"),
+            "branch": rec.get("lane"),
+            "stage": stage,
+            "stage_label": stage_table.item_stage_label(stage),
+            "evidence": evidence_text(rec, None),
+        })
+    # 「要人拍板」的排前面，其次进行中，再次待处理；同组按 id。
+    prio = {"person/review": 0, stage_table.BUCKET_DOING: 1,
+            stage_table.BUCKET_STUCK: 1, stage_table.BUCKET_TODO: 2}
+    rows.sort(key=lambda r: (prio.get(r["stage"], 3), r.get("id") or ""))
+    return rows[:limit]
+
+
 def _mainline_summary(limit=6):
     """产品主线摘要：方向来自 mainline.json，未决问题来自台账。只读、秒级。"""
     base = _truth_dir().parent.parent
@@ -1930,6 +2001,9 @@ def _status_payload(fast=True):
         "stage": stage["stage"],
         "stage_owner": stage["owner"],
         "counts": counts,
+        # 工单状态表：控制层把「来源 → 项目 → 泳道 → 分支 → stage → 证据」拼好，
+        # 面板只渲染，不再自己算 stage（唯一判据仍是 ops/stage_table.py）。
+        "work_rows": _work_rows(Path(current_project).name),
     }
     payload["__text__"] = _status_text(payload)
     return payload
