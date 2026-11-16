@@ -853,7 +853,14 @@
     bits.push("可落盘 " + (q.clean == null ? 0 : q.clean) + " / 冲突 " + (q.conflict == null ? 0 : q.conflict));
     if (!s.enabled) bits.push("自动动作已关闭");
     else if (s.paused) bits.push("已暂停推进");
-    var sl = el("sysLine"); if (sl) sl.textContent = bits.join(" · ");
+    var hh = s.harness_health || {};
+    if (hh.status === "ok") bits.push(hh.headline || "上下文健康：正常");
+    else bits.push("上下文健康：" + (hh.reason || "取不到"));
+    var sl = el("sysLine");
+    if (sl) {
+      sl.textContent = bits.join(" · ");
+      sl.title = (hh.reasons && hh.reasons.length) ? hh.reasons.join("；") : "";
+    }
 
     var recent = s.recent_completed || [];
     var cl = s.closure_rate || {};

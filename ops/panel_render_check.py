@@ -47,7 +47,7 @@ setTimeout(function(){
   var d = document.getElementById("f").contentDocument;
   var out = {};
   ["stateLabel","statusTime","projectLine","focusStatus","focusDoing","focusStep",
-   "hierProject","hierRoad","hierWork"].forEach(function(id){
+   "hierProject","hierRoad","hierWork","sysLine"].forEach(function(id){
     var n = d.getElementById(id);
     out[id] = n ? n.textContent.trim() : "";
       out["__body__"] = (d.body ? d.body.innerText : "");
@@ -195,6 +195,11 @@ def main(argv):
         ("首屏显示绑定项目名", project.get("name")),
         ("首屏显示绑定项目路径", project.get("path")),
         ("首屏显示总状态文案", payload.get("state_label")),
+        # 状态管家的结论必须真的上屏：这句以前只写进日志，用户看不到，
+        # 于是「harness 健康吗」在面板上永远是个盲区。
+        ("首屏显示上下文健康结论",
+         (payload.get("harness_health") or {}).get("headline")
+         or ("上下文健康：" + ((payload.get("harness_health") or {}).get("reason") or "取不到"))),
         # 三问②的显示优先级：需要人行动的最优先（与 J-0001 一致）——
         # 有人工验收时显示验收项，否则显示正在做的事。
         ("首屏显示正在做什么", (payload.get("human_acceptance") or [{}])[0].get("title")
@@ -206,6 +211,10 @@ def main(argv):
         ("有「工程详情与证据」区块", "工程详情与证据"),
     ]
     folders = ((payload.get("project_folders") or {}).get("folders") or [])
+    # 该状态根没有雷达/门禁数据时，这两条不是「面板没显示」，而是「没东西可显示」。
+    # 以前会把 None 当成期望文本去比对，必然失败——门禁自己造了一个永远红的假红灯。
+    # 没有数据就如实跳过并打印 SKIP，既不假通过，也不假失败。
+    skipped = []
     radar_folder = next((f for f in folders if (f.get("engineering_radar") or {}).get("layers")), None)
     gate_folder = next((f for f in folders if (f.get("quality_gate") or {}).get("checks")), None)
     if radar_folder:
@@ -220,7 +229,7 @@ def main(argv):
         if radar.get("blockers"):
             checks.append(("项目文件夹显示工程卡点", "卡点：" + str(radar["blockers"][0])))
     else:
-        checks.append(("项目文件夹显示 19 层工程进度", None))
+        skipped.append("项目文件夹显示 19 层工程进度（该状态根还没有工程雷达数据）")
     if gate_folder and gate_folder["quality_gate"].get("status"):
         gate_status = gate_folder["quality_gate"].get("status")
         gate_text = ("质量门禁：严格质量通过" if gate_status == "pass" else
@@ -229,7 +238,7 @@ def main(argv):
                      "质量门禁：严格质量 RED")
         checks.append(("项目文件夹显示独立质量门禁状态", gate_text))
     else:
-        checks.append(("项目文件夹显示独立质量门禁状态", None))
+        skipped.append("项目文件夹显示独立质量门禁状态（该状态根还没有质量门禁数据）")
     if folders:
         checks.append(("项目文件夹显示当前步骤", folders[0].get("current_step")))
     if step_check:
@@ -246,6 +255,9 @@ def main(argv):
     else:
         print("  PASS  首屏已渲染真实数据（非“读取中”）")
 
+    for label in skipped:
+        print(f"  SKIP  {label}")
+
     for label, expected in checks:
         ok = visible_doing(expected) if label == "首屏显示正在做什么" else visible(expected)
         if ok:
@@ -255,6 +267,12 @@ def main(argv):
             fails += 1
 
     if want_shot:
+        # 不可变的发布目录里没有 docs/（源码仓才有）。截图是验证产物，不是源码：
+        # 缺目录就建，别把「发行版布局不同」误报成「面板没渲染出来」。
+        try:
+            SHOT.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
         shot_proc = _run(chromium, workdir, [f"--screenshot={SHOT}",
                                              "--virtual-time-budget=9000",
                                              "--allow-file-access-from-files",
