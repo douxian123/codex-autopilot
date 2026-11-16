@@ -134,6 +134,13 @@ def main():
         # 就是这份截断快照造成的。
         run([sys.executable, str(OPS / "test-truth-sync-sidecar-and-ledger.py")],
             cwd=str(OPS.parent), check=True)
+        # 生成视图（PROJECT_STATUS / CONTROL_BOARD / CONTROL_PLANE / ops/context）被
+        # .gitignore 排除且从未跟踪，旧实现照 `git add` 会报 `paths are ignored`，
+        # 并把已 add 成功的真账本留在索引里形成半暂存 —— 下一次 merge 立刻被挡住，
+        # main 永久推不动（2026-11-17 本轮 land 实测）。门禁要求：视图/`.bak-*`
+        # 副本不卡死同步、不进版本库，add 失败时索引清干净。
+        run([sys.executable, str(OPS / "test-truth-sync-ignored-views.py")],
+            cwd=str(OPS.parent), check=True)
         # supersede / land 每拍 `× 主干工作树切不到 main` 的那条：trunk 与 main 没有
         # 共同祖先，且两份追加型台账的工作副本是旧截断版，`git checkout --detach main`
         # 被拒。门禁要求：切得过去、main 章节一条不丢、本地新条目保留，同时夹带**代码**
