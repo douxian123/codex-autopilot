@@ -156,6 +156,7 @@ console.log(JSON.stringify({
   needClass: document.getElementById("need").className,
   recentHtml: document.getElementById("recentBox").innerHTML,
   routeText: read("routeBox"),
+  stewardBar: read("stewardBar"),
 }));
 """
 
@@ -387,6 +388,32 @@ def main(argv):
         fails += has("候选写明命中信号", cout["blockedList"], "以后都")
         fails += has("候选写明不算就什么都不生效", cout["blockedList"],
                      "不算", "什么都不生效")
+
+        # 六管家健康条：六个管家的状态必须在一个地方可读，且四态语义不能混。
+        # 这是用户「万法归一入口 + 背后许多管家」设想的落地面——面板此前没有任何
+        # 一处能一眼看出「哪个管家断了」。unknown 必须如实说「取不到」，绝不用绿点
+        # 冒充正常；off（用户自己关的）也不能被当成故障报警。
+        stew = payload.get("stewards") or {}
+        rows = stew.get("rows") or []
+        fails += has("六管家健康条上屏", out["stewardBar"], "管家")
+        for key in ("context", "route", "merge", "tune", "exec", "pm"):
+            got = [r for r in rows if r.get("key") == key]
+            if not got:
+                fails += 1
+                print(f"  FAIL  六管家缺 {key}")
+            else:
+                print(f"  PASS  六管家含 {key}")
+        # 每个管家的 label 都要真的渲染到页面上（不是只存在于 payload）。
+        for r in rows:
+            fail = has(f"健康条渲染：{r.get('key')}", out["stewardBar"], r.get("label"))
+            if fail:
+                fails += fail
+        # unknown 态不得伪装正常：空 payload 下必须出现「取不到 / 没在跑」这类词。
+        blank = dict(payload)
+        blank["stewards"] = central_mcp._steward_health({})
+        bout2 = run_once(blank)
+        fails += has("健康条取不到时不冒充正常", bout2["stewardBar"],
+                     "取不到", "没在跑")
 
         fails += has("首屏开关文案与控制层一致", out["masterState"],
                      "已关闭" if not payload.get("enabled") else "正在运行")
