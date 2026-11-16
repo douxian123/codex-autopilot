@@ -223,6 +223,19 @@
   .route-group .t{font-size:12px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
   .tiny{font-size:11.5px;color:var(--ink-3)}
 
+  /* ---- 工单状态表：来源 → 项目 → 泳道 → 分支 → stage → 证据 ---- */
+  .wt{list-style:none;margin:0;padding:0}
+  .wt li{padding:9px 0;border-bottom:1px solid var(--line-2)}
+  .wt li:last-child{border-bottom:0}
+  .wt .t{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+  .wt .wid{font-size:10.5px;color:var(--ink-3);font-variant-numeric:tabular-nums;flex:0 0 auto}
+  .wt .stl{margin-left:auto;font-size:10.5px;font-weight:650;border-radius:999px;padding:2px 9px;background:var(--neutral-soft);color:var(--neutral);white-space:nowrap;flex:0 0 auto}
+  .wt .stl.doing{background:var(--brand-50);color:var(--brand-700)}
+  .wt .stl.review{background:var(--warn-soft);color:var(--warn)}
+  .wt .stl.stuck{background:var(--err-soft);color:var(--err)}
+  .wt .d{margin-top:4px;color:var(--ink-3);font-size:11.5px;overflow-wrap:anywhere}
+  .wt .ev{margin-top:3px;color:var(--ink-3);font-size:11.5px;opacity:.86;overflow-wrap:anywhere}
+
   /* ---- chips ---- */
   .chips{display:flex;flex-wrap:wrap;gap:7px}
   .chip{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--surface-2);border-radius:999px;padding:5px 13px 5px 6px;font-size:12.5px;max-width:100%}
@@ -513,6 +526,10 @@
       <div class="chead"><h2>全部工作项</h2><span class="count" id="workCount"></span></div>
       <div class="meta" id="workContext" style="margin-top:-5px;margin-bottom:10px"></div>
       <div id="progressBox"></div>
+      <details class="fold" style="margin-top:12px" id="workTableFold">
+        <summary>每一条的来龙去脉（来源 · 泳道 · 分支 · 到哪一步 · 证据）</summary>
+        <div class="foldbody"><div id="workTableBox"></div></div>
+      </details>
     </section>
 
     <section class="card">
@@ -836,6 +853,7 @@
     renderRecent(s.recent_completed || []);
     renderThreeQuestions(s, humanAcc, doingItems, stuckN);
     renderProgress(doingItems, s.todo_items || [], todoCount);
+    renderWorkTable(s.work_rows || []);
     renderRoute(s.route || {});
     renderMainline(s.mainline || {});
     var intakeButton = el("intakeSubmit");
@@ -1285,6 +1303,49 @@
       todo.forEach(function(it){ wrap2.appendChild(chip(it)); });
       box.appendChild(h2); box.appendChild(wrap2);
     }
+  }
+
+  // 工单状态表：控制层已经按 ops/stage_table.py 那一张表算好每行的 stage，
+  // 面板只负责把「来源 → 项目 → 泳道 → 分支 → stage → 证据」照抄出来，
+  // 不再自己算一遍状态，避免出现「面板说在做、CLI 说没事」两套口径。
+  var WORK_STAGE_CLASS = {
+    "person/review":"review", "doing":"doing", "stuck":"stuck",
+    "todo":"", "review":""
+  };
+  function renderWorkTable(rows){
+    var box = el("workTableBox"); if (!box) return; box.innerHTML = "";
+    var fold = el("workTableFold");
+    rows = rows || [];
+    if (fold) fold.hidden = !rows.length;
+    if (!rows.length) return;
+    var ul = document.createElement("ul"); ul.className = "wt";
+    rows.forEach(function(r){
+      var li = document.createElement("li");
+      var t = document.createElement("div"); t.className = "t";
+      var wid = document.createElement("span"); wid.className = "wid";
+      wid.textContent = r.id || "";
+      var name = document.createElement("span"); name.textContent = r.title || "未命名工作项";
+      var stl = document.createElement("span");
+      stl.className = "stl " + (WORK_STAGE_CLASS[r.stage] || "");
+      stl.textContent = r.stage_label || "待处理";
+      t.appendChild(wid); t.appendChild(name); t.appendChild(stl);
+      li.appendChild(t);
+      var bits = [];
+      if (r.source) bits.push("来源 " + r.source);
+      if (r.project) bits.push("项目 " + r.project);
+      if (r.lane) bits.push("泳道 " + r.lane);
+      if (r.branch && r.branch !== r.lane) bits.push("分支 " + r.branch);
+      var d = document.createElement("div"); d.className = "d";
+      d.textContent = bits.join(" · ");
+      if (bits.length) li.appendChild(d);
+      if (r.evidence){
+        var ev = document.createElement("div"); ev.className = "ev";
+        ev.textContent = "证据：" + r.evidence;
+        li.appendChild(ev);
+      }
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
   }
 
   function renderNative(s){

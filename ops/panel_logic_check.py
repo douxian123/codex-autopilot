@@ -149,6 +149,8 @@ console.log(JSON.stringify({
   recentBox: read("recentBox"),
   recentNote: read("recentNote"),
   acceptBox: read("acceptBox"),
+  workTableBox: read("workTableBox"),
+  workTableHidden: document.getElementById("workTableFold").hidden,
   needClass: document.getElementById("need").className,
   recentHtml: document.getElementById("recentBox").innerHTML,
   routeText: read("routeBox"),
@@ -283,6 +285,33 @@ def main(argv):
         # 「点它会怎样 / 不点会怎样」和一个真的能收口的按钮。
         fails += has("验收项带可点的收口动作", review_out["acceptBox"], "我确认通过")
         fails += has("验收项写明不点的后果", review_out["acceptBox"], "不点就继续")
+        # 二级工单表：每条必须把「来源 → 项目 → 泳道 → 分支 → stage → 证据」
+        # 串出来，stage 用控制层算好的值照抄。只显示一个标题等于没回答
+        # 「这条到底走到哪了、依据是什么」。
+        wrows = dict(payload)
+        wrows["work_rows"] = [
+            {"id": "L-9001", "title": "真实工单标题", "kind": "bug",
+             "source": "inbox", "project": "demo-project", "lane": "codex/lane-x",
+             "branch": "codex/lane-x", "stage": "doing", "stage_label": "进行中",
+             "evidence": "npm run build -> exit 0"},
+            {"id": "A-9002", "title": "真实待验收标题", "kind": "acceptance",
+             "source": "kgctl land", "project": "demo-project", "lane": "codex/lane-y",
+             "branch": "codex/lane-y-impl", "stage": "person/review",
+             "stage_label": "需要你验收",
+             "evidence": ""},
+        ]
+        wout = run_once(wrows)
+        fails += has("工单表列出工作项标题", wout["workTableBox"], "真实工单标题", "真实待验收标题")
+        fails += has("工单表带来源与归属项目", wout["workTableBox"], "来源 inbox", "项目 demo-project")
+        fails += has("工单表带泳道与分支（同值不重复展示）", wout["workTableBox"],
+                     "泳道 codex/lane-x", "分支 codex/lane-y-impl")
+        fails += has("工单表 stage 用控制层算好的文案", wout["workTableBox"], "进行中", "需要你验收")
+        fails += has("工单表带证据链", wout["workTableBox"], "证据：npm run build -> exit 0")
+        wempty = dict(payload)
+        wempty["work_rows"] = []
+        eout = run_once(wempty)
+        fails += 0 if eout["workTableHidden"] is True else has(
+            "没有工单时不占空间（折叠隐藏）", str(eout["workTableHidden"]), "True")
         fails += has("首屏开关文案与控制层一致", out["masterState"],
                      "已关闭" if not payload.get("enabled") else "正在运行")
         fails += has("原生直连结论如实显示", out["nativeState"],

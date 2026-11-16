@@ -118,6 +118,21 @@ def item_stage(status=None, needs_human=False, is_verified=False) -> str:
     return norm_item_status(status)
 
 
+# 单工作项 stage → 给人看的词。面板、CLI 都用这一份，别再各写一套文案。
+ITEM_STAGE_LABELS = {
+    "person/review": "需要你验收",
+    BUCKET_TODO: "待处理",
+    BUCKET_DOING: "进行中",
+    BUCKET_STUCK: "卡住",
+    BUCKET_REVIEW: "已验收",
+}
+
+
+def item_stage_label(stage) -> str:
+    """stage → 人可读文案。认不出的按「待处理」（宁可低估，不虚报完成）。"""
+    return ITEM_STAGE_LABELS.get(str(stage or ""), "待处理")
+
+
 def panel_stage(facts=None) -> dict:
     """整套面板处在哪一步。返回 `{stage, ui_state, label, owner}`，永不抛异常。
 
