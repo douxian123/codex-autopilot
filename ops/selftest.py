@@ -140,6 +140,12 @@ def main():
         # 改动时仍然 fail-closed（宁可失败，也不静默丢弃别人的在途改动）。
         run([sys.executable, str(OPS / "test-reset-trunk-head-stale-ledger.py")],
             cwd=str(OPS.parent), check=True)
+        # 修完上面两条后当场暴露的第三种形态：回收器为省磁盘把 trunk 里与 HEAD 逐字节
+        # 相同的 backend/evidence、evidence 剥掉，留下的 ` D` 又反过来挡住 supersede /
+        # land（实测 331 条、141.8MiB）。豁免必须严格到「HEAD 里确有该 blob 的删除」，
+        # 再生目录里被人改过的文件、以及真代码改动一律照旧 fail-closed。
+        run([sys.executable, str(OPS / "test-reap-stripped-evidence-not-blocking.py")],
+            cwd=str(OPS.parent), check=True)
         # launchd 入口新鲜度：同一类病一共 6 条（disk-reap 只是其中一条）。
         # 这些脚本原来散在 ~/.codex-guard/ 这类「没有版本、没人升级」的位置，
         # 发版之后它们还在跑几周前的代码。门禁要求：要么住在版本目录里，

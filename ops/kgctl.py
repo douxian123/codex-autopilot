@@ -857,8 +857,10 @@ def cmd_supersede(args):
         _align_main()
         wt = _trunk_worktree()
         reset_trunk_head(wt)
+        head_regenerable = _regenerable_head_paths(wt)
         dirty = [line for line in trunk_status(wt)
-                 if not is_truth_path(line) and not is_runtime_sidecar(line)]
+                 if not is_truth_path(line)
+                 and not _is_zero_loss_noise(line, head_regenerable)]
         if dirty:
             print(f"× 主干工作树有非真相层改动，拒绝 supersede：{wt}")
             print("\n".join(dirty[:20])[:800])
@@ -3462,6 +3464,42 @@ def _is_regenerable_rel(path: str) -> bool:
     return any(rel == d or rel.startswith(d + "/") for d in dirs)
 
 
+def _regenerable_head_paths(wt: Path) -> set:
+    """HEAD 里再生目录下的全部路径（一次 `ls-tree`，不逐文件问 git）。
+
+    用作「这条删除是否真的零损失」的判据：只有 HEAD 里确实存着这个 blob，
+    删掉工作副本才等价于「只是没把副本物化出来」，随时能原样还原。
+    """
+    try:
+        import workspace_guard as _wg
+        dirs = _wg.REGENERABLE_TRACKED_DIRS
+    except Exception:
+        dirs = ("backend/evidence", "evidence")
+    out = git("-C", str(wt), "ls-tree", "-r", "--name-only", "HEAD", "--", *dirs)
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
+def _is_zero_loss_noise(line: str, head_regenerable: set) -> bool:
+    """这条脏记录是否属于「机器噪声」——既不是人造改动，放掉也不丢任何信息。
+
+    两类：
+      * 运行时伴随文件（`data/*.db-wal` 等）：数据库自己在写，谁也没「改」过；
+      * 再生目录里**且 HEAD 里确有该 blob** 的删除：回收器为省磁盘把与 HEAD 逐字节
+        相同的副本剥掉了（`workspace_guard.strip_regenerable_tracked`），留下的
+        ` D` 随时 `git checkout --` 即原样还原。
+
+    严格性说明：只豁免「删除」，不豁免修改；且必须 `head_regenerable` 里能查到该路径。
+    工作副本里被人改过的再生文件（status 是 ` M`）一律不豁免，照旧 fail-closed。
+    """
+    if is_runtime_sidecar(line):
+        return True
+    code = line[:2]
+    if "D" not in code:
+        return False
+    body = _porcelain_body(line)
+    return bool(head_regenerable) and _is_regenerable_rel(body) and body in head_regenerable
+
+
 def trunk_truth_commits(wt: Path, base: str = None):
     base = base or MAIN
     out = git("-C", str(wt), "log", "--format=%s", f"{base}..HEAD")
@@ -4606,8 +4644,10 @@ def cmd_land(args):
         wt = _trunk_worktree()
         reset_trunk_head(wt)
         _mirror_truth_into_trunk(wt)
+        head_regenerable = _regenerable_head_paths(wt)
         dirty = [line for line in trunk_status(wt)
-                 if not is_truth_path(line) and not is_runtime_sidecar(line)]
+                 if not is_truth_path(line)
+                 and not _is_zero_loss_noise(line, head_regenerable)]
         if dirty:
             print(f"× 主干工作树有非真相层改动，拒绝 land：{wt}")
             print("\n".join(dirty[:20])[:800])
