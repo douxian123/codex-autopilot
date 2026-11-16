@@ -773,17 +773,45 @@ def _truth_dir():
     return Path(repo) / "ops" / "truth"
 
 
-def _roadmap():
-    """mainline.json 的产品路线：每一步到哪了。只读、秒级。"""
-    ml = _json_file(_truth_dir() / "mainline.json")
+# 产品路线的状态别名。项目自己的 truthctl.py 已经把 in_progress 文档化为合法的
+# 「进行中」（ROADMAP_LABEL 里与 doing 同义），但面板/文本/主线摘要只认 doing。
+# 2026-11-16 实测后果：ThoughLoom 的 mainline.json 里 5 条路线全是 in_progress，
+# 面板因此一条都匹配不上，只能一路退到 next / 首个未完成项 —— 用户看到的「当前阶段」
+# 是错的。归一放在数据源头这一处，三个消费点一起修好，不各修一遍。
+ROADMAP_STATUS_ALIASES = {
+    "in_progress": "doing", "in-progress": "doing", "active": "doing",
+    "ongoing": "doing", "wip": "doing", "current": "doing",
+    "complete": "done", "completed": "done", "finished": "done", "shipped": "done",
+    "todo": "todo", "pending": "todo", "not_started": "todo", "backlog": "todo",
+    "next": "next", "planned": "next", "upcoming": "next",
+}
+
+
+def _normalize_roadmap_status(status):
+    """把项目侧的状态词归一成面板统一的 done|doing|next|todo。"""
+    if not isinstance(status, str):
+        return "todo"
+    key = status.strip().lower()
+    if key in ("done", "doing", "next", "todo"):
+        return key
+    return ROADMAP_STATUS_ALIASES.get(key, "todo")
+
+
+def _roadmap_rows(ml):
+    """mainline.json 的 roadmap → [{step, expected, status}]，状态已归一。"""
     rows = []
     for it in (ml.get("roadmap") or []):
         if isinstance(it, str):
             rows.append({"step": it, "expected": "", "status": "todo"})
         elif isinstance(it, dict):
             rows.append({"step": it.get("step", ""), "expected": it.get("expected", ""),
-                         "status": it.get("status") or "todo"})
+                         "status": _normalize_roadmap_status(it.get("status"))})
     return rows
+
+
+def _roadmap():
+    """mainline.json 的产品路线：每一步到哪了。只读、秒级。"""
+    return _roadmap_rows(_json_file(_truth_dir() / "mainline.json"))
 
 
 def _project_folder_project_ids():
@@ -1032,13 +1060,7 @@ def _read_project_truth(root):
     mainline_product = ml.get("product") or ""
     mainline_one_liner = ml.get("one_liner") or ""
     mainline_stage = ml.get("stage") or ""
-    road = []
-    for item in (ml.get("roadmap") or []):
-        if isinstance(item, str):
-            road.append({"step": item, "expected": "", "status": "todo"})
-        elif isinstance(item, dict):
-            road.append({"step": item.get("step", ""), "expected": item.get("expected", ""),
-                         "status": item.get("status") or "todo"})
+    road = _roadmap_rows(ml)
     current_step = next((r for r in road if r.get("status") == "doing"), None)
     if not current_step:
         current_step = next((r for r in road if r.get("status") == "next"), None)
