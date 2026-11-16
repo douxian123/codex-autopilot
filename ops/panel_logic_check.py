@@ -257,21 +257,43 @@ def main(argv):
             fails += has("一眼三问：状态", out["focusStatus"], "运行中")
         else:
             fails += has("一眼三问：状态", out["focusStatus"], "已关闭")
+        # 「现在在做」必须与控制层/面板的优先级阶梯逐级一致。旧断言把 todo_items
+        # 也当成「正在做」，于是逼面板在没有任何 doing 时谎报第一条待办；而面板与
+        # panel_render_check 都要求此时显示控制层权威结论。新版严格镜像面板顺序
+        # （人工验收 → exec_now → doing_items → 卡点 → 控制层 doing），并把最后
+        # 的兜底从「子串包含」升级为「逐字相等」——是加强，不是放宽。
+        doing_items = payload.get("doing_items") or []
+        exec_now = payload.get("exec_now")
+        blocked_state = payload.get("blocked") or {}
+        has_block = bool(
+            (blocked_state.get("failures") or []) or (blocked_state.get("resolve") or [])
+            or (blocked_state.get("exec") or []) or (blocked_state.get("port") or []))
         if human_acc:
             fails += has("一眼三问：等你验收优先显示", out["focusDoing"],
                          human_acc[0].get("title") or "人工验收")
-        elif current_items:
+        elif exec_now:
+            fails += has("一眼三问：正在自动实现时显示该工单", out["focusDoing"],
+                         (exec_now.get("title") or "正在自动实现"))
+        elif doing_items:
             fails += has("一眼三问：现在在做", out["focusDoing"],
-                         current_items[0].get("title") or current_items[0].get("detail"))
+                         doing_items[0].get("title") or doing_items[0].get("detail"))
+        elif has_block:
+            fails += has("一眼三问：有卡点时显示等待处理卡点", out["focusDoing"],
+                         "等待处理卡点")
         else:
-            # 没有工作项时，首屏必须原样显示控制层算出的权威 doing，而不是面板自己
-            # 写死一句话。控制层在这里已经区分了「守护绑定别的项目」「已检查一轮没有
-            # 可合分支」「暂停/关闭」等情况；面板旧实现硬写「当前没有进行中的工作」，
-            # 于是控制层说了实话、面板显示空白态（panel-render 门禁实测抓到）。这条
-            # 现在比旧断言更严：比对的是权威原文，而不是任意含「没有进行中」的子串。
+            # 没有在做、也没有卡点时，首屏必须原样显示控制层算出的权威 doing，
+            # 而不是面板自己写死或用 todo 顶替。控制层在这里已经区分了「守护绑定
+            # 别的项目」「已检查一轮没有可合分支」「暂停/关闭」等情况；面板旧实现
+            # 硬写「当前没有进行中的工作」，于是控制层说了实话、面板显示空白态
+            # （panel-render 门禁实测抓到）。这里要求逐字相等，比旧的子串包含更严。
             expected_doing = payload.get("doing") or "没有进行中"
-            fails += has("一眼三问：无工作项时显示控制层权威结论",
-                         out["focusDoing"], expected_doing)
+            actual_doing = str(out["focusDoing"])
+            if actual_doing == expected_doing:
+                print("  PASS  一眼三问：无工作项时逐字显示控制层权威结论")
+            else:
+                print("  FAIL  一眼三问：无工作项时未逐字显示控制层权威结论"
+                      f"（期望 {expected_doing!r}，实际 {actual_doing!r}）")
+                fails += 1
         fails += has("一眼三问：当前步骤", out["focusStep"], expected_stage)
         # 这段无条件跑：不能因为当前项目恰好没有待验收项，就把「验收项必须带出口」
         # 这条判据跳过——那正是让验收项又悄悄退回「只有步骤、没有动作」的空档。
