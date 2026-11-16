@@ -4,27 +4,40 @@
 
 为什么有这条门禁（2026-11-17 实测）：
 
-  回收判据 `workspace_guard.worktree_removable` 里原本只有一行
+  这条路径上其实有两个叠在一起的缺陷，第二个只有把第一个修完才会露出来：
+
+  缺陷一（计数）：判据里只有一行
 
       ahead = branch_ahead(repo, branch, main) if branch else 0
 
-  调用方（`disk_reap._remove_one_kg_tmp`）读分支名时用的是
+  调用方（`disk_reap._remove_one_kg_tmp`）读分支名用的是
   `git rev-parse --abbrev-ref HEAD`，对 detached HEAD 得到字符串 `"HEAD"`，
-  于是它把 branch 置成空串再传进来。branch 为空 -> `ahead` 直接读成 0，
-  下面「有独占提交就拒绝回收（unique-commits）」这道闸根本不触发。
+  于是它把 branch 置成空串再传进来。branch 为空 -> `ahead` 直接读成 0。
 
-  最小复现（同一棵 worktree、同一个提交）：
-    * 传 `branch="HEAD"` -> ok=True  reason=clean          ahead=0   ← 会被回收
-    * 传真实 sha          -> ok=False reason=unique-commits ahead=1   ← 被拦住
+  缺陷二（拦截条件）：拦独占提交那道闸写的是
+
+      if branch and ahead > 0:
+
+  它按「分支名」判断，而真实调用恰恰把分支名传成空串。于是即使把 `ahead`
+  算准，`branch` 为空仍让整条件短路 —— 数值对了、闸门不开。2026-11-17
+  实测两个修订在同一棵树上（branch=""，真实 ahead=1）：
+    * 只修计数：ok=True  reason=clean                   ahead=1   ← 还是被删
+    * 修完拦截：ok=False reason=unique-commits-detached  ahead=1   ← 拦住
+
+  正常调用（`branch="HEAD"`）与直接传 sha 也要一并拒绝，防止别的调用方
+  从旁路漏过去。
 
   后果不是理论：`git rev-list --all` 把 worktree 的 HEAD 也算作可达，所以
   只要树还在、提交就还看得见；一旦回收器删掉这棵树，这些提交就变成任何
   ref 都够不到的对象，`git gc` 两周后静默清掉。本机实测有 18 棵 detached
   worktree 带着独占提交（最多 ahead=8171），正是这条路径的暴露面。
 
-  本门禁钉住两个方向：
-    1. 带独占提交的 detached 树 -> 判据必须拒绝（unique-commits），且 ahead>=1；
-    2. 无独占提交的 detached 树 -> 仍要允许回收（不把回收功能一刀切废掉）。
+  本门禁钉住三个方向：
+    1. 带独占提交的 detached 树，无论 branch 传 `"HEAD"`、空串还是真实 sha
+       -> 判据必须拒绝，且 ahead>=1（空串走 unique-commits-detached）；
+    2. 无独占提交的 detached 树 -> 三种传法都仍要允许回收
+       （不把回收功能一刀切废掉）；
+    3. 端到端：让回收器自己扫，这类树不得进入回收候选。
 """
 import importlib.util
 import os
@@ -94,19 +107,24 @@ def main():
         real_ahead = int(git(repo, "rev-list", "--count", f"main..{head}"))
         check("前置：该树确实有独占提交", real_ahead >= 1, real_ahead)
 
-        # 调用方的真实传法：detached -> branch 被置成 "HEAD"
-        assessed = wg.worktree_removable(repo, wt, abbrev, "main")
-        check("带独占提交的 detached 树被拒绝回收",
-              assessed.get("ok") is False, assessed)
-        check("拒绝原因是 unique-commits（而不是 dirty/missing 等旁路）",
-              assessed.get("reason") == "unique-commits", assessed)
-        check("ahead 如实反映独占提交数（不再读成 0）",
-              assessed.get("ahead") == real_ahead, assessed)
-        # 直接传 sha 也必须拒绝（防止别的调用方走这条路漏掉）
-        assessed_sha = wg.worktree_removable(repo, wt, head, "main")
-        check("传 HEAD sha 时同样被拒绝",
-              assessed_sha.get("ok") is False
-              and assessed_sha.get("reason") == "unique-commits", assessed_sha)
+        # 三种真实传法都必须拒绝。空串那一条是 disk_reap 对 detached 的**真实**
+        # 传法（`rev-parse --abbrev-ref HEAD` -> "HEAD" -> 调用点置成 ""），
+        # 也是上一版修复唯一漏掉的路径：只修了 ahead 计数，拦截仍写
+        # `if branch and ahead > 0`，branch 为空直接短路 -> 照样回收。
+        cases = [
+            ("", "unique-commits-detached"),        # disk_reap 的真实传法
+            (abbrev, "unique-commits"),             # 别的调用方的传法（"HEAD"）
+            (head, "unique-commits"),               # 直接传 sha，防旁路
+        ]
+        for br, want_reason in cases:
+            got = wg.worktree_removable(repo, wt, br, "main")
+            label = f"branch={br!r}"
+            check(f"带独占提交的 detached 树被拒绝回收（{label}）",
+                  got.get("ok") is False, got)
+            check(f"拒绝原因正确（{label} -> {want_reason}）",
+                  got.get("reason") == want_reason, got)
+            check(f"ahead 如实反映独占提交数（{label}）",
+                  got.get("ahead") == real_ahead, got)
 
         # ---- 二号树：detached HEAD 但无独占提交（不误伤回收） ----
         wt2 = base / "wt-clean"
@@ -114,11 +132,14 @@ def main():
         git(repo, "worktree", "add", "-q", "--detach", str(wt2), main_tip)
         check("前置：二号树停在 main 上、无独占提交",
               git(repo, "rev-list", "--count", f"main..{git(wt2, 'rev-parse', 'HEAD')}") == "0")
-        clean = wg.worktree_removable(repo, wt2, "HEAD", "main",
-                                      restore_regenerable=False)
-        check("无独占提交的 detached 树仍可回收（回收功能没被一刀切废掉）",
-              clean.get("ok") is True, clean)
-        check("二号树的 ahead 仍为 0", clean.get("ahead") == 0, clean)
+        # 反向断言：三种传法下，没有独占提交的树都仍要允许回收。
+        for br in ("", "HEAD", git(wt2, "rev-parse", "HEAD")):
+            clean = wg.worktree_removable(repo, wt2, br, "main",
+                                          restore_regenerable=False)
+            check(f"无独占提交的 detached 树仍可回收（branch={br!r}）",
+                  clean.get("ok") is True, clean)
+            check(f"二号树的 ahead 仍为 0（branch={br!r}）",
+                  clean.get("ahead") == 0, clean)
 
         # ---- 端到端：让回收器自己扫，必须跳过一号树 ----
         os.environ["KG_WORKSPACE_ROOT"] = str(base)

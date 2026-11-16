@@ -725,8 +725,21 @@ def worktree_removable(
     else:
         scratch_note = ""
 
+    # The unique-commit gate must key on `ahead`, NOT on the branch *name*.
+    # `disk_reap._remove_one_kg_tmp` passes branch="" for a detached HEAD, so the
+    # old `if branch and ahead > 0` short-circuited on the empty name and let a
+    # tree with unique commits be reaped. Measured 2026-11-17:
+    #   live   branch="" -> ok=True  reason=clean          ahead=0
+    #   fixed  branch="" -> ok=True  reason=clean          ahead=1   (still reaped!)
+    # Only the second `ok` matters -- the count being right is not enough if the
+    # guard never fires. So: refuse whenever there are unique commits. When we
+    # do have a branch name we can still offer the backup escape hatch; with no
+    # branch there is nothing to push, so the tree simply stays.
     backup = ""
-    if branch and ahead > 0:
+    if ahead > 0:
+        if not branch:
+            return {"ok": False, "reason": "unique-commits-detached",
+                    "ahead": ahead, "backup": ""}
         if not backup_unique:
             return {"ok": False, "reason": "unique-commits", "ahead": ahead, "backup": ""}
         ok, backup = backup_branch(repo, branch, stamp)
