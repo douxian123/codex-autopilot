@@ -63,9 +63,19 @@ def main():
 
         r1 = truthctl("constraints", "add", "永远不要 force push",
                       extra={"KG_CONSTRAINT_KIND": "taboo",
-                             "KG_CONSTRAINT_ENFORCEABLE": "gate"})
+                             "KG_CONSTRAINT_ENFORCEABLE": "gate",
+                             "KG_CONSTRAINT_CMD": "python3 ops/selftest.py"})
         check("constraints add（全局）成功", r1.returncode == 0, r1.stderr[-200:])
         check("返回了 C- 编号", "C-0001" in r1.stdout, r1.stdout[-200:])
+
+        # 反转样本：标了 gate 却写不出命令，就是「声称有门禁、实际没有」。
+        # 这曾经是合法写法，CLI/面板会渲染成「有门禁」却从不执行（2026-11-17 实测）。
+        # 现在必须在写入端直接拒绝，从源头堵住假绿灯。
+        r_bad = truthctl("constraints", "add", "标了 gate 却没命令",
+                         extra={"KG_CONSTRAINT_KIND": "taboo",
+                                "KG_CONSTRAINT_ENFORCEABLE": "gate"})
+        check("gate 缺命令被拒（不再允许假绿灯入账）",
+              r_bad.returncode != 0, r_bad.stdout[-200:])
 
         r2 = truthctl("constraints", "add", "backend 不要加隐式网络依赖",
                       extra={"KG_CONSTRAINT_KIND": "expectation",
