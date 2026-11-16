@@ -150,6 +150,13 @@ def main():
         run([sys.executable, str(OPS / "test-project-router.py")],
             cwd=str(OPS.parent), check=True,
             env={**os.environ, "KG_AUTOPILOT_HOME": str(root / "autopilot-home")})
+        # 「装的版本」与「跑的版本」是两件事：Codex 升级插件时替换版本目录，却不
+        # 重启已经在跑的 MCP 进程。那些进程的 OPS_DIR 指向已删除的目录，每次调用
+        # kgctl 都只拿到 can't open file，而宿主只表现为「工具坏了」——不抛异常、
+        # 只是安静地失败（2026-11-16 实测：13 个进程 cwd 全是已删的 .82）。
+        # 这条门禁锁住：陈旧进程必须跟随 install-state 找到当前版本，且必须判 broken。
+        run([sys.executable, str(OPS / "test-plugin-live-ops.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()
@@ -1430,6 +1437,10 @@ def test_binding_preflight_rejects_empty_shell():
         }), encoding="utf-8")
         (temp_plugin / "ops" / "plugin_binding.py").write_text(
             (OPS / "plugin_binding.py").read_text(encoding="utf-8"), encoding="utf-8")
+        # 真实的插件 ops/ 里必定有 kgctl.py / central_mcp.py。夹具也必须像真的，
+        # 否则「跑的代码已被删除」那条陈旧判据会把一个健康夹具误报成 broken。
+        for _stub in ("kgctl.py", "central_mcp.py", "truthctl.py", "central_daemon.py"):
+            (temp_plugin / "ops" / _stub).write_text("# stub\n", encoding="utf-8")
 
         script = (
             "import json, sys; from pathlib import Path; "

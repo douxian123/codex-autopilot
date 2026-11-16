@@ -26,9 +26,109 @@ def plugin_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
+def running_ops() -> Path:
+    """本进程正在执行的那份代码所在的 ops/。
+
+    注意：这只是「跑的是哪一份」，不等于「现在装的是哪一份」——升级之后两者会分叉。
+    """
+    return Path(__file__).resolve().parent
+
+
+def _abs_from_home(raw) -> Path | None:
+    """install-state / marketplace 里的路径是相对 ~ 写的，例如
+    `./plugins/codex-autopilot/releases/0.6.0-preview.86`。"""
+    if not raw:
+        return None
+    cand = Path(str(raw)).expanduser()
+    if not cand.is_absolute():
+        cand = Path.home() / str(raw).lstrip("./")
+    return cand
+
+
+def _usable_ops(cand: Path | None) -> Path | None:
+    """一个 ops/ 只有同时带着 kgctl 和 central_mcp 才算能跑。"""
+    if cand is None:
+        return None
+    ops = cand if cand.name == "ops" else cand / "ops"
+    if (ops / "kgctl.py").exists() and (ops / "central_mcp.py").exists():
+        return ops
+    return None
+
+
+def current_ops() -> Path:
+    """当前**真正装好、可执行**的那份 ops/（只读解析，不写任何东西）。
+
+    为什么不能拿 `Path(__file__).resolve().parent` 就算完（2026-11-16 实测）：
+    Codex 把插件快照到 `~/.codex/plugins/cache/personal/codex-autopilot/<版本>/`，
+    并以那个版本目录为 cwd 常驻拉起 `./ops/central_mcp.py`。发新版时 Codex 会用新
+    版本目录替换旧的，**却不重启已经在跑的 MCP 进程**。于是那些进程握着一份已被
+    删除的目录：`OPS_DIR / "kgctl.py"` 根本不存在，每次工具调用都只拿到
+    `can't open file .../ops/kgctl.py`，而宿主那边只表现为「工具坏了」。
+    实测：13 个在跑的 `central_mcp.py`，cwd 全是已删除的 `.82`，而 `.86` 早已装好。
+
+    这和 disk_reap 那次「每小时跑着 44 个版本前的化石代码」是同一类失效，所以复用
+    同一套解析顺序：本目录能用就用本目录；否则跟随 install-state；再否则跟随
+    marketplace。全都读不到时才报自己。
+    """
+    here = _usable_ops(running_ops())
+    if here is not None:
+        return here
+    state = Path.home() / "plugins/codex-autopilot/install-state.json"
+    try:
+        data = json.loads(state.read_text(encoding="utf-8"))
+        found = _usable_ops(_abs_from_home(data.get("source")))
+        if found is not None:
+            return found
+    except (OSError, ValueError):
+        pass
+    market = Path.home() / ".agents/plugins/marketplace.json"
+    try:
+        data = json.loads(market.read_text(encoding="utf-8"))
+        for plugin in data.get("plugins") or []:
+            if not isinstance(plugin, dict) or plugin.get("name") != "codex-autopilot":
+                continue
+            src = plugin.get("source")
+            found = _usable_ops(
+                _abs_from_home(src.get("path") if isinstance(src, dict) else src))
+            if found is not None:
+                return found
+    except (OSError, ValueError):
+        pass
+    return running_ops()
+
+
+def stale_code_problem() -> str | None:
+    """在跑的这份代码目录还在不在——不在，就等于「装好了，但整条 MCP 已经哑了」。
+
+    这一条必须是**错误**而不是提醒：它不抛异常，只让每个工具调用安静地失败，正是
+    本项目硬规则里最难发现的那种假绿灯。
+    """
+    running = running_ops()
+    if (running / "kgctl.py").exists():
+        return None
+    live = current_ops()
+    return (f"正在运行的插件代码目录已被删除：{running}。"
+            "Codex 升级插件时会替换版本目录，但不会重启已经在跑的 MCP 进程，"
+            "于是那些进程每次调用 kgctl / truthctl 都只拿到 can't open file。"
+            f"重启 Codex，让 MCP 用当前版本（{live.parent.name}）重新拉起即可。")
+
+
+def binding_path() -> Path:
+    """绑定真相 `.mcp.json` 的位置。
+
+    正常就是本插件根下那一份。但当正在跑的目录已被升级替换掉时，那份 `.mcp.json`
+    也一起没了 —— 这时候得去**当前安装版本**读绑定，否则陈旧进程连「账该写到哪个
+    项目」都不知道，`binding_health()` 还会因此误判成「传统布局」直接 skip。
+    """
+    here = plugin_root() / ".mcp.json"
+    if here.exists():
+        return here
+    return current_ops().parent / ".mcp.json"
+
+
 def binding_env() -> dict:
     """读插件 `.mcp.json` 里为 codex-autopilot 声明的环境变量。"""
-    path = plugin_root() / ".mcp.json"
+    path = binding_path()
     if not path.exists():
         return {}
     try:
@@ -81,14 +181,26 @@ def binding_health() -> dict:
       - KG_TRUNK 尚未创建                       -> status=ok + warning（首次落盘时自建）
       - 全部通过                               -> status=ok
     """
-    if not (plugin_root() / ".mcp.json").exists():
-        return {"status": "skip", "repo": None, "trunk": None,
-                "problems": [], "warnings": []}
-
     env = binding_env()
     repo_raw = env.get("KG_REPO") or os.environ.get("KG_REPO")
     trunk_raw = env.get("KG_TRUNK") or os.environ.get("KG_TRUNK")
     problems: list[str] = []
+
+    # 「装的版本」和「跑的版本」是两件事：Codex 升级插件时替换版本目录，却不重启
+    # 已经在跑的 MCP 进程。那些进程的 OPS_DIR 会指向已删除的目录，每次调用 kgctl
+    # 都只拿到 can't open file —— 必须在这里变成明确的 broken，而不是静默假绿灯。
+    stale = stale_code_problem()
+    if stale:
+        problems.append(stale)
+
+    if not binding_path().exists():
+        if stale:
+            # 陈旧进程的 `.mcp.json` 跟着版本目录一起没了，但这**不是**「传统布局」；
+            # 直接判 skip 就是拿假绿灯盖住「整条 MCP 已经哑了」。
+            return {"status": "broken", "repo": repo_raw, "trunk": trunk_raw,
+                    "problems": problems, "warnings": []}
+        return {"status": "skip", "repo": None, "trunk": None,
+                "problems": [], "warnings": []}
 
     if not repo_raw:
         return {"status": "broken", "repo": None, "trunk": trunk_raw, "problems": [
