@@ -125,6 +125,15 @@ def main():
             print(f"  run  {guard}", flush=True)
             run([sys.executable, str(OPS / guard)],
                 cwd=str(OPS.parent), check=True)
+        # 真相同步的两条现场根因（2026-11-16 守护重启后第一拍实测）：
+        #   ① 被误提交进版本库的 `data/*.db-wal` 一 checkpoint 就留下 ` D`，从此每拍
+        #      都挡住真相层推送，路由结果永远推不上 main；
+        #   ② 旧版把 `docs/OCT29_PROGRESS_RADAR.generated.md`（脚本生成、文件头写明
+        #      「勿手改」）当成「非真相层改动」，同样每拍拒绝同步。
+        # 同时锁住「陈旧追加型台账不得删已落盘章节」——supersede 每拍切不回 main
+        # 就是这份截断快照造成的。
+        run([sys.executable, str(OPS / "test-truth-sync-sidecar-and-ledger.py")],
+            cwd=str(OPS.parent), check=True)
         # launchd 入口新鲜度：同一类病一共 6 条（disk-reap 只是其中一条）。
         # 这些脚本原来散在 ~/.codex-guard/ 这类「没有版本、没人升级」的位置，
         # 发版之后它们还在跑几周前的代码。门禁要求：要么住在版本目录里，

@@ -857,7 +857,8 @@ def cmd_supersede(args):
         _align_main()
         wt = _trunk_worktree()
         reset_trunk_head(wt)
-        dirty = [line for line in trunk_status(wt) if not is_truth_path(line)]
+        dirty = [line for line in trunk_status(wt)
+                 if not is_truth_path(line) and not is_runtime_sidecar(line)]
         if dirty:
             print(f"× 主干工作树有非真相层改动，拒绝 supersede：{wt}")
             print("\n".join(dirty[:20])[:800])
@@ -3394,8 +3395,11 @@ def _origin_contains(commit: str) -> bool:
 TRUTH_PATHS = ("ops/truth", "ops/tasks", "ops/context", "docs/PROJECT_STATUS.md",
                "docs/CONTROL_BOARD.md", "docs/CONTROL_PLANE.html",
                "docs/PRODUCT_MAINLINE.md", "docs/COCKPIT_BRIEF.md",
-               "docs/AGENT_SYNC.md")
+               "docs/AGENT_SYNC.md", "docs/OCT29_PROGRESS_RADAR.generated.md")
 TRUTH_COMMIT_RE = re.compile(r"^(chore\(truth\)|train: (sync|merge))")
+
+# 追加型台账：每拍追加 `## ` 条目，绝不能因为工作副本落后于 HEAD 而删掉已落盘章节。
+APPEND_ONLY_MARKDOWN = ("docs/COCKPIT_BRIEF.md", "docs/AGENT_SYNC.md")
 
 # 产品真相证据：这些文件由真实质量/运维命令生成，不能由旧真相同步或冲突合并覆盖。
 TRUTH_KEEP_IF_BASELINE_MISSING = ("ops/truth/benchmark-contract-report.json",
@@ -3418,13 +3422,33 @@ def trunk_status(wt: Path):
     return [line for line in out.splitlines() if line.strip()]
 
 
-def is_truth_path(line: str) -> bool:
-    """judge whether a `git status --porcelain` line belongs to the truth layer."""
+def _porcelain_body(line: str) -> str:
+    """从一行 `git status --porcelain` 里取出相对路径（重命名取新名）。"""
     body = line[3:].strip() if len(line) > 3 else line.strip()
     if " -> " in body:
         body = body.split(" -> ", 1)[1]
-    body = body.strip('"')
-    return any(body == t or body.startswith(t.rstrip("/") + "/") for t in TRUTH_PATHS)
+    return body.strip('"')
+
+
+def _truth_rel(path: str) -> bool:
+    path = path.strip().strip('"')
+    return any(path == t or path.startswith(t.rstrip("/") + "/") for t in TRUTH_PATHS)
+
+
+def is_truth_path(line: str) -> bool:
+    """judge whether a `git status --porcelain` line belongs to the truth layer."""
+    return _truth_rel(_porcelain_body(line))
+
+
+# SQLite 运行时伴随文件（WAL/SHM/journal）。它们由数据库进程在跑的时候边写边删，
+# 谁都没有「改」过它们；历史上被误提交进版本库后，一次 checkpoint 就会在工作区留下
+# 一条 ` D`，从此永远挡住真相同步（2026-11-16 实测：两条 wal 把 tick 的 [7/8] 卡死）。
+# 这类条目既不是真相层、也不是人造改动，判据里单独豁免，且**绝不**提交它们。
+RUNTIME_SIDECAR_RE = re.compile(r"(^|/)[^/]*\.db-(wal|shm|journal)$")
+
+
+def is_runtime_sidecar(line: str) -> bool:
+    return bool(RUNTIME_SIDECAR_RE.search(_porcelain_body(line)))
 
 
 def trunk_truth_commits(wt: Path, base: str = None):
@@ -3447,8 +3471,80 @@ def trunk_head_is_truth_only(wt: Path, base: str = None) -> bool:
     files = [f.strip().strip('"') for f in out.split("\n") if f.strip()]
     if not files:
         return False
-    return all(any(f == t or f.startswith(t.rstrip("/") + "/") for t in TRUTH_PATHS)
-               for f in files)
+    return all(_truth_rel(f) for f in files)
+
+
+def _union_markdown_sections(base: str, local: str, remote: str) -> str:
+    """按二级标题对追加型台账做并集，绝不因为一份陈旧快照而删掉已落盘章节。
+
+    Cockpit 台账每条 `## ` 标题就是一条记录。标题不同的全部保留；同一标题出现多次
+    时取更长的那份（保住完整记录，而不是只剩标题的半条）；长度相同时 base 优先，再按
+    字典序取一个，保证两个合并方向得到同一个结果。
+    """
+    def parse(text: str):
+        preamble, sections = [], []
+        for line in text.splitlines():
+            if line.startswith("## "):
+                sections.append([line, []])
+            elif sections:
+                sections[-1][1].append(line)
+            else:
+                preamble.append(line)
+        return preamble, sections
+
+    base_preamble, base_sections = parse(base)
+    local_preamble, local_sections = parse(local)
+    remote_preamble, remote_sections = parse(remote)
+    preamble = next((p for p in (local_preamble, remote_preamble, base_preamble) if p), [])
+
+    def render(section) -> str:
+        heading, lines = section
+        return "\n".join([heading, *lines]).rstrip()
+
+    base_by_heading = {heading: body for heading, body in base_sections}
+    ordered, by_heading = [], {}
+    for heading, body in [*base_sections, *local_sections, *remote_sections]:
+        text = render((heading, body))
+        if heading not in by_heading:
+            ordered.append(heading)
+            by_heading[heading] = text
+            continue
+        current = by_heading[heading]
+        base_text = render((heading, base_by_heading.get(heading, [])))
+        candidates = (base_text, current, text)
+        best = max(len(c) for c in candidates)
+        longest = [c for c in candidates if len(c) == best]
+        by_heading[heading] = longest[0] if base_text in longest else min(longest)
+
+    body = "\n\n".join(by_heading[heading] for heading in ordered)
+    prefix = "\n".join(preamble).rstrip()
+    if prefix and body:
+        return prefix + "\n\n" + body + "\n"
+    return (prefix or body) + ("\n" if prefix or body else "")
+
+
+def _reconcile_append_only_with_head(wt: Path, rel: str) -> bool:
+    """暂存前先把追加型台账的陈旧工作副本与 HEAD 版做「只增不减」并集。
+
+    根因（2026-10-27 第四次复现）：这两份文件常年落后于已提交 main，直接 `git add`
+    工作副本会把别的窗口已经落盘的整段章节删掉（实测一次删 232 行 + 75 行）。
+    """
+    head = proc_run(["git", "-C", str(wt), "show", f"HEAD:{rel}"],
+                          capture_output=True, text=True, errors="replace")
+    if head.returncode != 0:
+        return True  # HEAD 里还没有这个文件：没有已提交内容可丢
+    target = wt / rel
+    if not target.exists():
+        return True
+    try:
+        work_text = target.read_text(encoding="utf-8")
+    except OSError:
+        return True
+    merged = _union_markdown_sections(head.stdout, work_text, head.stdout)
+    if merged != work_text:
+        target.write_text(merged, encoding="utf-8")
+        print(f"  追加型台账 {rel} 已与 HEAD 并集对齐（防陈旧副本删章节）")
+    return True
 
 
 def _hash_blob(ref: str, rel: str) -> str:
@@ -3547,11 +3643,56 @@ def _snapshot_truth_files(wt: Path) -> dict:
 
 
 def _restore_truth_files(wt: Path, snap: dict) -> None:
-    """把 `_snapshot_truth_files` 抓到的真相文件写回工作树（纯加法，只写真相路径）。"""
+    """把 `_snapshot_truth_files` 抓到的真相文件写回工作树（纯加法，只写真相路径）。
+
+    追加型台账（Cockpit / Agent Sync）不能盲写回：快照抓到的常常是**落后于 main 的
+    陈旧副本**（实测 2026-11-16：工作副本比 main 少 10318 / 10616 行）。盲写回等于用
+    截断版盖掉 main 的完整章节，然后再提交——这正是历史上「一次删 232 行 + 75 行」的
+    同一种病。这里改成与切换后（= main）的内容做二级标题并集：main 的章节一个不少，
+    快照里独有的条目也保留。
+    """
     for rel, data in snap.items():
         dst = wt / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
+        if rel in APPEND_ONLY_MARKDOWN:
+            try:
+                snap_text = data.decode("utf-8")
+                current = dst.read_text(encoding="utf-8") if dst.exists() else ""
+            except (UnicodeDecodeError, OSError):
+                dst.write_bytes(data)
+                continue
+            # base = 切换后的内容（main）：同标题冲突时优先保住已经落盘的完整章节。
+            merged = _union_markdown_sections(current, snap_text, current)
+            dst.write_text(merged, encoding="utf-8")
+            continue
         dst.write_bytes(data)
+
+
+def _clean_for_checkout(wt: Path) -> None:
+    """切 main 前，把「已有内存快照或可确定性还原」的工作区改动先放掉。
+
+    事故（2026-11-16 实测）：trunk 工作树里两份追加型台账相对 HEAD 有改动，
+    `git checkout --detach main` 直接报「local changes would be overwritten」并中止，
+    于是 supersede / land 每一拍都失败。那两份改动本身是有价值的真相，不能丢；
+    但调用方已经 `_snapshot_truth_files` 抓进内存，切完会原样写回——所以这里放掉安全。
+
+    只动三类路径，其余一律不碰（碰了就会丢掉没提交的代码）：
+      * 真相层：已快照到内存，切完写回；
+      * 运行时伴随文件：数据库自己生成/删除的，放掉不损失任何信息；
+      * 再生目录（evidence 等）：内容在 git 里按字节保存，`checkout --` 就是原样还原。
+    """
+    for rel in TRUTH_PATHS:
+        proc_run(["git", "-C", str(wt), "checkout", "--", rel],
+                       capture_output=True, text=True)
+    for line in trunk_status(wt):
+        if is_runtime_sidecar(line):
+            proc_run(["git", "-C", str(wt), "checkout", "--", _porcelain_body(line)],
+                           capture_output=True, text=True)
+    try:
+        import workspace_guard as _wg
+        _wg.restore_regenerable_tracked(wt)
+    except Exception as exc:  # fail-open：还原不了就交给下面的 checkout 自己判定
+        print(f"  ! 再生目录还原失败（忽略）：{exc}")
 
 
 def reset_trunk_head(wt: Path) -> None:
@@ -3591,6 +3732,7 @@ def reset_trunk_head(wt: Path) -> None:
         print(f"  保留主干工作树上 {len(trunk_truth_commits(wt))} 条真相提交并同步 origin/{MAIN}")
         return
     snap = _snapshot_truth_files(wt)
+    _clean_for_checkout(wt)
     ok = proc_run(["git", "-C", str(wt), "checkout", "--detach", MAIN],
                         capture_output=True, text=True)
     if ok.returncode != 0:
@@ -3602,11 +3744,20 @@ def reset_trunk_head(wt: Path) -> None:
 
 
 def sync_trunk_truth(wt: Path, reason: str) -> bool:
-    """把主干工作树上真相层 / 生成视图的改动提交掉（只显式列出这些路径）。"""
+    """把主干工作树上真相层 / 生成视图的改动提交掉（只显式列出这些路径）。
+
+    判据分三类，缺一类就会永久卡死：
+      * 真相层 -> 本次要提交；
+      * 运行时伴随文件（`data/*.db-wal` 这类）-> 既不是人造改动也不该提交，豁免放行。
+        历史上它们被误提交进版本库，之后数据库每 checkpoint 一次就留下一条 ` D`，
+        2026-11-16 实测正是这两条 wal 让 tick 的 [7/8] 每拍都被拒、真相层永远推不上 main；
+      * 其余（代码 / 产品文件）-> fail-closed，绝不吞进 `chore(truth)`。
+    """
     pending = [line for line in trunk_status(wt) if is_truth_path(line)]
     if not pending:
         return False
-    dirty = [line for line in trunk_status(wt) if not is_truth_path(line)]
+    dirty = [line for line in trunk_status(wt)
+             if not is_truth_path(line) and not is_runtime_sidecar(line)]
     if dirty:
         # 共享检出里可能有并行任务在写代码/产品文件。只提交真相层会把它们吞进
         # `chore(truth)`，并让本地 main 与 origin/main 分叉，随后 land 永久卡死。
@@ -3621,6 +3772,10 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     if not _ensure_truth_baselines(wt):
         print("  × 稳定性基准保护失败，拒绝提交真相层")
         return False
+    # 追加型台账暂存前必须与已提交版本做并集：工作副本常常落后于 main，
+    # 直接 add 会把别的窗口已经落盘的整段章节删掉（实测一次删 232 + 75 行）。
+    for rel in APPEND_ONLY_MARKDOWN:
+        _reconcile_append_only_with_head(wt, rel)
     for rel in TRUTH_PATHS:
         if (wt / rel).exists():
             proc_run(["git", "-C", str(wt), "add", "--", rel],
@@ -3689,6 +3844,11 @@ def _resolve_truth_merge(wt: Path) -> bool:
         target = wt / rel
         if rel.endswith(".jsonl"):
             target.write_text(_union_jsonl_text(ours, theirs), encoding="utf-8")
+        elif rel in APPEND_ONLY_MARKDOWN:
+            # 追加型台账：stage1 = 共同祖先，stage2 = 本地真相，stage3 = origin/main。
+            # 按二级标题做并集，两条链上的每一拍都保留，绝不「远端优先」压掉本地新增。
+            base = _stage_blob(wt, 1, rel)
+            target.write_text(_union_markdown_sections(base, ours, theirs), encoding="utf-8")
         elif rel.endswith(".json"):
             if rel in TRUTH_KEEP_IF_BASELINE_MISSING:
                 # Product evidence snapshots are generated by real repo commands;
@@ -4400,7 +4560,8 @@ def cmd_land(args):
         wt = _trunk_worktree()
         reset_trunk_head(wt)
         _mirror_truth_into_trunk(wt)
-        dirty = [line for line in trunk_status(wt) if not is_truth_path(line)]
+        dirty = [line for line in trunk_status(wt)
+                 if not is_truth_path(line) and not is_runtime_sidecar(line)]
         if dirty:
             print(f"× 主干工作树有非真相层改动，拒绝 land：{wt}")
             print("\n".join(dirty[:20])[:800])
