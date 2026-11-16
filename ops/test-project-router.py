@@ -257,6 +257,54 @@ def main():
         check("同一仓库的 worktree / trunk 不会各占一条注册项",
               names.count("kg") == 1
               and not any(n.startswith("kg-") for n in names), names)
+
+        # ---- 13. 跨项目接力：归到别的项目后必须**当场归类**，不能只塞进 inbox ----
+        # 早先 intake 遇到「属于别的项目」只把记录写进目标 inbox 就返回，指望「那个项目
+        # 自己的守护」分类；但守护是全局单例、只认一个状态根，本机还停着。结果这条
+        # 需求永远停在「待路由」，既不在任何看板上也没人分类 —— 路由只做了一半。
+        relaybase = base / "relay"
+        relaybase.mkdir()
+        ra = git_init(make_state_root(relaybase, "gamma"))
+        rb = git_init(make_state_root(relaybase, "delta"))
+        pr.register("gamma", ra, path=home / "projects.json")
+        pr.register("delta", rb, path=home / "projects.json")
+        p = run_kgctl(ra, relaybase / "alpha-trunk", "intake",
+                      "delta项目的登录页排版坏了")
+        out = p.stdout + p.stderr
+        beta_inbox = (rb / "ops" / "tasks" / "inbox.jsonl").read_text(
+            encoding="utf-8").splitlines()
+        beta_rows = [json.loads(l) for l in beta_inbox if l.strip()]
+        check("归到别的项目时，目标 inbox 被标成已归类（routed=true）",
+              len(beta_rows) == 1 and beta_rows[0].get("routed") is True, beta_rows)
+        beta_ledger = (rb / "ops" / "truth" / "ledger.jsonl")
+        led = [json.loads(l) for l in beta_ledger.read_text(encoding="utf-8").splitlines()
+               if l.strip()] if beta_ledger.exists() else []
+        check("归到别的项目时，目标问题台账真的新增了一条",
+              len(led) == 1 and led[0].get("id"), led)
+        check("跨项目接力不许把记录写进当前绑定项目的账本",
+              not (ra / "ops" / "tasks" / "inbox.jsonl").read_text(
+                  encoding="utf-8").strip(), out[:300])
+
+        # ---- 14. 重名项目不许静默挑第一个 ----
+        # 本机真实存在两个仓库都叫 codex-autopilot（一个在 ~/.newmax/workspace，
+        # 一个在 ~/Documents/Codex）。显式指派时若取第一个命中，等于把活派去改另一个
+        # 仓库 —— 必须停下来让调用方看清是哪一个。
+        dupbase = base / "dup"
+        dupbase.mkdir()
+        d1 = git_init(make_state_root(dupbase, "same1"))
+        d2 = git_init(make_state_root(dupbase, "same2"))
+        pr.register("dup", d1, path=home / "projects.json")
+        pr.register("dup", d2, path=home / "projects.json")
+        why = []
+        got = pr.resolve_hint("dup", pr.load_registry(home / "projects.json"),
+                              detail=why)
+        check("重名项目做显式指派 → 不返回任何一个（不许挑第一个）",
+              got is None and why, (got, why))
+        p = run_kgctl(ra, relaybase / "alpha-trunk", "inbox", "指派给重名项目",
+                      extra_env={"KG_INBOX_PROJECT": "dup"})
+        out = p.stdout + p.stderr
+        check("重名项目做显式指派 → 停在待路由箱，不写任何项目账本",
+              "没写进任何项目账本" in out, out[:300])
     finally:
         shutil.rmtree(base, ignore_errors=True)
         os.environ.pop("KG_AUTOPILOT_HOME", None)
