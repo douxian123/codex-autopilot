@@ -192,6 +192,114 @@ def _constraint_candidates_summary():
     return {"status": "ok", "count": len(items), "items": items}
 
 
+def _steward_health(payload):
+    """六管家健康条：把六个管家的真实状态收敛成一份面板可读的清单。
+
+    用户问过「面板要怎么做」，也给过「万法归一入口 + 背后许多管家」的完整设想。
+    面板此前只散着显示路由/合并/实现/项目经理的一部分，状态与上下文管家按到最近
+    才有卡 —— 没有一个地方能一眼看出**哪个管家断了**。这里只做**聚合**，判据全部
+    来自各处已经算好的真实字段，不重算、不新增第二套真相。
+
+    每个管家给三样：`key`（稳定标识）、`state`（ok / attention / off / unknown）、
+    `label`（人话一行）。`state` 只有这四态：`attention` = 需要人或需要修，
+    `off` = 用户自己关的（不是故障），`unknown` = 取不到（不冒充正常）。
+    """
+    sw = payload.get("switches") or {}
+    daemon = payload.get("daemon") or {}
+    tune = payload.get("harness_tune") or {}
+    cand = payload.get("constraint_candidates") or {}
+    health = payload.get("harness_health") or {}
+    queue = payload.get("queue") or {}
+    counters = payload.get("counters") or {}
+    blocked = payload.get("blocked") or {}
+
+    rows = []
+
+    # 1. 上下文管家：自动收录候选 + 生效约束条数。候选待确认 = 需要人，不是故障。
+    try:
+        import constraints as constraints_mod
+        active = len(constraints_mod.active_constraints(_truth_dir() / "constraints.jsonl"))
+    except Exception:
+        active = None
+    pending_c = cand.get("count")
+    if cand.get("status") != "ok" or active is None:
+        rows.append({"key": "context", "state": "unknown",
+                     "label": "上下文管家：约束台账读不到"})
+    elif pending_c:
+        rows.append({"key": "context", "state": "attention",
+                     "label": "上下文管家：%s 条候选等你确认 · 已生效 %s 条" % (pending_c, active)})
+    else:
+        rows.append({"key": "context", "state": "ok",
+                     "label": "上下文管家：已生效 %s 条约束，无待确认" % active})
+
+    # 2. 路由管家：跨项目收口是不是真在跑。真实判据是全局待路由箱里还没归到项目的
+    # 条数（`_answer_needed_count`），不是 `_route_summary` 里的字段——它根本没有
+    # unrouted，写成那样会永远走「已归类」的假绿。
+    unrouted = _answer_needed_count()
+    if not daemon.get("live"):
+        rows.append({"key": "route", "state": "unknown",
+                     "label": "路由管家：守护没在跑，收口状态取不到"})
+    elif unrouted:
+        rows.append({"key": "route", "state": "attention",
+                     "label": "路由管家：%s 条还在等归属，没进任何项目" % unrouted})
+    else:
+        rows.append({"key": "route", "state": "ok",
+                     "label": "路由管家：新收需求都已归到项目"})
+
+    # 3. 合并管家：自动合入 / 拆冲突的开关与卡点。
+    if not sw.get("auto_land"):
+        rows.append({"key": "merge", "state": "off",
+                     "label": "合并管家：自动合入已关"})
+    elif blocked.get("failures") or blocked.get("resolve"):
+        rows.append({"key": "merge", "state": "attention",
+                     "label": "合并管家：%s 条卡在门禁 / %s 条待拆冲突"
+                     % (len(blocked.get("failures") or []), len(blocked.get("resolve") or []))})
+    else:
+        rows.append({"key": "merge", "state": "ok",
+                     "label": "合并管家：可合 %s · 已合 %s · 冲突 %s"
+                     % (queue.get("clean"), counters.get("landed"), queue.get("conflict"))})
+
+    # 4. 状态管家：待点头的 harness 调整卡 + 上下文健康结论。
+    if tune.get("status") != "ok":
+        rows.append({"key": "tune", "state": "unknown",
+                     "label": "状态管家：调整卡读不到"})
+    elif tune.get("count"):
+        rows.append({"key": "tune", "state": "attention",
+                     "label": "状态管家：%s 张调整卡等你点头（config 未动）" % tune.get("count")})
+    elif health.get("status") == "ok" and health.get("level") in ("warn", "over"):
+        rows.append({"key": "tune", "state": "attention",
+                     "label": "状态管家：%s" % (health.get("headline") or "上下文偏紧")})
+    else:
+        rows.append({"key": "tune", "state": "ok",
+                     "label": "状态管家：%s" % (health.get("headline") or "当前无待调整项")})
+
+    # 5. 实现管家：auto_exec 开关。关着是用户的选择（off），不是故障。
+    if not sw.get("auto_exec"):
+        rows.append({"key": "exec", "state": "off",
+                     "label": "实现管家：自动实现已关（只路由和合并，不自动写码）"})
+    elif blocked.get("exec"):
+        rows.append({"key": "exec", "state": "attention",
+                     "label": "实现管家：%s 条实现卡住" % len(blocked.get("exec") or [])})
+    else:
+        rows.append({"key": "exec", "state": "ok",
+                     "label": "实现管家：已开，会按槽位自动派活"})
+
+    # 6. 项目经理：对外可视的三问面板本身是否在产出。取不到就说取不到。
+    if payload.get("project", {}).get("path"):
+        rows.append({"key": "pm", "state": "ok",
+                     "label": "项目经理：已绑定 %s，三问面板在产出" % payload["project"]["name"]})
+    else:
+        rows.append({"key": "pm", "state": "unknown",
+                     "label": "项目经理：还没绑定项目"})
+
+    order = {"attention": 0, "unknown": 1, "off": 2, "ok": 3}
+    rows.sort(key=lambda r: order.get(r["state"], 9))
+    counts = {}
+    for r in rows:
+        counts[r["state"]] = counts.get(r["state"], 0) + 1
+    return {"rows": rows, "counts": counts}
+
+
 def _server_version() -> str:
     """版本以插件清单为准，避免 MCP 里再写死一份导致漂移。
 
@@ -1922,6 +2030,7 @@ def _status_payload(fast=True):
             "machine_verified": [],
             "human_accepted_count": None,
             "binding": health,
+            "stewards": _steward_health({}),
         }
         payload["__text__"] = (
             "自动挡 · 安装绑定失效\n"
@@ -2124,6 +2233,9 @@ def _status_payload(fast=True):
         # 面板只渲染，不再自己算 stage（唯一判据仍是 ops/stage_table.py）。
         "work_rows": _work_rows(Path(current_project).name),
     }
+    # 六管家健康条：一眼看出哪个管家断了（ok/attention/off/unknown 四态）。
+    # 必须等 payload 构造完再算——判据全来自上面这些字段，不能引用还在构造的自己。
+    payload["stewards"] = _steward_health(payload)
     payload["__text__"] = _status_text(payload)
     return payload
 
