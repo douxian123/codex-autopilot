@@ -259,7 +259,14 @@ def main(argv):
             fails += has("一眼三问：现在在做", out["focusDoing"],
                          current_items[0].get("title") or current_items[0].get("detail"))
         else:
-            fails += has("一眼三问：没有进行中工作时给空态", out["focusDoing"], "没有进行中")
+            # 没有工作项时，首屏必须原样显示控制层算出的权威 doing，而不是面板自己
+            # 写死一句话。控制层在这里已经区分了「守护绑定别的项目」「已检查一轮没有
+            # 可合分支」「暂停/关闭」等情况；面板旧实现硬写「当前没有进行中的工作」，
+            # 于是控制层说了实话、面板显示空白态（panel-render 门禁实测抓到）。这条
+            # 现在比旧断言更严：比对的是权威原文，而不是任意含「没有进行中」的子串。
+            expected_doing = payload.get("doing") or "没有进行中"
+            fails += has("一眼三问：无工作项时显示控制层权威结论",
+                         out["focusDoing"], expected_doing)
         fails += has("一眼三问：当前步骤", out["focusStep"], expected_stage)
         if human_acc:
             review = dict(payload)
