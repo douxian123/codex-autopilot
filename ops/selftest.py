@@ -193,6 +193,12 @@ def main():
         # 用的是同一套错误取值，两边一起错、门禁照样全绿。这条锁住归一与原值。
         run([sys.executable, str(OPS / "test-roadmap-status-alias.py")],
             cwd=str(OPS.parent), check=True)
+        # 工作项的 stage 判据只能有一份：原本 central_mcp / panel.html / doctor 三处
+        # 各写一条 if 链，本项目已经因此出现过「CLI 说没跑、面板说在跑」的自相矛盾。
+        # 这条锁住 first-match-wins 的优先级（出错>关闭>暂停>实现中>要你拍板>等你
+        # 验收>判不清>常驻没接上>有分支可合>闲），以及「缺项=不知道，不凭空报警」。
+        run([sys.executable, str(OPS / "test-stage-table.py")],
+            cwd=str(OPS.parent), check=True)
         # 上下文管家：约束台账必须能写、能按 scope 精准调取、能注入执行者 prompt。
         # 此前只有 judgments.jsonl（判断逻辑），没有 scope 也没有强制回路 ——
         # 写了不会被后续实现自动引用，等于「规范是文字，文字输给顺手」。

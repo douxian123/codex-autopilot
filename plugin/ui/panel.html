@@ -765,12 +765,18 @@
     var todoCount = s.todo_count || 0;
     var humanAcc = s.human_acceptance || [];
     var bl = s.blocked || {};
-    var doingN = doingItems.length + (s.exec_now ? 1 : 0);
-    var stuckN = (bl.failures ? bl.failures.length : 0) + (bl.resolve ? bl.resolve.length : 0) + (bl.exec ? bl.exec.length : 0);
-    num("stTodo", todoCount); num("stDoing", doingN); num("stReview", humanAcc.length); num("stStuck", stuckN);
-    el("stageTodo").className = "stage" + (todoCount > 0 ? " que" : "");
+    // 四个格子只在后台算一次（stage_table），面板照抄。宿主没给 counts
+    // （例如安装绑定失效那条极简 payload）才退回本地现算，保证不会显示成 0。
+    var cnt = s.counts || {};
+    var doingN = (cnt.doing != null) ? cnt.doing : doingItems.length + (s.exec_now ? 1 : 0);
+    var todoN = (cnt.todo != null) ? cnt.todo : todoCount;
+    var reviewN = (cnt.review != null) ? cnt.review : humanAcc.length;
+    var stuckN = (cnt.stuck != null) ? cnt.stuck
+      : (bl.failures ? bl.failures.length : 0) + (bl.resolve ? bl.resolve.length : 0) + (bl.exec ? bl.exec.length : 0);
+    num("stTodo", todoN); num("stDoing", doingN); num("stReview", reviewN); num("stStuck", stuckN);
+    el("stageTodo").className = "stage" + (todoN > 0 ? " que" : "");
     el("stageDoing").className = "stage" + (doingN > 0 ? " live" : "");
-    el("stageReview").className = "stage" + (humanAcc.length > 0 ? " rev" : "");
+    el("stageReview").className = "stage" + (reviewN > 0 ? " rev" : "");
     el("stageStuck").className = "stage" + (stuckN > 0 ? " hot" : "");
 
     var pb = el("pauseBtn");

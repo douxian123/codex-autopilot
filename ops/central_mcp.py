@@ -1505,6 +1505,33 @@ def _product_state(limit=25):
     return {"updated": data.get("updated"), "count": len(modules), "modules": modules[:limit]}
 
 
+def _answer_needed_count():
+    """判不清归属、还压在全局待路由箱里的投稿条数。
+
+    这些需求没进任何项目账本，只在待路由箱里——面板必须让它们露面，否则等于丢了。
+    取不到一律回 0：宁可少报一项「等你答一句」，也不要因为读不到就把现场说成有事。
+    """
+    try:
+        import project_router
+        path = project_router.routing_inbox_path()
+        if not path.exists():
+            return 0
+        n = 0
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not rec.get("routed"):
+                n += 1
+        return n
+    except Exception:
+        return 0
+
+
 def _active_judgments(limit=12):
     """判断逻辑台账（只取 active），供面板展示「同一个判断人只做一次」。"""
     out = []
@@ -1716,28 +1743,35 @@ def _status_payload(fast=True):
     lifecycle = control_state.lifecycle_status(ctrl)
 
     exec_now = _running_exec() if live else None
-    if ctrl.get("error"):
-        state_key, state_label = "error", "状态异常，已安全暂停"
-    elif not enabled:
-        state_key, state_label = "off", "自动挡已关闭，Codex 已恢复原生状态"
-    elif paused:
-        state_key, state_label = "paused", "已暂停"
-    elif exec_now:
-        state_key, state_label = "working", "正在自动实现一条需求"
-    elif failures:
-        state_key, state_label = "blocked", "有分支需要你拍板"
-    elif board["human"]:
-        state_key, state_label = "blocked", "需要你验收"
-    elif not live:
-        state_key, state_label = "session_only", (
-            "当前项目未连接常驻守护"
-            if job_running and daemon_project and daemon_project != current_project
-            else "仅会话内运行（常驻未开）"
-        )
-    elif summary.get("clean") or summary.get("merged"):
-        state_key, state_label = "working", "正在检查可合入的分支"
-    else:
-        state_key, state_label = "idle", "运行中，暂无待办"
+
+    # 「现在处在哪一步」只由 stage_table 里那一张 first-match-wins 表说了算。
+    # 面板的 body.s-*、state_label、四个计数格子全部来自这一次判定；CLI / doctor
+    # 想要同一句话也调同一个函数，不再各写一条 if 链。
+    import stage_table  # noqa: E402  只读纯函数，无副作用
+    # 「需要你拍板」= 真的合不进去、必须人定的那些（原判定只用 land failures）。
+    # resolve / port 那两条队列是**机器自己在推**的，把它们也算成「要你拍板」会把
+    # 正常现场抬成警报——这里保持原语义，不动。
+    blocked_n = len(failures)
+    # 面板第 4 格「卡住」沿用原口径：failures + resolve + exec（port 仍只进明细面板）。
+    stuck_n = len(failures) + len(blocked) + len(st.get("exec_blocked") or {})
+    review_n = len(board["human"])
+    stage = stage_table.panel_stage({
+        "error": ctrl.get("error"),
+        "enabled": enabled,
+        "paused": paused,
+        "exec_running": bool(exec_now),
+        "blocked_count": blocked_n,
+        "review_count": review_n,
+        "answer_count": _answer_needed_count(),
+        "daemon_live": bool(live),
+        "daemon_other_project": bool(
+            job_running and daemon_project and daemon_project != current_project),
+        "queued_count": (1 if (summary.get("clean") or summary.get("merged")) else 0),
+    })
+    state_key, state_label = stage["ui_state"], stage["label"]
+    counts = stage_table.stage_counts(
+        doing=len(board["doing"]), todo=board["todo_count"],
+        review=review_n, stuck=stuck_n, exec_running=bool(exec_now))
 
     # 大白话的「正在做什么 / 为什么 / 最近做了什么 / 需要你做什么」。
     if not enabled:
@@ -1876,6 +1910,10 @@ def _status_payload(fast=True):
         "human_acceptance": board["human"],
         "machine_verified": board["machine"],
         "human_accepted_count": board["human_done_count"],
+        # stage_table 的同一个结论：面板拿它填格子与状态，不必再自己算一遍。
+        "stage": stage["stage"],
+        "stage_owner": stage["owner"],
+        "counts": counts,
     }
     payload["__text__"] = _status_text(payload)
     return payload
