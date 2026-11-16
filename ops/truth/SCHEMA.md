@@ -20,7 +20,6 @@ ops/truth/
   product_state.json # 产品状态：产品今天实际是怎么工作的（按模块，随代码同步）
   decisions.jsonl    # 决策台账：做过哪些决定、为什么、备选是什么（追加式）
   judgments.jsonl    # 判断逻辑台账：人为什么这么判断（每轮蒸馏回写，追加式）
-  constraints.jsonl  # 约束台账：用户说过的预期/返修/决策/禁忌，带 scope 用于精准调取（追加式）
   ledger.jsonl       # 问题台账：bug / 视觉 / 体验 / 架构问题（追加式，带状态与泳道）
   progress.jsonl     # 进展台账：每条泳道最近干了什么、是否落盘（追加式）
   acceptance.jsonl   # 验收台账：实现模块 / 验收项 / 状态 / 证据 / 人工复核步骤（追加式）
@@ -63,20 +62,6 @@ ops/truth/
 `status` ∈ `active` | `retired`。与 ledger 的区别：ledger 记「这个项目哪里有问题」，
 judgment 记「以后遇到同类情况该怎么判断」——记的是判断逻辑，不是一次性细节，
 这样下一次换一个地方也不用重新讲一遍。
-
-### constraints.jsonl
-
-额外字段：`statement`（用户原话，不改写）、`kind`（`expectation` 预期 /
-`rework` 返修 / `decision` 决策 / `taboo` 禁忌）、`scope`（管哪些路径或模块的 glob 列表）、
-`enforceable`（`none` 纯记录 / `gate` 有机器门禁 / `checklist` 人验收项）、
-`policy_version`、`supersedes`。`status` ∈ `active` | `retired`。
-
-与 judgments 的分工（有意分开，别混）：judgment 记「以后遇到同类情况该怎么判断」，
-跨场景复用；constraint 记「这个项目的这个范围必须/不得如何」，带 scope、可被**精准调取**。
-实现某处改动时，`kgctl context <分支>` 会按这条分支实际改动的文件，只带命中 scope 的
-约束（scope 为空 = 全局约束，恒命中）；派 worker 时同样的匹配结果会直接拼进它的 prompt。
-这解决的是「规范是文字，文字输给顺手」——不是提醒模型去读，而是把相关约束直接给它。
-`enforceable=none` 要如实标：它就是「这条没有机器兜底」的诚实声明，靠注入 + 人验收兜。
 
 ### product_state.json（单对象，非追加）
 
