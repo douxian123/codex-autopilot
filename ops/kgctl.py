@@ -5117,9 +5117,16 @@ def _truth(sub, *extra):
     path = _truthctl_path()
     env = os.environ.copy()
     env["KG_REPO"] = str(REPO)
-    rc = proc_run([sys.executable, str(path), sub, *extra],
-                        cwd=str(path.parent.parent), env=env)
-    return rc.returncode
+    res = proc_run([sys.executable, str(path), sub, *extra],
+                   cwd=str(path.parent.parent), env=env,
+                   capture_output=True, text=True)
+    if res.stdout:
+        sys.stdout.write(res.stdout)
+        sys.stdout.flush()
+    if res.stderr:
+        sys.stderr.write(res.stderr)
+        sys.stderr.flush()
+    return res.returncode
 
 
 def _relay_route_to_project(target_root, route) -> bool:

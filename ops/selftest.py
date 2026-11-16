@@ -237,6 +237,13 @@ def main():
         # 这条锁住：陈旧锁会被隔离留证、真持有者的锁绝不搬动、探不清时 loud-fail。
         run([sys.executable, str(OPS / "test-truth-sync-index-lock.py")],
             cwd=str(OPS.parent), check=True)
+        # 「万法归一」入口的转发出口：kgctl 把 route/snapshot/synthesize/next 委托给
+        # truthctl，却用 proc_run 捕获子进程输出后整段丢弃，只带回退出码。实测
+        # `kgctl route` 0 字节 / 内门 1460 字节、`kgctl next` 0 字节 / 127 字节 ——
+        # 守护返回码 0、日志 rc=0，用户从总入口什么都看不到，是最难发现的假绿灯。
+        # 这条锁住：stdout/stderr 都原样透传、退出码不被顺手改绿。
+        run([sys.executable, str(OPS / "test-kgctl-truth-output.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()
