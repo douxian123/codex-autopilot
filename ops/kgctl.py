@@ -1499,8 +1499,99 @@ def cmd_route(args):
 
     委托给 truthctl 的 route，读写同一份 inbox 与问题台账。旧的「按文件重叠给建议」
     挪到 `kgctl suggest`，避免「两个 route 各读各的文件、各说各话」再次出现。
+
+    `--all` 再多扫一层：除当前绑定项目，把**其他已注册项目**的 inbox 也路由掉。
+    守护是全局单例、只认一个 `KG_REPO`，没有这一层，用户在别的项目窗口里提的
+    需求会永远停在「待路由」（2026-11-18 实测：`codex-autopilot` 账本里 8 条
+    躺了 7~20 天，而守护每 15 分钟都报 rc=0）。
     """
-    return _truth("route", *args)
+    sweep = "--all" in args
+    rest = [a for a in args if a != "--all"]
+    rc = _truth("route", *rest)
+    if sweep:
+        # 绑定项目的退出码以 rc 为准；别的项目各自的失败已在它自己的输出里如实打了
+        # 出来，不回滚、也不冒充成绑定项目的成功或失败。
+        _route_all_projects(go="--go" in rest)
+    return rc
+
+
+def _registered_roots(exclude=None) -> list:
+    """已注册项目里去重后的状态根（按 git 仓库身份去重，不按路径字符串）。"""
+    out, seen = [], set()
+    skip = {str(Path(exclude).resolve())} if exclude else set()
+    try:
+        registry = project_router.load_registry()
+    except Exception:
+        return out
+    for row in registry:
+        root = Path(str(row.get("root") or "")).expanduser()
+        if not str(root):
+            continue
+        try:
+            key = str(root.resolve())
+        except OSError:
+            continue
+        if key in seen or key in skip:
+            continue
+        if not looks_like_state_root(root):
+            continue
+        seen.add(key)
+        out.append((row.get("name") or root.name, root))
+    return out
+
+
+def _route_all_projects(go=True) -> list:
+    """把**其他已注册项目**各自 inbox 里的待路由项，交给它们自己的 truthctl 归类。
+
+    为什么需要（2026-11-18 实测）：守护是全局单例，route pass 只跑当前绑定的
+    `KG_REPO`。于是「万法归一」入口只在绑定项目上归一——用户在 `codex-autopilot`
+    这类别的项目窗口提的需求写进了它自己的 inbox，却没有任何人在跑它的 route，
+    永久停在 `routed=false`：既不在看板上、也不进台账、也不报错。
+
+    这里只跑目标项目自己的 `truthctl route`（写它自己的泳道 + 问题台账 + 回写
+    routed），不 land、不 merge、不碰代码，也不动当前绑定项目的账本。某个项目
+    失败只如实报出来，不影响其他项目、也不改调用方的退出码。
+    """
+    targets = _registered_roots(exclude=REPO)
+    if not targets:
+        return []
+    results = []
+    for name, root in targets:
+        inbox = root / "ops" / "tasks" / "inbox.jsonl"
+        try:
+            pending = [r for r in read_jsonl(inbox) if not r.get("routed")]
+        except OSError:
+            pending = []
+        if not pending:
+            continue
+        own = root / "ops" / "truthctl.py"
+        path = own if own.is_file() else (RUNTIME_OPS / "truthctl.py")
+        if not path.is_file():
+            print(f"  ! 跳过「{name}」：找不到 truthctl（{path}）", flush=True)
+            results.append({"project": name, "root": str(root), "pending": len(pending),
+                            "ok": False, "detail": "找不到 truthctl"})
+            continue
+        env = os.environ.copy()
+        env["KG_REPO"] = str(root)
+        env.pop("KG_TRUNK", None)
+        argv = [sys.executable, str(path), "route"] + (["--go"] if go else [])
+        try:
+            res = proc_run(argv, cwd=str(root), env=env,
+                           capture_output=True, text=True)
+        except OSError as exc:
+            print(f"  ! 跳过「{name}」：调不起 truthctl（{exc}）", flush=True)
+            results.append({"project": name, "root": str(root), "pending": len(pending),
+                            "ok": False, "detail": str(exc)})
+            continue
+        ok = res.returncode == 0
+        print(f"\n[路由接力] 「{name}」待路由 {len(pending)} 条 "
+              f"({'已归类' if ok else '失败'}）", flush=True)
+        for line in ((res.stdout or "") + (res.stderr or "")).strip().splitlines():
+            if line.strip():
+                print("  " + line, flush=True)
+        results.append({"project": name, "root": str(root), "pending": len(pending),
+                        "ok": ok, "detail": (res.stderr or "").strip()[-200:]})
+    return results
 
 
 def cmd_suggest(args):

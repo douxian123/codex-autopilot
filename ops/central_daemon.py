@@ -4391,7 +4391,11 @@ def _pass_route(ctx: dict) -> dict:
     dispatch_exec 只看账本里已经存在的行；路由放在派活之后，会让刚收进来的
     需求白等一整拍，而那时所有工作槽都空着。
     """
-    rc, out = run_kgctl(["route", "--go"], timeout=TICK_TIMEOUT)
+    # `--all`：守护是全局单例、只认一个 KG_REPO。不加这一层，用户在别的项目窗口
+    # 提的需求会写进那个项目的 inbox，却没有任何人在跑它的 route —— 永久停在
+    # 「待路由」，既不在看板上、也不进台账、也不报错（2026-11-18 实测：
+    # codex-autopilot 账本里 8 条躺了 7~20 天，而本守护每 15 分钟都报 rc=0）。
+    rc, out = run_kgctl(["route", "--all", "--go"], timeout=TICK_TIMEOUT)
     log_block("route(pre-exec)", rc, out)
     ctx["route_rc"], ctx["route_out"] = rc, out
     return {"rc": rc}
