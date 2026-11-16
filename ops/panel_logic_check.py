@@ -372,6 +372,22 @@ def main(argv):
         fails += has("调整卡写明改前备份/可回滚", tout["blockedList"], "一键回滚")
         fails += has("调整卡写明不点的后果", tout["blockedList"], "config 一个字都不动")
 
+        # 上下文管家的约束候选也必须真的上屏，并且写清「收进规范会怎样 /
+        # 不算会怎样」。候选绝不能自动生效（它一进 constraints.jsonl 就参与落盘
+        # 门禁），所以面板必须给出「算 / 不算」两条明确出口，而不是只展示不动作。
+        cand = dict(payload)
+        cand["constraint_candidates"] = {"status": "ok", "count": 1, "items": [{
+            "id": "CC-9001", "text": "以后都不许用 git add -A",
+            "title": "以后都不许用 git add -A", "kind": "taboo",
+            "scope": ["AGENTS.md"], "signals": ["以后都", "不许"],
+        }]}
+        cout = run_once(cand)
+        fails += has("上下文管家的约束候选上屏", cout["blockedList"], "CC-9001")
+        fails += has("候选附上用户原话", cout["blockedList"], "以后都不许用 git add -A")
+        fails += has("候选写明命中信号", cout["blockedList"], "以后都")
+        fails += has("候选写明不算就什么都不生效", cout["blockedList"],
+                     "不算", "什么都不生效")
+
         fails += has("首屏开关文案与控制层一致", out["masterState"],
                      "已关闭" if not payload.get("enabled") else "正在运行")
         fails += has("原生直连结论如实显示", out["nativeState"],

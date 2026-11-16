@@ -169,6 +169,29 @@ _HARNESS_KEY_LABEL = {
 }
 
 
+def _constraint_candidates_summary():
+    """上下文管家：待用户点头的「约束候选」（只读，绝不在这里写生效约束）。
+
+    候选由守护每拍扫已路由的入口原话提出（见 constraint_candidates.py）；这里只把
+    「有几条、原话是什么、命中什么信号」拼给面板。候选**不参与落盘门禁**，只有人
+    显式点头 promote 才升成生效约束。取不到就说取不到，不用「0 条」冒充。
+    """
+    try:
+        import constraint_candidates
+        rows = constraint_candidates.pending()
+    except Exception as exc:
+        return {"status": "unknown", "reason": f"读不到约束候选（{exc!r}）", "items": []}
+    items = [{
+        "id": r.get("id"),
+        "text": r.get("text"),
+        "title": r.get("title"),
+        "kind": r.get("kind"),
+        "scope": r.get("scope") or [],
+        "signals": r.get("signals") or [],
+    } for r in rows]
+    return {"status": "ok", "count": len(items), "items": items}
+
+
 def _server_version() -> str:
     """版本以插件清单为准，避免 MCP 里再写死一份导致漂移。
 
@@ -724,6 +747,38 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {"id": {"type": "string", "description": "调整卡 id，如 T-0001"}},
+            "required": ["id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "constraint_candidates_list",
+        "description": "上下文管家：列出待你点头的「约束候选」。这些候选由守护扫已路由的入口原话自动提出（命中「绝不/必须/不许/以后都/记住」等规范性措辞），附上你的原话与命中信号。候选**不参与落盘门禁**，不点头就什么都不生效。用户问“上下文管家收了我哪些说法 / 有没有待确认的约束”时用它。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "constraint_candidate_promote",
+        "description": "上下文管家：把一条候选升成真正生效的项目约束（走 truthctl constraints add）。只有用户明确点头才能调用（confirm=true 是「人已同意」的语义）。生效后这条会参与落盘门禁与执行者 prompt，所以必须由人确认。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "候选 id，如 CC-0001"},
+                "confirm": {"type": "boolean",
+                            "description": "必须为 true：代表用户已经明确同意这条约束"},
+            },
+            "required": ["id", "confirm"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "constraint_candidate_dismiss",
+        "description": "上下文管家：把一条候选标记为「不算」——它既不会生效，以后同一句原话也不会再弹回来。用户说“这条不算 / 我不是那个意思 / 别收这条”时用它。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "候选 id，如 CC-0001"},
+                "reason": {"type": "string", "description": "为什么不算（可选，仅留档）"},
+            },
             "required": ["id"],
             "additionalProperties": False,
         },
@@ -2049,6 +2104,7 @@ def _status_payload(fast=True):
         "closure_rate": _closure_rate_summary(),
         "harness_health": _harness_health(),
         "harness_tune": _harness_tune_summary(),
+        "constraint_candidates": _constraint_candidates_summary(),
         "mainline": _mainline_summary(),
         # fast=True 是面板/开关那条路：只读缓存，不连宿主，绝不因此变慢。
         "route": _route_summary(timeout=0.0 if fast else None),
@@ -2270,7 +2326,7 @@ def call_tool(name, args):
         "suggest_branch", "resolve_list", "resolve_plan", "generate_context",
         "dashboard", "autopilot_status", "render_autopilot_panel",
         "autopilot_settings_read", "codex_native_threads", "codex_native_probe",
-        "harness_tune_list",
+        "harness_tune_list", "constraint_candidates_list",
     }
     control_tools = {
         "autopilot_control", "autopilot_run_once",
@@ -2471,6 +2527,28 @@ def call_tool(name, args):
             res = harness_tune.apply(rid, confirm=bool(args.get("confirm")))
         else:
             res = harness_tune.rollback(rid)
+        return json.dumps(res, ensure_ascii=False, indent=1), (
+            0 if res.get("status") != "error" else 2)
+    if name in ("constraint_candidates_list", "constraint_candidate_promote",
+                "constraint_candidate_dismiss"):
+        import constraint_candidates
+        if name == "constraint_candidates_list":
+            rows = constraint_candidates.pending()
+            if not rows:
+                return ("上下文管家：当前没有待你确认的约束候选。"
+                        "（生效约束台账一个字都没动）", 0)
+            return constraint_candidates.human(), 0
+        cid = (args.get("id") or "").strip()
+        if not cid:
+            return f"{name} 需要 id（如 CC-0001）", 2
+        if name == "constraint_candidate_promote":
+            # confirm 就是「人已明确同意」的语义；不给就一律拒绝，绝不自动写生效约束。
+            if not bool(args.get("confirm")):
+                return ("升成生效约束必须由人明确点头：请带 confirm=true（或直接在面板上点同意）。"
+                        "候选本身不影响任何门禁。", 2)
+            res = constraint_candidates.promote(cid)
+        else:
+            res = constraint_candidates.dismiss(cid, args.get("reason") or "")
         return json.dumps(res, ensure_ascii=False, indent=1), (
             0 if res.get("status") != "error" else 2)
     if name == "suggest_branch":

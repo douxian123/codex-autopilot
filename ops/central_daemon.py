@@ -5359,6 +5359,14 @@ def loop(interval_min: int, max_land: int, dry: bool,
                 harness_tune.daemon_hook(dry=dry, log_fn=log)
             except Exception as exc:
                 log(f"[tune] 出卡跳过（fail-open）：{exc!r}")
+            # 上下文管家（fail-open）：扫已路由的入口原话，命中规范性措辞就出「约束候选卡」。
+            # 与状态管家同族：**只提名、从不写生效约束** —— 真正升成约束必须由人显式点头
+            # （见 constraint_candidates.py）。候选不参与落盘门禁，异常一律吞掉。
+            try:
+                import constraint_candidates
+                constraint_candidates.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[constraint] 提名跳过（fail-open）：{exc!r}")
             # 空转记分（fail-open）：给每一拍分类，连续空转就点名并把记分写进下一拍的 prompt。
             # 与预算闸门同族：只读判定、动作显式、一键关、异常一律吞掉。
             try:

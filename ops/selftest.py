@@ -259,6 +259,14 @@ def main():
         # section 里的同名键不动、取不到体检证据就不出卡。
         run([sys.executable, str(OPS / "test-harness-tune.py")],
             cwd=str(OPS.parent), check=True)
+        # 上下文管家：用户要的是「任何入口说过的预期/返修/禁忌自动收成项目约束，
+        # 说过一次就不再犯」。实测 `truthctl route` 只写泳道与问题台账，从不蒸馏约束
+        # （本项目 constraints.jsonl 长期 0 条），自动收录根本没接线。这条锁住候选：
+        # 只扫已路由的入口原话、命中规范性措辞才提名、描述现状的句子不误收、
+        # 提名阶段绝不写生效台账、promote 才走 truthctl 真写、按原话去重（dismiss
+        # 过的同句不再弹回）。
+        run([sys.executable, str(OPS / "test-constraint-candidates.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()
