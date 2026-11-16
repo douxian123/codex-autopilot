@@ -28,13 +28,31 @@ from pathlib import Path
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "codex-autopilot"
 
-# 本进程启动时所在的 ops/。版本目录可能已经被 Codex 升级时替换掉，所以下面还会
-# 用 plugin_binding.current_ops() 复核一次（见 2026-11-16 的陈旧进程事故）。
+# 本进程启动时所在的 ops/，也就是**正在跑的这份代码**。
+# 注意它不等于「现在装的是哪一份」：Codex 升级插件会删掉旧的版本目录，而这个
+# 已经在跑的进程不会重启（见 2026-11-16 的陈旧进程事故）。所以凡是去调
+# kgctl / truthctl 的地方，路径都必须在那一次调用的当下解析，不能在这里算一次就
+# 锁死 —— 那样等于把「目录被删」这件事固化进进程内存，原故障照旧复现。
 RUNNING_OPS = Path(__file__).resolve().parent
-OPS_DIR = RUNNING_OPS
-REPO = OPS_DIR.parent
-KGCTL = OPS_DIR / "kgctl.py"
-TRUTHCTL = OPS_DIR / "truthctl.py"
+
+from plugin_binding import (apply_plugin_env, binding_health, binding_line,  # noqa: E402
+                            current_ops, stale_code_problem)
+
+
+def _live_ops() -> Path:
+    """这一次调用当下「真正装好的那份 ops/」。
+
+    为什么必须是函数、而不是模块级常量（2026-11-16 实测）：升级删掉旧版本目录的
+    动作发生在进程启动**之后**。若在 import 时把路径算一次，那时候旧目录还在，
+    `current_ops()` 会合法地判定「本目录能用」并返回它，路径就被锁死在一个很快
+    会被删掉的目录上 —— 之后每次调用照样 `can't open file`，原故障一字未改。
+    """
+    return current_ops()
+
+
+def _fallback_repo() -> Path:
+    """没有显式 KG_REPO 时，子进程该把 cwd / 状态根落在哪。"""
+    return _live_ops().parent
 
 
 def _closure_rate_summary():
@@ -45,7 +63,7 @@ def _closure_rate_summary():
     """
     try:
         import closure_rate
-        res = closure_rate.compute(os.environ.get("KG_REPO") or REPO)
+        res = closure_rate.compute(os.environ.get("KG_REPO") or _fallback_repo())
     except Exception as exc:  # 模块坏了本身就是要上报的问题，不能静默成「没问题」
         res = {"status": "unknown",
                "reason": "闭环率计算失败（%s）" % exc,
@@ -63,9 +81,13 @@ def _closure_rate_line(res):
 
 
 def _server_version() -> str:
-    """版本以插件清单为准，避免 MCP 里再写死一份导致漂移。"""
+    """版本以插件清单为准，避免 MCP 里再写死一份导致漂移。
+
+    读的是**当前装好的那一份**清单，不是本进程启动时的旧目录 —— 旧目录在升级后
+    已经不存在，读它只会退回 "0.0.0"，让面板看不出自己到底跑的是哪一代。
+    """
     for rel in (".codex-plugin/plugin.json", "plugin/.codex-plugin/plugin.json"):
-        manifest = OPS_DIR.parent / rel
+        manifest = _live_ops().parent / rel
         try:
             return json.loads(manifest.read_text(encoding="utf-8")).get("version", "0.0.0")
         except (OSError, ValueError):
@@ -74,17 +96,6 @@ def _server_version() -> str:
 
 
 SERVER_VERSION = _server_version()
-
-from plugin_binding import (apply_plugin_env, binding_health, binding_line,  # noqa: E402
-                            current_ops, stale_code_problem)
-
-# 复核一次「真正装好的那份在哪」：Codex 升级插件时会替换版本目录，却不重启已经在
-# 跑的 MCP 进程，于是本进程的 OPS_DIR 可能指向一个已被删除的目录 —— 那样每次调用
-# kgctl / truthctl 都只会拿到 `can't open file`，而宿主只表现为「工具坏了」。
-OPS_DIR = current_ops()
-REPO = OPS_DIR.parent
-KGCTL = OPS_DIR / "kgctl.py"
-TRUTHCTL = OPS_DIR / "truthctl.py"
 
 import control_state  # noqa: E402
 import codex_native  # noqa: E402
@@ -105,8 +116,9 @@ PANEL_URI = "ui://autopilot/panel-v2.html"
 
 def _panel_html_path():
     """面板 HTML 在源码树里是 plugin/ui/，自包含安装后是 <插件根>/ui/。"""
-    for cand in (OPS_DIR.parent / "ui" / "panel.html",
-                 OPS_DIR.parent / "plugin" / "ui" / "panel.html"):
+    root = _live_ops().parent
+    for cand in (root / "ui" / "panel.html",
+                 root / "plugin" / "ui" / "panel.html"):
         if cand.exists():
             return cand
     return None
@@ -118,7 +130,7 @@ def _run(argv, extra_env=None, timeout=900):
         env.update({k: str(v) for k, v in extra_env.items() if v is not None})
     # cwd 用状态根：kgctl 的 git 回退路径（worktree list / rev-parse）要落在目标项目里，
     # 而不是插件自己所在的目录（那里通常不是一个 Git 仓库）。
-    cwd = os.environ.get("KG_REPO") or str(REPO)
+    cwd = os.environ.get("KG_REPO") or str(_fallback_repo())
     try:
         p = subprocess.run([sys.executable, *argv], capture_output=True, text=True,
                            cwd=cwd, env=env, timeout=timeout)
@@ -131,11 +143,11 @@ def _run(argv, extra_env=None, timeout=900):
 
 
 def kgctl(*args, extra_env=None):
-    return _run([str(KGCTL), *args], extra_env)
+    return _run([str(_live_ops() / "kgctl.py"), *args], extra_env)
 
 
 def truthctl(*args, extra_env=None):
-    return _run([str(TRUTHCTL), *args], extra_env)
+    return _run([str(_live_ops() / "truthctl.py"), *args], extra_env)
 
 
 TOOLS = [
@@ -637,7 +649,7 @@ def _daemon_live():
         import daemon_liveness
     except Exception:
         return False, None, None
-    st = daemon_liveness.daemon_liveness(os.environ.get("KG_REPO") or REPO)
+    st = daemon_liveness.daemon_liveness(os.environ.get("KG_REPO") or _fallback_repo())
     return bool(st.get("live")), st.get("pid"), st.get("bound_repo")
 
 
@@ -653,7 +665,7 @@ def _daemon_liveness_problem(daemon_enabled=True):
     except Exception:
         return None
     try:
-        st = daemon_liveness.daemon_liveness(os.environ.get("KG_REPO") or REPO)
+        st = daemon_liveness.daemon_liveness(os.environ.get("KG_REPO") or _fallback_repo())
         return daemon_liveness.liveness_problem(st, daemon_enabled)
     except Exception:
         return None
@@ -697,7 +709,7 @@ def _open_ledger_count():
 
 
 def _truth_dir():
-    repo = os.environ.get("KG_REPO") or str(REPO)
+    repo = os.environ.get("KG_REPO") or str(_fallback_repo())
     return Path(repo) / "ops" / "truth"
 
 
@@ -995,7 +1007,7 @@ def _project_folders(fast=True):
     自己的 ops/truth，绝不写回，也不把别的项目工作项混进当前项目。读不到某个项目
     账本时，该文件夹保留并明确标成无法读取，不静默显示 0。
     """
-    current = str(Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve())
+    current = str(Path(os.environ.get("KG_REPO") or _fallback_repo()).expanduser().resolve())
     ml = _mainline_summary()
     board = _acceptance_board()
     road = _roadmap()
@@ -1157,7 +1169,7 @@ def _auto_section_name():
     """
     base = codex_native.DEFAULT_SECTION_NAME
     try:
-        project = Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve().name
+        project = Path(os.environ.get("KG_REPO") or _fallback_repo()).expanduser().resolve().name
     except (OSError, ValueError):
         project = ""
     return "%s · %s" % (base, project) if project else base
@@ -1575,7 +1587,7 @@ def _status_payload(fast=True):
         )
         return payload
     job_running, pid, daemon_project = _daemon_live()
-    current_project = str(Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve())
+    current_project = str(Path(os.environ.get("KG_REPO") or _fallback_repo()).expanduser().resolve())
     live = bool(job_running and daemon_project == current_project)
     daemon_problem = _daemon_liveness_problem(bool(ctrl.get("daemon_enabled", True)))
     st = _daemon_state() if live else {}
@@ -1866,7 +1878,7 @@ def control_action(action, enabled=None):
             return control_state.mutation_guard(), 2
         if control_state.is_paused():
             return "当前处于暂停中，不会偷偷跑一轮。先恢复运行再试。", 2
-        daemon = OPS_DIR / "central_daemon.py"
+        daemon = _live_ops() / "central_daemon.py"
         control_state.append_event("run_once")
         out, rc = _run([str(daemon), "--once"], timeout=2400)
         return _with_status("已跑完一轮：\n" + out), rc
@@ -1885,7 +1897,7 @@ def control_action(action, enabled=None):
     if action in ("enable_daemon", "disable_daemon"):
         if not control_state.is_enabled():
             return control_state.mutation_guard(), 2
-        daemon = OPS_DIR / "central_daemon.py"
+        daemon = _live_ops() / "central_daemon.py"
         want = action == "enable_daemon"
         out, rc = _run([str(daemon), "--install" if want else "--uninstall"], timeout=120)
         if rc == 0:

@@ -77,10 +77,23 @@ proc_run = _proc.run
 
 HERE = Path(__file__).resolve().parent
 CODE_ROOT = HERE.parent
-KGCTL = HERE / "kgctl.py"
 
 
-from plugin_binding import apply_plugin_env  # noqa: E402
+from plugin_binding import apply_plugin_env, binding_path, current_ops  # noqa: E402
+
+
+def _live_ops() -> Path:
+    """这一次子进程调用当下「真正装好的那份 ops/」。
+
+    守护是 launchd 常驻进程，形态和 MCP 一样：它在某个版本目录还健在时启动，之后
+    那份目录若被删掉（手清 / 外部回收），任何在 import 时算死的路径都会让每一拍
+    `kgctl` / `truthctl` 静默失败 —— 不抛异常、只是不干活（见 2026-11-16 的
+    central_mcp 同类事故）。所以子进程路径必须在那一次调用的当下解析。
+
+    注意 HERE 保留给 plist 身份判定用：那问的是「装的是哪一份、launchd 指着谁」，
+    和「这一拍该拿哪份代码干活」是两件事，不能混。
+    """
+    return current_ops()
 
 import central_config  # noqa: E402
 import control_state  # noqa: E402
@@ -243,12 +256,13 @@ def run_kgctl(args, timeout=TICK_TIMEOUT, env_extra=None, stream=True):
     超时一律 killpg 收整个进程组（只 kill 直接子进程会留下 git 孙进程，
     就是历史上那类「僵尸服务存活几小时」的形态）。
     """
-    cmd = [sys.executable, str(KGCTL), *args]
+    ops = _live_ops()
+    cmd = [sys.executable, str(ops / "kgctl.py"), *args]
     env = {**os.environ, **env_extra} if env_extra else None
     started = time.monotonic()
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, errors="replace", cwd=str(CODE_ROOT),
+                                text=True, errors="replace", cwd=str(ops.parent),
                                 env=env, start_new_session=True)
     except OSError as exc:
         return 125, f"调用 kgctl 失败: {exc}"
@@ -362,7 +376,9 @@ def _state_repo():
     if repo:
         return Path(repo).expanduser()
     try:
-        data = json.loads((HERE.parent / ".mcp.json").read_text(encoding="utf-8"))
+        # 走 binding_path()：本目录被删掉时它会去当前安装版本读那份 .mcp.json，
+        # 而不是拿着一个已经不存在的路径空手而归。
+        data = json.loads(binding_path().read_text(encoding="utf-8"))
         env = (data.get("mcpServers") or {}).get("codex-autopilot", {}).get("env") or {}
         if env.get("KG_REPO"):
             return Path(env["KG_REPO"]).expanduser()
@@ -1147,11 +1163,12 @@ def _prune_exec_blocked(blocked: dict) -> list:
 
 
 def _run_truthctl(args, extra_env=None, timeout=120):
-    cmd = [sys.executable, str(HERE / "truthctl.py"), *args]
+    ops = _live_ops()
+    cmd = [sys.executable, str(ops / "truthctl.py"), *args]
     env = {**os.environ, **extra_env} if extra_env else None
     try:
         r = proc_run(cmd, capture_output=True, text=True, errors="replace",
-                           cwd=str(CODE_ROOT), timeout=timeout, env=env)
+                           cwd=str(ops.parent), timeout=timeout, env=env)
         return r.returncode, (r.stdout or "") + (r.stderr or "")
     except (OSError, subprocess.TimeoutExpired) as exc:
         return 124, f"调用 truthctl 失败/超时: {exc}"

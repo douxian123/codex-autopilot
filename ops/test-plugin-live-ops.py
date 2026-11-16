@@ -20,6 +20,13 @@
   2. 本目录已被删除时，`current_ops()` 必须跟随 install-state 找到当前安装版本
   3. 这种情况下 `stale_code_problem()` 必须报错，且 `binding_health()` 判 broken
      —— 绝不能退回「一切正常」的假绿灯
+  4. 真实的失效时间线：**先加载成功，之后目录才被删，再调用必须能改道**。
+
+第 4 条是补上的，因为前三条单独跑绿**并不足以**挡住真 bug（2026-11-16 实测）：
+前三条探的是「目录早就没了」，可那种情况下脚本根本起不来，现实中不会出现。
+真正出事的形态是 —— 进程在旧目录还健在时启动，`OPS_DIR` 在 import 那一刻被算成
+常量锁死，升级把目录删掉之后，每次调用照样 `can't open file`。所以必须把路径解析
+做成**调用时**进行，并由这条门禁把「import 时就锁死」钉成回归。
 """
 
 import importlib.util
@@ -75,6 +82,47 @@ def probe(ops_dir, home):
                          capture_output=True, text=True, env=env)
     if out.returncode != 0:
         raise AssertionError("探针跑不起来：\n%s\n%s" % (out.stdout, out.stderr))
+    return json.loads(out.stdout.strip().splitlines()[-1])
+
+
+def probe_load_then_delete(running_ops_dir, home, env_extra=None):
+    """真实失效时间线：**先成功加载，之后目录才被删，再调用必须能改道**。
+
+    这是前三条检查挡不住的那条路（2026-11-16 实测）：进程在旧目录还健在时启动，
+    如果路径在 import 那一刻被算成常量，就会锁死在一个很快会被删掉的目录上，升级
+    之后每次调用照样 `can't open file`。
+
+    子进程里做三件事：import 真·central_mcp（此时目录还在）→ 把目录整个改名搬走
+    （等价于 Codex 升级删掉旧版本缓存）→ 再问一次 `_live_ops()` 落在哪。
+    """
+    code = (
+        "import importlib.util, json, os, sys\n"
+        "ops = sys.argv[1]\n"
+        "sys.path.insert(0, ops)\n"
+        "spec = importlib.util.spec_from_file_location('central_mcp', ops + '/central_mcp.py')\n"
+        "m = importlib.util.module_from_spec(spec)\n"
+        "sys.modules['central_mcp'] = m\n"
+        "spec.loader.exec_module(m)\n"
+        "before = str(m._live_ops())\n"
+        "before_exists = os.path.isfile(before + '/kgctl.py')\n"
+        "os.rename(sys.argv[2], sys.argv[2] + '-deleted')\n"
+        "after = str(m._live_ops())\n"
+        "after_exists = os.path.isfile(after + '/kgctl.py')\n"
+        "print(json.dumps({'before': before, 'after': after,\n"
+        "                  'before_ok': before_exists, 'after_ok': after_exists},\n"
+        "                 ensure_ascii=False))\n"
+    )
+    env = dict(os.environ)
+    env["HOME"] = str(home)
+    env.pop("KG_REPO", None)
+    env.pop("KG_TRUNK", None)
+    if env_extra:
+        env.update(env_extra)
+    out = subprocess.run(
+        [sys.executable, "-c", code, str(running_ops_dir), str(running_ops_dir)],
+        capture_output=True, text=True, env=env)
+    if out.returncode != 0:
+        raise AssertionError("时间线探针跑不起来：\n%s\n%s" % (out.stdout, out.stderr))
     return json.loads(out.stdout.strip().splitlines()[-1])
 
 
@@ -135,6 +183,30 @@ def main():
               Path(got["current"]).resolve() == stale_ops.resolve(), got["current"])
         check("这种情况下仍是 broken",
               got["health"].get("status") == "broken", got["health"].get("status"))
+
+        print("4) 真实时间线：先加载成功，之后目录才被删，再调用必须改道")
+        (home / "plugins" / "codex-autopilot" / "install-state.json").write_text(
+            json.dumps({"version": "0.6.0-preview.86",
+                        "source": "./plugins/codex-autopilot/releases/0.6.0-preview.86"}),
+            encoding="utf-8")
+        # 造一份「正在跑的旧版本缓存」：真·central_mcp + 真·plugin_binding 都在，
+        # 所以 import 那一刻本目录是完好可用的 —— 这正是出事现场。
+        cache_ops = home / "cache" / "codex-autopilot" / "0.6.0-preview.82" / "ops"
+        cache_ops.mkdir(parents=True, exist_ok=True)
+        for src in OPS.glob("*.py"):
+            (cache_ops / src.name).write_text(
+                src.read_text(encoding="utf-8"), encoding="utf-8")
+        check("模拟现场：加载时旧目录完好、kgctl.py 在",
+              (cache_ops / "kgctl.py").exists() and (cache_ops / "central_mcp.py").exists())
+        got = probe_load_then_delete(cache_ops, home)
+        check("加载那一刻 _live_ops() 就是这份旧目录（现场属实）",
+              Path(got["before"]).resolve() == cache_ops.resolve(), got["before"])
+        check("加载时旧目录里的 kgctl.py 真的在（不是空目录）",
+              got["before_ok"] is True, got["before_ok"])
+        check("目录被删后再解析必须改道到当前安装版本",
+              Path(got["after"]).resolve() == (installed / "ops").resolve(), got["after"])
+        check("改道后那份 kgctl.py 必须存在（不许再 can't open file）",
+              got["after_ok"] is True, got["after_ok"])
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
