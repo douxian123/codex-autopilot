@@ -1611,6 +1611,15 @@
     var xe = (s.blocked && s.blocked.exec) || [];
     xe.forEach(function(x){ items.push({tag:"实现暂缓", cls:"", text:(x.id||"") + (x.reason? " · "+x.reason : ""),
       act:"retry", why:"点它会立刻让自动挡再检查一轮（不改代码、不动 main）；不点就继续挂着，等下一拍自己重试。"}); });
+    // 状态管家提出的 harness 调整卡：改配置会影响你接下来的所有会话，所以它
+    // 绝不自动应用 —— 卡片只列在这里，你点了才改，改前按字节备份、随时可一键回滚。
+    var ht = s.harness_tune || {};
+    (ht.items || []).forEach(function(x){
+      items.push({tag:"待你点头", cls:"warn",
+        text:(x.id||"") + " · " + (x.label||x.key) + "：" + x.old + " → " + x.new,
+        act:"tune", id:x.id, why:(x.why||"") +
+          "；点它会改这一项（改前自动备份，随时可一键回滚）；不点就保持现状，config 一个字都不动。"});
+    });
     if (s.error) items.unshift({tag:"异常", cls:"err", text:s.error, act:"retry",
       why:"点它会立刻让自动挡再检查一轮（不改代码、不动 main）；不点就继续停在异常。"});
     if (!items.length){ ul.innerHTML = '<div class="empty">没有需要你决策的，也没有异常。</div>'; return; }
@@ -1633,15 +1642,20 @@
     msg.textContent = it.why || "点它会推进一步；不点就继续挂着。";
     var btn = document.createElement("button");
     btn.className = "btn primary"; btn.type = "button";
-    btn.textContent = it.act === "resolve" ? "放宽闸门再拆一次" : "立刻再检查一轮";
+    btn.textContent = it.act === "resolve" ? "放宽闸门再拆一次"
+      : it.act === "tune" ? "同意，改这一项" : "立刻再检查一轮";
     btn.addEventListener("click", function(){
       btn.disabled = true;
       var was = btn.textContent; btn.textContent = "正在处理…";
       var call = (it.act === "resolve")
         ? callTool("resolve_start", {branch: it.branch, confirm: true, max_files: 16, max_lines: 3000})
-        : callTool("autopilot_run_once", {});
+        : (it.act === "tune")
+          ? callTool("harness_tune_apply", {id: it.id, confirm: true})
+          : callTool("autopilot_run_once", {});
       call.then(function(){
-        toast(it.act === "resolve" ? ("已按更大闸门重拆 " + (it.branch || "")) : "已跑完一轮", "ok");
+        toast(it.act === "resolve" ? ("已按更大闸门重拆 " + (it.branch || ""))
+          : it.act === "tune" ? "已改这一项，可随时一键回滚"
+          : "已跑完一轮", "ok");
         return loadStatus(false);
       }).catch(function(e){
         toast("操作没成功：" + (e && e.message || e), "err");
