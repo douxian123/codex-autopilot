@@ -302,6 +302,38 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
+        "name": "constraints_add",
+        "description": "把用户说过的一句预期/返修/决策/禁忌收成一条带 scope 的项目约束。目的是“说过一次就不再犯”：scope 写清管哪些路径/模块，实现那块改动时系统会自动把相关约束拼给执行者。能写成断言的门禁填 gate，审美/手感填 checklist，老实标 none。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "statement": {"type": "string", "description": "约束原话（用户怎么说就怎么记，别改写）"},
+                "kind": {"type": "string", "enum": ["expectation", "rework", "decision", "taboo"],
+                         "description": "预期 / 返修 / 决策 / 禁忌，默认 expectation"},
+                "scope": {"type": "string",
+                          "description": "管哪些路径或模块，冒号分隔的 glob，如 “backend:plugin/ui/*.html”；留空=全局约束（恒命中）"},
+                "enforceable": {"type": "string", "enum": ["none", "gate", "checklist"],
+                                "description": "none=纯记录 / gate=有机器门禁 / checklist=人验收项，默认 none"},
+                "policy_version": {"type": "string", "description": "约束版本标识，可选（用于改动传播）"},
+                "supersedes": {"type": "string", "description": "被这条取代的旧约束 id，可选"},
+            },
+            "required": ["statement"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "constraints_list",
+        "description": "列出项目约束台账；带 files 时只列命中这些路径的（这就是“精准调取”：不是把全部上下文喂进去）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "files": {"type": "array", "items": {"type": "string"},
+                          "description": "改动文件路径，可选；给了就只返回命中的约束"},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "close_item",
         "description": "关闭问题台账里的一条（bug/视觉/体验/架构）：标 done 并把结论追加成进展；可带 commit 与证据。用户报的 bug 修完、验收过之后调用，让它从「收到」走到「已关闭」，不再依赖用户自己记。",
         "inputSchema": {
@@ -2172,6 +2204,22 @@ def call_tool(name, args):
         return truthctl("distill", "add", statement, extra_env=env)
     if name == "synthesize_mainline":
         return truthctl("synthesize")
+    if name == "constraints_add":
+        statement = (args.get("statement") or "").strip()
+        if not statement:
+            return "constraints_add 需要 statement", 2
+        env = {"KG_CONSTRAINT_KIND": args.get("kind") or None,
+               "KG_CONSTRAINT_SCOPE": args.get("scope") or None,
+               "KG_CONSTRAINT_ENFORCEABLE": args.get("enforceable") or None,
+               "KG_CONSTRAINT_POLICY": args.get("policy_version") or None,
+               "KG_CONSTRAINT_SUPERSEDES": args.get("supersedes") or None}
+        return truthctl("constraints", "add", statement, extra_env=env)
+    if name == "constraints_list":
+        argv = ["constraints"]
+        files = args.get("files") or []
+        if files:
+            argv += ["--files", ":".join(files)]
+        return truthctl(*argv)
     if name == "close_item":
         rid = (args.get("id") or "").strip()
         if not rid:

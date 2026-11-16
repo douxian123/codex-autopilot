@@ -10,6 +10,7 @@ truthctl 管「这个项目现在到底是什么状态」。
   product_state.json 产品状态：产品今天是怎么工作的（随代码同步更新，人只看它的变化）
   decisions.jsonl    决策台账
   judgments.jsonl    判断逻辑台账：人为什么这么判断（每轮蒸馏回写）
+  constraints.jsonl  约束台账：用户说过的预期/返修/决策/禁忌，带 scope 精准调取
   ledger.jsonl       问题台账（bug/视觉/体验/架构）
   progress.jsonl     进展台账
   acceptance.jsonl   验收台账
@@ -24,6 +25,8 @@ truthctl 管「这个项目现在到底是什么状态」。
   truthctl product set "<模块>" "<行为>"  更新一个模块（why/files 走环境变量）
   truthctl distill             回看这一轮人额外说了什么，列候选判断
   truthctl distill add "<判断>"  把判断背后的判断逻辑写回（why/scope 走环境变量）
+  truthctl constraints add "<约束>"  记一条约束（kind/scope/enforceable 走环境变量）
+  truthctl constraints [--files a:b]  列出约束；带 --files 只列命中的
   truthctl close <L-id> "<结论>"  标 done（必须带证据：KG_TRUTH_EVIDENCE 或 KG_TRUTH_COMMIT）
   truthctl reopen <L-id> "<原因>"  把已关闭的问题重新打开
   truthctl accept "<标题>" [--human --steps "..."]  登记验收项，分清机器自证/人工验收
@@ -71,6 +74,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from plugin_binding import apply_plugin_env  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, resolve_state_root  # noqa: E402
+import constraints as constraints_mod  # noqa: E402
 import central_config  # noqa: E402
 
 # 自包含安装下，绑定的项目写在插件 .mcp.json 里；显式 KG_REPO 优先。
@@ -98,7 +102,7 @@ def _kgctl_cmd() -> str:
 
 
 PREFIX = {'decision': 'D', 'ledger': 'L', 'progress': 'P', 'acceptance': 'A',
-          'judgment': 'J'}
+          'judgment': 'J', 'constraint': 'C'}
 LEDGER_KINDS = {'visual', 'ux', 'bug', 'arch', 'gate'}
 LANES = REPO / 'ops' / 'tasks' / 'lanes.json'
 # 从具体到泛化：第一条命中的规则就是归类结果。可用 central.config.json 的
@@ -142,7 +146,7 @@ def _read(path: Path) -> list:
 
 FILES = {'decision': 'decisions.jsonl', 'ledger': 'ledger.jsonl',
          'progress': 'progress.jsonl', 'acceptance': 'acceptance.jsonl',
-         'judgment': 'judgments.jsonl'}
+         'judgment': 'judgments.jsonl', 'constraint': 'constraints.jsonl'}
 
 
 def _read_json(path: Path) -> dict:
@@ -873,6 +877,86 @@ def cmd_distill(args):
           '（product/design/arch/process）。')
 
 
+def cmd_constraints(args):
+    """约束台账：把用户说过的预期/返修/决策/禁忌收成一条带 scope 的约束。
+
+    与 `judgments.jsonl` 的区别（这条分工是有意的，别混）：
+      * judgment 记「以后遇到同类情况该怎么判断」（判断逻辑，跨场景复用）；
+      * constraint 记「这个项目的这个范围必须/不得如何」（带 scope，可被精准调取，
+        实现某处改动时只带相关的那几条）。
+    约束写进来不是终点：能机器验证的走 `enforceable=gate`，审美/手感走
+    `checklist`，剩下的诚实标 `none`（它就是在说「这条没有机器兜底」）。
+    """
+    mode = args[0] if args else None
+
+    if mode in ('add', 'set', 'upsert'):
+        statement = ' '.join(args[1:]).strip()
+        if not statement:
+            sys.exit('用法: truthctl constraints add "<约束原话>"'
+                     '（KG_CONSTRAINT_KIND / KG_CONSTRAINT_SCOPE / '
+                     'KG_CONSTRAINT_ENFORCEABLE 走环境变量）')
+        kind = (os.environ.get('KG_CONSTRAINT_KIND') or 'expectation').strip()
+        enforceable = (os.environ.get('KG_CONSTRAINT_ENFORCEABLE') or 'none').strip()
+        scope = [s for s in re.split(r'[:,\n]', os.environ.get('KG_CONSTRAINT_SCOPE', ''))
+                 if s.strip()]
+        rec = _append_new('constraint',
+                          statement=statement, title=statement[:80],
+                          kind=kind, enforceable=enforceable,
+                          scope=scope,
+                          policy_version=os.environ.get('KG_CONSTRAINT_POLICY') or None,
+                          supersedes=os.environ.get('KG_CONSTRAINT_SUPERSEDES') or None,
+                          source=os.environ.get('KG_TRUTH_SOURCE', 'user'),
+                          status='active')
+        where = '、'.join(scope) if scope else '全局'
+        print(f"已记入约束 [{rec['id']}]（{kind}/{enforceable}，范围：{where}）："
+              f"{statement[:70]}")
+        return
+
+    if mode in ('retire', 'drop'):
+        rid = (args[1] if len(args) > 1 else '').strip()
+        if not rid:
+            sys.exit('用法: truthctl constraints retire <C-id>')
+        path = TRUTH / FILES['constraint']
+        with _truth_lock():
+            row = _latest_by_id(_read(path)).get(rid)
+            if row is None:
+                sys.exit(f'约束台账里没有 {rid}')
+            merged = dict(row)
+            merged['status'] = 'retired'
+            merged['ts'] = time.strftime('%Y-%m-%d %H:%M:%S')
+            _append(merged)
+        print(f'已停用约束 [{rid}]')
+        return
+
+    if mode in ('-h', '--help'):
+        print('用法: truthctl constraints add "<约束>" | truthctl constraints'
+              ' [--files a:b] | truthctl constraints retire <C-id>')
+        return
+
+    # 列出台账；带 --files 时只列命中这些路径的（pid=精准调取）。
+    files = []
+    if '--files' in args:
+        idx = args.index('--files')
+        if idx + 1 < len(args):
+            files = [s for s in re.split(r'[:,\n]', args[idx + 1]) if s.strip()]
+    path = TRUTH / FILES['constraint']
+    # 按 id 收敛后再数：追加式台账里同 id 会有多条状态覆盖行，直接数物理行会把
+    # 停用条数算虚（实测把 1 条报成 2 条）。停用数 = 唯一 id 数 - 生效条数。
+    unique_ids = {r.get('id') for r in constraints_mod.read_rows(path) if r.get('id')}
+    retired = len(unique_ids) - len(constraints_mod.active_constraints(path))
+    rows = (constraints_mod.matching_constraints(path, files) if files
+            else constraints_mod.active_constraints(path))
+    print(f'=== 约束台账（{len(rows)} 条生效'
+          + (f'，另 {retired} 条已停用' if retired else '') + '）===')
+    if files:
+        print(f'（只看命中这些路径的：{"、".join(files)}）')
+    if not rows:
+        print('  （还没有约束。用 truthctl constraints add "<约束>" 记一条。）')
+    for r in rows:
+        print('  ' + constraints_mod.render_line(r))
+    print('\n调取约定：scope 为空 = 全局约束（恒命中）；写了 scope 就只在改动命中时带上。')
+
+
 def _coerce_evidence(evidence):
     """evidence 历史上出现过 str / list / None 三种类型；统一成单个字符串。"""
     if not evidence:
@@ -1265,6 +1349,7 @@ def cmd_snapshot(args):
 CMDS = {'add': cmd_add, 'ls': cmd_ls, 'snapshot': cmd_snapshot, 'promote': cmd_promote,
         'route': cmd_route, 'lanes': cmd_lanes, 'next': cmd_next,
         'product': cmd_product, 'distill': cmd_distill,
+        'constraints': cmd_constraints,
         'close': cmd_close, 'open': cmd_open, 'synthesize': cmd_synthesize,
         'accept': cmd_accept}
 

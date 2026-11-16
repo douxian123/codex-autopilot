@@ -100,6 +100,7 @@ import control_state  # noqa: E402
 import pass_registry  # noqa: E402
 from pass_registry import Pass, Registry  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
+import constraints as constraints_mod  # noqa: E402
 import live_guard  # noqa: E402
 import workspace_guard  # noqa: E402
 
@@ -1232,6 +1233,23 @@ def _resolve_exec_prompt(item: dict) -> str:
     return "\n".join(lines)
 
 
+def _constraints_for(files) -> list:
+    """按改动文件挑出相关约束；读不到台账就返回空表，绝不假装「没有约束」。
+
+    约束台账在状态根下（`_state_repo()`），和 truthctl 写的是同一份文件。
+    取不到（状态根没解析出来、文件不存在、读失败）时返回空表——调用方据此
+    不写「无约束」那一句，避免把「取不到」说成「没有」。
+    """
+    try:
+        repo = _state_repo()
+        if not repo:
+            return []
+        path = Path(repo) / "ops" / "truth" / "constraints.jsonl"
+        return constraints_mod.matching_constraints(path, files or [])
+    except Exception:
+        return []
+
+
 def _exec_prompt(item: dict) -> str:
     if item.get("kind") == "resolve":
         return _resolve_exec_prompt(item)
@@ -1246,6 +1264,13 @@ def _exec_prompt(item: dict) -> str:
         lines += ["", "补充说明：", str(item["detail"])]
     if files:
         lines += ["", "相关文件线索：" + "、".join(str(f) for f in files)]
+    # 上下文管家：把用户说过的、和这次改动相关的约束直接给到执行者，不让它自己
+    # 想起来。scope 为空的约束是全局红线（恒命中）；取不到台账时这一段为空，
+    # 不阻断派活——但不能假装「没有约束」，所以取不到时不写「无约束」这句。
+    _constraints = _constraints_for(files)
+    if _constraints:
+        lines += ["", "本项目已确认的约束（用户说过一次，必须遵守）："]
+        lines += [constraints_mod.render_line(r) for r in _constraints]
     lines += [
         "",
         "硬规则（必须遵守）：",

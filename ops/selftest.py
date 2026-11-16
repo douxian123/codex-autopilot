@@ -193,6 +193,11 @@ def main():
         # 用的是同一套错误取值，两边一起错、门禁照样全绿。这条锁住归一与原值。
         run([sys.executable, str(OPS / "test-roadmap-status-alias.py")],
             cwd=str(OPS.parent), check=True)
+        # 上下文管家：约束台账必须能写、能按 scope 精准调取、能注入执行者 prompt。
+        # 此前只有 judgments.jsonl（判断逻辑），没有 scope 也没有强制回路 ——
+        # 写了不会被后续实现自动引用，等于「规范是文字，文字输给顺手」。
+        run([sys.executable, str(OPS / "test-constraints-intake.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()
@@ -6216,6 +6221,7 @@ def test_mcp_contract():
         missing = {"product_state", "product_update", "distill_review",
                    "distill_add", "synthesize_mainline", "close_item",
                    "reopen_item", "register_acceptance",
+                   "constraints_add", "constraints_list",
                    "codex_native_dispatch_task", "codex_native_follow_up"} - tool_names
         assert not missing, f"缺少自动挡工具: {sorted(missing)}"
 
