@@ -2983,6 +2983,28 @@ def cmd_reap(args):
 
 # ---------------------------------------------------------------- 落盘：merge train
 
+def _trunk_is_foreign_clone(wt: Path) -> bool:
+    """主干路径是否属于**另一个 clone**，而不是本仓库的 worktree。
+
+    判据用仓库身份（git common dir），不是路径或目录名——本机有两份 remote 相同的
+    clone（`~/.newmax/workspace/codex-autopilot` 与
+    `~/Documents/Codex/codex-autopilot-native-autopilot`），路径长得再像也判不出来。
+
+    拿不到身份（不是 git 仓库 / git 报错）时返回 False：那种情况交给下游
+    `worktree add` 或 checkout 自己报错，不在这里猜。
+    """
+    try:
+        if not wt.exists():
+            return False
+    except OSError:
+        return False
+    mine = project_router.identity(REPO)
+    theirs = project_router.identity(wt)
+    if not theirs:
+        return False
+    return bool(mine) and theirs != mine
+
+
 def _trunk_worktree():
     """落盘必须在**独立主干工作树**里做。
 
@@ -2997,6 +3019,18 @@ def _trunk_worktree():
         # 所以这里强制改用默认的 `<项目名>-trunk`。
         fallback = REPO.parent / (REPO.name + "-trunk")
         print(f"  !KG_TRUNK 指向状态根本身（{REPO}），已改用独立主干工作树：{fallback}")
+        wt = fallback
+    if _trunk_is_foreign_clone(wt):
+        # 配置里的 trunk_dir 也可能指向**另一个 clone**（本仓实测就写死了一条
+        # ~/Documents/Codex/codex-autopilot-native-autopilot-trunk：remote 相同、
+        # git common dir 不同）。那不是「本项目的落盘主干」，而是另一份检出。
+        # land 会在主干里 checkout main / merge / reset HEAD —— 跑到别人的检出里做
+        # 这些，既是破坏性修改，也会因为那边有自己的未跟踪 runtime 产物而必然失败
+        # （实测：「untracked working tree files would be overwritten by checkout」）。
+        # 身份不是本仓库就退回默认的 `<项目名>-trunk`。
+        fallback = REPO.parent / (REPO.name + "-trunk")
+        print(f"  !配置的落盘主干属于另一个 clone（{wt}），"
+              f"已改用本仓库主干：{fallback}")
         wt = fallback
     if not (wt / ".git").exists():
         wt.parent.mkdir(parents=True, exist_ok=True)

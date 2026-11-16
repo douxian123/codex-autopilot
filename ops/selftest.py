@@ -147,6 +147,14 @@ def main():
         # 的是「这棵树怎么验」，配置必须来自正在被验证的 trunk。
         run([sys.executable, str(OPS / "test-verify-gates-use-target-tree.py")],
             cwd=str(OPS.parent), check=True)
+        # 落盘主干必须是本仓库的 worktree，不能是另一个 clone：本仓
+        # central.config.json 的 trunk_dir 曾被写死成
+        # ~/Documents/Codex/codex-autopilot-native-autopilot-trunk（远端相同、
+        # git common dir 不同），于是默认 land 跑到别人的检出里 checkout/merge/reset，
+        # 被那边的未跟踪 runtime 产物挡住（2026-11-17 本轮实测）。门禁要求：身份判据
+        # 用 git common dir，判为 foreign 时退回本仓 <项目名>-trunk。
+        run([sys.executable, str(OPS / "test-trunk-is-same-repo.py")],
+            cwd=str(OPS.parent), check=True)
         # supersede / land 每拍 `× 主干工作树切不到 main` 的那条：trunk 与 main 没有
         # 共同祖先，且两份追加型台账的工作副本是旧截断版，`git checkout --detach main`
         # 被拒。门禁要求：切得过去、main 章节一条不丢、本地新条目保留，同时夹带**代码**

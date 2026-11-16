@@ -1,7 +1,7 @@
 {
   "main_branch": "main",
   "branch_prefix": "codex/",
-  "trunk_dir": "/Users/danta/Documents/Codex/codex-autopilot-native-autopilot-trunk",
+  "trunk_dir": null,
   "shared_dir": null,
   "link_dirs": [],
   "build": {
