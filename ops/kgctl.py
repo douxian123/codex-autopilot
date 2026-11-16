@@ -3348,6 +3348,14 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
     门禁清单来自 ops/central.config.json 的 verify（没配就退化成 build 那一条）。
     verify_by_change 可按本次 merge 的实际 diff 追加相关门禁；没命中规则时仍保留
     build 作为真实验证底线。工作目录不存在时按失败处理，不抛未捕获异常。
+
+    配置必须从**正在被验证的 trunk** 读，而不是从 RESOLVE 出来的状态根读：
+    状态根（共享检出）经常被另一个 worktree 占着、甚至停在完全不同历史的分支上，
+    里面可能根本没有 `ops/central.config.json`。旧实现用启动时加载的 CFG，于是
+    退化成内置默认 `npm run build` + `cwd=frontend`，而本仓没有 frontend ——
+    每次 land 都报 `cwd 不存在` 并丢弃合并（2026-11-17 本轮实测，真正原因就是
+    配置来源错了，不是门禁本身失败）。门禁要描述的是「这棵树怎么验」，所以它
+    必须来自这棵树。
     """
     changed = []
     try:
@@ -3358,11 +3366,19 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
             changed = [line for line in (p.stdout or "").splitlines() if line.strip()]
     except Exception:
         changed = []
+    # trunk 自带配置就用 trunk 的；缺失才退回启动时那份 CFG，保证老行为不退化。
+    gate_cfg = CFG
+    if (wt / "ops" / "central.config.json").exists():
+        try:
+            gate_cfg = central_config.load(wt)
+        except Exception as exc:
+            print(f"  ! trunk 的 central.config.json 读不了（{exc}），退回状态根配置")
+            gate_cfg = CFG
     selector = getattr(central_config, "verify_gates_for_changes", None)
     # Runtime copies can briefly lag the staged source copy. Falling back to the
     # stable gate list keeps landing possible while the change selector is absent.
-    gates = (selector(CFG, changed) if callable(selector)
-             else central_config.verify_gates(CFG))
+    gates = (selector(gate_cfg, changed) if callable(selector)
+             else central_config.verify_gates(gate_cfg))
     if not gates:
         return True, [], "(未配置验证门禁，跳过)"
     with _verification_gate_lock():
