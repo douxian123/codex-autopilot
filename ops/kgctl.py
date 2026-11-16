@@ -3413,6 +3413,24 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
     # stable gate list keeps landing possible while the change selector is absent.
     gates = (selector(gate_cfg, changed) if callable(selector)
              else central_config.verify_gates(gate_cfg))
+    # 约束管家接线：`enforceable=gate` 且写了 cmd 的约束，按本次改动路径转成
+    # 真的门禁。旧实现只读 central.config.json，标了 gate 的约束从没被执行过——
+    # 面板却渲染成「有门禁」，是实打实的假绿灯（2026-11-17 实测）。
+    # 读的是**正在被验证的 trunk** 的约束台账，不是状态根那份。
+    constraint_gaps = []
+    try:
+        cpath = wt / "ops" / "truth" / "constraints.jsonl"
+        if cpath.exists():
+            gates = list(gates) + constraints_mod.gate_commands(cpath, changed)
+            constraint_gaps = constraints_mod.gate_gaps(cpath, changed)
+    except Exception as exc:
+        print(f"  ! 约束门禁读取失败（{exc}），本轮按未接处理", file=sys.stderr)
+    if constraint_gaps:
+        # 不因为「声称有门禁但其实没有」就拦下落盘，但也绝不假装它验证过：
+        # 名字进结果列表、状态如实标 skipped，面板与验收台账都看得到。
+        print("  ! 有 %d 条约束标了 gate 却没写命令，本轮未执行：%s"
+              % (len(constraint_gaps),
+                 "、".join(str(r.get("id") or "?") for r in constraint_gaps)))
     if not gates:
         return True, [], "(未配置验证门禁，跳过)"
     with _verification_gate_lock():

@@ -34,6 +34,9 @@ ENFORCEABLE_LABEL = {
     "无门禁": "无门禁", "有门禁": "有门禁", "人验收": "人验收",
 }
 
+# 标了 gate 却没写命令：这不是「有门禁」，是「声称有、实际没有」。
+GATE_UNWIRED = "门禁未接"
+
 
 def read_rows(path) -> list:
     """读 JSONL；坏行跳过，不因为一行坏就整份取不到。"""
@@ -123,9 +126,48 @@ def matching_constraints(path, files) -> list:
     return [r for r in active_constraints(path) if scope_matches(r.get("scope"), files)]
 
 
+def gate_commands(path, files) -> list:
+    """把 enforceable=gate 且真写了命令的约束，转成落盘门禁。
+
+    只有「gate + 有 cmd」才算门禁。标了 gate 却没命令的走 `gate_gaps()`，
+    单独如实报出来——旧实现把这类也算「有门禁」，面板与 CLI 都在撒谎。
+    """
+    out, seen = [], set()
+    for r in matching_constraints(path, files):
+        if str(r.get("enforceable") or "").strip() != "gate":
+            continue
+        cmd = str(r.get("cmd") or "").strip()
+        if not cmd:
+            continue
+        name = f"constraint-{r.get('id')}" if r.get("id") else "constraint-gate"
+        cwd = str(r.get("cwd") or ".").strip() or "."
+        key = (name, cmd, cwd)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"name": name, "cmd": cmd, "cwd": cwd,
+                    "source": "constraint", "constraint": r.get("id")})
+    return out
+
+
+def gate_gaps(path, files) -> list:
+    """标了 gate 但没写命令的约束：它们其实没有机器兜底，必须如实说。"""
+    return [r for r in matching_constraints(path, files)
+            if str(r.get("enforceable") or "").strip() == "gate"
+            and not str(r.get("cmd") or "").strip()]
+
+
+def enforceable_label(row) -> str:
+    """这条约束的兜底实在哪一档。gate 但没命令的回答是「门禁未接」，不是「有门禁」。"""
+    raw = str((row or {}).get("enforceable") or "").strip()
+    if raw == "gate" and not str((row or {}).get("cmd") or "").strip():
+        return GATE_UNWIRED
+    return ENFORCEABLE_LABEL.get(raw, "")
+
+
 def render_line(row) -> str:
     kind = KIND_LABEL.get(str(row.get("kind") or ""), str(row.get("kind") or "预期"))
-    enf = ENFORCEABLE_LABEL.get(str(row.get("enforceable") or ""), "")
+    enf = enforceable_label(row)
     tag = f"{kind}/{enf}" if enf else kind
     scope = normalize_scope(row.get("scope"))
     where = f"（范围：{', '.join(scope)}）" if scope else "（全局）"

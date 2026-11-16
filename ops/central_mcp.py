@@ -314,6 +314,10 @@ TOOLS = [
                           "description": "管哪些路径或模块，冒号分隔的 glob，如 “backend:plugin/ui/*.html”；留空=全局约束（恒命中）"},
                 "enforceable": {"type": "string", "enum": ["none", "gate", "checklist"],
                                 "description": "none=纯记录 / gate=有机器门禁 / checklist=人验收项，默认 none"},
+                "cmd": {"type": "string",
+                        "description": "enforceable=gate 时必填：落盘那一刻真跑的验证命令（如 “python3 ops/test-x.py”）。写不出命令就别标 gate。"},
+                "cwd": {"type": "string",
+                        "description": "命令的工作目录，相对仓库根，默认仓库根"},
                 "policy_version": {"type": "string", "description": "约束版本标识，可选（用于改动传播）"},
                 "supersedes": {"type": "string", "description": "被这条取代的旧约束 id，可选"},
             },
@@ -2342,6 +2346,8 @@ def call_tool(name, args):
         env = {"KG_CONSTRAINT_KIND": args.get("kind") or None,
                "KG_CONSTRAINT_SCOPE": args.get("scope") or None,
                "KG_CONSTRAINT_ENFORCEABLE": args.get("enforceable") or None,
+               "KG_CONSTRAINT_CMD": args.get("cmd") or None,
+               "KG_CONSTRAINT_CWD": args.get("cwd") or None,
                "KG_CONSTRAINT_POLICY": args.get("policy_version") or None,
                "KG_CONSTRAINT_SUPERSEDES": args.get("supersedes") or None}
         return truthctl("constraints", "add", statement, extra_env=env)

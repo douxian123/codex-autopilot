@@ -920,16 +920,24 @@ def cmd_constraints(args):
         enforceable = (os.environ.get('KG_CONSTRAINT_ENFORCEABLE') or 'none').strip()
         scope = [s for s in re.split(r'[:,\n]', os.environ.get('KG_CONSTRAINT_SCOPE', ''))
                  if s.strip()]
+        # 标了 gate 就必须带命令，否则「有门禁」是空话：落盘那一刻没有东西可跑，
+        # 面板却会渲染成有机器兜底（2026-11-17 实测 C-0001 就是这种假绿灯）。
+        cmd = (os.environ.get('KG_CONSTRAINT_CMD') or '').strip()
+        cwd = (os.environ.get('KG_CONSTRAINT_CWD') or '').strip() or None
+        if enforceable == 'gate' and not cmd:
+            sys.exit('enforceable=gate 必须同时给 KG_CONSTRAINT_CMD（真正要跑的验证命令）；'
+                     '写不出断言就老实标 checklist 或 none。')
         rec = _append_new('constraint',
                           statement=statement, title=statement[:80],
                           kind=kind, enforceable=enforceable,
-                          scope=scope,
+                          scope=scope, cmd=cmd or None, cwd=cwd,
                           policy_version=os.environ.get('KG_CONSTRAINT_POLICY') or None,
                           supersedes=os.environ.get('KG_CONSTRAINT_SUPERSEDES') or None,
                           source=os.environ.get('KG_TRUTH_SOURCE', 'user'),
                           status='active')
         where = '、'.join(scope) if scope else '全局'
-        print(f"已记入约束 [{rec['id']}]（{kind}/{enforceable}，范围：{where}）："
+        suffix = f"，门禁：{cmd}" if cmd else ""
+        print(f"已记入约束 [{rec['id']}]（{kind}/{enforceable}，范围：{where}{suffix}）："
               f"{statement[:70]}")
         return
 
