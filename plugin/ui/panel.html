@@ -285,6 +285,7 @@
   .accact{margin-top:10px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;border-top:1px solid var(--line-2);padding-top:10px}
   .accmsg{font-size:11.5px;color:var(--ink-3);flex:1 1 210px;min-width:0;line-height:1.5}
   .accact .btn{padding:6px 13px;font-size:12.5px;border-radius:8px;flex:0 0 auto}
+  .accbtns{display:flex;gap:8px;align-items:center;flex:0 0 auto}
   .accfold{margin-top:12px;border-top:1px solid var(--line-2)}
   .accfold>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:12px 0 2px;font-size:12px;font-weight:600;color:var(--ink-3)}
   .accfold>summary::-webkit-details-marker{display:none}
@@ -1620,6 +1621,19 @@
         act:"tune", id:x.id, why:(x.why||"") +
           "；点它会改这一项（改前自动备份，随时可一键回滚）；不点就保持现状，config 一个字都不动。"});
     });
+    // 上下文管家提出的约束候选：系统按你说的规范性措辞（「绝不/必须/不许/以后都/
+    // 记住」等）自动提名，但**绝不自动生效**。生效后会进落盘门禁，所以只列在这里，
+    // 你点「算」才收进项目规范；点「不算」它就不会再弹回来。
+    var cc = s.constraint_candidates || {};
+    (cc.items || []).forEach(function(x){
+      var scope = (x.scope && x.scope.length) ? x.scope.join("、") : "全局";
+      var sig = (x.signals && x.signals.length) ? x.signals.join("、") : "规范措辞";
+      items.push({tag:"待你确认", cls:"warn",
+        text:(x.id||"") + " · " + (x.text||x.title||""),
+        act:"constraint", id:x.id,
+        why:"命中信号：" + sig + "；适用范围：" + scope +
+          "。点「算」会把它收进项目规范，之后落盘门禁与执行者都按它办事；点「不算」这条不再出现，什么都不生效。"});
+    });
     if (s.error) items.unshift({tag:"异常", cls:"err", text:s.error, act:"retry",
       why:"点它会立刻让自动挡再检查一轮（不改代码、不动 main）；不点就继续停在异常。"});
     if (!items.length){ ul.innerHTML = '<div class="empty">没有需要你决策的，也没有异常。</div>'; return; }
@@ -1640,6 +1654,32 @@
     var row = document.createElement("div"); row.className = "accact";
     var msg = document.createElement("span"); msg.className = "accmsg";
     msg.textContent = it.why || "点它会推进一步；不点就继续挂着。";
+    // 约束候选有两个方向：收进规范 / 明确不算。其余卡点只有单一出口，照旧一个按钮。
+    if (it.act === "constraint"){
+      var yes = document.createElement("button");
+      yes.className = "btn primary"; yes.type = "button"; yes.textContent = "算，收进规范";
+      var no = document.createElement("button");
+      no.className = "btn"; no.type = "button"; no.textContent = "不算";
+      var ring = document.createElement("span");
+      ring.className = "accbtns";
+      ring.appendChild(yes); ring.appendChild(no);
+      yes.addEventListener("click", function(){
+        yes.disabled = true; no.disabled = true; yes.textContent = "正在收…";
+        callTool("constraint_candidate_promote", {id: it.id, confirm: true})
+          .then(function(){ toast("已收进项目规范，之后按它办事", "ok"); return loadStatus(false); })
+          .catch(function(e){ toast("操作没成功：" + (e && e.message || e), "err");
+            yes.disabled = false; no.disabled = false; yes.textContent = "算，收进规范"; });
+      });
+      no.addEventListener("click", function(){
+        yes.disabled = true; no.disabled = true; no.textContent = "正在处理…";
+        callTool("constraint_candidate_dismiss", {id: it.id, reason: "panel: 用户点了不算"})
+          .then(function(){ toast("这条不算，以后不会再出现", "ok"); return loadStatus(false); })
+          .catch(function(e){ toast("操作没成功：" + (e && e.message || e), "err");
+            yes.disabled = false; no.disabled = false; no.textContent = "不算"; });
+      });
+      row.appendChild(msg); row.appendChild(ring);
+      return row;
+    }
     var btn = document.createElement("button");
     btn.className = "btn primary"; btn.type = "button";
     btn.textContent = it.act === "resolve" ? "放宽闸门再拆一次"
