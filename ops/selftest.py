@@ -198,6 +198,11 @@ def main():
         # 写了不会被后续实现自动引用，等于「规范是文字，文字输给顺手」。
         run([sys.executable, str(OPS / "test-constraints-intake.py")],
             cwd=str(OPS.parent), check=True)
+        # 真相同步闸门：陈旧 index.lock 曾让 tick 的 `[7/8] git add` 每拍静默失败，
+        # 真相层（含新写的约束台账）连写几小时都进不了 git，而守护与面板全显示正常。
+        # 这条锁住：陈旧锁会被隔离留证、真持有者的锁绝不搬动、探不清时 loud-fail。
+        run([sys.executable, str(OPS / "test-truth-sync-index-lock.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()

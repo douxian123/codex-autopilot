@@ -208,6 +208,115 @@ def _prune_stale_locks(keep: int = 5) -> None:
             pass
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+# git 自己的 index.lock 不带 pid 字段，`_lock_blocked()` 那套「读 pid 探活」用不上。
+# 2026-11-17 实测：共享检出里一次被中断的 git 留下 0 字节 `index.lock`，此后每一拍
+# tick 的 `[7/8] git add` 都以 "Another git process seems to be running" 失败；而
+# `sync_trunk_truth` 当时**不检查 add 的返回码**，于是真相层每一拍都静默空转——
+# 新写入的 `constraints.jsonl` 连写几天都进不了 git，守护与面板却全显示「正常」。
+# 判据改成：先探活（lsof）确认没人持有、再要求足够老，才把锁隔离留证；否则 loud-fail。
+STALE_INDEX_LOCK_SECONDS = _env_float("KG_STALE_INDEX_LOCK_SECONDS", 120.0)
+
+
+def index_lock_path(wt: Path) -> Path:
+    """这个检出自己的 index.lock 路径（worktree 各有各的 index，不能写死 .git/index.lock）。"""
+    out = proc_run(["git", "-C", str(wt), "rev-parse", "--git-path", "index.lock"],
+                   capture_output=True, text=True)
+    text = (out.stdout or "").strip()
+    if out.returncode == 0 and text:
+        path = Path(text)
+        return path if path.is_absolute() else (Path(wt) / path).resolve()
+    return Path(wt) / ".git" / "index.lock"
+
+
+def _index_lock_holders(path: Path):
+    """持有 index.lock 的 pid 集合；返回 None 表示「探不清」（工具缺失 / 报错）。
+
+    lsof 无匹配进程时的语义是 rc=1 + 空 stdout —— 那是「没人持有」，不是探不清。
+    区分这两者很要紧：把「探不清」当成「没人持有」就会删掉别人正在写的锁。
+    """
+    if not shutil.which("lsof"):
+        return None
+    try:
+        out = proc_run(["lsof", "-t", str(path)], capture_output=True, text=True)
+    except Exception:
+        return None
+    if (out.stdout or "").strip() == "":
+        # 空 stdout：要么没人持有（rc=1），要么 lsof 自己坏了（rc>1）。后者按探不清处理。
+        return set() if out.returncode in (0, 1) else None
+    pids = set()
+    for token in (out.stdout or "").split():
+        try:
+            pids.add(int(token))
+        except ValueError:
+            continue
+    return pids
+
+
+def index_lock_state(wt: Path) -> dict:
+    """只读地判定这个检出的 index.lock 会不会让下一次 git add 失败。
+
+    返回 {present, path, age, holders, blocked, stale, reason}。`blocked=True` 表示
+    调用方现在同步真相层一定会失败；`stale=True` 表示锁无持有者且已够老，可以隔离。
+    本函数**不碰任何文件**。
+    """
+    lock = index_lock_path(wt)
+    if not lock.exists():
+        return {"present": False, "path": lock, "blocked": False, "stale": False, "reason": ""}
+    try:
+        st = lock.stat()
+    except OSError as exc:
+        return {"present": True, "path": lock, "blocked": True, "stale": False, "holders": None,
+                "reason": f"index.lock 存在但读不到属性（{exc}）"}
+    holders = _index_lock_holders(lock)
+    age = time.time() - st.st_mtime
+    info = {"present": True, "path": lock, "age": round(age, 1),
+            "size": st.st_size, "holders": holders, "stale": False}
+    if holders is None:
+        info.update({"blocked": True, "reason":
+                     f"index.lock 存在（{lock}）且探不清持有者（lsof 不可用）；"
+                     "先人工确认没有 git 进程在跑，再删掉它，别让真相同步继续空转"})
+        return info
+    if holders:
+        info.update({"blocked": True, "reason":
+                     f"index.lock 正被 git 进程持有（pid "
+                     f"{', '.join(map(str, sorted(holders)))}，{lock}）：等它结束"})
+        return info
+    if age < STALE_INDEX_LOCK_SECONDS:
+        info.update({"blocked": True, "reason":
+                     f"index.lock 存在且 {age:.0f}s 前才动过（{lock}）："
+                     "可能有人正在写，本轮不同步真相层"})
+        return info
+    info.update({"blocked": False, "stale": True, "reason":
+                 f"index.lock 无持有者且已 {age:.0f}s 未动（{lock}）：陈旧，可隔离"})
+    return info
+
+
+def clear_index_lock_if_stale(wt: Path) -> tuple:
+    """(ok, reason)：陈旧 index.lock 就地隔离留证；不清楚时 loud-fail，绝不乱删。"""
+    state = index_lock_state(wt)
+    if not state.get("present"):
+        return True, ""
+    if state.get("blocked") or not state.get("stale"):
+        # 有真实持有者 / 刚动过 / 探不清 / 读不到属性：一律 loud-fail，不动这把锁。
+        return False, state["reason"]
+    lock = state["path"]
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    stale = lock.with_name(f"{lock.name}.stale-{stamp}")
+    try:
+        lock.replace(stale)
+    except OSError as exc:
+        return False, f"隔离陈旧 index.lock 失败（{exc}）：{lock}"
+    print(f"  [index.lock] 无持有者且已 {state.get('age')}s 未动，隔离 -> {stale}")
+    return True, f"已隔离陈旧 index.lock -> {stale.name}"
+
+
 def _acquire_lock(reason: str) -> bool:
     """原子取得共享发布锁；land 与真相推送只能有一个进入。"""
     if _lock_blocked():
@@ -3432,6 +3541,21 @@ def trunk_status(wt: Path):
     return [line for line in out.splitlines() if line.strip()]
 
 
+def truth_pending_status(wt: Path):
+    """真相层里「有东西要提交吗」——必须**包含未跟踪文件**。
+
+    与 `trunk_status`（只用于「有没有非真相层污染」，故意只看已跟踪）不同，这里
+    少看未跟踪文件会漏掉一整类真实改动：`ops/truth/constraints.jsonl` 在新建项目里
+    是全新未跟踪文件，如果它是这一拍唯一的真相改动，`pending` 就会是空的，
+    `sync_trunk_truth` 直接返回 False —— 表现为「没有改动」，而不是「还没提交」。
+    """
+    out = proc_run(["git", "-C", str(wt), "status", "--porcelain",
+                          "--untracked-files=all"],
+                         capture_output=True, text=True).stdout
+    return [line for line in out.splitlines()
+            if line.strip() and is_truth_path(line)]
+
+
 def _porcelain_body(line: str) -> str:
     """从一行 `git status --porcelain` 里取出相对路径（重命名取新名）。"""
     body = line[3:].strip() if len(line) > 3 else line.strip()
@@ -3845,7 +3969,9 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
         2026-11-16 实测正是这两条 wal 让 tick 的 [7/8] 每拍都被拒、真相层永远推不上 main；
       * 其余（代码 / 产品文件）-> fail-closed，绝不吞进 `chore(truth)`。
     """
-    pending = [line for line in trunk_status(wt) if is_truth_path(line)]
+    # 判据必须包含未跟踪文件：新建的 `ops/truth/constraints.jsonl` 是未跟踪状态，
+    # 用 `trunk_status`（--untracked-files=no）会把它看成「没有改动」，永远不进 git。
+    pending = truth_pending_status(wt)
     if not pending:
         return False
     dirty = [line for line in trunk_status(wt)
@@ -3864,14 +3990,34 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     if not _ensure_truth_baselines(wt):
         print("  × 稳定性基准保护失败，拒绝提交真相层")
         return False
+    # 陈旧 index.lock 会让后面的 `git add` 全部失败。以前这里不看返回码，于是真相层
+    # 每拍静默空转（2026-11-17 实测：0 字节锁堵了 2h45m，constraints.jsonl 进不了 git，
+    # 守护与面板却全显示正常）。先隔离陈旧锁；探不清就 loud-fail，不假装同步过。
+    lock_ok, lock_note = clear_index_lock_if_stale(wt)
+    if not lock_ok:
+        print(f"  × 真相同步被 index.lock 挡住：{lock_note}")
+        print("    真相同步本轮未完成。上面这条是明确失败，不是「无改动」。")
+        return False
+    if lock_note:
+        print(f"  {lock_note}")
     # 追加型台账暂存前必须与已提交版本做并集：工作副本常常落后于 main，
     # 直接 add 会把别的窗口已经落盘的整段章节删掉（实测一次删 232 + 75 行）。
     for rel in APPEND_ONLY_MARKDOWN:
         _reconcile_append_only_with_head(wt, rel)
+    add_failures = []
     for rel in TRUTH_PATHS:
         if (wt / rel).exists():
-            proc_run(["git", "-C", str(wt), "add", "--", rel],
-                           capture_output=True, text=True)
+            added = proc_run(["git", "-C", str(wt), "add", "--", rel],
+                             capture_output=True, text=True)
+            if added.returncode != 0:
+                # add 失败却被忽略，是「静默空转」的成因：没有暂存就没有 staged，
+                # 函数就返回 False，调用方看起来像「这拍本来就没改动」。
+                add_failures.append((rel, (added.stderr or added.stdout or "").strip()))
+    if add_failures:
+        print("  × 暂存真相层失败，本轮不同步（这不是「无改动」）：")
+        for rel, err in add_failures[:5]:
+            print(f"    {rel}: {err[:160]}")
+        return False
     staged = proc_run(["git", "-C", str(wt), "diff", "--cached", "--name-only"],
                             capture_output=True, text=True).stdout.strip()
     if not staged:
@@ -5041,6 +5187,24 @@ def cmd_doctor(args):
         "loaded_not_running": "未起来（job 在但无 pid）",
         "not_installed": "未安装",
     }.get(_live.get("status"), "看不清"))
+
+    # ⑤ 真相同步闸门：陈旧 index.lock 会让 tick 的 `[7/8] git add` 每拍失败，而
+    # 旧实现不看返回码 —— 真相层静默空转、面板全绿。这条只读地把锁的状态说出来。
+    try:
+        _locks = index_lock_state(REPO)
+    except Exception as exc:
+        _locks = {"present": True, "blocked": True,
+                  "reason": f"索引锁探针失败（{type(exc).__name__}: {exc}）——体检工具自己坏了"}
+    if not _locks.get("present"):
+        INFOS.append("⑤ 真相同步闸门：无 index.lock，可正常暂存")
+    elif _locks.get("holders"):
+        INFOS.append("⑤ 真相同步闸门：git 正在持有 index.lock（正常短暂状态）")
+    elif _locks.get("blocked"):
+        problems.append("⑤ 真相同步被 index.lock 挡住：" + str(_locks.get("reason")))
+        INFOS.append("⑤ 真相同步闸门：被陈旧/未知 index.lock 挡住")
+    else:
+        INFOS.append("⑤ 真相同步闸门：index.lock 陈旧可隔离（"
+                     f"{_locks.get('age')}s 未动）")
 
     # ① automation 漂移
     auto_root = Path.home() / ".codex" / "automations"
