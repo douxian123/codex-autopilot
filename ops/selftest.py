@@ -134,6 +134,19 @@ def main():
         # 就是这份截断快照造成的。
         run([sys.executable, str(OPS / "test-truth-sync-sidecar-and-ledger.py")],
             cwd=str(OPS.parent), check=True)
+        # 生成视图（PROJECT_STATUS / CONTROL_BOARD / CONTROL_PLANE / ops/context）被
+        # .gitignore 排除且从未跟踪，旧实现照 `git add` 会报 `paths are ignored`，
+        # 并把已 add 成功的真账本留在索引里形成半暂存 —— 下一次 merge 立刻被挡住，
+        # main 永久推不动（2026-11-17 本轮 land 实测）。门禁要求：视图/`.bak-*`
+        # 副本不卡死同步、不进版本库，add 失败时索引清干净。
+        run([sys.executable, str(OPS / "test-truth-sync-ignored-views.py")],
+            cwd=str(OPS.parent), check=True)
+        # 落盘门禁的配置来源：旧实现用状态根（共享检出，常停在别的分支、没有
+        # central.config.json）的 CFG，退化成内置默认 npm run build + frontend，
+        # 每次 land 都报 `cwd 不存在` 并丢弃合并（2026-11-17 本轮实测）。门禁描述
+        # 的是「这棵树怎么验」，配置必须来自正在被验证的 trunk。
+        run([sys.executable, str(OPS / "test-verify-gates-use-target-tree.py")],
+            cwd=str(OPS.parent), check=True)
         # supersede / land 每拍 `× 主干工作树切不到 main` 的那条：trunk 与 main 没有
         # 共同祖先，且两份追加型台账的工作副本是旧截断版，`git checkout --detach main`
         # 被拒。门禁要求：切得过去、main 章节一条不丢、本地新条目保留，同时夹带**代码**
@@ -2962,6 +2975,26 @@ def test_verify_and_truth():
             raise AssertionError(f"人工验收项或步骤没写回: {human}")
         if not any(r.get("evidence") for r in arecs):
             raise AssertionError("机器自证项没有证据")
+
+        # 人工验收必须有「关闭口」：登记后能被同一 id 收敛成 verified，
+        # 否则面板「需要你验收」会永远是同一批，用户被逼着反复盯盘。
+        hid = human[-1].get("id")
+        conv = truthctl(repo, "accept", "--id", hid, "--status", "verified",
+                        "--note", "用户看过并确认", extra_env={"KG_TRUTH_SOURCE": "user"})
+        if conv.returncode != 0:
+            raise AssertionError(f"accept --id 收敛失败:\n{conv.stdout}\n{conv.stderr}")
+        after = {}
+        for x in (repo / "ops" / "truth" / "acceptance.jsonl").read_text(
+                encoding="utf-8").splitlines():
+            if x.strip():
+                row = _json.loads(x)
+                after[row.get("id")] = row
+        closed = after.get(hid, {})
+        if closed.get("status") != "verified" or closed.get("verified_by") != "user":
+            raise AssertionError(f"验收项没有被收敛成 verified: {closed}")
+        if len([r for r in after.values()
+                if r.get("needs_human") and r.get("status") != "verified"]) != 0:
+            raise AssertionError("人工验收项收敛后仍挂在待办里")
 
         # 产品路线：mainline.json 写 roadmap，synthesize 要渲染出每一步到哪了。
         (repo / "ops" / "truth" / "mainline.json").write_text(_json.dumps({

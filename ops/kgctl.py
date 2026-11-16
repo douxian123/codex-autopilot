@@ -3348,6 +3348,14 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
     门禁清单来自 ops/central.config.json 的 verify（没配就退化成 build 那一条）。
     verify_by_change 可按本次 merge 的实际 diff 追加相关门禁；没命中规则时仍保留
     build 作为真实验证底线。工作目录不存在时按失败处理，不抛未捕获异常。
+
+    配置必须从**正在被验证的 trunk** 读，而不是从 RESOLVE 出来的状态根读：
+    状态根（共享检出）经常被另一个 worktree 占着、甚至停在完全不同历史的分支上，
+    里面可能根本没有 `ops/central.config.json`。旧实现用启动时加载的 CFG，于是
+    退化成内置默认 `npm run build` + `cwd=frontend`，而本仓没有 frontend ——
+    每次 land 都报 `cwd 不存在` 并丢弃合并（2026-11-17 本轮实测，真正原因就是
+    配置来源错了，不是门禁本身失败）。门禁要描述的是「这棵树怎么验」，所以它
+    必须来自这棵树。
     """
     changed = []
     try:
@@ -3358,11 +3366,19 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
             changed = [line for line in (p.stdout or "").splitlines() if line.strip()]
     except Exception:
         changed = []
+    # trunk 自带配置就用 trunk 的；缺失才退回启动时那份 CFG，保证老行为不退化。
+    gate_cfg = CFG
+    if (wt / "ops" / "central.config.json").exists():
+        try:
+            gate_cfg = central_config.load(wt)
+        except Exception as exc:
+            print(f"  ! trunk 的 central.config.json 读不了（{exc}），退回状态根配置")
+            gate_cfg = CFG
     selector = getattr(central_config, "verify_gates_for_changes", None)
     # Runtime copies can briefly lag the staged source copy. Falling back to the
     # stable gate list keeps landing possible while the change selector is absent.
-    gates = (selector(CFG, changed) if callable(selector)
-             else central_config.verify_gates(CFG))
+    gates = (selector(gate_cfg, changed) if callable(selector)
+             else central_config.verify_gates(gate_cfg))
     if not gates:
         return True, [], "(未配置验证门禁，跳过)"
     with _verification_gate_lock():
@@ -3583,6 +3599,39 @@ RUNTIME_SIDECAR_RE = re.compile(r"(^|/)[^/]*\.db-(wal|shm|journal)$")
 
 def is_runtime_sidecar(line: str) -> bool:
     return bool(RUNTIME_SIDECAR_RE.search(_porcelain_body(line)))
+
+
+# 备份/临时产物：`.bak-*`、`*.orig`、`*.rej`、编辑器 `*~`。它们不是账本，是某次
+# 操作留下的副本；把副本提交进 main 只会让版本库多一份永远不更新的死重。
+TRUTH_NOISE_RE = re.compile(r"(\.bak(-|$)|\.orig$|\.rej$|~$|\.tmp$)")
+
+
+def is_truth_noise(rel: str) -> bool:
+    return bool(TRUTH_NOISE_RE.search(rel.strip().strip('"')))
+
+
+def _ignored_untracked(wt: Path, rel: str) -> bool:
+    """`rel` 是否被 .gitignore 排除、且从未进过版本库。
+
+    `kgctl dash` / `tick` 生成的视图（`docs/PROJECT_STATUS.md`、
+    `docs/CONTROL_BOARD.md`、`docs/CONTROL_PLANE.html`、`ops/context/`）在
+    .gitignore 里被显式排除，也从未被跟踪。对它们 `git add` 会以
+    `The following paths are ignored by one of your .gitignore files` 失败。
+
+    旧实现把这个失败当成真相同步失败：已经 add 成功的台账文件留在索引里不回滚，
+    函数返回 False，调用方却继续 merge —— 于是 merge 立刻被这批半暂存的本地改动
+    挡住（`Your local changes ... would be overwritten by merge`），main 永久推不动。
+    2026-11-17 本轮 land 实测踩到，源分支提交始终进不了 main。
+
+    这些视图由真实命令随时重建，不该也不进版本库；跳过它们是正确的，不是放宽。
+    """
+    ignored = proc_run(["git", "-C", str(wt), "check-ignore", "-q", "--", rel],
+                       capture_output=True, text=True)
+    if ignored.returncode != 0:
+        return False
+    tracked = proc_run(["git", "-C", str(wt), "ls-files", "--error-unmatch", "--", rel],
+                       capture_output=True, text=True)
+    return tracked.returncode != 0
 
 
 def _is_regenerable_rel(path: str) -> bool:
@@ -4006,14 +4055,26 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
         _reconcile_append_only_with_head(wt, rel)
     add_failures = []
     for rel in TRUTH_PATHS:
-        if (wt / rel).exists():
-            added = proc_run(["git", "-C", str(wt), "add", "--", rel],
-                             capture_output=True, text=True)
-            if added.returncode != 0:
-                # add 失败却被忽略，是「静默空转」的成因：没有暂存就没有 staged，
-                # 函数就返回 False，调用方看起来像「这拍本来就没改动」。
-                add_failures.append((rel, (added.stderr or added.stdout or "").strip()))
+        if not (wt / rel).exists():
+            continue
+        # 生成视图（PROJECT_STATUS / CONTROL_BOARD / CONTROL_PLANE / ops/context）
+        # 被 .gitignore 排除且从未跟踪，随时可重建，不该 add。旧实现照 add，
+        # 得到 `paths are ignored` 后当成致命失败返回 False，但索引里已经 add 成功
+        # 的台账没被回滚 —— 下一次 merge 就被半暂存挡住，main 永久推不动。
+        if _ignored_untracked(wt, rel):
+            continue
+        added = proc_run(["git", "-C", str(wt), "add", "--", rel],
+                         capture_output=True, text=True)
+        if added.returncode != 0:
+            # add 失败却被忽略，是「静默空转」的成因：没有暂存就没有 staged，
+            # 函数就返回 False，调用方看起来像「这拍本来就没改动」。
+            add_failures.append((rel, (added.stderr or added.stdout or "").strip()))
     if add_failures:
+        # 半暂存是 merge 卡死的直接原因：既然本轮同步失败，就把刚才 add 进去的
+        # 真相层撤回索引，别把一份「没提交的改动」留给下一次 land。工作区内容
+        # 一分不动（reset 只动索引），台账仍在磁盘上，下一拍重跑即可。
+        proc_run(["git", "-C", str(wt), "reset", "-q", "--", *TRUTH_PATHS],
+                 capture_output=True, text=True)
         print("  × 暂存真相层失败，本轮不同步（这不是「无改动」）：")
         for rel, err in add_failures[:5]:
             print(f"    {rel}: {err[:160]}")
@@ -4022,6 +4083,20 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
                             capture_output=True, text=True).stdout.strip()
     if not staged:
         return False
+    # 备份/临时副本（`.bak-*` 这类 smoke 测试遗留）不是账本，撤出索引即可：
+    # 文件本身留在磁盘上原样不动，只是不进 `chore(truth)`。旧实现会把它们静默
+    # 提交进 main（实测 ops/tasks/inbox.jsonl.bak-route-smoke-20261116-235548
+    # 就被 staged 成 A 状态），让版本库多一份永远不更新的死重。
+    noise = [rel for rel in staged.splitlines() if is_truth_noise(rel)]
+    if noise:
+        proc_run(["git", "-C", str(wt), "reset", "-q", "--", *noise],
+                 capture_output=True, text=True)
+        print(f"  跳过 {len(noise)} 个备份/临时副本（留在磁盘，不进版本库）："
+              + "、".join(noise[:3]))
+        staged = proc_run(["git", "-C", str(wt), "diff", "--cached", "--name-only"],
+                          capture_output=True, text=True).stdout.strip()
+        if not staged:
+            return False
     committed = proc_run(["git", "-C", str(wt), "commit", "-m", f"chore(truth): {reason}"],
                                capture_output=True, text=True)
     if committed.returncode != 0:

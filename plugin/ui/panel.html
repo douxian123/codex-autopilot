@@ -1052,7 +1052,10 @@
     else if (s.exec_now) workText = (s.exec_now.id ? s.exec_now.id + " · " : "") + (s.exec_now.title || "正在自动实现");
     else if (doingItems.length) workText = doingItems[0].title || doingItems[0].detail || "正在处理工作项";
     else if (hasBlock) workText = "等待处理卡点";
-    else workText = "当前没有进行中的工作";
+    // 兜底必须落到控制层算出的权威 doing：它已经处理了「守护绑定别的项目」「已检查
+    // 一轮没有可合分支」「暂停/关闭」这些情况。旧版这里硬写「当前没有进行中的工作」，
+    // 于是 control plane 说了实话、面板却显示空白态 —— 面板渲染门禁实测抓到这条。
+    else workText = s.doing || "当前没有进行中的工作";
     var stepText = activeRoad
       ? (activeRoad.step || "当前路线") + " · " + (activeRoad.status === "doing" ? "进行中" : "下一步")
       : "路线待拆解 · 项目：" + (proj.name || "未绑定");

@@ -385,6 +385,22 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
+        "name": "resolve_acceptance",
+        "description": "收敛一条已登记的验收项：人工拍板（用户看过、点过、说可以）或机器复核完之后，把对应 A-id 从 todo/wip/blocked 翻成 verified，面板的「需要你验收」才会真正减少。传 id 必带 status；人工拍板不需要 evidence，机器复核建议带 evidence。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "验收台账 id，如 A-0030"},
+                "status": {"type": "string", "enum": ["todo", "wip", "blocked", "verified"],
+                           "description": "目标状态；人工验收通过用 verified"},
+                "note": {"type": "string", "description": "为什么翻成这个状态，一句话，可选"},
+                "evidence": {"type": "string", "description": "机器复核的命令+结果，可选"},
+            },
+            "required": ["id", "status"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "intake_request",
         "description": "一句话入口：把用户原话记进唯一入口，立刻归类、写入问题台账、刷新真相与看板、给出下一步。用户抛零散需求（视觉/体验/bug/架构/门禁）时优先用它，一步走完整条链，不用先 capture 再 sync。",
         "inputSchema": {
@@ -2280,6 +2296,19 @@ def call_tool(name, args):
                "KG_TRUTH_LANE": args.get("lane") or None,
                "KG_TRUTH_STATUS": args.get("status") or None,
                "KG_TRUTH_EVIDENCE": args.get("evidence") or None}
+        return truthctl(*argv, extra_env=env)
+    if name == "resolve_acceptance":
+        rid = (args.get("id") or "").strip()
+        status = (args.get("status") or "").strip()
+        if not rid:
+            return "resolve_acceptance 需要 id（如 A-0030）", 2
+        if status not in ("todo", "wip", "blocked", "verified"):
+            return "resolve_acceptance 需要 status（todo/wip/blocked/verified）", 2
+        argv = ["accept", "--id", rid, "--status", status]
+        if args.get("note"):
+            argv += ["--note", args["note"]]
+        env = {"KG_TRUTH_EVIDENCE": args.get("evidence") or None,
+               "KG_TRUTH_SOURCE": "user"}
         return truthctl(*argv, extra_env=env)
     if name == "reopen_item":
         rid = (args.get("id") or "").strip()
