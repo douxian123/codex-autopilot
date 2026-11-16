@@ -134,6 +134,12 @@ def main():
         # 就是这份截断快照造成的。
         run([sys.executable, str(OPS / "test-truth-sync-sidecar-and-ledger.py")],
             cwd=str(OPS.parent), check=True)
+        # supersede / land 每拍 `× 主干工作树切不到 main` 的那条：trunk 与 main 没有
+        # 共同祖先，且两份追加型台账的工作副本是旧截断版，`git checkout --detach main`
+        # 被拒。门禁要求：切得过去、main 章节一条不丢、本地新条目保留，同时夹带**代码**
+        # 改动时仍然 fail-closed（宁可失败，也不静默丢弃别人的在途改动）。
+        run([sys.executable, str(OPS / "test-reset-trunk-head-stale-ledger.py")],
+            cwd=str(OPS.parent), check=True)
         # launchd 入口新鲜度：同一类病一共 6 条（disk-reap 只是其中一条）。
         # 这些脚本原来散在 ~/.codex-guard/ 这类「没有版本、没人升级」的位置，
         # 发版之后它们还在跑几周前的代码。门禁要求：要么住在版本目录里，

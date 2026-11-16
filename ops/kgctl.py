@@ -3451,6 +3451,17 @@ def is_runtime_sidecar(line: str) -> bool:
     return bool(RUNTIME_SIDECAR_RE.search(_porcelain_body(line)))
 
 
+def _is_regenerable_rel(path: str) -> bool:
+    """路径是否落在「内容由 git 完整保存、可 `git checkout --` 原样还原」的再生目录里。"""
+    rel = path.strip().strip('"')
+    try:
+        import workspace_guard as _wg
+        dirs = _wg.REGENERABLE_TRACKED_DIRS
+    except Exception:
+        dirs = ("backend/evidence", "evidence")
+    return any(rel == d or rel.startswith(d + "/") for d in dirs)
+
+
 def trunk_truth_commits(wt: Path, base: str = None):
     base = base or MAIN
     out = git("-C", str(wt), "log", "--format=%s", f"{base}..HEAD")
@@ -3668,31 +3679,52 @@ def _restore_truth_files(wt: Path, snap: dict) -> None:
         dst.write_bytes(data)
 
 
-def _clean_for_checkout(wt: Path) -> None:
-    """切 main 前，把「已有内存快照或可确定性还原」的工作区改动先放掉。
+def _checkout_blockers(stderr: str) -> list:
+    """从 `git checkout` 的报错里解析出「挡住切换」的路径。
+
+    git 的两种形态都是「一句 header + 一串 Tab 缩进的路径」：
+      error: Your local changes to the following files would be overwritten by checkout:
+      error: The following untracked working tree files would be overwritten by checkout:
+    只认 header 之后连续的 Tab 行，避免把 "Abort" 之类的尾行当成路径。
+    """
+    blockers, collecting = [], False
+    for raw in (stderr or "").splitlines():
+        if "would be overwritten" in raw:
+            collecting = True
+            continue
+        if not collecting:
+            continue
+        if raw.startswith("\t") or raw.startswith("        "):
+            path = raw.strip().strip('"')
+            if path:
+                blockers.append(path)
+            continue
+        if raw.strip():
+            collecting = False
+    return blockers
+
+
+def _clean_checkout_blockers(wt: Path, blockers: list) -> list:
+    """放掉「有备份或可确定性还原」的挡路路径，返回**不能安全放掉**的那些。
 
     事故（2026-11-16 实测）：trunk 工作树里两份追加型台账相对 HEAD 有改动，
-    `git checkout --detach main` 直接报「local changes would be overwritten」并中止，
+    `git checkout --detach main` 报「local changes would be overwritten」并中止，
     于是 supersede / land 每一拍都失败。那两份改动本身是有价值的真相，不能丢；
-    但调用方已经 `_snapshot_truth_files` 抓进内存，切完会原样写回——所以这里放掉安全。
+    但调用方已经 `_snapshot_truth_files` 抓进内存，切完会原样写回——放掉是安全的。
 
-    只动三类路径，其余一律不碰（碰了就会丢掉没提交的代码）：
+    只放掉三类，其余原样保留并由调用方 fail-closed（碰了就会丢没提交的代码）：
       * 真相层：已快照到内存，切完写回；
-      * 运行时伴随文件：数据库自己生成/删除的，放掉不损失任何信息；
-      * 再生目录（evidence 等）：内容在 git 里按字节保存，`checkout --` 就是原样还原。
+      * 运行时伴随文件：数据库自己生成/删除的，放掉不损失信息；
+      * 再生目录（evidence 等）：内容在 git 里按字节保存，`checkout --` 即原样还原。
     """
-    for rel in TRUTH_PATHS:
-        proc_run(["git", "-C", str(wt), "checkout", "--", rel],
-                       capture_output=True, text=True)
-    for line in trunk_status(wt):
-        if is_runtime_sidecar(line):
-            proc_run(["git", "-C", str(wt), "checkout", "--", _porcelain_body(line)],
+    unsafe = []
+    for rel in blockers:
+        if _truth_rel(rel) or is_runtime_sidecar(f" D {rel}") or _is_regenerable_rel(rel):
+            proc_run(["git", "-C", str(wt), "checkout", "--", rel],
                            capture_output=True, text=True)
-    try:
-        import workspace_guard as _wg
-        _wg.restore_regenerable_tracked(wt)
-    except Exception as exc:  # fail-open：还原不了就交给下面的 checkout 自己判定
-        print(f"  ! 再生目录还原失败（忽略）：{exc}")
+        else:
+            unsafe.append(rel)
+    return unsafe
 
 
 def reset_trunk_head(wt: Path) -> None:
@@ -3732,11 +3764,25 @@ def reset_trunk_head(wt: Path) -> None:
         print(f"  保留主干工作树上 {len(trunk_truth_commits(wt))} 条真相提交并同步 origin/{MAIN}")
         return
     snap = _snapshot_truth_files(wt)
-    _clean_for_checkout(wt)
-    ok = proc_run(["git", "-C", str(wt), "checkout", "--detach", MAIN],
-                        capture_output=True, text=True)
-    if ok.returncode != 0:
-        print("× 主干工作树切不到 main：", ok.stderr.strip()[:200])
+    ok = None
+    for _attempt in range(2):
+        ok = proc_run(["git", "-C", str(wt), "checkout", "--detach", MAIN],
+                            capture_output=True, text=True)
+        if ok.returncode == 0:
+            break
+        blockers = _checkout_blockers(ok.stderr)
+        if not blockers:
+            break
+        unsafe = _clean_checkout_blockers(wt, blockers)
+        if unsafe:
+            # 挡路的是代码 / 产品文件：宁可失败，也不静默丢弃别人的在途改动。
+            print(f"× 主干工作树切不到 main：{len(unsafe)} 个非真相层改动会被覆盖，"
+                  f"拒绝自动丢弃")
+            for rel in unsafe[:10]:
+                print("    " + rel)
+            sys.exit(1)
+    if ok is None or ok.returncode != 0:
+        print("× 主干工作树切不到 main：", (ok.stderr if ok else "").strip()[:200])
         sys.exit(1)
     _restore_truth_files(wt, snap)
     if snap:
