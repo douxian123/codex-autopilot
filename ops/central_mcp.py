@@ -28,7 +28,10 @@ from pathlib import Path
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "codex-autopilot"
 
-OPS_DIR = Path(__file__).resolve().parent
+# 本进程启动时所在的 ops/。版本目录可能已经被 Codex 升级时替换掉，所以下面还会
+# 用 plugin_binding.current_ops() 复核一次（见 2026-11-16 的陈旧进程事故）。
+RUNNING_OPS = Path(__file__).resolve().parent
+OPS_DIR = RUNNING_OPS
 REPO = OPS_DIR.parent
 KGCTL = OPS_DIR / "kgctl.py"
 TRUTHCTL = OPS_DIR / "truthctl.py"
@@ -72,7 +75,16 @@ def _server_version() -> str:
 
 SERVER_VERSION = _server_version()
 
-from plugin_binding import apply_plugin_env, binding_health, binding_line  # noqa: E402
+from plugin_binding import (apply_plugin_env, binding_health, binding_line,  # noqa: E402
+                            current_ops, stale_code_problem)
+
+# 复核一次「真正装好的那份在哪」：Codex 升级插件时会替换版本目录，却不重启已经在
+# 跑的 MCP 进程，于是本进程的 OPS_DIR 可能指向一个已被删除的目录 —— 那样每次调用
+# kgctl / truthctl 都只会拿到 `can't open file`，而宿主只表现为「工具坏了」。
+OPS_DIR = current_ops()
+REPO = OPS_DIR.parent
+KGCTL = OPS_DIR / "kgctl.py"
+TRUTHCTL = OPS_DIR / "truthctl.py"
 
 import control_state  # noqa: E402
 import codex_native  # noqa: E402
