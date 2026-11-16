@@ -2760,6 +2760,35 @@ def _reap_remove_worktree(wt: str) -> tuple[bool, str]:
     return True, ""
 
 
+def _pin_branch_ref(branch: str, stamp: str) -> str:
+    """把分支 tip 钉到本地 preserve ref —— 必须在 `git branch -D` **之前**。
+
+    为什么必须有这一步（2026-11-16 实测）：`reap` 删的是**分支指针**，不是提交。
+    指针一没、远端又没有影子 ref，tip 就成了不可达对象，`git gc`（默认
+    gc.pruneExpire 两周）随后可以把它连同整条祖先链静默清掉。本机
+    knowledge-graph 仓的历史里正是这样攒下一万多条游离提交。
+
+    插件这份 `kgctl reap` 此前**完全没有**这层保护，而守护拉起第一拍就会在磁盘
+    压力下真的执行 `reap --go`（2026-11-16 实测：磁盘 92.8% > 阈值 85%，只读预演
+    列出 34 条待删分支），属于「一装就裸删」。
+
+    钉成 `refs/preserve/local/<stamp>/<branch>` 是纯加法：只新增一个本地 ref，
+    不改任何已有分支、不改 main、不碰远端。本地 ref 一旦建立，对象就从「无人可达」
+    变成「ref 可达」，gc 不会再动它。还原：
+    `git branch <branch> refs/preserve/local/<stamp>/<branch>`。
+
+    返回钉成功时用的 ref；取不到 head 或 update-ref 失败时返回 ""，调用方据此
+    跳过删除（宁可留着，也不裸删）。
+    """
+    sha = git("rev-parse", "--verify", f"refs/heads/{branch}")
+    if not sha:
+        return ""
+    ref = f"refs/preserve/local/{stamp}/{branch}"
+    pinned = proc_run(["git", "-C", str(REPO), "update-ref", ref, sha],
+                      capture_output=True, text=True)
+    return ref if pinned.returncode == 0 else ""
+
+
 def cmd_reap(args):
     go = "--go" in args
     rows = scan()
@@ -2782,9 +2811,12 @@ def cmd_reap(args):
                 dirty = f"  保留：{keep}"
         planned.append((r, wt, own, keep))
         print(f"  {'分支+worktree' if own else '仅分支'}  {r['branch']:44s} {wt}{dirty}")
-    print(f"\n共 {len(merged)} 项。{'【已执行】' if go else '默认只预演；确认后加 --go'}")
+    print(f"\n共 {len(merged)} 项。删分支前会先在本地钉 refs/preserve/local/<stamp>/<分支>。"
+          f"{'【已执行】' if go else '默认只预演；确认后加 --go'}")
     if not go:
         return
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    removed = skipped = pinned = 0
     for r, wt, own, keep in planned:
         if own and keep:
             # 现场还在用：目录和它的分支名都留着，这一项本轮跳过。
@@ -2809,9 +2841,24 @@ def cmd_reap(args):
                 removed, detail = _reap_remove_worktree(wt)
                 if not removed:
                     print(f"  剥离态回收未生效 {Path(wt).name}：{detail}")
-        proc_run(["git", "-C", str(REPO), "branch", "-D", r["branch"]],
-                       capture_output=True, text=True)
-    print("已回收。分支只是指针，成果在 main 里。")
+        # 先钉后删：钉不上就跳过这条分支，宁可留着，也不裸删。
+        ref = _pin_branch_ref(r["branch"], stamp)
+        if not ref:
+            print(f"  跳过分支删除（钉 preserve ref 失败，宁可留着）：{r['branch']}")
+            skipped += 1
+            continue
+        pinned += 1
+        delr = proc_run(["git", "-C", str(REPO), "branch", "-D", r["branch"]],
+                        capture_output=True, text=True)
+        if delr.returncode == 0:
+            removed += 1
+        else:
+            print(f"  跳过分支删除失败：{r['branch']}："
+                  f"{(delr.stderr or delr.stdout).strip()[:200]}")
+            skipped += 1
+    print(f"已回收 {removed} 条分支（其中 {pinned} 条删除前已钉到 "
+          f"refs/preserve/local/{stamp}/），跳过 {skipped} 项。"
+          f"分支只是指针，成果在 main 里；被删分支的 tip 仍可从 preserve ref 还原。")
 
 
 # ---------------------------------------------------------------- 落盘：merge train

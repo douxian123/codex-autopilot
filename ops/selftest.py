@@ -116,6 +116,10 @@ def main():
             "test-reap-creation-grace.py",
             "test-reap-stripped-only.py",
             "test-reap-backend-orphans.py",
+            # 删分支前必须先钉 preserve ref：插件这份 reap 此前完全没有保护，而守护
+            # 一拉起就会在磁盘压力下真跑 `reap --go`（2026-11-16 实测 34 条待删）。
+            # 这条门禁不只断言 ref 存在，还用 `git gc --prune=now` 证明对象真的没被回收。
+            "test-reap-branch-preserve.py",
         )
         for guard in reap_guards:
             print(f"  run  {guard}", flush=True)
