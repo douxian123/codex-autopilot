@@ -595,6 +595,19 @@ def branch_ahead(repo: Path, branch: str, main: str = "main") -> int:
         return -1
 
 
+def worktree_head_sha(worktree: Path) -> str:
+    """The commit a worktree actually has checked out, branch or detached.
+
+    Separate from any branch *name* on purpose: a detached HEAD has no branch,
+    but it still holds commits -- and those are exactly what a caller must not
+    delete. Returns "" only when the worktree has no resolvable HEAD.
+    """
+    result = run_git(worktree, "rev-parse", "--verify", "HEAD")
+    if result.returncode != 0:
+        return ""
+    return (result.stdout or "").strip()
+
+
 def backup_branch(repo: Path, branch: str, stamp: str) -> tuple[bool, str]:
     """Push a branch, falling back to a unique backup ref on non-fast-forward."""
     remote_result = run_git(repo, "config", "--get", f"branch.{branch}.remote")
@@ -643,7 +656,19 @@ def worktree_removable(
     if guarded:
         return {"ok": False, "reason": guarded, "ahead": 0, "backup": ""}
 
+    # Unique-commit protection must follow the *commit actually checked out*,
+    # not only the branch name. A detached HEAD reports branch "" (the callers
+    # that read `rev-parse --abbrev-ref HEAD` get "HEAD"), yet it can still hold
+    # commits that exist nowhere else. Keying on the branch name alone made
+    # `ahead` read 0 for such a tree, so the "refuse when there are unique
+    # commits" gate below never fired -- and removing the worktree left those
+    # commits reachable from nothing, one `git gc` away from silent deletion.
+    # Measured 2026-11-17: a detached tree with a real `main..HEAD` of 1 was
+    # assessed `ok=True, ahead=0`; passing the HEAD sha instead gave
+    # `unique-commits`. Take the max so neither signal can under-count.
     ahead = branch_ahead(repo, branch, main) if branch else 0
+    head_ahead = branch_ahead(repo, worktree_head_sha(worktree), main)
+    ahead = max(ahead, head_ahead)
     if status(worktree):
         remove_generated_dirs(worktree)
         # Opt-in: when the *only* thing making this tree dirty is untracked
