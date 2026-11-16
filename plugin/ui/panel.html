@@ -98,6 +98,19 @@
   .northstar .ns-d{font-size:11.5px;color:var(--ink-3);margin-left:auto;font-variant-numeric:tabular-nums}
   .northstar.unknown .ns-v{color:var(--ink-2);font-weight:500}
   .northstar.missing{opacity:.6}
+
+  /* ---- 首屏三问 ---- */
+  .q{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px 13px;margin-bottom:11px;box-shadow:var(--shadow-1)}
+  .qhead{display:flex;align-items:center;gap:9px;margin-bottom:11px}
+  .qhead .qn{width:20px;height:20px;border-radius:50%;background:var(--surface-3);color:var(--ink-3);display:grid;place-items:center;font-size:11px;font-weight:700;flex:0 0 auto;font-variant-numeric:tabular-nums}
+  .qhead h2{margin:0;font-size:14px;font-weight:650;color:var(--ink)}
+  .qhead .qstate{margin-left:auto;font-size:11.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .q .alert{margin-bottom:10px}
+  .q .hero,.q .card{box-shadow:none;border-radius:var(--r-sm);margin-bottom:0}
+  .q .card .chead{margin-bottom:10px}
+  .q .card + .card,.q .northstar,.q .sysline{margin-top:10px}
+  .sysline{font-size:11.5px;color:var(--ink-3);line-height:1.6;overflow-wrap:anywhere}
+
   .hero-bar{height:3px;border-radius:999px;background:var(--surface-3);margin-top:13px;overflow:hidden}
   .hero-bar span{display:block;height:100%;width:34%;border-radius:999px;background:var(--acc);opacity:0}
   body.s-working .hero-bar span{opacity:1;animation:slide 1.7s ease-in-out infinite}
@@ -369,6 +382,60 @@
     </div>
   </header>
 
+  <!-- 首屏只回答三件事，其余一律下沉。健康时不占空间。 -->
+  <section class="q" id="q1">
+    <div class="qhead"><span class="qn">1</span><h2>有东西需要我吗？</h2><span class="qstate" id="q1State"></span></div>
+    <div class="alert lv-ok" id="need">
+      <span class="al-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/></svg></span>
+      <span class="al-tx">读取中…</span>
+    </div>
+    <section class="card" id="acceptCard">
+      <div class="chead"><h2>需要你介入</h2><span class="count" id="accNote"></span></div>
+      <div id="acceptBox"></div>
+    </section>
+  </section>
+
+  <section class="q" id="q2">
+    <div class="qhead"><span class="qn">2</span><h2>系统在干对的事吗？</h2><span class="qstate" id="q2State"></span></div>
+    <section class="hero">
+      <div class="hero-top">
+        <span class="pulse"></span>
+        <span class="hero-state" id="stateLabel">读取中</span>
+        <span class="hero-time" id="statusTime"></span>
+      </div>
+      <div class="triple" aria-label="当前状态与进度">
+        <div class="cell">
+          <span class="k">现在是什么状态</span>
+          <span class="v" id="focusStatus">读取中…</span>
+        </div>
+        <div class="cell work">
+          <span class="k">现在在干嘛</span>
+          <span class="v" id="focusDoing">读取中…</span>
+        </div>
+        <div class="cell">
+          <span class="k">现在在哪个步骤</span>
+          <span class="v" id="focusStep">读取中…</span>
+        </div>
+      </div>
+      <div class="hero-bar" aria-hidden="true"><span></span></div>
+      <div class="execnow" id="execNow" hidden><span class="edot"></span><span class="etx" id="execNowText"></span></div>
+    </section>
+    <div class="sysline" id="sysLine">正在读取常驻与调度…</div>
+  </section>
+
+  <section class="q" id="q3">
+    <div class="qhead"><span class="qn">3</span><h2>它替我完成了什么？</h2><span class="qstate" id="q3State"></span></div>
+    <div class="northstar missing" id="northStar">
+      <span class="ns-k">首问闭环率</span>
+      <span class="ns-v" id="nsValue">取不到</span>
+      <span class="ns-d" id="nsDetail"></span>
+    </div>
+    <section class="card" id="recentCard">
+      <div class="chead"><h2>最近收口</h2><span class="count" id="recentNote"></span></div>
+      <div id="recentBox"></div>
+    </section>
+  </section>
+
   <section class="card" style="padding:11px 14px;margin-bottom:10px">
     <div class="switchrow" style="padding:0;border:0">
       <div><div class="t">Codex 自动挡</div><div class="d" id="masterState">正在读取状态…</div></div>
@@ -376,40 +443,6 @@
     </div>
     <div class="d projline" id="projectLine">绑定项目：读取中…</div>
   </section>
-
-  <section class="hero">
-    <div class="hero-top">
-      <span class="pulse"></span>
-      <span class="hero-state" id="stateLabel">读取中</span>
-      <span class="hero-time" id="statusTime"></span>
-    </div>
-    <div class="triple" aria-label="一眼三问">
-      <div class="cell">
-        <span class="k">① 现在是什么状态</span>
-        <span class="v" id="focusStatus">读取中…</span>
-      </div>
-      <div class="cell work">
-        <span class="k">② 现在在干嘛</span>
-        <span class="v" id="focusDoing">读取中…</span>
-      </div>
-      <div class="cell">
-        <span class="k">③ 现在在哪个步骤</span>
-        <span class="v" id="focusStep">读取中…</span>
-      </div>
-    </div>
-    <div class="northstar missing" id="northStar">
-      <span class="ns-k">首问闭环率</span>
-      <span class="ns-v" id="nsValue">取不到</span>
-      <span class="ns-d" id="nsDetail"></span>
-    </div>
-    <div class="hero-bar" aria-hidden="true"><span></span></div>
-    <div class="execnow" id="execNow" hidden><span class="edot"></span><span class="etx" id="execNowText"></span></div>
-  </section>
-
-  <div class="alert lv-ok" id="need">
-    <span class="al-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/></svg></span>
-    <span class="al-tx">读取中…</span>
-  </div>
 
   <section class="intake">
     <label for="intakeText">把问题交给自动挡</label>
@@ -455,16 +488,6 @@
       <div class="route-node"><span class="k">当前工作项</span><span class="v" id="hierWork">读取中…</span></div>
     </div>
     <div class="orientation-note" id="orientationNote">正在读取当前路线…</div>
-  </section>
-
-  <section class="card" id="acceptCard">
-    <div class="chead"><h2>需要你介入</h2><span class="count" id="accNote"></span></div>
-    <div id="acceptBox"></div>
-  </section>
-
-  <section class="card" id="recentCard">
-    <div class="chead"><h2>最近收口</h2><span class="count" id="recentNote"></span></div>
-    <div id="recentBox"></div>
   </section>
 
   <details class="overview-detail">
@@ -802,11 +825,40 @@
     renderOrientation(s);
     renderAcceptance(humanAcc, s.machine_verified || []);
     renderRecent(s.recent_completed || []);
+    renderThreeQuestions(s, humanAcc, doingItems, stuckN);
     renderProgress(doingItems, s.todo_items || [], todoCount);
     renderRoute(s.route || {});
     renderMainline(s.mainline || {});
     var intakeButton = el("intakeSubmit");
     if (intakeButton) intakeButton.disabled = !s.enabled || !!s.error;
+  }
+
+  // 首屏三问的右侧小字：只说「要不要人、系统忙不忙、最近有没有产出」，
+  // 不重复正文，也不在健康时制造噪音。
+  function renderThreeQuestions(s, human, doing, stuckN){
+    var need = human.length + stuckN;
+    setText("q1State", human.length ? (human.length + " 项等你") : (stuckN ? (stuckN + " 个卡点") : "不用你"));
+    var q1 = el("q1"); if (q1) q1.className = "q" + (need ? " has-need" : "");
+
+    var d = s.daemon || {};
+    var busy = doing.length + (s.exec_now ? 1 : 0);
+    setText("q2State", s.error ? "异常" : !s.enabled ? "已关闭" :
+      (s.lifecycle === "draining" ? "收尾中" : busy ? "推进中" : "待命"));
+    var q2 = el("q2"); if (q2) q2.className = "q" + (s.error ? " has-error" : busy ? " is-live" : "");
+
+    var q = s.queue || {};
+    var bits = [];
+    bits.push(d.live ? ("常驻运行中" + (d.pid ? " #" + d.pid : "")) : "常驻未运行");
+    if (d.last_cycle) bits.push("上一轮 " + fmtTime(d.last_cycle));
+    bits.push("可落盘 " + (q.clean == null ? 0 : q.clean) + " / 冲突 " + (q.conflict == null ? 0 : q.conflict));
+    if (!s.enabled) bits.push("自动动作已关闭");
+    else if (s.paused) bits.push("已暂停推进");
+    var sl = el("sysLine"); if (sl) sl.textContent = bits.join(" · ");
+
+    var recent = s.recent_completed || [];
+    var cl = s.closure_rate || {};
+    setText("q3State", cl.status === "ok" ? (Number(cl.rate_pct).toFixed(1) + "% 闭环")
+      : (recent.length ? (recent.length + " 项收口") : "暂无产出"));
   }
 
   var LANE_LABEL = {design:"体验 / 视觉", bug:"Bug", arch:"架构", gate:"门禁", reprocess:"待重排"};
