@@ -269,6 +269,9 @@
   .acc ol{margin:7px 0 0;padding-left:20px;font-size:12.5px;color:var(--ink-2)}
   .acc ol li{padding:2px 0}
   .accnote{margin-top:10px;font-size:11.5px;color:var(--ink-3)}
+  .accact{margin-top:10px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;border-top:1px solid var(--line-2);padding-top:10px}
+  .accmsg{font-size:11.5px;color:var(--ink-3);flex:1 1 210px;min-width:0;line-height:1.5}
+  .accact .btn{padding:6px 13px;font-size:12.5px;border-radius:8px;flex:0 0 auto}
   .accfold{margin-top:12px;border-top:1px solid var(--line-2)}
   .accfold>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:12px 0 2px;font-size:12px;font-weight:600;color:var(--ink-3)}
   .accfold>summary::-webkit-details-marker{display:none}
@@ -1407,6 +1410,7 @@
           var hint = document.createElement("div"); hint.className = "accnote"; hint.textContent = "（还没写明复核步骤）";
           li.appendChild(hint);
         }
+        li.appendChild(buildAcceptanceAction(a));
         ul.appendChild(li);
       });
       box.appendChild(ul);
@@ -1425,6 +1429,31 @@
       });
       body.appendChild(mu); det.appendChild(sm); det.appendChild(body); box.appendChild(det);
     }
+  }
+
+  // 每条人工验收都要带「下一个动作」，并写清点了会怎样 / 不点会怎样。
+  // 只列复核步骤、不给出口，是这批验收项长期挂着不动的直接原因。
+  function buildAcceptanceAction(a){
+    var row = document.createElement("div"); row.className = "accact";
+    var msg = document.createElement("span"); msg.className = "accmsg";
+    msg.textContent = "点它会把它从待验收翻成已通过，这条从首屏消失；不点就继续占着「需要你介入」。";
+    var btn = document.createElement("button");
+    btn.className = "btn primary"; btn.type = "button";
+    btn.textContent = "我确认通过，收口这条";
+    btn.addEventListener("click", function(){
+      if (!a.id) { toast("这条验收缺 id，收口不了，先补台账", "err"); return; }
+      btn.disabled = true; btn.textContent = "正在收口…";
+      callTool("resolve_acceptance",
+               {id:a.id, status:"verified", note:"用户在面板确认通过"}).then(function(){
+        toast("已收口 " + a.id, "ok");
+        return loadStatus(false);
+      }).catch(function(e){
+        toast("收口失败：" + (e && e.message || e), "err");
+        btn.disabled = false; btn.textContent = "我确认通过，收口这条";
+      });
+    });
+    row.appendChild(msg); row.appendChild(btn);
+    return row;
   }
 
   function renderMainline(ml){
