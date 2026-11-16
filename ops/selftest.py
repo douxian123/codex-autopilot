@@ -251,6 +251,14 @@ def main():
         # 预演只读不写、不碰绑定项目账本，且守护那层确实挂着 --all。
         run([sys.executable, str(OPS / "test-route-all-projects.py")],
             cwd=str(OPS.parent), check=True)
+        # 状态管家：`budget_gate` 只测不改，于是「压缩线/工具输出上限该不该调」
+        # 仍然要人肉判断 + 人肉改 config + 人肉记回滚点 —— 承诺的「提卡 → 点头才改
+        # → 备份 → 一键回滚」根本没接线（2026-11-18 实测：没有任何代码写 config.toml）。
+        # 这条锁住：propose 绝不碰 config、没 --confirm 一律拒绝、只改白名单内的键、
+        # 应用前按字节备份、回滚逐字节还原、人改过 config 后旧卡作废（不覆盖人的编辑）、
+        # section 里的同名键不动、取不到体检证据就不出卡。
+        run([sys.executable, str(OPS / "test-harness-tune.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()

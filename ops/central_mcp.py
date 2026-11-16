@@ -140,6 +140,35 @@ def _harness_health_line(level, worst):
     return "上下文健康：读不到判定"
 
 
+def _harness_tune_summary():
+    """状态管家：待用户点头的 harness 调整卡（只读，绝不在这里改 config）。
+
+    卡片由守护每拍按真实体检结论提出（见 harness_tune.py）；这里只把「有几张、
+    调什么、为什么」拼给面板。取不到就说取不到，不用「0 张」冒充（硬规则 10）。
+    """
+    try:
+        import harness_tune
+        rows = harness_tune.pending()
+    except Exception as exc:
+        return {"status": "unknown", "reason": f"读不到调整卡（{exc!r}）", "items": []}
+    items = [{
+        "id": r.get("id"),
+        "key": r.get("key"),
+        "label": _HARNESS_KEY_LABEL.get(r.get("key"), r.get("key")),
+        "old": r.get("old"),
+        "new": r.get("new"),
+        "why": r.get("why"),
+    } for r in rows]
+    return {"status": "ok", "count": len(items), "items": items}
+
+
+# 只给面板显示用的人话标签（键名本身照旧用于 apply，不翻译）。
+_HARNESS_KEY_LABEL = {
+    "model_auto_compact_token_limit": "上下文压缩线",
+    "tool_output_token_limit": "单条工具输出上限",
+}
+
+
 def _server_version() -> str:
     """版本以插件清单为准，避免 MCP 里再写死一份导致漂移。
 
@@ -668,6 +697,35 @@ TOOLS = [
             "type": "object",
             "properties": {"values": {"type": "object"}},
             "required": ["values"],
+        },
+    },
+    {
+        "name": "harness_tune_list",
+        "description": "状态管家：列出待你点头的 harness 调整卡（压缩线 / 单条工具输出上限）。这些卡由守护按长驻窗口的真实体检结论提出；不点头 config 一个字都不会变。用户问“上下文健康 / 该不该调配置 / 状态管家提了什么”时用它。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "harness_tune_apply",
+        "description": "状态管家：应用一张调整卡。只有用户明确点头才能调用（confirm=true 是「人已同意」的语义）。应用前按字节备份 config.toml，只替换白名单里那一个键的那一行，其余字节不动；出卡后 config 被人改过则整张卡作废，绝不覆盖人的编辑。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "调整卡 id，如 T-0001"},
+                "confirm": {"type": "boolean",
+                            "description": "必须为 true：代表用户已经明确同意这次改动"},
+            },
+            "required": ["id", "confirm"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "harness_tune_rollback",
+        "description": "状态管家：把一张已应用的调整卡按字节回滚到应用前的 config.toml。改了不舒服可以一键退回，这个动作只碰被这张卡改过的那份文件。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "string", "description": "调整卡 id，如 T-0001"}},
+            "required": ["id"],
+            "additionalProperties": False,
         },
     },
 ]
@@ -1990,6 +2048,7 @@ def _status_payload(fast=True):
         "last_verification": _last_verification(),
         "closure_rate": _closure_rate_summary(),
         "harness_health": _harness_health(),
+        "harness_tune": _harness_tune_summary(),
         "mainline": _mainline_summary(),
         # fast=True 是面板/开关那条路：只读缓存，不连宿主，绝不因此变慢。
         "route": _route_summary(timeout=0.0 if fast else None),
@@ -2211,6 +2270,7 @@ def call_tool(name, args):
         "suggest_branch", "resolve_list", "resolve_plan", "generate_context",
         "dashboard", "autopilot_status", "render_autopilot_panel",
         "autopilot_settings_read", "codex_native_threads", "codex_native_probe",
+        "harness_tune_list",
     }
     control_tools = {
         "autopilot_control", "autopilot_run_once",
@@ -2395,6 +2455,24 @@ def call_tool(name, args):
         if not rid:
             return "reopen_item 需要 id（如 L-0003）", 2
         return truthctl("open", rid, args.get("reason") or "")
+    if name in ("harness_tune_list", "harness_tune_apply", "harness_tune_rollback"):
+        import harness_tune
+        if name == "harness_tune_list":
+            pending = harness_tune.pending()
+            if not pending:
+                return ("状态管家：当前没有待你点头的 harness 调整。（config.toml 一个字都没动）",
+                        0)
+            return harness_tune.human(), 0
+        rid = (args.get("id") or "").strip()
+        if not rid:
+            return f"{name} 需要 id（如 T-0001）", 2
+        if name == "harness_tune_apply":
+            # confirm 就是「人已明确同意」的语义；不给就一律拒绝，绝不自动改配置。
+            res = harness_tune.apply(rid, confirm=bool(args.get("confirm")))
+        else:
+            res = harness_tune.rollback(rid)
+        return json.dumps(res, ensure_ascii=False, indent=1), (
+            0 if res.get("status") != "error" else 2)
     if name == "suggest_branch":
         return kgctl("suggest")
     if name == "intake_request":

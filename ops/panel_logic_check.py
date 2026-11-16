@@ -357,6 +357,21 @@ def main(argv):
         fails += has("没有卡点时给出空态说明",
                      beout["blockedList"] or beout["blockedHtml"], "没有需要你决策的")
 
+        # 状态管家的调整卡必须真的上屏，并且写清「点了会怎样 / 不点会怎样」。
+        # 只把卡片留在 CLI、面板看不到，等于用户永远等不到那一次「点头」——
+        # 这正是「机制存在但没有入口」的老毛病。
+        tune = dict(payload)
+        tune["harness_tune"] = {"status": "ok", "count": 1, "items": [{
+            "id": "T-9001", "key": "model_auto_compact_token_limit",
+            "label": "上下文压缩线", "old": 160000, "new": 200000,
+            "why": "司令窗近 2 小时压缩 5 次",
+        }]}
+        tout = run_once(tune)
+        fails += has("状态管家的调整卡上屏", tout["blockedList"],
+                     "T-9001", "上下文压缩线")
+        fails += has("调整卡写明改前备份/可回滚", tout["blockedList"], "一键回滚")
+        fails += has("调整卡写明不点的后果", tout["blockedList"], "config 一个字都不动")
+
         fails += has("首屏开关文案与控制层一致", out["masterState"],
                      "已关闭" if not payload.get("enabled") else "正在运行")
         fails += has("原生直连结论如实显示", out["nativeState"],

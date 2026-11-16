@@ -5351,6 +5351,14 @@ def loop(interval_min: int, max_land: int, dry: bool,
                 budget_gate.daemon_hook(dry=dry, log_fn=log)
             except Exception as exc:
                 log(f"[budget] 闸门跳过（fail-open）：{exc!r}")
+            # 状态管家（fail-open）：按体检结论出「harness 调整卡」。这一钩子**只写
+            # 提案、从不改 config** —— 真正应用必须由人显式点头（见 harness_tune.py）。
+            # 与预算闸门同族：只读判定、动作显式、一键关、异常一律吞掉。
+            try:
+                import harness_tune
+                harness_tune.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[tune] 出卡跳过（fail-open）：{exc!r}")
             # 空转记分（fail-open）：给每一拍分类，连续空转就点名并把记分写进下一拍的 prompt。
             # 与预算闸门同族：只读判定、动作显式、一键关、异常一律吞掉。
             try:
