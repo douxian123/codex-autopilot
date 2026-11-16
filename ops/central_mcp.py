@@ -1946,8 +1946,11 @@ def _status_text(payload):
         payload["need_action"],
         "",
         _closure_rate_line(payload.get("closure_rate")),
-        "开关：自动合入=%s  自动拆冲突=%s  自动移植=%s  后台常驻=%s"
-        % ("开" if sw["auto_land"] else "关",
+        # 自动实现排在最前：它是「需求会不会被真的写出来」这一格。少了它，
+        # 一行全绿却一步没实现——和「守护没在跑却显示开着」是同一个坑。
+        "开关：自动实现=%s  自动合入=%s  自动拆冲突=%s  自动移植=%s  后台常驻=%s"
+        % ("开" if sw["auto_exec"] else "关（只记账，不实现）",
+           "开" if sw["auto_land"] else "关",
            "开" if sw["auto_resolve"] else "关",
            "开" if sw["auto_port"] else "关",
            _daemon_switch_label(sw.get("daemon_enabled"),

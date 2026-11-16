@@ -2246,6 +2246,16 @@ def test_panel_contract():
         assert states == {"36 题严格质量": "pass", "50 题真人盲评": "human_pending"}, \
             "36 题与 50 题盲评的状态没有分别保留"
 
+    # 状态文本里那行「开关」必须把 auto_exec 报出来。少了它，一行全绿却一步
+    # 没实现——用户以为需求在被做，其实只被记了账。守护静默死亡那条同源教训：
+    # 机器可读的开关名（data-key）和给模型/CLI 读的那行字，必须同时覆盖 auto_exec。
+    text = central_mcp._status_text(payload)
+    switch_line = next((l for l in text.splitlines() if l.startswith("开关：")), "")
+    assert switch_line, "状态文本里没有「开关」那一行"
+    assert "自动实现=" in switch_line, \
+        f"「开关」那行漏了 auto_exec，用户看不到需求是否会被真的实现：{switch_line!r}"
+    assert "auto_exec" in switch_keys, "面板高级里没有 auto_exec 开关，用户无法自己打开"
+
     print(f"selftest ok: 面板元素（{len(used_ids)} 个）与工具（{len(called)} 个）"
           f"全部真实存在，项目文件夹按项目归口，开关项都在控制层里。")
 
