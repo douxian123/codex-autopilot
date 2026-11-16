@@ -9,18 +9,22 @@ HookPrompt（桌面端渲染成「钩子反馈」卡片），把对话刷爆；`
 stdout，挡不住这条落盘。且在 Plan Mode 会话里实测到该注入会让模型回「我不能改」
 直接停住，等于制造「跑两句就停」。
 
-于是看门狗的职责从「Stop 必须在」收窄成「hooks.json 存在 + 合法 JSON + hooks
-非空」。这样既修掉满屏钩子，又保留「被清成 {"hooks":{}} 就自动补回」这层保护
-（历史上有过 5 次这种事故）。
+于是看门狗的职责从「Stop 必须在」改成两条：
+  (a) 三条 loop-guard 挂载（PreToolUse / PostToolUse / UserPromptSubmit）必须齐，
+      被清成 {"hooks":{}} 或缺挂载就自动补回（历史上有过 5 次这种事故）；
+  (b) 「现场没有 Stop」升级成**不变量**：只要发现 hooks.json 里又冒出 Stop，
+      立刻只摘掉这一个 key。因为「不再要求 Stop」只保证看门狗不会装回它，
+      挡不住安装脚本/旧恢复链路/人工编辑把它写回来 —— 写回来卡片就复发。
 
 所以这里用假 HOME + 假插件根，逐个断言：
   1. 完整 hooks（PreToolUse 等，无 Stop）         → 不恢复
   2. 只有 PostToolUse                             → 不恢复
   3. hooks 为空                                   → 必须恢复
-  4. Stop 残留但不属于本脚本（非空）              → 不恢复
+  4. 正常态没有 Stop                              → 不产生摘除备份
   5. 权威备份缺失 + hooks 为空                    → fail-open，绝不猜
   6. 权威备份不是合法 JSON                        → 拒绝照坏件恢复
   7. 权威备份合法且非空（无 Stop）+ hooks 为空    → 必须恢复
+  8. Stop 又冒出来（指向 loop-guard.py 或别的）   → 主动摘除，其余挂载不动
 
 判定「是否恢复」看的是守卫留下的备份文件 hooks.json.bak-<TS>-guard-restore，
 而不是 hooks.json 的内容 —— 因为 installer 每次都会追加 resource 条目，
@@ -81,7 +85,8 @@ HOOKS_OK = {
 
 
 def scenario(name, hooks, *, canon=True, canon_hooks=None, canon_raw=None,
-             expect_restore=True, expect_log=None, forbid_log=None):
+             expect_restore=True, expect_log=None, forbid_log=None,
+             expect_stop_unmount=False):
     """在假 HOME + 假插件根里跑一次守卫，断言它是否做了恢复。"""
     with tempfile.TemporaryDirectory(prefix="hooks-guard-test-") as tmp:
         root = Path(tmp)
@@ -114,6 +119,7 @@ def scenario(name, hooks, *, canon=True, canon_hooks=None, canon_raw=None,
         proc = subprocess.run(["/bin/bash", str(gdir / "hooks-guard.sh")],
                               capture_output=True, text=True, env=env)
         restored = list((home / ".codex").glob("hooks.json.bak-*-guard-restore"))
+        unmounted = list((home / ".codex").glob("hooks.json.bak-*-stop-unmount"))
         log_path = home / ".codex" / "hooks" / "hooks-guard.log"
         log_text = log_path.read_text(encoding="utf-8") if log_path.is_file() else ""
 
@@ -123,10 +129,21 @@ def scenario(name, hooks, *, canon=True, canon_hooks=None, canon_raw=None,
             check(f"{name}: 判定为需要恢复", bool(restored))
         else:
             check(f"{name}: 未误恢复", not restored)
+        if expect_stop_unmount:
+            check(f"{name}: 摘除动过手(留了 stop-unmount 备份)", bool(unmounted))
+        else:
+            check(f"{name}: 未多此一举写 stop-unmount 备份", not unmounted)
         if expect_log is not None:
             check(f"{name}: 日志含 {expect_log!r}", expect_log in log_text)
         if forbid_log is not None:
             check(f"{name}: 日志不含 {forbid_log!r}", forbid_log not in log_text)
+        if expect_stop_unmount:
+            after = json.loads(hooks_json.read_text(encoding="utf-8"))
+            check(f"{name}: 现场 Stop 已被摘掉", "Stop" not in (after.get("hooks") or {}))
+            # 其余挂载必须原样保留 —— 摘除只许删 Stop 这一个 key。
+            keep = {k: v for k, v in hooks.items() if k != "Stop"}
+            check(f"{name}: 其余挂载原样保留",
+                  all(k in (after.get("hooks") or {}) for k in keep))
         if expect_restore and restored:
             after = json.loads(hooks_json.read_text(encoding="utf-8"))
             restored_hooks = after.get("hooks", {})
@@ -246,10 +263,19 @@ def main():
     scenario("hooks 为空", {}, expect_restore=True,
              expect_log="已恢复 hooks.json 挂载")
     # 4) Stop 残留但指向别的脚本（三条挂载齐）→ 不恢复，也不把 Stop 当回事
-    scenario("Stop 指向别的脚本（非空）",
+    #    2026-11-16 起升级为不变量：Stop 一出现就必须被摘掉（无论指向谁）。
+    scenario("Stop 又冒出来（指向别的脚本）",
              {**HOOKS_OK,
               "Stop": [{"hooks": [{"type": "command", "command": "python3 other.py stop"}]}]},
-             expect_restore=False)
+             expect_restore=False,
+             expect_stop_unmount=True,
+             expect_log="已主动摘除")
+    # 4b) Stop 指向 loop-guard.py 自己（最容易被安装脚本写回的那种）
+    scenario("Stop 又冒出来（指向 loop-guard.py）",
+             {**HOOKS_OK, "Stop": STOP_OK["Stop"]},
+             expect_restore=False,
+             expect_stop_unmount=True,
+             expect_log="已主动摘除")
     # 5) 权威备份缺失 + hooks 为空 → fail-open，绝不猜
     scenario("权威备份缺失 + hooks 为空", {}, canon=False, expect_restore=False,
              expect_log="权威备份缺失")

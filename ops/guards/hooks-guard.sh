@@ -157,6 +157,57 @@ PYEOF
   fi
 fi
 
+# ---- 2026-11-16 政策不变量:现场不许再有 Stop 事件 ----
+# 「不再要求 Stop」只保证看门狗**不会**把它装回来;它挡不住别人装:
+# 任何安装脚本、旧版恢复链路、或人工编辑往 hooks.json 里写回 Stop,
+# 「钩子反馈」卡片就会立刻复发 —— 这正是用户反复说「修了两天还没好」的形态。
+# 所以这里把「Stop 不在现场」升级成不变量:只在确实存在 Stop 时才动文件,
+# 且**只删 Stop 这一个 key**,其余挂载原样保留;写前备份、临时文件原子替换。
+# 返回值:0=已摘除 1=本来就没有(什么都不做) 2=文件不可用(不碰,fail-open)。
+if [ "$need_restore" = "0" ]; then
+  # 不用 set +e/-e 包裹:本脚本只有 set -u,凭空加 errexit 会改变后面恢复路径
+  # 的退出语义。用 || 捕获返回码即可。
+  stop_unmount_rc=0
+  /usr/bin/python3 - "$HOOKS_JSON" "$HOME" >/dev/null 2>&1 <<'PYEOF' || stop_unmount_rc=$?
+import json, os, shutil, sys, tempfile, time
+
+path, home = sys.argv[1], sys.argv[2]
+try:
+    with open(path, encoding="utf-8") as f:
+        d = json.load(f)
+except Exception:
+    raise SystemExit(2)          # 读不了就别动,交给上面的恢复判据处理
+if not isinstance(d, dict):
+    raise SystemExit(2)
+h = d.get("hooks")
+if not (isinstance(h, dict) and "Stop" in h):
+    raise SystemExit(1)          # 本来就没有 Stop
+
+stamp = time.strftime("%Y%m%d-%H%M%S")
+shutil.copy2(path, os.path.join(home, ".codex", f"hooks.json.bak-{stamp}-stop-unmount"))
+h.pop("Stop", None)
+fd, tmp = tempfile.mkstemp(prefix=".hooks-json-", dir=os.path.dirname(path))
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)        # 原子替换:并发写入不会看到半截文件
+except BaseException:
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+    raise SystemExit(2)
+raise SystemExit(0)
+PYEOF
+  if [ "$stop_unmount_rc" = "0" ]; then
+    log "现场 hooks.json 又出现了 Stop 事件,已主动摘除(旧件存 hooks.json.bak-*-stop-unmount)"
+    osascript -e 'display notification "已摘除回归的 Stop 钩子(它会刷满钩子反馈卡片)" with title "hooks-guard"' 2>/dev/null || true
+  fi
+fi
+
 [ "$need_restore" = "1" ] || exit 0
 
 # ---- 权威版本不在 → fail-open,绝不猜、绝不用别的东西顶上 ----
