@@ -192,6 +192,16 @@ def _constraint_candidates_summary():
     return {"status": "ok", "count": len(items), "items": items}
 
 
+def _n(value):
+    """把可能为 None 的计数渲染成面板能读的字样。
+
+    实测缺陷（2026-11-17）：健康条直接把 `queue["clean"]` 之类塞进 `%s`，
+    守护没跑时那些字段是 None，于是首屏印出「可合 None · 冲突 None」——
+    内部空值泄漏到读者面。取不到就说「—」，不印 Python 字面量。
+    """
+    return "—" if value is None else str(value)
+
+
 def _steward_health(payload):
     """六管家健康条：把六个管家的真实状态收敛成一份面板可读的清单。
 
@@ -257,7 +267,8 @@ def _steward_health(payload):
     else:
         rows.append({"key": "merge", "state": "ok",
                      "label": "合并管家：可合 %s · 已合 %s · 冲突 %s"
-                     % (queue.get("clean"), counters.get("landed"), queue.get("conflict"))})
+                     % (_n(queue.get("clean")), _n(counters.get("landed")),
+                        _n(queue.get("conflict")))})
 
     # 4. 状态管家：待点头的 harness 调整卡 + 上下文健康结论。
     if tune.get("status") != "ok":

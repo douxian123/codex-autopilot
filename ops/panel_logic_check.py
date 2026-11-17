@@ -414,6 +414,15 @@ def main(argv):
         bout2 = run_once(blank)
         fails += has("健康条取不到时不冒充正常", bout2["stewardBar"],
                      "取不到", "没在跑")
+        # 内部空值不得泄漏到读者面。实测缺陷（2026-11-17）：守护没跑时合并管家那行
+        # 直接印出「可合 None · 冲突 None」。None/True/False 这类 Python 字面量
+        # 一旦上屏就是没交付——这是本项目硬规则（内部读数不上读者面）。
+        for bad in ("None", "True", "False"):
+            if bad in str(out["stewardBar"]) or bad in str(bout2["stewardBar"]):
+                fails += 1
+                print(f"  FAIL  健康条泄漏内部字面量 {bad}")
+            else:
+                print(f"  PASS  健康条不泄漏 {bad}")
 
         fails += has("首屏开关文案与控制层一致", out["masterState"],
                      "已关闭" if not payload.get("enabled") else "正在运行")
