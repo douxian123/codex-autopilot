@@ -128,6 +128,19 @@ def main() -> int:
         check("explicit+destructive 有理由可执行",
               explicit_destructive["state"] == "running")
 
+        # 3b. 资源 / 工具白名单：工单声明之外的请求必须在 Popen 之前禁行。
+        raises("越权 resource 禁行", mod.AuthorizationError,
+               service.start, sample("w6", allowed_resources=["ops/a.txt"],
+                                     resources=["ops/secret.txt"]))
+        raises("越权 tool 禁行", mod.AuthorizationError,
+               service.start, sample("w7", allowed_tools=["read"],
+                                     tools=["write"]))
+        scoped = service.start(sample("w8", allowed_resources=["ops/a.txt"],
+                                      resources=["ops/a.txt"],
+                                      allowed_tools=["read"], tools=["read"]))
+        check("白名单内请求可执行", scoped["state"] == "running",
+              scoped["state"])
+
         # 4. 状态机与账本完整性
         raises("非法 worker_id", mod.LifecycleError,
                service.start, sample("../escape"))
