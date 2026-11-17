@@ -2393,7 +2393,8 @@ def _context_payload(branch: str, head: str = "", main_head: str = "") -> dict:
             REPO / "ops" / "truth" / "constraints.jsonl", files),
         "acceptance_todo": [r for r in latest_by_id(read_jsonl(REPO / "ops" / "truth" / "acceptance.jsonl")).values()
                             if r.get("status") in ("todo", "wip", "blocked")],
-        "recent_progress": sorted(latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values(),
+        "recent_progress": sorted([r for r in latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values()
+                                   if (r.get("status") or "active") != "retired"],
                                   key=lambda r: r.get("ts", ""))[-8:],
         "convergence": next((g for g in load_convergence().get("groups", [])
                              if g.get("branch") == branch), None),
@@ -2493,7 +2494,8 @@ def cmd_dash(args):
     open_led = [r for r in led if r.get("status") in ("open", "doing", "todo")]
     open_led.sort(key=lambda r: ({"bug": 0, "arch": 1, "ux": 2, "visual": 3}.get(r.get("kind"), 9),
                                  r.get("ts", "")))
-    prog = sorted(latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values(),
+    prog = sorted([r for r in latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values()
+                   if (r.get("status") or "active") != "retired"],
                   key=lambda r: r.get("ts", ""))[-8:]
     inbox = read_jsonl(INBOX)
     pending = [x for x in inbox if not x.get("routed")]
