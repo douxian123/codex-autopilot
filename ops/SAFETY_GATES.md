@@ -57,6 +57,18 @@ tick 总时长 37.6s。门禁 `test_context_packs_are_cached_and_budgeted`。
 决定是否允许启动新 worker。低于停止线时不启动新任务，但已运行任务继续收尾；
 达到恢复线后自动放行，避免反复清盘和边界抖动。
 
+## 真实派发必须经过 worker 生命周期账本（2026-11-18）
+
+`central_daemon` 的首次派发、在途现场恢复、基础设施重试、模型降级重派和无改动
+重派，都必须先由 `ops/exec_lifecycle.py` 在 `ops/worker_lifecycle.py` 的
+append-only 账本里声明，再由生命周期层调用 `Popen`。账本损坏、授权冲突或状态
+不合法时不启动进程、不占用并发槽位；若进程已经拉起但后续落账失败，立即回收
+整个进程组，绝不留无账本孤儿。
+
+worker 的 PID 写入账本 `external_ref`，回收结果回写 `completed` / `failed` /
+`handed_back`；终态后同一 ticket 重派必须生成新 worker，不能复用已结束账本。
+门禁 `ops/test-exec-lifecycle.py` 锁住这些失败路径，并已登记进 `selftest.py`。
+
 ## 设计纪律
 
 1. 有副作用的循环必须幂等：重启后先认领在跑的，再决定是否新开。

@@ -109,6 +109,7 @@ from pass_registry import (
 from ledger_state import latest_ledger_by_id  # noqa: E402
 import constraints as constraints_mod  # noqa: E402
 import exec_overlap  # noqa: E402
+import exec_lifecycle  # noqa: E402
 import live_guard  # noqa: E402
 import workspace_guard  # noqa: E402
 
@@ -2119,11 +2120,71 @@ def _exec_command(job: dict) -> list:
     return cmd
 
 
+def _abort_launched(launched: dict, err: str) -> None:
+    """生命周期落账失败后，绝不留一个没有账本的活进程。"""
+    proc = launched.get("proc")
+    if proc is not None:
+        try:
+            if proc.poll() is None:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except OSError:
+                    proc.kill()
+        except Exception as exc:
+            log(f"[exec] 回收未落账 worker 失败（继续报错）：{exc!r}")
+    fh = launched.get("fh")
+    if fh is not None:
+        try:
+            fh.close()
+        except OSError:
+            pass
+    log(f"[exec] 生命周期落账失败，已回收本次启动：{err}")
+
+
+def _spawn_with_lifecycle(job: dict, log_path: Path, note: str) -> tuple | None:
+    """重试/降级/无改动重派共用的启动口：先升 generation，再 Popen。"""
+    launched: dict[str, object] = {}
+
+    def launch() -> int:
+        fh = log_path.open("a", encoding="utf-8")
+        if note:
+            fh.write(note)
+            fh.flush()
+        try:
+            proc = subprocess.Popen(
+                _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
+                stderr=subprocess.STDOUT, cwd=str(job["worktree"]),
+                start_new_session=True)
+        except Exception:
+            fh.close()
+            raise
+        launched["fh"] = fh
+        launched["proc"] = proc
+        return proc.pid
+
+    _projection, err = exec_lifecycle.start_or_resume(
+        job, launch, runtime=RUNTIME, reason=note.strip() or "auto_exec 重试")
+    if err:
+        log(f"[exec] {job.get('id') or '?'} 重试启动被生命周期闸拦住：{err}")
+        _abort_launched(launched, err)
+        job["start_error"] = str(err)
+        return None
+    job.pop("start_error", None)
+    proc = launched["proc"]
+    job["proc"], job["fh"], job["pid"] = proc, launched["fh"], proc.pid
+    return proc, launched["fh"]
+
+
 def _start_exec(job: dict) -> dict | None:
     """Start one prepared Codex worker without waiting for it."""
     if job.get("recover"):
         # No new session is needed; make the existing branch immediately
         # reapable so the same supervisor performs add/commit/land.
+        _projection, err = exec_lifecycle.mark_recovered(job, runtime=RUNTIME)
+        if err:
+            log(f"[exec] {job.get('id') or '?'} 恢复现场生命周期落账失败：{err}")
+            job["start_error"] = str(err)
+            return None
         job["proc"] = _finished_proc()
         return job
     wt = Path(job["worktree"])
@@ -2131,19 +2192,34 @@ def _start_exec(job: dict) -> dict | None:
     cmd = _exec_command(job)
     log(f"[exec] 派发 {job['id']} -> {job['branch']}（worktree={wt}, "
         f"codex={job['codex'][0]}, model={job.get('model') or 'default'}）")
-    try:
+    launched: dict[str, object] = {}
+
+    def launch() -> int:
         fh = log_path.open("w", encoding="utf-8")
-        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=fh,
-                                stderr=subprocess.STDOUT, cwd=str(wt),
-                                start_new_session=True)
-    except OSError as exc:
-        log(f"[exec] 无法启动 codex: {exc}")
-        job["start_error"] = str(exc)
+        try:
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=fh,
+                                    stderr=subprocess.STDOUT, cwd=str(wt),
+                                    start_new_session=True)
+        except Exception:
+            fh.close()
+            raise
+        launched["fh"] = fh
+        launched["proc"] = proc
+        return proc.pid
+
+    # 账本先落 start.requested/worker.started，launch 只由 lifecycle 内部调用。
+    # 账本损坏、授权不合法或状态冲突时这里直接返回错误，绝不裸 Popen。
+    _projection, err = exec_lifecycle.start_or_resume(
+        job, launch, runtime=RUNTIME)
+    if err:
+        log(f"[exec] {job.get('id') or '?'} 无法启动 worker：{err}")
+        _abort_launched(launched, err)
+        job["start_error"] = str(err)
         return None
     job.pop("start_error", None)
-    job["proc"] = proc
-    job["fh"] = fh
-    job["pid"] = proc.pid
+    job["proc"] = launched["proc"]
+    job["fh"] = launched["fh"]
+    job["pid"] = int(launched["proc"].pid)
     return job
 
 
@@ -2185,28 +2261,22 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
                 return result
             log(f"[exec] {rid} {retry_note}"
                 f"（同一 worktree={wt}，日志 {log_path}）")
-            try:
-                fh = log_path.open("a", encoding="utf-8")
-                if job.get("model_fallback_used"):
-                    fh.write(f"\n===== auto_exec 模型通道额度失败，"
-                             f"切换到 slow_model 重试（{_now()}，"
-                             f"model={job.get('model') or 'default'}）=====\n")
-                elif job.get("no_change_retry"):
-                    fh.write(f"\n===== auto_exec 无改动重试 {attempt}/{total} 次"
-                             f"（{_now()}，上一次退出码={code}）=====\n")
-                else:
-                    fh.write(f"\n===== auto_exec 重试 第 {attempt}/{total} 次"
-                             f"（{_now()}，上一次退出码={code}，"
-                             f"判定为基础设施抖动）=====\n")
-                fh.flush()
-                proc = subprocess.Popen(
-                    _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
-                    stderr=subprocess.STDOUT, cwd=str(wt), start_new_session=True)
-            except OSError as exc:
-                log(f"[exec] 无法启动 codex: {exc}")
+            if job.get("model_fallback_used"):
+                note = (f"\n===== auto_exec 模型通道额度失败，"
+                        f"切换到 slow_model 重试（{_now()}，"
+                        f"model={job.get('model') or 'default'}）=====\n")
+            elif job.get("no_change_retry"):
+                note = (f"\n===== auto_exec 无改动重试 {attempt}/{total} 次"
+                        f"（{_now()}，上一次退出码={code}）=====\n")
+            else:
+                note = (f"\n===== auto_exec 重试 第 {attempt}/{total} 次"
+                        f"（{_now()}，上一次退出码={code}，"
+                        f"判定为基础设施抖动）=====\n")
+            spawned = _spawn_with_lifecycle(job, log_path, note)
+            if spawned is None:
                 code = 125
                 break
-            job["proc"], job["fh"] = proc, fh
+            job["proc"], job["fh"] = spawned
         try:
             code = job["proc"].wait(timeout=cfg["timeout"])
         except subprocess.TimeoutExpired:
@@ -2263,20 +2333,14 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
                                "retry_reason": "disk_held",
                                "model": job.get("model")})
                 return result
-            try:
-                fh = log_path.open("a", encoding="utf-8")
-                fh.write(
-                    "\n===== auto_exec 模型通道额度失败，切换到 slow_model 重试"
+            note = ("\n===== auto_exec 模型通道额度失败，切换到 slow_model 重试"
                     f"（{_now()}，model={job.get('model') or 'default'}）=====\n")
-                fh.flush()
-                proc = subprocess.Popen(
-                    _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
-                    stderr=subprocess.STDOUT, cwd=str(wt), start_new_session=True)
-            except OSError as exc:
-                job["start_error"] = str(exc)
+            spawned = _spawn_with_lifecycle(job, log_path, note)
+            if spawned is None:
                 code = 125
                 break
-            job["proc"], job["fh"], job["pid"] = proc, fh, proc.pid
+            job["proc"], job["fh"] = spawned
+            job["pid"] = job["proc"].pid
             job["detached"] = False
             job["relaunched_at"] = _now()
             job["attempts"] = attempt
@@ -2303,19 +2367,14 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
                     job["attempts"] = attempt
                     log(f"[exec] {rid} 退出 0 但无改动，异步重派 "
                         f"{tries + 1}/{no_change_retries}（工作区和槽位都保留）")
-                    try:
-                        fh = log_path.open("a", encoding="utf-8")
-                        fh.write(f"\n===== auto_exec 退出 0 但无改动，异步重派 "
-                                 f"{tries + 1}/{no_change_retries}（{_now()}）=====\n")
-                        fh.flush()
-                        proc = subprocess.Popen(
-                            _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
-                            stderr=subprocess.STDOUT, cwd=str(wt), start_new_session=True)
-                    except OSError as exc:
-                        job["start_error"] = str(exc)
+                    note = (f"\n===== auto_exec 退出 0 但无改动，异步重派 "
+                            f"{tries + 1}/{no_change_retries}（{_now()}）=====\n")
+                    spawned = _spawn_with_lifecycle(job, log_path, note)
+                    if spawned is None:
                         code = 125
                     else:
-                        job["proc"], job["fh"], job["pid"] = proc, fh, proc.pid
+                        job["proc"], job["fh"] = spawned
+                        job["pid"] = job["proc"].pid
                         job["relaunched_at"] = _now()
                         result.update({"attempts": attempt, "outcome": "relaunched",
                                        "retry_reason": "no_changes"})
@@ -3042,6 +3101,10 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
             continue
         result = _reap_exec(job, blocked)
         if result.get("outcome") == "relaunched":
+            _projection, _lifecycle_err = exec_lifecycle.report(
+                job, result, runtime=RUNTIME)
+            if _lifecycle_err:
+                log(f"[exec] {rid} 重试生命周期落账失败（继续回收）：{_lifecycle_err}")
             results.append(result)
             continue
         jobs.pop(rid, None)
@@ -3056,6 +3119,10 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
                                       Path(job["repo"]), Path(job["worktree"]),
                                       job["branch"], rid, result, blocked,
                                       Path(job["log"]))
+        _projection, _lifecycle_err = exec_lifecycle.report(
+            job, result, runtime=RUNTIME)
+        if _lifecycle_err:
+            log(f"[exec] {rid} 回收生命周期落账失败（结果不变）：{_lifecycle_err}")
         results.append(result)
         # One land per cycle; another completed worker is collected next
         # cycle. This keeps the critical section serial and auditable.
@@ -4355,8 +4422,14 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
             results.append({"id": rid, "outcome": "channel_unavailable",
                             "retry_next_cycle": True})
             continue
-        _start_exec(job)
-        jobs[rid] = job
+        started = _start_exec(job)
+        if started is None:
+            err = str(job.get("start_error") or "worker_start_fail")
+            blocked[rid] = {"reason": "worker_start_fail", "error": err,
+                            "ts": _now()}
+            results.append({"id": rid, "outcome": "start_fail", "error": err})
+            continue
+        jobs[rid] = started
         # 槽位只统计「需要跑 codex 会话」的工作。recover 槽位不需要模型
         # （只是等落盘门禁按序收口），把它们算进并发上限等于用一条不需要
         # 算力的队列项去挤占真正要跑模型的位置 —— 实测 4 个槽位里 3 个是
