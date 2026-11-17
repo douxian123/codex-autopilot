@@ -163,6 +163,11 @@ def main():
         # 副本不卡死同步、不进版本库，add 失败时索引清干净。
         run([sys.executable, str(OPS / "test-truth-sync-ignored-views.py")],
             cwd=str(OPS.parent), check=True)
+        # `reset_trunk_head` 切换主干前抓真相快照，旧实现把快照直接写回，实测让
+        # PRODUCT_MAINLINE 的生成时间从 2026-11-11 回退到 2026-10-13，并删掉
+        # 已落盘路线/决策/验收。门禁要求按文件类型保全较新内容。
+        run([sys.executable, str(OPS / "test-restore-truth-snapshot-freshness.py")],
+            cwd=str(OPS.parent), check=True)
         # 落盘门禁的配置来源：旧实现用状态根（共享检出，常停在别的分支、没有
         # central.config.json）的 CFG，退化成内置默认 npm run build + frontend，
         # 每次 land 都报 `cwd 不存在` 并丢弃合并（2026-11-17 本轮实测）。门禁描述
