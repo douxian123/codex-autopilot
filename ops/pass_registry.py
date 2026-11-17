@@ -21,18 +21,26 @@
 `ops/truth/decisions.jsonl`。
 
 权限等级（对应「分级自治，逐个转正」）
---------------------------------------
+---------------------------------------
 **每个 pass 自己声明等级**，`Registry.run()` 默认就按它自己的声明跑；给
 `override` 时才整体改口径。执行副作用**只有一种情况**：这一轮对该 pass 生效的
-等级恰好是 `auto`。
+等级恰好是 `auto`，且它的授权来源允许执行。
 
   * `auto`    —— 机械、可逆、有硬判据的动作。直接执行。
   * `propose` —— 语义判断类的动作（约束蒸馏、harness 配置调整、任务拆解）。
                 只产出提案，不落副作用，等上层决定是否收进决策队列。
   * `observe` —— 全量观察期：连提案都不给人看，只记录「本来会做什么 + 依据」。
 
-声明等级刻意偏保守：**只有已经有硬判据保护的动作才声明 `auto`**，语义判断类一律
-先声明 `propose`。
+声明等级刻意偏保守：**未显式声明的 pass 默认是 `observe`**，只有已经有硬判据
+保护、并且由人显式授权的动作才声明 `auto`。
+
+授权来源（`Pass.authorization`）
+--------------------------------
+  * `explicit` —— 用户明确要求，或用户已在面板/控制文件里打开并授权该动作。
+  * `inferred` —— 系统从上下文推断「应该做」，**绝不**能触发破坏性动作。
+
+每条 pass 还要声明 `effect`（`read` / `proposal` / `reversible` / `destructive`）。
+`inferred + destructive` 一律被注册表拦在副作用之前；这层拦截不依赖调用方自觉。
 
 「逐个转正」怎么发生
 --------------------
@@ -60,6 +68,16 @@ MODE_AUTO = "auto"
 
 MODES = (MODE_OBSERVE, MODE_PROPOSE, MODE_AUTO)
 _MODE_RANK = {MODE_OBSERVE: 0, MODE_PROPOSE: 1, MODE_AUTO: 2}
+
+AUTH_EXPLICIT = "explicit"
+AUTH_INFERRED = "inferred"
+AUTHORIZATIONS = (AUTH_EXPLICIT, AUTH_INFERRED)
+
+EFFECT_READ = "read"
+EFFECT_PROPOSAL = "proposal"
+EFFECT_REVERSIBLE = "reversible"
+EFFECT_DESTRUCTIVE = "destructive"
+EFFECTS = (EFFECT_READ, EFFECT_PROPOSAL, EFFECT_REVERSIBLE, EFFECT_DESTRUCTIVE)
 
 
 def normalize_mode(value: Any, default: str = MODE_PROPOSE) -> str:
@@ -93,6 +111,24 @@ def effective_mode(declared: str, override: str | None) -> str:
     return normalize_mode(override, default=normalize_mode(declared))
 
 
+def normalize_authorization(value: Any, default: str = AUTH_INFERRED) -> str:
+    """把授权来源收敛到 explicit / inferred；不认识的值按更弱的一档处理。"""
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in AUTHORIZATIONS:
+            return v
+    return default
+
+
+def normalize_effect(value: Any, default: str = EFFECT_DESTRUCTIVE) -> str:
+    """把副作用等级收敛到合法档位；不认识的值按最具破坏性处理（fail-closed）。"""
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in EFFECTS:
+            return v
+    return default
+
+
 @dataclass
 class PassResult:
     """一个 pass 跑完的观测记录。字段都是纯数据，可直接 json.dumps。"""
@@ -103,6 +139,10 @@ class PassResult:
     duration_s: float = 0.0
     detail: str = ""
     value: Any = None
+    # 这两项回显「这条 pass 凭什么被执行 / 改动有多重」，面板据此区分
+    # 「已明确授权」和「还在观察」，不用再回读注册表。
+    effect: str = EFFECT_DESTRUCTIVE
+    authorization: str = AUTH_INFERRED
 
     def as_dict(self) -> dict:
         return {
@@ -112,6 +152,8 @@ class PassResult:
             "duration_s": round(self.duration_s, 3),
             "detail": self.detail,
             "value": self.value,
+            "effect": normalize_effect(self.effect),
+            "authorization": normalize_authorization(self.authorization),
         }
 
 
@@ -131,10 +173,12 @@ class Pass:
 
     name: str
     fn: Callable[[], Any]
-    level: str = MODE_AUTO
+    level: str = MODE_OBSERVE
     enabled: bool = True
     title: str = ""
     propose_fn: Callable[[], Any] | None = None
+    effect: str = EFFECT_DESTRUCTIVE
+    authorization: str = AUTH_INFERRED
 
     def resolved_title(self) -> str:
         return self.title or self.name
@@ -191,10 +235,13 @@ class Registry:
                  log_prefix: str) -> PassResult:
         started = time.monotonic()
         mode = effective_mode(p.level, override)
+        effect = normalize_effect(p.effect)
+        auth = normalize_authorization(p.authorization)
 
         def done(status: str, detail: str = "", value: Any = None) -> PassResult:
             return PassResult(p.name, mode, status,
-                              time.monotonic() - started, detail, value)
+                              time.monotonic() - started, detail, value,
+                              effect, auth)
 
         if not p.enabled:
             self._log(f"{log_prefix} {p.name} 已关闭，跳过")
@@ -218,6 +265,13 @@ class Registry:
                 return done("ok", detail or "observe：已记录本来会做什么", value)
             self._log(f"{log_prefix} {p.name} 声明 {p.level}，只出提案，不执行")
             return done("proposed", detail, value)
+
+        # 授权是副作用之外的第二道闸：系统推断不能触发破坏性动作，即使某个调用方
+        # 显式 override=auto。拦截发生在 fn 之前，且结果仍是 proposed，给人留出口。
+        if auth == AUTH_INFERRED and effect == EFFECT_DESTRUCTIVE:
+            self._log(f"{log_prefix} {p.name} 是破坏性动作，但授权来源是 inferred；"
+                      f"已拦成提案，不执行")
+            return done("proposed", "授权来源是系统推断，破坏性动作需要人明确授权")
 
         # 预算检查放在真正调用之前，且由注册表统一做，避免各步骤漏写。
         if self._over_budget(p.resolved_title()):

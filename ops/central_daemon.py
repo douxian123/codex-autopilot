@@ -98,7 +98,14 @@ def _live_ops() -> Path:
 import central_config  # noqa: E402
 import control_state  # noqa: E402
 import pass_registry  # noqa: E402
-from pass_registry import Pass, Registry  # noqa: E402
+from pass_registry import (
+    AUTH_EXPLICIT,
+    EFFECT_DESTRUCTIVE,
+    EFFECT_REVERSIBLE,
+    MODE_AUTO,
+    Pass,
+    Registry,
+)  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
 import constraints as constraints_mod  # noqa: E402
 import live_guard  # noqa: E402
@@ -4680,24 +4687,50 @@ def _pass_tick_post(ctx: dict) -> dict:
 def _build_cycle_registry(ctx: dict):
     """按语义顺序注册这一拍要跑的所有 pass。
 
-    注册顺序 = 执行顺序（见文件头注释）。这里不声明任何 `propose` 级 pass：
-    现有每个 pass 背后都有硬判据（land 有 merge-tree 预演 + 门禁，port/resolve
-    冲突即整体放弃，回收只清零损失现场），符合 pass_registry 的「有硬判据才
-    声明 auto」。要观察某一步，用 `--only` + `--mode` 临时降权，不改默认值。
+    注册顺序 = 执行顺序（见文件头注释）。
+
+    pass_registry 现在默认 `observe`：**没写 level 的 pass 只会观察，不执行副作用**。
+    下面这十条是既有自动挡工序，逐条显式转正 —— 每条都声明 `level=auto` 加
+    `authorization=explicit`，表示「人已经授权这条工序自动跑」，不是系统自行升权。
+    这样新加的 pass 不会因为忘记声明就悄悄执行（fail-closed），而既有行为保持原样。
+    `effect` 区分可逆与破坏性：`route/checkpoint/tick/tick-post` 只改控制面与账本
+    （可逆），其余会动分支/工作区/磁盘（破坏性）。破坏性动作在授权来源变成 inferred
+    时会被注册表拦成提案，所以这里显式标注 `explicit`。
+    要观察某一步，用 `--only` + `--mode` 临时降权，不改默认值。
     """
     reg = Registry(log=log,
                    over_budget=lambda step: _over_budget(ctx["deadline"], step))
-    reg.register(Pass("route", lambda: _pass_route(ctx), title="路由新收需求"))
-    reg.register(Pass("exec", lambda: _pass_exec(ctx), title="派 worker 实现"))
-    reg.register(Pass("reap", lambda: _pass_reap(ctx), title="回收磁盘与死 worktree"))
+    reg.register(Pass("route", lambda: _pass_route(ctx), title="路由新收需求",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("exec", lambda: _pass_exec(ctx), title="派 worker 实现",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_DESTRUCTIVE))
+    reg.register(Pass("reap", lambda: _pass_reap(ctx), title="回收磁盘与死 worktree",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_DESTRUCTIVE))
     reg.register(Pass("checkpoint", lambda: _pass_checkpoint(ctx),
-                      title="工作槽状态提前落盘"))
-    reg.register(Pass("tick", lambda: _pass_tick(ctx), title="刷新真相层"))
-    reg.register(Pass("supersede", lambda: _pass_supersede(ctx), title="归档重复分支"))
-    reg.register(Pass("land", lambda: _pass_land(ctx), title="串行落盘"))
-    reg.register(Pass("port", lambda: _pass_port(ctx), title="自动移植小差异分支"))
-    reg.register(Pass("resolve", lambda: _pass_resolve(ctx), title="冲突拆成任务"))
-    reg.register(Pass("tick-post", lambda: _pass_tick_post(ctx), title="落盘后刷新看板"))
+                      title="工作槽状态提前落盘",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("tick", lambda: _pass_tick(ctx), title="刷新真相层",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("supersede", lambda: _pass_supersede(ctx), title="归档重复分支",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_DESTRUCTIVE))
+    reg.register(Pass("land", lambda: _pass_land(ctx), title="串行落盘",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_DESTRUCTIVE))
+    reg.register(Pass("port", lambda: _pass_port(ctx), title="自动移植小差异分支",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_DESTRUCTIVE))
+    reg.register(Pass("resolve", lambda: _pass_resolve(ctx), title="冲突拆成任务",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_DESTRUCTIVE))
+    reg.register(Pass("tick-post", lambda: _pass_tick_post(ctx), title="落盘后刷新看板",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
     return reg
 
 

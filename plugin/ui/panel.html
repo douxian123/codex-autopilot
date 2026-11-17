@@ -454,6 +454,7 @@
     </section>
     <div class="sysline" id="sysLine">正在读取常驻与调度…</div>
     <div class="stewards" id="stewardBar" aria-label="六个管家状态"></div>
+    <div class="sysline" id="autonomyLine" hidden></div>
   </section>
 
   <section class="q" id="q3">
@@ -904,6 +905,22 @@
     if (sl) {
       sl.textContent = bits.join(" · ");
       sl.title = (hh.reasons && hh.reasons.length) ? hh.reasons.join("；") : "";
+    }
+    // 自治分级：只在这一轮真跑过工序时出现，说明哪些已明确授权、多少还在观察、
+    // 多少等你转正。取不到就明确说取不到，不印「0 条」假装正常。
+    var au = s.autonomy || {};
+    var al = el("autonomyLine");
+    if (al) {
+      if (au.status === "ok" && au.label) {
+        al.textContent = au.label;
+        al.hidden = false;
+      } else if (au.status === "unknown") {
+        al.textContent = au.label || "自治分级：本轮工序记录取不到";
+        al.hidden = false;
+      } else {
+        al.textContent = "";
+        al.hidden = true;
+      }
     }
     renderStewards(s.stewards);
 
