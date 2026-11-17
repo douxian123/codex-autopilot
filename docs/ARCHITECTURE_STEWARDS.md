@@ -17,10 +17,35 @@
 
 | 层 | 责任 | 我们的对应物 | 当前缺口 |
 |---|---|---|---|
-| 关系层 | 一个持续对话/入口维护目标、优先级、需要人的时机 | 唯一输入框、`ops/tasks/inbox.jsonl`、面板三问、`needs_human` 的人工验收队列 | 还没有把跨项目长期目标做成稳定关系对象 |
-| 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/acceptance_criteria.py`、`ops/exec_overlap.py`、observe/propose/auto 与 explicit/inferred 分级 | 候选提名不冒充门禁；路由时确定性编译机器门禁与人工复核，推不出时如实标 `unknown`，人确认后才进验收台账 |
+| 关系层 | 一个持续对话/入口维护目标、优先级、需要人的时机 | 唯一输入框、`ops/relationship_ledger.py`、`ops/tasks/inbox.jsonl`、面板三问、`needs_human` 的人工验收队列 | 显式目标对象已落地，但不会自动从聊天或主线升成生效目标；跨项目目标仍需人显式登记 |
+| 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/exec_overlap.py`、`ops/acceptance_criteria.py`、`ops/acceptance_criteria_compiler.py`、observe/propose/auto 与 explicit/inferred 分级 | 候选确认与路由编译已落地；编译器只产出工单自证计划，不创建验收项，也不替代人工确认 |
 | 执行层 | 隔离会话里并行研究/实现/验证，再做串行合流 | 路由/实现/合并/验收管家、独立 worktree、`kgctl land` 门禁、`ops/worker_lifecycle.py` 生命周期契约、`ops/exec_lifecycle.py` 生产接线 | 已接管真实派发；定时唤醒只写回入口，仍不直接开 worker |
-| 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、`ops/wake_resume.py`、`worker_lifecycle`、`ops/exec_lifecycle.py`、truth 台账、全局待路由箱、`project_health` | 到期唤醒、显式恢复、资源/工具白名单与逐 pass 授权审计已落地；Outcomes 式独立评分仍缺 |
+| 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、`ops/wake_resume.py`、`worker_lifecycle`、`ops/exec_lifecycle.py`、truth 台账、全局待路由箱、`project_health`、`ops/outcome_score.py` | 到期唤醒、显式恢复、资源/工具白名单与逐 pass 授权审计已落地；结果代理分为只读独立评分，不替代真用户结果 |
+
+## 关系层契约
+
+`ops/relationship_ledger.py` 把「跨项目长期目标」做成 append-only JSONL 对象，默认落在
+`~/.codex-autopilot/relationships/goals.jsonl`，可用 `KG_RELATIONSHIP_GOALS_PATH` 覆盖。
+每条目标记 `id`、标题、优先级、涉及项目、状态、`needs_human`、原因、来源和更新时间；
+`create/update` 只接受 `user` / `operator` 显式来源，推断来源直接拒绝。
+
+读取层只做投影：`central_mcp.relationship_goals` 把摘要交给高级区折叠展示，不派活，
+不替用户决定优先级，也不把聊天里的一句话自动升成生效目标。文件不存在、空账本、
+账本损坏是三种不同事实：分别是 `unknown`、0 条、`unknown`；`unknown` 不写成 0 或正常。
+`ops/test-relationship-ledger.py` 锁住来源边界、id/seq 稳定、只读投影和损坏 fail-closed，
+`panel_logic_check` / `panel_render_check` 锁住上屏与缺失时的诚实文案。
+
+## 结果代理分契约
+
+`ops/outcome_score.py` 是独立的结果代理评分：只读 `closure_rate`、问题台账、
+验收台账、`project_health` 和关系目标账本，不读发布认证，不把机器命令绿灯
+当成用户结果变好。五类判据分别回答首问闭环、完成项证据、人工验收边界、
+全局健康和显式目标收口；`unknown` 不按 0 分计入，北极星判据「首问闭环」
+取不到时整体只能 `unknown`，有效覆盖不足 60% 也不报分。
+
+它接进 `central_mcp.outcome_score`，只在高级区折叠展示。`ops/test-outcome-score.py`
+锁住缺台账、无样本、假人工验收、机器绿灯冒充结果等失败路径；面板门禁锁住
+「取不到」「不计分」和边界文案都真实上屏。这是结果代理，不是用户内心结果真值。
 
 ## Worker 生命周期契约
 
@@ -100,6 +125,8 @@ PM 视角新增一层只读简报：把待确认预期、验收标准候选、�
 
 前半截是「什么算成」：`ops/acceptance_criteria.py` 从**已路由**的入口原话里识别明确验收信号（必须能、看到、跑通、测试通过、门禁等），提名可判定标准候选，并附原话、命中信号、建议复核步骤、是否建议机器门禁。候选只进 `acceptance_criteria_candidates.jsonl`，不写 `acceptance.jsonl`；重复原话和 `dismiss` 过的原话不再弹。人明确 `confirm=true` 后才调用 `truthctl accept` 登记 A-id，原话 hash 一并落进验收台账，候选文件丢失也不会让同一句话复发。
 
+规划层另有一条独立的确定性编译链，和候选确认互补：`ops/truthctl.py route` 在预演与落账时用 `ops/acceptance_criteria_compiler.py` 把已路由工作项编译成 `acceptance_plan`，写进 `ledger.jsonl`。它只从项目 `verify` 配置和文件线索推出能真跑的机器门禁（命令、cwd、`exit 0`）与必须人看的复核步骤；推不出可判定条件就如实写 `unknown`。`central_daemon._exec_prompt()` 读这份计划，要求执行者逐条写出命令、cwd 和退出码；`central_mcp._work_rows()` 与工程详情工单表只显示 `验收标准：机器 N 条 / 人工 M 条`，不把命令堆到首屏。编译器不创建 A-id、不写 `evidence`，也不把人工项伪装成机器 verdict。
+
 确认候选只是登记验收项，**不是验收通过**：人工项带复核步骤但没有 `evidence`，机器项也只建议真门禁。两者都不能被自动标成 `verified`，也不能直接进「需要你验收」。
 
 人工验收项只有 `needs_human=true` 还不够。若没有 `evidence`，它进入「待自验」，不进入「需要你验收」。`evidence` 必须是可复核的命令、cwd 和退出码；验收管家自己先把机器能跑的部分跑完，再把确实需要人的部分截图提醒用户。
@@ -156,7 +183,8 @@ PM 视角新增一层只读简报：把待确认预期、验收标准候选、�
 
 - 验收标准编译是确定性的：只把项目 verify 配置和文件线索翻译成 `cmd + cwd + exit 0`，再为视觉/交互项补人工复核；它不替产品做审美判断。推不出条件时留 `unknown`，不是绿色通过。
 - PM 管家的预期打磨已上屏为简报，但候选升成生效约束仍需人确认；这是有意的，避免一句自然语言直接进机器门禁全局污染。
+- 验收标准编译器只按项目配置和文件线索产出工单自证计划；推不出时保持 `unknown`，且不替代候选确认、人工验收或真跑门禁的证据。
 - 进度追问已能生成候选，但不会自动发消息；是否追问仍由人决定。
 - 全局健康目前是面板可见的只读结论，还没有在守护里自动触发修复；这是有意的，避免越过用户授权改配置或动工作进程。
 - 截图附件已能写入、透传、上屏，但系统不会自动截屏；真实桌面验收动作仍需用户或执行者提供截图路径，面板负责把附件展示出来。
-- `pass_registry` 已实现 `explicit/inferred` 两级授权和 `inferred + destructive` 禁行；但每个真实 pass 的授权来源声明、面板对这两种来源的可读呈现，还没有做完整审计。旧对照稿曾写「两级授权未落地」，那是对旧基线的判断，不适用于当前代码。
+- `pass_registry` 已实现 `explicit/inferred` 两级授权和 `inferred + destructive` 禁行；worker spec 的 `allowed_resources` / `allowed_tools` 在 `Popen` 前 fail-closed，面板工程详情逐条显示本轮 pass 的模式、授权来源、副作用和状态。旧对照稿曾写「两级授权未落地」，那是对旧基线的判断，不适用于当前代码。

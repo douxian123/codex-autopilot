@@ -1,6 +1,31 @@
 {
  "tasks": [
   {
+   "slug": "acceptance-criteria-compiler-20261118",
+   "branch": "codex/acceptance-criteria-compiler-20261118",
+   "resolve_branch": "codex/resolve-acceptance-criteria-compiler-20261118",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-acceptance-criteria-compiler-20261118",
+   "base_main": "68c89020bd72d107c34e969c84ed902f43039fd3",
+   "source_head": "96f177802653d3bfb879a0b47deff4395a53c083",
+   "source_commits": [
+    "96f177802653d3bfb879a0b47deff4395a53c083"
+   ],
+   "created": "2026-11-18 05:18:14",
+   "updated": "2026-11-18 05:18:14",
+   "conflict_files": [
+    "docs/ARCHITECTURE_STEWARDS.md",
+    "ops/acceptance_criteria.py",
+    "ops/test-acceptance-criteria.py"
+   ],
+   "unresolved_files": [
+    "docs/ARCHITECTURE_STEWARDS.md",
+    "ops/acceptance_criteria.py",
+    "ops/test-acceptance-criteria.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
    "slug": "truth-dedupe-pm-closure-20261118",
    "branch": "codex/truth-dedupe-pm-closure-20261118",
    "resolve_branch": "codex/resolve-truth-dedupe-pm-closure-20261118",
@@ -319,5 +344,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-18 04:22:24"
+ "updated": "2026-11-18 05:18:15"
 }

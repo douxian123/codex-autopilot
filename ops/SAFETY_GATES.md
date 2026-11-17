@@ -6,6 +6,8 @@
 |---|---|---|---|
 | 防重复派发 | `_live_exec_slugs()` | 同一工作区已有 `codex exec` 时不派第二个 | 无常驻开关，只在日志留痕 |
 | worker 生命周期 | `ops/worker_lifecycle.py` | append-only 账本锁住 `start/status/stop/event/handback/resume`、generation、授权与 fail-closed；`ops/exec_lifecycle.py` 已接管真实派发 | `KG_WORKER_LIFECYCLE_ROOT` 指定账本根 |
+| worker 资源/工具白名单 | `ops/worker_lifecycle.py` 的 `normalize_spec()` | worker 请求的 `resources` / `tools` 必须落在工单 `allowed_resources` / `allowed_tools` 内；越界在 `Popen` 前抛 `AuthorizationError`，不落 running 账本，也不占并发槽位 | `KG_WORKER_LIFECYCLE_ROOT` 指定账本根 |
+| 逐 pass 授权审计 | `ops/central_mcp.py` 的 `_autonomy_summary()` | 把本轮 `last_passes` 的模式、授权来源、副作用和状态投影到面板工程详情；取不到写 `unknown`，不伪造正常 | 无需开关，只读已有工序记录 |
 | 定时唤醒 / 跨工单恢复 | `ops/wake_resume.py` | append-only 账本锁住到期、投递、失败退避与显式授权；只写回唯一入口，不启动 worker，旧 worker 活跃时必须走 lifecycle resume | `KG_WAKE_RESUME_ROOT` 指定账本根，`KG_WAKE_RETRY_SECONDS` / `KG_WAKE_MAX_ATTEMPTS` 调退避和上限 |
 | 派发上限 | `_exec_attempt_gate()` | 6h 窗口内同一需求最多派 3 次，超限进 blocked | 调 `EXEC_REPEAT_CAP` |
 | 冲突停手 | `_escalate_conflict_block()` | 同一组冲突文件连续撞 2 次后停手等待裁决 | 面板 blocked 人工放行 |

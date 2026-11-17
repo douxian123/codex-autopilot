@@ -78,7 +78,7 @@ from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, resolve_state_root  # noqa: E402
 import constraints as constraints_mod  # noqa: E402
 import central_config  # noqa: E402
-import acceptance_criteria  # noqa: E402
+import acceptance_criteria_compiler  # noqa: E402
 
 # 自包含安装下，绑定的项目写在插件 .mcp.json 里；显式 KG_REPO 优先。
 apply_plugin_env()
@@ -630,12 +630,31 @@ def infer_lane(kind: str, text: str, files) -> str:
     return DEFAULT_LANE
 
 
-def _append_ledger(kind, title, detail, files, source, lane) -> dict:
-    criteria = acceptance_criteria.compile_criteria(
-        text=detail or title, kind=kind, files=files or [], lane=lane, cfg=CFG)
-    return _append_new('ledger', kind=kind, title=title, detail=detail,
-                       status='open', lane=lane, files=files or [], source=source,
-                       acceptance_criteria=criteria)
+def _append_ledger(kind, title, detail, files, source, lane,
+                   acceptance_plan=None) -> dict:
+    fields = {'kind': kind, 'title': title, 'detail': detail,
+              'status': 'open', 'lane': lane, 'files': files or [], 'source': source}
+    if acceptance_plan is not None:
+        fields['acceptance_plan'] = acceptance_plan
+    return _append_new('ledger', **fields)
+
+
+def _compile_acceptance_plan(text, kind, files, lane) -> dict:
+    """路由预演时编译验收标准；编译器异常不能阻塞唯一入口。"""
+    try:
+        return acceptance_criteria_compiler.compile_criteria(
+            text=text or '', kind=kind or '', files=list(files or []),
+            lane=lane or '', cfg=CFG)
+    except Exception as exc:
+        return {
+            'status': 'unknown',
+            'summary': '验收标准编译失败：%s' % exc,
+            'lane': lane or '',
+            'machine_checks': [],
+            'human_checks': [],
+            'needs_human': False,
+            'source': 'acceptance-criteria-compiler',
+        }
 
 
 def _lane_names() -> set:
@@ -724,7 +743,9 @@ def cmd_route(args):
         if not lane:
             lane = infer_lane(kind, it.get('text', ''), it.get('files'))
         plan.append({'n': i, 'kind': kind, 'lane': lane, 'text': it.get('text', ''),
-                     'files': it.get('files') or [], 'cand': cand[:2]})
+                     'files': it.get('files') or [], 'cand': cand[:2],
+                     'acceptance_plan': _compile_acceptance_plan(
+                         it.get('text', ''), kind, it.get('files') or [], lane)})
     # text[:120] -> 已有台账 id。命中即「这条其实已经进过台账」，不再新建，但必须把它
     # 归并到那条台账并把 inbox 标 routed —— 否则重复输入会永远停在「待路由」，
     # 每轮 tick 都重复报同一批待办，进度永远清不干净。
@@ -743,9 +764,9 @@ def cmd_route(args):
     for p in plan:
         mark = f"  <已有 {p['cand'][0][3]}>" if p['cand'] else ''
         print(f" #{p['n']:03d} [{p['kind']:6s}] -> {p['lane']:14s} {p['text'][:78]}{mark}")
-        criteria = acceptance_criteria.compile_criteria(
-            text=p['text'], kind=p['kind'], files=p['files'], lane=p['lane'], cfg=CFG)
-        print(f"       验收标准：{criteria['summary']}")
+        label = acceptance_criteria_compiler.summary_label(p['acceptance_plan'])
+        if label:
+            print(f"       {label}")
     for p in dups:
         print(f" #{p['n']:03d} [{p['kind']:6s}] -> 归并 {seen[p['text'][:120]]}  {p['text'][:70]}")
     if not go:
@@ -768,21 +789,20 @@ def cmd_route(args):
                 if note not in ev:
                     ev.append(note)
                     target['evidence'] = ev
-                if not target.get('acceptance_criteria'):
-                    target['acceptance_criteria'] = acceptance_criteria.compile_criteria(
-                        text=p['text'], kind=p['kind'], files=p['files'],
-                        lane=p['lane'], cfg=CFG)
-                    path = TRUTH / FILES['ledger']
-                    rows = _read(path)
-                    for i, rec in enumerate(rows):
-                        if rec.get('id') == ref:
-                            rows[i] = target
-                    with path.open('w') as fh:
-                        for rec in rows:
-                            fh.write(json.dumps(rec, ensure_ascii=False) + '\n')
+                if not target.get('acceptance_plan'):
+                    target['acceptance_plan'] = p['acceptance_plan']
+                path = TRUTH / FILES['ledger']
+                rows = _read(path)
+                for i, rec in enumerate(rows):
+                    if rec.get('id') == ref:
+                        rows[i] = target
+                with path.open('w') as fh:
+                    for rec in rows:
+                        fh.write(json.dumps(rec, ensure_ascii=False) + '\n')
         else:
             rec = _append_ledger(p['kind'], p['text'][:80].replace('\n', ' '),
-                                 p['text'], p['files'], f"inbox#{p['n']}", p['lane'])
+                                 p['text'], p['files'], f"inbox#{p['n']}", p['lane'],
+                                 acceptance_plan=p['acceptance_plan'])
             it['lane'], it['ledger_id'], it['routed'] = rec['lane'], rec['id'], True
             made.append(rec['id'])
     merged = 0
@@ -799,11 +819,9 @@ def cmd_route(args):
                 if note not in ev:
                     ev.append(note)
                     rec['evidence'] = ev
-                if not rec.get('acceptance_criteria'):
-                    rec['acceptance_criteria'] = acceptance_criteria.compile_criteria(
-                        text=p['text'], kind=p['kind'], files=p['files'],
-                        lane=p['lane'], cfg=CFG)
-                    rows[j] = rec
+                if not rec.get('acceptance_plan'):
+                    rec['acceptance_plan'] = p['acceptance_plan']
+                rows[j] = rec
                 break
         with path.open('w') as fh:
             for rec in rows:

@@ -262,6 +262,31 @@ def _pm_briefing_summary(runtime=None):
                 "source": "pm_briefing 模块不可用"}
 
 
+def _relationship_goals_summary():
+    """关系层只读摘要：跨项目长期目标、需要人的时机，不派活、不替人定优先级。"""
+    try:
+        import relationship_ledger
+        return relationship_ledger.summary()
+    except Exception as exc:
+        return {"status": "unknown", "level": "unknown",
+                "headline": "跨项目目标取不到（%s）" % exc,
+                "note": "取不到不等于 0 条；本层不自动派活，也不替你决定目标。",
+                "count": None, "needs_human_count": None, "items": []}
+
+
+def _outcome_score_summary():
+    """结果代理分：只读原始台账，命令绿灯不冒充用户结果。"""
+    try:
+        import outcome_score
+        return outcome_score.compute(os.environ.get("KG_REPO") or _fallback_repo())
+    except Exception as exc:
+        return {"status": "unknown", "score": None, "grade": "未知",
+                "coverage": 0.0,
+                "headline": "结果代理分取不到（%s）" % exc,
+                "note": "取不到不等于 0 分；机器命令通过不等于用户结果变好。",
+                "components": [], "missing": ["结果代理分"], "shortfalls": []}
+
+
 def _screenshots_env(value):
     """把 MCP 的 screenshots 数组归一成 truthctl 的 ':' 分隔 env。"""
     if value is None:
@@ -1931,6 +1956,7 @@ def _work_rows(project_name, limit=40):
     没有的证据字段留空，不用编的字符串填空。
     """
     import stage_table  # noqa: E402  只读纯函数，无副作用
+    import acceptance_criteria_compiler  # noqa: E402  只读纯函数，无副作用
 
     latest = {}
     for r in _read_jsonl(_truth_dir() / "ledger.jsonl"):
@@ -1971,8 +1997,8 @@ def _work_rows(project_name, limit=40):
             "stage": stage,
             "stage_label": stage_table.item_stage_label(stage),
             "evidence": evidence_text(rec, binding),
-            "acceptance": acceptance_criteria.summary_label(
-                rec.get("acceptance_criteria")),
+            "acceptance_summary": acceptance_criteria_compiler.summary_label(
+                rec.get("acceptance_plan")),
         })
     for rec in acc_latest.values():
         if not (rec.get("needs_human") and rec.get("status") in ("todo", "wip", "blocked")):
@@ -1989,8 +2015,8 @@ def _work_rows(project_name, limit=40):
             "stage": stage,
             "stage_label": stage_table.item_stage_label(stage),
             "evidence": evidence_text(rec, None),
-            "acceptance": acceptance_criteria.summary_label(
-                rec.get("acceptance_criteria")),
+            "acceptance_summary": acceptance_criteria_compiler.summary_label(
+                rec.get("acceptance_plan")),
         })
     # 「要人拍板」的排前面，其次进行中，再次待处理；同组按 id。
     prio = {"person/review": 0, stage_table.BUCKET_DOING: 1,
@@ -2317,6 +2343,8 @@ def _status_payload(fast=True):
             "stewards": _steward_health({}),
             "autonomy": _autonomy_summary({}),
             "pm_briefing": _pm_briefing_summary({"blocked": {}}),
+            "relationship_goals": _relationship_goals_summary(),
+            "outcome_score": _outcome_score_summary(),
         }
         payload["__text__"] = (
             "自动挡 · 安装绑定失效\n"
@@ -2533,6 +2561,10 @@ def _status_payload(fast=True):
                 "resolve": list(blocked),
             },
         }),
+        # 关系层：跨项目长期目标是显式账本，不属于某个项目真相；这里只读摘要，
+        # 不把目标自动派给 worker，也不把「需要人」变成自动追问。
+        "relationship_goals": _relationship_goals_summary(),
+        "outcome_score": _outcome_score_summary(),
         "harness_tune": _harness_tune_summary(),
         "constraint_candidates": _constraint_candidates_summary(),
         "acceptance_criteria": _acceptance_criteria_summary(),

@@ -237,6 +237,14 @@ def main():
         # 这条同时锁住「空台账与文件缺失不同」「overlap 排队不是病」「待自验没人跑是真卡点」。
         run([sys.executable, str(OPS / "test-project-health.py")],
             cwd=str(OPS.parent), check=True)
+        # 关系层：跨项目长期目标必须有稳定对象。显式来源、空账本与取不到的区别、
+        # 损坏账本 fail-closed、只读投影不派活，都由这条门禁锁住。
+        run([sys.executable, str(OPS / "test-relationship-ledger.py")],
+            cwd=str(OPS.parent), check=True)
+        # 结果代理分：只读已有台账，北极星判据缺失不能由其他项替补，
+        # unknown 不算 0 分，机器门禁绿灯不等于用户结果变好。
+        run([sys.executable, str(OPS / "test-outcome-score.py")],
+            cwd=str(OPS.parent), check=True)
         # PM 简报：预期打磨、施工让路、进度追问候选必须来自已有台账，
         # 取不到说 unknown；尤其不许把「只生成候选」做成自动发消息。
         run([sys.executable, str(OPS / "test-pm-briefing.py")],

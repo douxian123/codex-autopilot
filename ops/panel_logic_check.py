@@ -215,6 +215,10 @@ console.log(JSON.stringify({
   autonomyLine: read("autonomyLine"),
   autonomyAudit: read("autonomyAudit"),
   pmBriefingBox: read("pmBriefingBox") + " " + document.getElementById("pmBriefingBox").innerHTML,
+  relationshipGoalsBox: read("relationshipGoalsBox") + " "
+    + document.getElementById("relationshipGoalsBox").innerHTML,
+  outcomeScoreBox: read("outcomeScoreBox") + " "
+    + document.getElementById("outcomeScoreBox").innerHTML,
 }));
 """
 
@@ -436,7 +440,7 @@ def main(argv):
              "source": "inbox", "project": "demo-project", "lane": "codex/lane-x",
              "branch": "codex/lane-x", "stage": "doing", "stage_label": "进行中",
              "evidence": "npm run build -> exit 0",
-             "acceptance": "验收标准：机器 3 条 / 人工 0 条"},
+             "acceptance_summary": "验收标准：机器 2 条 / 人工 1 条"},
             {"id": "A-9002", "title": "真实待验收标题", "kind": "acceptance",
              "source": "kgctl land", "project": "demo-project", "lane": "codex/lane-y",
              "branch": "codex/lane-y-impl", "stage": "person/review",
@@ -451,7 +455,7 @@ def main(argv):
         fails += has("工单表 stage 用控制层算好的文案", wout["workTableBox"], "进行中", "需要你验收")
         fails += has("工单表带证据链", wout["workTableBox"], "证据：npm run build -> exit 0")
         fails += has("工单表带验收标准摘要", wout["workTableBox"],
-                     "验收标准：机器 3 条 / 人工 0 条")
+                     "验收标准：机器 2 条 / 人工 1 条")
         wempty = dict(payload)
         wempty["work_rows"] = []
         eout = run_once(wempty)
@@ -695,6 +699,57 @@ def main(argv):
         pm_missing = run_once(dict(payload, pm_briefing=None))
         fails += has("PM 简报缺失时如实说取不到",
                      pm_missing["pmBriefingBox"], "取不到")
+
+        # 关系层：跨项目长期目标在高级区折叠展示。它必须照抄控制层摘要，
+        # 缺失时说取不到，不能把 G-id / 优先级 / 需要人的原因藏在首屏。
+        rel_payload = dict(payload)
+        rel_payload["relationship_goals"] = {
+            "status": "ok", "level": "attention", "count": 1,
+            "needs_human_count": 1,
+            "headline": "跨项目目标 1 条，其中 1 条需要人判断",
+            "note": "只记录你显式登记的目标；不会自动派活，也不会替你决定优先级。",
+            "items": [{
+                "id": "G-9001",
+                "title": "把自动挡做成长期可信的个人助理",
+                "priority": "high", "status": "waiting_human",
+                "projects": ["codex-autopilot", "personal-memory"],
+                "needs_human": True, "reason": "等用户判断要不要改产品方向",
+                "updated_at": "2026-11-18T00:00:00Z",
+            }],
+        }
+        rel_out = run_once(rel_payload)
+        fails += has("关系层摘要上屏", rel_out["relationshipGoalsBox"],
+                     "跨项目目标", "G-9001", "codex-autopilot")
+        fails += has("关系层需要人原因上屏", rel_out["relationshipGoalsBox"],
+                     "需要人", "等用户判断要不要改产品方向")
+        fails += has("关系层明示不派活", rel_out["relationshipGoalsBox"],
+                     "不会自动派活")
+        rel_missing = run_once(dict(payload, relationship_goals=None))
+        fails += has("关系层缺失时如实说取不到",
+                     rel_missing["relationshipGoalsBox"], "取不到")
+
+        # 结果代理分：高级区只读展示，必须带机器绿灯不等于用户结果的边界。
+        out_payload = dict(payload)
+        out_payload["outcome_score"] = {
+            "status": "ok", "score": 72, "grade": "有基础",
+            "headline": "结果代理分 72/100（有基础；覆盖 100%）",
+            "note": "这是台账结果代理分；机器命令通过不等于用户结果变好。",
+            "components": [
+                {"key": "closure", "label": "首问闭环", "status": "ok",
+                 "score": 80.0, "weight": 35, "detail": "80.0%（4/5）"},
+                {"key": "health", "label": "全局健康", "status": "unknown",
+                 "score": None, "weight": 15, "detail": "取不到"},
+            ],
+            "missing": ["全局健康"], "shortfalls": [],
+        }
+        outcome_out = run_once(out_payload)
+        fails += has("结果代理分上屏", outcome_out["outcomeScoreBox"],
+                     "结果代理分 72/100", "首问闭环", "全局健康")
+        fails += has("结果代理分不冒充用户结果", outcome_out["outcomeScoreBox"],
+                     "机器命令通过不等于用户结果变好", "取不到，不计分")
+        outcome_missing = run_once(dict(payload, outcome_score=None))
+        fails += has("结果代理分缺失时如实说取不到",
+                     outcome_missing["outcomeScoreBox"], "取不到")
 
         fails += has("首屏开关文案与控制层一致", out["masterState"],
                      "已关闭" if not payload.get("enabled") else "正在运行")

@@ -641,6 +641,16 @@
       <div class="foldbody"><div id="pmBriefingBox"></div></div>
     </details>
 
+    <details class="card fold" id="relationshipGoalsFold">
+      <summary>关系层 · 跨项目长期目标</summary>
+      <div class="foldbody"><div id="relationshipGoalsBox"></div></div>
+    </details>
+
+    <details class="card fold" id="outcomeScoreFold">
+      <summary>结果代理分 · 用户结果有没有变好</summary>
+      <div class="foldbody"><div id="outcomeScoreBox"></div></div>
+    </details>
+
     <details class="card fold">
       <summary>进行中的冲突任务</summary>
       <div class="foldbody"><ul class="list" id="resolveList"></ul></div>
@@ -875,6 +885,8 @@
     renderOrientation(s);
     renderAcceptance(humanAcc, s.machine_verified || []);
     renderPmBriefing(s.pm_briefing);
+    renderRelationshipGoals(s.relationship_goals);
+    renderOutcomeScore(s.outcome_score);
     renderRecent(s.recent_completed || []);
     renderThreeQuestions(s, humanAcc, doingItems, stuckN);
     renderProgress(doingItems, s.todo_items || [], todoCount);
@@ -1050,6 +1062,60 @@
       meta.textContent = "取不到：" + missing.join("、") + "；这些项不计入正常。";
       box.appendChild(meta);
     }
+  }
+
+  // 关系层：只照抄显式登记的目标摘要。它不自动派活，也不把「需要人」变成追问动作。
+  function renderRelationshipGoals(rg){
+    var box = el("relationshipGoalsBox"); if (!box) return; box.innerHTML = "";
+    if (!rg || rg.status !== "ok"){
+      box.innerHTML = '<div class="empty">'
+        + (rg && rg.headline ? rg.headline : "跨项目目标取不到；不把不知道当成 0 条。")
+        + '</div>';
+      return;
+    }
+    var list = document.createElement("ul"); list.className = "list";
+    pmRow(list, "摘要", rg.headline || "跨项目目标摘要取不到");
+    (rg.items || []).slice(0, 5).forEach(function(r){
+      var label = r.id || "目标";
+      var priority = ({high: "高", normal: "普通", low: "低"})[r.priority] || "取不到";
+      var status = ({proposed: "待确认", active: "进行中", waiting_human: "需要人",
+        paused: "暂停", done: "完成"})[r.status] || "取不到";
+      var projects = (r.projects || []).join("、") || "项目取不到";
+      pmRow(list, label, priority + " · " + status + " · " + projects
+        + " · " + (r.title || "无标题"));
+      if (r.needs_human){
+        pmRow(list, "需要人", r.reason || "原因未写明");
+      }
+    });
+    box.appendChild(list);
+    var meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = rg.note || "关系层只记录显式目标，不自动派活。";
+    box.appendChild(meta);
+  }
+
+  // 结果代理分：只照抄控制层结论。命令跑绿不等于用户结果变好，取不到也不按 0 分算。
+  function renderOutcomeScore(os){
+    var box = el("outcomeScoreBox"); if (!box) return; box.innerHTML = "";
+    if (!os || os.status !== "ok"){
+      box.innerHTML = '<div class="empty">'
+        + (os && os.headline ? os.headline
+           : "结果代理分取不到；不把不知道当成 0 分。")
+        + '</div>';
+      return;
+    }
+    var list = document.createElement("ul"); list.className = "list";
+    pmRow(list, "总分", os.headline || "结果代理分取不到");
+    (os.components || []).forEach(function(c){
+      if (!c || c.status !== "ok"){
+        pmRow(list, c ? c.label : "判据", "取不到，不计分");
+        return;
+      }
+      pmRow(list, c.label, c.score + " 分 · 权重 " + c.weight + "% · " + (c.detail || ""));
+    });
+    box.appendChild(list);
+    var meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = os.note || "这是台账结果代理分；机器命令通过不等于用户结果变好。";
+    box.appendChild(meta);
   }
 
   function renderFolders(folders, s){
@@ -1498,10 +1564,10 @@
         ev.textContent = "证据：" + r.evidence;
         li.appendChild(ev);
       }
-      if (r.acceptance){
-        var ac = document.createElement("div"); ac.className = "ev";
-        ac.textContent = r.acceptance;
-        li.appendChild(ac);
+      if (r.acceptance_summary){
+        var acc = document.createElement("div"); acc.className = "ev";
+        acc.textContent = r.acceptance_summary;
+        li.appendChild(acc);
       }
       ul.appendChild(li);
     });

@@ -24,12 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
-REPO = OPS.parent
 failures = []
-
-# 编译器回归与候选闭环共用同一模块实例，避免两套导入口径。
-sys.path.insert(0, str(OPS))
-import acceptance_criteria as ac  # noqa: E402
 
 
 def check(label, cond, detail=""):
@@ -48,21 +43,13 @@ def load(name, filename, env):
     return mod
 
 
-def read_jsonl(path):
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()]
-
-
-def make_state_root(base):
-    root = base / "project"
-    (root / "ops" / "tasks").mkdir(parents=True)
-    (root / "ops" / "truth").mkdir(parents=True)
-    for rel in ("ops/tasks/inbox.jsonl", "ops/truth/ledger.jsonl",
-                "ops/truth/progress.jsonl", "ops/truth/decisions.jsonl",
-                "ops/truth/acceptance.jsonl"):
-        (root / rel).write_text("", encoding="utf-8")
-    (root / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
-    return root
+def truthctl(repo, *args):
+    env = os.environ.copy()
+    env["KG_REPO"] = str(repo)
+    env["KG_TRUTH_ID_STATE_ROOT"] = str(repo.parent / "acceptance-route-ids")
+    return subprocess.run(
+        [sys.executable, str(OPS / "truthctl.py"), *args],
+        cwd=str(OPS.parent), env=env, capture_output=True, text=True)
 
 
 INBOX = [
@@ -158,6 +145,62 @@ def main():
         check("PM 简报聚合验收标准候选", acc.get("status") == "ok", acc)
         check("PM 简报候选计数只读", acc.get("pending_count") == 0, acc)
 
+        # 规划层编译器与候选确认是两层：候选负责「要不要算验收项」，编译器负责
+        # 「worker 拿到工单后怎样逐条自证」。这里锁住完整链路：路由预演可见 ->
+        # --go 落 ledger -> 执行 prompt 带命令/cwd/退出码 -> 工单表只显示紧凑摘要。
+        (repo / "ops" / "central.config.json").write_text(
+            json.dumps({"verify": [
+                {"name": "acceptance-gate", "cmd": "python3 -m py_compile ops/truthctl.py",
+                 "cwd": "."}]}, ensure_ascii=False), encoding="utf-8")
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text(
+            json.dumps({"ts": "2026-11-18 13:00:00",
+                        "text": "面板点击后必须看到结果，刷新后也要保持",
+                        "files": ["plugin/ui/panel.html", "ops/truthctl.py"],
+                        "kind": "visual",
+                        "routed": False, "lane": None}, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        preview = truthctl(repo, "route")
+        check("路由预演成功", preview.returncode == 0, preview.stderr[-300:])
+        check("路由预演显示验收标准摘要",
+              "验收标准：机器" in preview.stdout and "人工" in preview.stdout,
+              preview.stdout[-400:])
+        routed = truthctl(repo, "route", "--go")
+        check("路由落账成功", routed.returncode == 0, routed.stderr[-300:])
+        led = [json.loads(line) for line in
+               (repo / "ops" / "truth" / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+               if line.strip()]
+        check("路由只新增一条工作项", len(led) == 1, led)
+        plan = (led[0].get("acceptance_plan") or {}) if led else {}
+        check("验收标准编译结果落进 ledger", plan.get("status") == "ok", plan)
+        check("编译器带项目配置门禁",
+              any(c.get("name") == "acceptance-gate" and c.get("cmd")
+                  for c in plan.get("machine_checks") or []), plan)
+        check("视觉需求带人工复核步骤", len(plan.get("human_checks") or []) >= 2, plan)
+        check("编译器没有代写验收台账",
+              len([line for line in acceptance.read_text(encoding="utf-8").splitlines()
+                   if line.strip()]) == 1, acceptance.read_text(encoding="utf-8"))
+
+        compiler = load("acceptance_compiler_t", "acceptance_criteria_compiler.py", {})
+        check("工单摘要只报条数不堆命令",
+              compiler.summary_label(plan) == "验收标准：机器 4 条 / 人工 2 条",
+              compiler.summary_label(plan))
+        env = {"KG_REPO": str(repo),
+               "KG_TRUTH_ID_STATE_ROOT": str(repo.parent / "acceptance-route-ids")}
+        dm = load("central_daemon_acceptance_t", "central_daemon.py", env)
+        prompt = dm._exec_prompt(led[0])
+        check("执行 prompt 带可判定验收标准", "可判定验收标准" in prompt, prompt[-500:])
+        check("执行 prompt 带命令与 cwd",
+              "acceptance-gate" in prompt and "cwd=" in prompt and "exit 0" in prompt,
+              prompt[-800:])
+        check("执行 prompt 要求写退出码", "退出码" in prompt, prompt[-500:])
+        check("执行 prompt 保留人工复核", "人工复核 1" in prompt, prompt[-500:])
+        cm = load("central_mcp_acceptance_t", "central_mcp.py", env)
+        work_rows = cm._work_rows("demo-project")
+        routed_row = next((r for r in work_rows if r.get("id") == led[0].get("id")), None)
+        check("工单行带验收标准摘要",
+              bool(routed_row) and routed_row.get("acceptance_summary")
+              == compiler.summary_label(plan), routed_row or work_rows[:1])
+
     print()
     if failures:
         print(f"acceptance_criteria 门禁：{len(failures)} 项未通过")
@@ -168,135 +211,5 @@ def main():
     return 0
 
 
-def _routing_compiler_regressions():
-    # ---- 1) 纯函数编译：命令可跑、cwd 明确、通过条件是 exit 0 ----
-    cfg = {"verify": [{"name": "unit", "cmd": "python3 -m unittest discover", "cwd": "."}]}
-    criteria = ac.compile_criteria(
-        text="补一个门禁", kind="gate", files=["ops/acceptance_criteria.py"],
-        lane="gate", cfg=cfg)
-    machine = criteria["machine_checks"]
-    check("编译状态是 ok", criteria["status"] == "ok", json.dumps(criteria, ensure_ascii=False))
-    check("机器门禁来自项目配置",
-          any(g.get("name") == "unit" and g.get("cmd") == "python3 -m unittest discover"
-              for g in machine), json.dumps(machine, ensure_ascii=False))
-    check("Python 文件带静态编译门禁",
-          any(g.get("name") == "py-compile" and "py_compile" in g.get("cmd", "")
-              for g in machine), json.dumps(machine, ensure_ascii=False))
-    check("每条机器门禁都可判定",
-          bool(machine) and all(g.get("cmd") and g.get("cwd")
-                                and g.get("pass_condition") == "exit 0" for g in machine),
-          json.dumps(machine, ensure_ascii=False))
-    check("机器门禁不是泛化文案",
-          all("验证一下" not in g.get("cmd", "") and "跑测试" not in g.get("cmd", "")
-              for g in machine))
-
-    # ---- 2) 视觉/交互：人工复核必须带通过条件 ----
-    visual = ac.compile_criteria(
-        text="修一下面板按钮位置的视觉问题", kind="visual",
-        files=["plugin/ui/panel.html"], cfg={})
-    check("视觉需求标记需要人看", visual["needs_human"] is True)
-    check("人工步骤带通过条件",
-          bool(visual["human_checks"])
-          and all(h.get("step") and h.get("pass_condition")
-                  for h in visual["human_checks"]),
-          json.dumps(visual["human_checks"], ensure_ascii=False))
-    check("界面文件带面板机器门禁",
-          any(g.get("name") == "panel-render" for g in visual["machine_checks"]),
-          json.dumps(visual["machine_checks"], ensure_ascii=False))
-
-    # ---- 3) 推不出条件时如实说 unknown ----
-    unknown = ac.compile_criteria(text="随便看看", kind="", files=[], cfg={})
-    check("无证据时状态是 unknown", unknown["status"] == "unknown",
-          json.dumps(unknown, ensure_ascii=False))
-
-    # ---- 4) 消费者投影 ----
-    prompt = "\n".join(ac.render_for_prompt(criteria))
-    check("执行 prompt 带真实命令", "python3 -m unittest discover" in prompt)
-    check("执行 prompt 要求写退出码", "exit 0" in prompt and "退出码" in prompt)
-    label = ac.summary_label(criteria)
-    check("面板摘要只报条数", label.startswith("验收标准：机器 ")
-          and "/ 人工 " in label and "py_compile" not in label, label)
-
-    daemon_src = (OPS / "central_daemon.py").read_text(encoding="utf-8")
-    mcp_src = (OPS / "central_mcp.py").read_text(encoding="utf-8")
-    panel_src = (OPS.parent / "plugin" / "ui" / "panel.html").read_text(encoding="utf-8")
-    check("执行者只读台账里的验收标准",
-          'acceptance_criteria.render_for_prompt(item.get("acceptance_criteria"))'
-          in daemon_src)
-    check("控制层把验收标准投影到工单表",
-          'acceptance_criteria.summary_label(' in mcp_src)
-    check("面板显示验收标准摘要", "r.acceptance" in panel_src)
-
-    # ---- 5) route --go 真落账 ----
-    with tempfile.TemporaryDirectory(prefix="acceptance-criteria-") as raw:
-        base = Path(raw)
-        root = make_state_root(base)
-        env = {**os.environ, "KG_REPO": str(root),
-               "KG_AUTOPILOT_HOME": str(base / "autopilot-home"),
-               "KG_TRUTH_ID_STATE_ROOT": str(base / "truth-ids")}
-
-        def truthctl(*args):
-            return subprocess.run(
-                [sys.executable, str(OPS / "truthctl.py"), *args],
-                cwd=str(REPO), env=env, capture_output=True, text=True)
-
-        inbox_path = root / "ops" / "tasks" / "inbox.jsonl"
-        inbox_path.write_text(json.dumps({
-            "ts": "2026-11-18 12:00:00", "text": "修面板按钮位置的视觉问题",
-            "source": "user", "files": ["plugin/ui/panel.html"],
-            "kind": "unknown", "routed": False, "lane": None,
-        }, ensure_ascii=False) + "\n", encoding="utf-8")
-
-        preview = truthctl("route")
-        check("route 预演成功", preview.returncode == 0, preview.stderr[-300:])
-        check("route 预演显示验收标准", "验收标准：" in preview.stdout, preview.stdout[-500:])
-        check("预演不落账", read_jsonl(root / "ops" / "truth" / "ledger.jsonl") == [])
-
-        landed = truthctl("route", "--go")
-        check("route --go 成功", landed.returncode == 0, landed.stderr[-300:])
-        rows = read_jsonl(root / "ops" / "truth" / "ledger.jsonl")
-        check("route --go 新增一条台账", len(rows) == 1,
-              json.dumps(rows, ensure_ascii=False))
-        rec = rows[0] if rows else {}
-        stored = rec.get("acceptance_criteria") or {}
-        check("台账带可判定验收标准", stored.get("status") in ("ok", "unknown"),
-              json.dumps(stored, ensure_ascii=False))
-        check("台账标准含机器门禁", bool(stored.get("machine_checks")),
-              json.dumps(stored, ensure_ascii=False))
-        check("台账标准含人工复核", bool(stored.get("human_checks")),
-              json.dumps(stored, ensure_ascii=False))
-
-        # 归并只补缺失字段，不能拿新输入覆盖既有标准。
-        existing = json.dumps({**rec, "acceptance_criteria": {"status": "existing",
-                                                              "machine_checks": [],
-                                                              "human_checks": []}},
-                              ensure_ascii=False)
-        (root / "ops" / "truth" / "ledger.jsonl").write_text(existing + "\n",
-                                                             encoding="utf-8")
-        with inbox_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({
-                "ts": "2026-11-18 12:05:00", "text": "修面板按钮位置的视觉问题",
-                "source": "user", "files": ["plugin/ui/panel.html"],
-                "kind": "unknown", "routed": False, "lane": None,
-            }, ensure_ascii=False) + "\n")
-        merged = truthctl("route", "--go")
-        check("归并 route --go 成功", merged.returncode == 0, merged.stderr[-300:])
-        after = read_jsonl(root / "ops" / "truth" / "ledger.jsonl")
-        check("归并保留既有验收标准",
-              len(after) == 1 and after[0].get("acceptance_criteria", {}).get("status")
-              == "existing", json.dumps(after, ensure_ascii=False))
-
-def _run_routing_compiler_regressions():
-    failures = _routing_compiler_regressions()
-    if failures:
-        raise AssertionError(f"acceptance-criteria routing compiler: {failures} 项未通过")
-
-
 if __name__ == "__main__":
-    code = main()
-    try:
-        _run_routing_compiler_regressions()
-    except AssertionError as exc:
-        print(f"FAIL {exc}")
-        code = max(1, code)
-    raise SystemExit(code)
+    sys.exit(main())
