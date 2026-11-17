@@ -526,6 +526,7 @@
 
   <details class="overview-detail">
     <summary>工程详情与证据</summary>
+    <div class="sysline" id="autonomyAudit" hidden></div>
     <section class="track">
       <div class="stages">
         <div class="stage" id="stageTodo"><div class="n" id="stTodo">0</div><div class="l">待处理</div></div>
@@ -919,13 +920,42 @@
     if (al) {
       if (au.status === "ok" && au.label) {
         al.textContent = au.label;
+        al.title = "逐条授权来源见工程详情与证据";
         al.hidden = false;
       } else if (au.status === "unknown") {
         al.textContent = au.label || "自治分级：本轮工序记录取不到";
+        al.title = "逐条授权来源取不到";
         al.hidden = false;
       } else {
         al.textContent = "";
+        al.title = "";
         al.hidden = true;
+      }
+    }
+    var audit = el("autonomyAudit");
+    if (audit) {
+      var MODE_LABEL = {auto:"自动", propose:"提案", observe:"观察"};
+      var AUTH_LABEL = {explicit:"明确授权", inferred:"系统推断"};
+      var EFFECT_LABEL = {read:"只读", proposal:"提案", reversible:"可逆", destructive:"破坏性"};
+      var STATUS_LABEL = {ok:"完成", skipped:"跳过", proposed:"待转正", errored:"出错", over_budget:"超预算"};
+      var passRows = Array.isArray(au.passes) ? au.passes : [];
+      if (passRows.length) {
+        var lines = passRows.map(function(p) {
+          p = p || {};
+          var mode = MODE_LABEL[p.mode] || p.mode || "取不到";
+          var auth = AUTH_LABEL[p.authorization] || p.authorization || "取不到";
+          var effect = EFFECT_LABEL[p.effect] || p.effect || "取不到";
+          var status = STATUS_LABEL[p.status] || p.status || "取不到";
+          return (p.name || "未命名工序") + " · " + mode + " · 授权来源 " + auth + " · 副作用 " + effect + " · " + status;
+        });
+        audit.textContent = "本轮逐条授权来源：" + lines.join("；");
+        audit.hidden = false;
+      } else if (au.status === "unknown") {
+        audit.textContent = "本轮逐条授权来源：取不到";
+        audit.hidden = false;
+      } else {
+        audit.textContent = "";
+        audit.hidden = true;
       }
     }
     renderStewards(s.stewards);

@@ -52,12 +52,29 @@ def spec_for_job(job: dict[str, Any]) -> dict[str, Any]:
     codex = [str(x) for x in (job.get("codex") or ["codex"])]
     command = [*codex, "exec", "-C", str(job.get("worktree") or "")]
 
-    resources = item.get("files") or item.get("resources") or []
-    if not isinstance(resources, (list, tuple)):
-        resources = [str(resources)]
-    tools = item.get("tools") or ["codex_exec"]
-    if not isinstance(tools, (list, tuple)):
-        tools = [str(tools)]
+    def _job_list(key: str, *candidates: Any) -> list[str]:
+        raw = job.get(key)
+        if raw is None:
+            for candidate in candidates:
+                if candidate:
+                    raw = candidate
+                    break
+        if raw is None:
+            return []
+        if not isinstance(raw, (list, tuple)):
+            raw = [raw]
+        return [str(x) for x in raw if str(x).strip()]
+
+    # 工单声明决定 allowlist，job 上的 requested_* 才是本次 worker 的请求；
+    # 没给请求字段时保持旧行为，直接采用声明值，兼容既有派发。
+    allowed_resources = _job_list("lifecycle_allowed_resources",
+                                  item.get("allowed_resources"),
+                                  item.get("resources"), item.get("files"))
+    allowed_tools = _job_list("lifecycle_allowed_tools",
+                              item.get("allowed_tools"),
+                              item.get("tools")) or ["codex_exec"]
+    resources = _job_list("lifecycle_requested_resources") or allowed_resources
+    tools = _job_list("lifecycle_requested_tools") or allowed_tools
 
     return {
         "worker_id": str(job.get("lifecycle_worker_id") or safe_worker_id(rid)),
@@ -65,8 +82,10 @@ def spec_for_job(job: dict[str, Any]) -> dict[str, Any]:
         "lane": str(item.get("lane") or item.get("kind") or "exec"),
         "worktree": str(job.get("worktree") or ""),
         "command": command,
-        "resources": [str(x) for x in resources if str(x).strip()],
-        "tools": [str(x) for x in tools if str(x).strip()],
+        "resources": resources,
+        "tools": tools,
+        "allowed_resources": allowed_resources,
+        "allowed_tools": allowed_tools,
         # auto_exec 只有在用户显式打开控制开关后才到得了这里；隔离 worktree
         # 加 kgctl land 门禁是可逆的，不需要也不允许 inferred + destructive。
         "authorization": wl.AUTH_EXPLICIT,

@@ -190,6 +190,34 @@ def main() -> int:
                   "LedgerCorrupt" in str(bad_job.get("start_error") or ""),
                   str(bad_job.get("start_error")))
 
+            # 5b. 工单 allowlist 之外什么都不启动，也不占槽、不落 running。
+            deny_job = make_job(tmp, "L-DENY")
+            deny_job["item"]["allowed_resources"] = ["app.txt"]
+            deny_job["item"]["allowed_tools"] = ["codex_exec"]
+            deny_job["lifecycle_requested_resources"] = ["app.txt", "secret.txt"]
+            before_deny = len(SPAWN_CALLS)
+            deny_started = daemon._start_exec(deny_job)
+            check("越权资源拒绝启动", deny_started is None, str(deny_job))
+            check("越权资源不启动进程", len(SPAWN_CALLS) == before_deny,
+                  str(SPAWN_CALLS[before_deny:]))
+            check("越权资源错误可见",
+                  "AuthorizationError" in str(deny_job.get("start_error") or ""),
+                  str(deny_job.get("start_error")))
+            deny_state = service.status(
+                exec_lifecycle.safe_worker_id("L-DENY"))
+            check("越权资源不落 running 账本",
+                  deny_state["state"] == "absent", str(deny_state))
+
+            deny_tool_job = make_job(tmp, "L-DENY-TOOL")
+            deny_tool_job["item"]["allowed_tools"] = ["codex_exec"]
+            deny_tool_job["lifecycle_requested_tools"] = ["shell"]
+            before_tool_deny = len(SPAWN_CALLS)
+            deny_tool_started = daemon._start_exec(deny_tool_job)
+            check("越权工具拒绝启动", deny_tool_started is None,
+                  str(deny_tool_job))
+            check("越权工具不启动进程", len(SPAWN_CALLS) == before_tool_deny,
+                  str(SPAWN_CALLS[before_tool_deny:]))
+
             # 6. dispatch 层不能把失败启动塞回并发槽位。
             source = (OPS / "central_daemon.py").read_text(encoding="utf-8")
             check("dispatch 接住空启动", "started = _start_exec(job)" in source

@@ -473,7 +473,24 @@ def _autonomy_summary(state):
             "explicit": None,
             "observing": None,
             "proposed": None,
+            "passes": [],
         }
+
+    def _detail(pass_row):
+        row = pass_row if isinstance(pass_row, dict) else {}
+
+        def _value(key):
+            value = row.get(key)
+            return str(value).strip() if value not in (None, "") else "取不到"
+
+        return {
+            "name": _value("name"),
+            "mode": _value("mode"),
+            "status": _value("status"),
+            "authorization": _value("authorization"),
+            "effect": _value("effect"),
+        }
+
     explicit = sum(1 for p in passes if (p or {}).get("authorization") == "explicit")
     observing = sum(1 for p in passes if (p or {}).get("mode") == "observe")
     proposed = sum(1 for p in passes if (p or {}).get("status") == "proposed")
@@ -490,6 +507,7 @@ def _autonomy_summary(state):
         "observing": observing,
         "proposed": proposed,
         "errored": errored,
+        "passes": [_detail(p) for p in passes],
     }
 
 

@@ -20,7 +20,7 @@
 | 关系层 | 一个持续对话/入口维护目标、优先级、需要人的时机 | 唯一输入框、`ops/tasks/inbox.jsonl`、面板三问、`needs_human` 的人工验收队列 | 还没有把跨项目长期目标做成稳定关系对象 |
 | 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/exec_overlap.py`、`ops/acceptance_criteria.py`、observe/propose/auto 与 explicit/inferred 分级 | 候选已能生成可判定标准；语义仍停在候选，必须人确认后才进验收台账 |
 | 执行层 | 隔离会话里并行研究/实现/验证，再做串行合流 | 路由/实现/合并/验收管家、独立 worktree、`kgctl land` 门禁、`ops/worker_lifecycle.py` 生命周期契约、`ops/exec_lifecycle.py` 生产接线 | 已接管真实派发；定时唤醒只写回入口，仍不直接开 worker |
-| 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、`ops/wake_resume.py`、truth 台账、全局待路由箱、`project_health` | 到期唤醒与显式恢复已有 append-only 协议；按工单资源/工具白名单仍弱 |
+| 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、`ops/wake_resume.py`、`worker_lifecycle`、`ops/exec_lifecycle.py`、truth 台账、全局待路由箱、`project_health` | 到期唤醒、显式恢复、资源/工具白名单与逐 pass 授权审计已落地；Outcomes 式独立评分仍缺 |
 
 ## Worker 生命周期契约
 
@@ -29,6 +29,12 @@
 当前状态由事件投影得出，不允许跳过中间态。重复 `start` 幂等，避免开出第二个 session；
 `stop` / `interrupted` 可显式 `resume` 并升 generation；`handed_back` 是终态，
 只能由路由层开新 worker。
+
+每个 worker spec 还带 `allowed_resources` / `allowed_tools`：请求范围必须落在工单
+声明内，越界在 `start/resume` 前抛 `AuthorizationError`，不会 `Popen`、不会落
+running 账本，也不会占并发槽位。未声明 allowlist 时沿用旧请求范围，保证现有工单
+平滑升级；控制层只把 `last_passes` 中已有的 `authorization` / `effect` 投影给
+面板，工程详情折叠区逐条显示授权来源与副作用，首屏只保留摘要。
 
 授权边界复用 `pass_registry`：`inferred + destructive` 直接拒绝，`destructive`
 必须带 `authorization_reason`。账本损坏、事件 seq 断裂、非法状态转移都 fail-closed，
@@ -41,7 +47,8 @@
 `ops/test-exec-lifecycle.py` 锁住这些生产接线约束。
 
 当前边界要说清：生产 worker 已经按上述生命周期契约运行；跨项目的 timer 唤醒、
-显式跨工单恢复已有运行层协议，但按工单资源/工具白名单仍未完成，不能把运行层整体说成「已最优」。
+显式跨工单恢复、资源/工具白名单和逐 pass 授权审计均已有可验证门禁，运行层比上一版更硬，
+但仍不能把运行层整体说成「已最优」。
 
 因此当前不是「最优已完成」，而是「架构收敛正确、运行层还在补」。最优路线不是继续加第八、第九个管家，而是把四层之间的契约写硬：谁可以唤醒谁、谁拥有写权限、什么证据允许合流、什么情况必须回到人这里。全局健康只读这四层的事实，不替任何一层做决定。
 
