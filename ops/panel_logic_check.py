@@ -430,6 +430,11 @@ def main(argv):
         bempty = dict(payload)
         bempty["blocked"] = {"failures": [], "resolve": [], "exec": [], "port": []}
         bempty["error"] = None
+        # 「需要你决策」区块不只吃 blocked：状态管家的调整卡和上下文管家的
+        # 约束候选也会进同一个列表。要断言空态，必须把三类来源都清空；
+        # 否则 land 的临时主干里只要有一张待点头卡片，这里就会制造假红灯。
+        bempty["harness_tune"] = {"status": "ok", "count": 0, "items": []}
+        bempty["constraint_candidates"] = {"status": "ok", "count": 0, "items": []}
         beout = run_once(bempty)
         fails += has("没有卡点时给出空态说明",
                      beout["blockedList"] or beout["blockedHtml"], "没有需要你决策的")
