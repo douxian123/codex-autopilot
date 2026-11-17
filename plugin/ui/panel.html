@@ -1620,7 +1620,22 @@
   function buildAcceptanceAction(a){
     var row = document.createElement("div"); row.className = "accact";
     var msg = document.createElement("span"); msg.className = "accmsg";
-    msg.textContent = "点它会把它从待验收翻成已通过，这条从首屏消失；不点就继续占着「需要你介入」。";
+    msg.textContent = "补图只追加附件，不会替你收口；确认通过才会把这条从首屏移走；不点就继续占着「需要你介入」。";
+    var actions = document.createElement("div"); actions.className = "accbtns";
+    var shotBtn = document.createElement("button");
+    shotBtn.className = "btn"; shotBtn.type = "button";
+    shotBtn.textContent = "补一张复核截图";
+    shotBtn.addEventListener("click", function(){
+      if (!a.id) { toast("这条验收缺 id，补不了截图，先补台账", "err"); return; }
+      shotBtn.disabled = true; shotBtn.textContent = "正在打开截图…";
+      callTool("capture_acceptance_screenshot", {id:a.id, confirm:true}).then(function(){
+        toast("已记下复核截图；这条仍等你确认", "ok");
+        return loadStatus(false);
+      }).catch(function(e){
+        toast("补图失败：" + (e && e.message || e), "err");
+        shotBtn.disabled = false; shotBtn.textContent = "补一张复核截图";
+      });
+    });
     var btn = document.createElement("button");
     btn.className = "btn primary"; btn.type = "button";
     btn.textContent = "我确认通过，收口这条";
@@ -1636,7 +1651,8 @@
         btn.disabled = false; btn.textContent = "我确认通过，收口这条";
       });
     });
-    row.appendChild(msg); row.appendChild(btn);
+    actions.appendChild(shotBtn); actions.appendChild(btn);
+    row.appendChild(msg); row.appendChild(actions);
     return row;
   }
 

@@ -41,10 +41,14 @@ function makeEl(id) {
     textContent: "", innerHTML: "", className: "", title: "",
     value: "", checked: false, hidden: false, disabled: false,
     style: {}, children: [],
+    _clickHandlers: [],
     classList: { toggle: NOOP, add: NOOP, remove: NOOP, contains: function () { return false; } },
     setAttribute: function (k, v) { this[k] = String(v); },
     getAttribute: function (k) { return this[k]; },
-    removeAttribute: NOOP, addEventListener: NOOP, removeEventListener: NOOP,
+    removeAttribute: NOOP, removeEventListener: NOOP,
+    addEventListener: function (type, fn) {
+      if (type === "click" && typeof fn === "function") this._clickHandlers.push(fn);
+    },
     appendChild: function (c) {
       this.children.push(c);
       this.textContent = (this.textContent || "") + ((c && c.textContent) || "");
@@ -92,6 +96,10 @@ const window = {
   matchMedia() { return { matches: false, addEventListener: NOOP }; },
 };
 window.parent = window;
+const toolCalls = [];
+window.postMessage = function (msg) {
+  if (msg && msg.method === "tools/call" && msg.params) toolCalls.push(msg.params);
+};
 
 globalThis.window = window;
 globalThis.document = document;
@@ -114,6 +122,21 @@ document.getElementById("need").querySelector = function (selector) {
   return selector === ".al-tx" ? alertText : null;
 };
 
+function findButton(root, label) {
+  if (!root) return null;
+  // 最小 DOM 的 createElement 把标签写进 id（如 "<button>"），没有 tag 属性。
+  if (String(root.id || "").indexOf("button") >= 0
+      && root.textContent === label) return root;
+  for (const child of (root.children || [])) {
+    const found = findButton(child, label);
+    if (found) return found;
+  }
+  return null;
+}
+
+// 截图按钮的点击必须发到 capture_acceptance_screenshot，并显式带 confirm=true。
+// 没有 confirm 时 MCP 层会拒绝，因此这里不是「看文案」，是真点按钮取工具参数。
+
 // 走 Codex 宿主同一条通知：structuredContent 就是控制层状态
 msg.fn({
   source: window,
@@ -121,9 +144,25 @@ msg.fn({
           params: { structuredContent: payload } },
 });
 
+// 真点一次「补一张复核截图」：只验证面板发出的工具调用，
+// 不调用系统截图器、不写验收台账。按钮没接上时下面三个字段会是空。
+var shotButton = findButton(document.getElementById("acceptBox"), "补一张复核截图");
+if (shotButton) {
+  shotButton._clickHandlers.slice().forEach(function (fn) { fn(); });
+}
+
 const read = function (id) { return document.getElementById(id).textContent; };
 console.log(JSON.stringify({
   ok: true,
+  captureToolName: (toolCalls.find(function (c) {
+    return c.name === "capture_acceptance_screenshot";
+  }) || {}).name || "",
+  captureToolId: (((toolCalls.find(function (c) {
+    return c.name === "capture_acceptance_screenshot";
+  }) || {}).arguments) || {}).id || "",
+  captureToolConfirm: (((toolCalls.find(function (c) {
+    return c.name === "capture_acceptance_screenshot";
+  }) || {}).arguments) || {}).confirm,
   projectLine: read("projectLine"),
   projectTitle: document.getElementById("projectLine").title,
   hierarchyProject: read("hierProject"),
@@ -182,6 +221,9 @@ def main(argv):
     project = payload.get("project") or {}
     counters = payload.get("counters") or {}
     human_acc = payload.get("human_acceptance") or []
+    # 与面板 renderRoute() 的优先级链一致：阻塞态没有工作项时必须说「等待解除卡点」。
+    # 旧断言只认「等待下一条需求」，在有卡点的真实状态下制造假红灯。
+    route_blocked = payload.get("state") in ("blocked", "error")
 
     workdir = Path(tempfile.mkdtemp(prefix="autopilot-panel-logic-"))
     try:
@@ -241,7 +283,8 @@ def main(argv):
         current_items = payload.get("doing_items") or payload.get("todo_items") or []
         expected_work = ((current_items[0].get("title") or current_items[0].get("detail"))
                          if current_items
-                         else ("等待人工验收" if human_acc else "等待下一条需求"))
+                         else ("等待人工验收" if human_acc else
+                               "等待解除卡点" if route_blocked else "等待下一条需求"))
         fails += has("路线图显示当前工作项", out["hierarchyWork"], expected_work)
         folders = ((payload.get("project_folders") or {}).get("folders") or [])
         if folders:
@@ -312,6 +355,19 @@ def main(argv):
         # 「点它会怎样 / 不点会怎样」和一个真的能收口的按钮。
         fails += has("验收项带可点的收口动作", review_out["acceptBox"], "我确认通过")
         fails += has("验收项写明不点的后果", review_out["acceptBox"], "不点就继续")
+        # 截图动作必须能点，且点击后真的发到 MCP；只写按钮文案不算闭环。
+        fails += has("验收项带可点的补图动作", review_out["acceptBox"], "补一张复核截图")
+        fails += has("补图动作写明不会替人收口", review_out["acceptBox"],
+                     "补图只追加附件", "不会替你收口")
+        fails += has("补图按钮发起截图工具调用", review_out.get("captureToolName", ""),
+                     "capture_acceptance_screenshot")
+        fails += has("补图按钮带真实验收 id", review_out.get("captureToolId", ""),
+                     "A-9001")
+        if review_out.get("captureToolConfirm") is not True:
+            print("  FAIL  补图按钮必须显式带 confirm=true")
+            fails += 1
+        else:
+            print("  PASS  补图按钮必须显式带 confirm=true")
         # 人工验收必须能把「机器已看过的现场」带给用户。截图只是复核附件，
         # 不参与自验 gate：没有 evidence 的项仍留在待自验。
         shots = dict(payload)
@@ -325,6 +381,11 @@ def main(argv):
         shots_out = run_once(shots)
         fails += has("验收项展示复核截图", shots_out["acceptBox"],
                      "复核截图", "/tmp/first.png", "/tmp/second.png")
+        fails += has("截图按钮调用 capture_acceptance_screenshot",
+                     shots_out["captureToolName"], "capture_acceptance_screenshot")
+        fails += has("截图按钮带上验收 id", shots_out["captureToolId"], "A-9002")
+        fails += has("截图按钮显式 confirm=true",
+                     str(shots_out["captureToolConfirm"]), "True")
         # 二级工单表：每条必须把「来源 → 项目 → 泳道 → 分支 → stage → 证据」
         # 串出来，stage 用控制层算好的值照抄。只显示一个标题等于没回答
         # 「这条到底走到哪了、依据是什么」。

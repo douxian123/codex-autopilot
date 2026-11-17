@@ -105,7 +105,10 @@ def _expectations(truth):
     constraints_path = truth / "constraints.jsonl"
     candidates_path = truth / "constraint_candidates.jsonl"
     mainline_path = truth / "mainline.json"
-    missing = [p.name for p in (constraints_path, candidates_path, mainline_path)
+    # constraint_candidates.jsonl 是守护扫到候选才生成的可选运行台账。干净项目
+    # 首装没有它，等于「0 条待确认」，不是探针坏了；constraints / mainline 缺失
+    # 才是真相取不到，必须继续报 unknown。
+    missing = [p.name for p in (constraints_path, mainline_path)
                if not p.exists()]
 
     active = []
@@ -140,7 +143,7 @@ def _expectations(truth):
             "text": _text(r.get("text") or r.get("statement") or r.get("title")),
             "kind": r.get("kind") or "",
         } for r in pending[:6]],
-        "pending_count": len(pending) if candidates_path.exists() else None,
+        "pending_count": len(pending),
         "active_count": len(active) if constraints_path.exists() else None,
         "active": [{
             "id": r.get("id"),
@@ -180,7 +183,10 @@ def _overlap_holds(runtime):
 def _native_bindings(truth):
     path = truth / "native_routes.jsonl"
     if not path.exists():
-        return None
+        # 原生路由是可选的运行台账：从未派过活的干净项目本来就不会有它。
+        # 这里返回空绑定，表达「0 条窗口绑定」，不能冒充成探针取不到；
+        # 问题台账 ledger.jsonl 缺失仍然是 unknown，两者语义不同。
+        return {}
     latest = {}
     for row in _read_jsonl(path):
         lid = row.get("ledger_id")
@@ -192,12 +198,10 @@ def _native_bindings(truth):
 def _follow_up(runtime, truth, now, stale_minutes):
     ledger_path = truth / "ledger.jsonl"
     bindings = _native_bindings(truth)
-    if not ledger_path.exists() or bindings is None:
+    if not ledger_path.exists():
         missing = []
         if not ledger_path.exists():
             missing.append("ledger.jsonl")
-        if bindings is None:
-            missing.append("native_routes.jsonl")
         return {"status": "unknown", "items": [], "missing": missing,
                 "note": "追问候选取不到；不自动向任何窗口发消息。"}
 

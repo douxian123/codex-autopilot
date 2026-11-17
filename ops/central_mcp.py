@@ -248,6 +248,28 @@ def _screenshots_env(value):
     return ":".join(items) or None
 
 
+def _acceptance_record(acceptance_id):
+    """按 id 取验收台账的最新一条；取不到就返回 None，不猜。"""
+    aid = str(acceptance_id or "").strip()
+    latest = {}
+    for row in _read_jsonl(_truth_dir() / "acceptance.jsonl"):
+        if row.get("id"):
+            latest[row["id"]] = row
+    return latest.get(aid)
+
+
+def _capture_ready_acceptance(record):
+    """只有已自验、仍待人工复核的项才允许补截图。
+
+    这把「先自验，再打扰用户」的顺序写进调用口：截图是复核附件，不能把
+    没有 evidence 的项伪装成可以给人看，也不能顺手把状态改成 verified。
+    """
+    rec = record or {}
+    return (bool(rec.get("needs_human"))
+            and rec.get("status") in ("todo", "wip", "blocked")
+            and bool(str(rec.get("evidence") or "").strip()))
+
+
 def _n(value):
     """把可能为 None 的计数渲染成面板能读的字样。
 
@@ -703,6 +725,20 @@ TOOLS = [
                                 "description": "补充待复核截图路径，可选；只追加，不覆盖已有附件"},
             },
             "required": ["id", "status"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "capture_acceptance_screenshot",
+        "description": "用户在面板上主动给一条待人工复核的验收项补截图：本机交互式框选，图片写到用户级目录，只把路径追加到对应 A-id 的 screenshots，绝不自动把验收项标成通过。必须显式 confirm=true。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "验收台账 id，如 A-0030"},
+                "confirm": {"type": "boolean",
+                            "description": "用户已点击「补一张复核截图」并明确同意框选；false 一律拒绝"},
+            },
+            "required": ["id", "confirm"],
             "additionalProperties": False,
         },
     },
@@ -2819,6 +2855,44 @@ def call_tool(name, args):
                "KG_TRUTH_SHOTS": _screenshots_env(args.get("screenshots")),
                "KG_TRUTH_SOURCE": "user"}
         return truthctl(*argv, extra_env=env)
+    if name == "capture_acceptance_screenshot":
+        # 这是人点按钮后才允许进来的动作。confirm 不是装饰：模型/守护/探针
+        # 即使拿到的工具参数里没有它，也不能借这条链路调系统截图器。
+        if not bool(args.get("confirm")):
+            return {"code": "SCREENSHOT_CONFIRM_REQUIRED",
+                    "message": "补图必须由人点按钮触发；请带 confirm=true。"}, 2
+        rid = (args.get("id") or "").strip()
+        if not rid:
+            return {"code": "SCREENSHOT_ID_REQUIRED",
+                    "message": "capture_acceptance_screenshot 需要验收 id（如 A-0030）。"}, 2
+        record = _acceptance_record(rid)
+        if record is None:
+            return {"code": "SCREENSHOT_ACCEPTANCE_NOT_FOUND",
+                    "message": "验收台账里没有 %s；先登记验收项。" % rid}, 2
+        if not _capture_ready_acceptance(record):
+            return {"code": "SCREENSHOT_NOT_HUMAN_READY",
+                    "message": "这条还没到人工复核：必须有机器自验证据且仍待人工确认；"
+                               "截图不能代替自验。"}, 2
+        try:
+            import acceptance_screenshot
+            shot = acceptance_screenshot.capture(rid)
+        except Exception as exc:
+            return {"code": "SCREENSHOT_CAPTURE_FAILED",
+                    "message": "截图失败：%s" % exc}, 2
+        if shot.get("error"):
+            return {"code": "SCREENSHOT_CAPTURE_FAILED",
+                    "message": shot["error"]}, 2
+        status = record.get("status") or "todo"
+        out, code = truthctl(
+            "accept", "--id", rid, "--status", status,
+            extra_env={"KG_TRUTH_SHOTS": shot["path"],
+                       "KG_TRUTH_SOURCE": "panel-screenshot"})
+        if code != 0:
+            return {"code": "SCREENSHOT_APPEND_FAILED",
+                    "message": "截图已生成，但没写进验收台账：%s" % out}, 2
+        control_state.append_event("acceptance_screenshot", id=rid, path=shot["path"])
+        return {"__text__": "已给 %s 补上复核截图；验收状态仍是 %s，没有替你收口。" % (rid, status),
+                "id": rid, "path": shot["path"], "status": status}, 0
     if name == "reopen_item":
         rid = (args.get("id") or "").strip()
         if not rid:
