@@ -66,5 +66,9 @@
  "codex/truth-close-pm-truth-closure-20261118@c8b9f37b322a7cf772b4974c6ed1ce60ff8e4602@0fd2177bea6a39fa0f26822a6064529b44ee2a30": {
   "files": 7,
   "lines": 82
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@fe2c0f33d5f593b9fb5d01d340f83142152ec985": {
+  "files": 15,
+  "lines": 1221
  }
 }

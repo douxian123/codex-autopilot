@@ -1,5 +1,5 @@
 {
- "main": "0fd2177bea6a39fa0f26822a6064529b44ee2a30",
+ "main": "fe2c0f33d5f593b9fb5d01d340f83142152ec985",
  "branches": [
   "codex/autopilot-close-gate-20261026",
   "codex/autopilot-exec-recover-min-20261020",
@@ -23,7 +23,7 @@
   "codex/autopilot-truth-sync-failclosed": 2,
   "codex/daemon-liveness-20261110": 3,
   "codex/disk-production-admission-20261112": 3,
-  "codex/eval-loop-judge-20261110": 5,
+  "codex/eval-loop-judge-20261110": 6,
   "codex/reap-branch-preserve-20261111": 2,
   "codex/resource-admission-verify-narrowing-20261115": 3,
   "codex/snapshot-budget-archive-20261113": 2

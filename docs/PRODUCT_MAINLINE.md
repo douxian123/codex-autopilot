@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-18 03:50:48　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-18 04:14:56　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -43,7 +43,6 @@
 ## 最近在推进
 
 - [已落盘] @ d36087b804 首屏三问与 PM/验收管家闭环已落盘：首屏只回答要不要我、是不是在干对的事、替我做成了什么；PM 简报、人工验收复核截图与补图按钮进入折叠区；补图不替人收口。落盘 commit 3a950f4e，真相记录 d36087b8。
-- [已落盘] @ 89c79304e6 codex/runtime-lifecycle-dispatch-20261118 验证门禁通过，已落盘 main @ 89c79304e6；改动 6 个文件：docs/ARCHITECTURE_STEWARDS.md（+9/-4）、ops/SAFETY_GATES.md（+12/-0）、ops/central_daemon.py（+127/-54）、ops/exec_lifecycle.py（+235/-0）、ops/selftest.py（+1/-0），另有 1 个文件｜6 files changed, 620 insertions(+), 58 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
@@ -51,7 +50,9 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0004` [P1] codex/runtime-lifecycle-dispatch-20261118 落盘验收
+- `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0005` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
@@ -76,12 +77,13 @@
 
 - `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
-- `A-0004` [P1] codex/runtime-lifecycle-dispatch-20261118 落盘验收
+- `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
+- `A-0005` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
 
 ## 进度概览
 
 - 累计关闭问题：1 条
-- 累计落盘：2 条
+- 累计落盘：1 条
 - 未决问题：8 条
-- 已验收：3 条
+- 已验收：4 条
 
