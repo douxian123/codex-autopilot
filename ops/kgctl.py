@@ -92,7 +92,10 @@ from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, looks_like_state_root, resolve_state_root  # noqa: E402
 import constraints as constraints_mod  # noqa: E402
 import central_config  # noqa: E402
+<<<<<<< HEAD
 import project_router  # noqa: E402
+=======
+>>>>>>> codex/daemon-liveness-20261110
 from daemon_liveness import (daemon_liveness, liveness_line,  # noqa: E402
                              liveness_problem)
 
@@ -5470,6 +5473,7 @@ def cmd_doctor(args):
         "not_installed": "未安装",
     }.get(_live.get("status"), "看不清"))
 
+<<<<<<< HEAD
     # ⑤ 真相同步闸门：陈旧 index.lock 会让 tick 的 `[7/8] git add` 每拍失败，而
     # 旧实现不看返回码 —— 真相层静默空转、面板全绿。这条只读地把锁的状态说出来。
     try:
@@ -5488,6 +5492,8 @@ def cmd_doctor(args):
         INFOS.append("⑤ 真相同步闸门：index.lock 陈旧可隔离（"
                      f"{_locks.get('age')}s 未动）")
 
+=======
+>>>>>>> codex/daemon-liveness-20261110
     # ① automation 漂移
     auto_root = Path.home() / ".codex" / "automations"
     if not auto_root.exists():

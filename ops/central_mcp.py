@@ -1124,6 +1124,7 @@ def _daemon_live():
         import daemon_liveness
     except Exception:
         return False, None, None
+<<<<<<< HEAD
     st = daemon_liveness.daemon_liveness(os.environ.get("KG_REPO") or _fallback_repo())
     return bool(st.get("live")), st.get("pid"), st.get("bound_repo")
 
@@ -1144,6 +1145,10 @@ def _daemon_liveness_problem(daemon_enabled=True):
         return daemon_liveness.liveness_problem(st, daemon_enabled)
     except Exception:
         return None
+=======
+    st = daemon_liveness.daemon_liveness(os.environ.get("KG_REPO") or REPO)
+    return bool(st.get("live")), st.get("pid"), st.get("bound_repo")
+>>>>>>> codex/daemon-liveness-20261110
 
 
 def _ledger_count():

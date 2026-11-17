@@ -7020,6 +7020,7 @@ def test_daemon_liveness_shared_judge():
         (live, pid, project)
     print("selftest ok: 守护存活判据只有一份，面板与 CLI 共用；没装且开关关着不误报。")
 
+<<<<<<< HEAD
     # 状态面（模型通过 autopilot_status 读到的那段文本）不许把配置位当现实念。
     # 2026-11-11 实测：daemon_enabled=true 但 launchd 无 job、无进程，文本仍印
     # 「后台常驻=开」。这一格必须反映「是不是真在跑」。
@@ -7317,6 +7318,8 @@ def test_portable_serve_requires_token():
         "旧的裸路径放行写法还在，等于令牌形同虚设")
     print("selftest ok: 跨机移植 serve 走一次性令牌，缺/错令牌一律 404。")
 
+=======
+>>>>>>> codex/daemon-liveness-20261110
 
 if __name__ == "__main__":
     test_disk_reap_reaps_stale_code_sign_clones()
