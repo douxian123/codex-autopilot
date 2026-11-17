@@ -404,13 +404,33 @@ def main(argv):
         fails += has("候选写明不算就什么都不生效", cout["blockedList"],
                      "不算", "什么都不生效")
 
-        # 管家健康条：各管家 + 全局项目健康必须在一个地方可读，且四态语义不能混。
+        # 管家健康条：七个管家 + 一层全局项目健康必须在一个地方可读，四态语义不能混。
         # 这是用户「万法归一入口 + 背后许多管家」设想的落地面——面板此前没有任何
         # 一处能一眼看出「哪个管家断了」。unknown 必须如实说「取不到」，绝不用绿点
         # 冒充正常；off（用户自己关的）也不能被当成故障报警。
         stew = payload.get("stewards") or {}
         rows = stew.get("rows") or []
         fails += has("管家健康条上屏", out["stewardBar"], "管家")
+        # 精确键集合：七个管家必须齐全；健康层单独校验，既不是第八个管家，也不得缺失。
+        expected_keys = {"context", "route", "merge", "tune", "exec", "pm", "accept"}
+        actual_keys = {r.get("key") for r in rows if r.get("key") != "health"}
+        health_rows = [r for r in rows if r.get("key") == "health"]
+        if actual_keys != expected_keys:
+            fails += 1
+            print(f"  FAIL  管家键集合漂移：多={sorted(actual_keys - expected_keys)} "
+                  f"少={sorted(expected_keys - actual_keys)}")
+        else:
+            print("  PASS  管家键集合正好是七个")
+        if len(health_rows) != 1:
+            fails += 1
+            print(f"  FAIL  全局健康应恰好 1 行，实得 {len(health_rows)} 行")
+        else:
+            print("  PASS  全局健康恰好 1 行")
+        if len(rows) != 8:
+            fails += 1
+            print(f"  FAIL  健康条应有 7 个管家 + 1 层全局健康，实得 {len(rows)} 行")
+        else:
+            print("  PASS  健康条行数：7 个管家 + 1 层全局健康")
         # accept 是这一轮新增的验收管家：它管的是「先自己验完，再来找你」这个顺序。
         # 少一条断言，就等于这个管家断了也没人知道。
         for key in ("context", "route", "merge", "tune", "exec", "pm", "accept", "health"):
