@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-17 17:46:07　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-17 17:47:15　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -38,11 +38,11 @@
 
 ## 最近在推进
 
-- [已落盘] @ e4c3e4b144 codex/pm-overlap-gate-20261118 验证门禁通过，已落盘 main @ e4c3e4b144；改动 4 个文件：ops/central_mcp.py（+34/-2）、ops/panel_logic_check.py（+6/-4）、ops/selftest.py（+28/-2）、ops/test-acceptance-selfcheck.py（+105/-0）｜4 files changed, 173 insertions(+), 8 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ 272895599b codex/pm-acceptance-stewards-20261117 验证门禁通过，已落盘 main @ 272895599b；改动 3 个文件：ops/kgctl.py（+62/-5）、ops/selftest.py（+5/-0）、ops/test-restore-truth-snapshot-freshness.py（+122/-0）｜3 files changed, 189 insertions(+), 5 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0002` [P1] codex/pm-overlap-gate-20261118 落盘验收
+- `A-0002` [P1] codex/pm-acceptance-stewards-20261117 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
@@ -68,7 +68,7 @@
 
 ## 已机器验收
 
-- `A-0002` [P1] codex/pm-overlap-gate-20261118 落盘验收
+- `A-0002` [P1] codex/pm-acceptance-stewards-20261117 落盘验收
 
 ## 进度概览
 
