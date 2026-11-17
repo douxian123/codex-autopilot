@@ -96,13 +96,12 @@
   },
   {
    "area": "验收管家",
-   "behavior": "从已路由原话提名可判定验收标准候选；人确认后才登记验收项，机器项仍需真门禁证据，人工项先自验再提醒。",
-   "why": "用户要求把模糊预期编译成可判定验收标准，确认前不进验收台账，确认后不伪造证据",
+   "behavior": "人工验收项先由机器跑真实验证，只有带可复核命令、cwd、退出码的项才进入“需要你验收”；用户点击后才会调系统截图器补复核附件，补图只追加附件，不替用户收口。",
+   "why": "人工注意力是稀缺资源；没有机器证据的项出现在“需要你验收”里会让用户成为第一道测试，截图也不能替代验证。",
    "files": [
-    "ops/acceptance_criteria.py",
-    "ops/truthctl.py",
     "ops/central_mcp.py",
-    "ops/pm_briefing.py",
+    "ops/truthctl.py",
+    "ops/acceptance_screenshot.py",
     "plugin/ui/panel.html"
    ],
    "updated": "2026-11-18"
@@ -115,16 +114,6 @@
     "ops/project_health.py",
     "ops/central_mcp.py",
     "plugin/ui/panel.html"
-   ],
-   "updated": "2026-11-18"
-  },
-  {
-   "area": "安全闸事实边界",
-   "behavior": "worker 资源/工具越界在 Popen 前拒绝；逐 pass 授权来源与副作用在面板工程详情只读展示。",
-   "why": "运行层资源/工具白名单与逐 pass 授权审计已有真实门禁，文档旧边界与当前代码不一致",
-   "files": [
-    "docs/ARCHITECTURE_STEWARDS.md",
-    "ops/SAFETY_GATES.md"
    ],
    "updated": "2026-11-18"
   }
