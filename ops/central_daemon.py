@@ -108,6 +108,7 @@ from pass_registry import (
 )  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
 import constraints as constraints_mod  # noqa: E402
+import exec_overlap  # noqa: E402
 import live_guard  # noqa: E402
 import workspace_guard  # noqa: E402
 
@@ -1127,6 +1128,17 @@ def _prune_exec_blocked(blocked: dict) -> list:
                     log(f"[exec] {rid} 先前的落盘锁/网络抖动已过，分支仍有未落提交，放行重试")
     except Exception as exc:
         log(f"[exec] 清理瞬时落盘阻塞失败（忽略）：{exc!r}")
+    # overlap_hold 是「这一拍谁在改同一批文件」的调度结论，不是需求的固有属性。
+    # 持有者一旦收口、被卡住或文件线索变了，这条排队就必须消失；否则一条本来
+    # 只该等十分钟的需求会被永久钉在原地。这里一律清掉，下一拍按当时现场重算。
+    try:
+        for rid, rec in list(blocked.items()):
+            if isinstance(rec, dict) and rec.get("reason") == exec_overlap.REASON_OVERLAP_HOLD:
+                blocked.pop(rid, None)
+                stale.append(rid)
+                log(f"[exec] {rid} 的文件占地每拍重算，清掉上一拍的排队结论")
+    except Exception as exc:
+        log(f"[exec] 清理文件占地排队失败（忽略）：{exc!r}")
     # 「同一组冲突需人工裁决」的停手有期限：到期放行一次，免得改完代码也永远不动。
     now_ts = time.time()
     for rid, rec in list(blocked.items()):
@@ -4155,6 +4167,42 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
                          if r.get("outcome") == "resolve_gate_fail"}
     force_session_ids = set()
     open_items = list(_exec_open_items())
+    items_by_id = {it.get("id"): it for it in open_items if it.get("id")}
+    _inflight_cache = {}
+
+    def _inflight(it):
+        """这条需求是否已有在途成果（只读，同一条一拍只查一次）。"""
+        _rid = it.get("id") or ""
+        if _rid not in _inflight_cache:
+            try:
+                _inflight_cache[_rid] = _exec_has_inflight_work(
+                    it, cfg, _state_repo())
+            except Exception:
+                _inflight_cache[_rid] = False
+        return _inflight_cache[_rid]
+
+    # 「文件占地」判据的持有者：正在跑会话的 + 已有在途成果、且这一拍会继续
+    # 推进的条目。**已经卡住的不算持有者** —— 让一条永远推不动的需求长期占着
+    # 文件，等于把别的活一起锁死，那是死锁不是调度。
+    #
+    # 这里**不能**在同一次派发循环里缓存：刚派发的 worker 立刻就是下一条的
+    # 持有者。缓存一次会让同一拍里后一条看不见前一条，闸门等于没接。
+    def _holders_now():
+        holders = []
+        seen = set()
+        for _rid, _job in jobs.items():
+            if _rid in blocked or _rid in seen:
+                continue
+            _it = _job.get("item") or items_by_id.get(_rid) or {}
+            holders.append((_rid, exec_overlap.declared_files(_it)))
+            seen.add(_rid)
+        for _rid, _it in items_by_id.items():
+            if _rid in blocked or _rid in seen:
+                continue
+            if _inflight(_it):
+                holders.append((_rid, exec_overlap.declared_files(_it)))
+                seen.add(_rid)
+        return holders
 
     def _session_slots() -> int:
         # 只数「真在跑/真要用模型」的槽位；recover 只是等落盘，不占算力名额。
@@ -4204,6 +4252,15 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
                 blocked.pop(rid, None)
                 force_session_ids.add(rid)
                 log(f"[exec] {rid} 通道退避到期，重开模型会话")
+            elif blocked[rid].get("reason") == exec_overlap.REASON_OVERLAP_HOLD:
+                # 排队不是判死：每一拍都按当时的持有者重算一次。前一条已经收口、
+                # 或者持有者本身也卡住了，这条就该放行，而不是等下一个人来清。
+                _hold_again = exec_overlap.overlap_hold(item, _holders_now())
+                if _hold_again:
+                    blocked[rid] = dict(_hold_again, ts=_now())
+                    continue
+                blocked.pop(rid, None)
+                log(f"[exec] {rid} 撞的文件已经让开，放行开工")
             else:
                 if (_should_retry_resolve_finish(item, blocked[rid])
                         and rid not in failed_this_cycle):
@@ -4266,8 +4323,21 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
                         continue
             except Exception as _exc:
                 log(f"[exec] {rid} 自动收口判断失败（忽略）：{_exc!r}")
+        _has_inflight = _inflight(item)
+        # 已经有在途成果的，不会开新会话，也不该被「文件占地」挡住：它只是
+        # 继续走自己的收口门禁，不会和谁抢同一份文件的写入。
+        if item.get("kind") != "resolve" and not _has_inflight:
+            _hold = exec_overlap.overlap_hold(item, _holders_now())
+            if _hold:
+                _why = "、".join(
+                    f"{h['id']}（{'、'.join(h['files'][:3])}）"
+                    for h in _hold.get("holders") or [])
+                blocked[rid] = dict(_hold, ts=_now())
+                log(f"[exec] {rid} 与在途施工项撞同一批文件，先排队等"
+                    f"{_why} 落地（不占槽位，也不计失败）")
+                continue
         if (item.get("kind") != "resolve"
-                and not _exec_has_inflight_work(item, cfg, _state_repo())):
+                and not _has_inflight):
             _cap = _exec_attempt_gate(rid)
             if _cap:
                 blocked[rid] = _cap
