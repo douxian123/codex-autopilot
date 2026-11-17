@@ -646,6 +646,11 @@
       <div class="foldbody"><div id="relationshipGoalsBox"></div></div>
     </details>
 
+    <details class="card fold" id="outcomeScoreFold">
+      <summary>结果代理分 · 用户结果有没有变好</summary>
+      <div class="foldbody"><div id="outcomeScoreBox"></div></div>
+    </details>
+
     <details class="card fold">
       <summary>进行中的冲突任务</summary>
       <div class="foldbody"><ul class="list" id="resolveList"></ul></div>
@@ -881,6 +886,7 @@
     renderAcceptance(humanAcc, s.machine_verified || []);
     renderPmBriefing(s.pm_briefing);
     renderRelationshipGoals(s.relationship_goals);
+    renderOutcomeScore(s.outcome_score);
     renderRecent(s.recent_completed || []);
     renderThreeQuestions(s, humanAcc, doingItems, stuckN);
     renderProgress(doingItems, s.todo_items || [], todoCount);
@@ -1084,6 +1090,31 @@
     box.appendChild(list);
     var meta = document.createElement("div"); meta.className = "meta";
     meta.textContent = rg.note || "关系层只记录显式目标，不自动派活。";
+    box.appendChild(meta);
+  }
+
+  // 结果代理分：只照抄控制层结论。命令跑绿不等于用户结果变好，取不到也不按 0 分算。
+  function renderOutcomeScore(os){
+    var box = el("outcomeScoreBox"); if (!box) return; box.innerHTML = "";
+    if (!os || os.status !== "ok"){
+      box.innerHTML = '<div class="empty">'
+        + (os && os.headline ? os.headline
+           : "结果代理分取不到；不把不知道当成 0 分。")
+        + '</div>';
+      return;
+    }
+    var list = document.createElement("ul"); list.className = "list";
+    pmRow(list, "总分", os.headline || "结果代理分取不到");
+    (os.components || []).forEach(function(c){
+      if (!c || c.status !== "ok"){
+        pmRow(list, c ? c.label : "判据", "取不到，不计分");
+        return;
+      }
+      pmRow(list, c.label, c.score + " 分 · 权重 " + c.weight + "% · " + (c.detail || ""));
+    });
+    box.appendChild(list);
+    var meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = os.note || "这是台账结果代理分；机器命令通过不等于用户结果变好。";
     box.appendChild(meta);
   }
 

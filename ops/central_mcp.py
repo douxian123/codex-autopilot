@@ -274,6 +274,19 @@ def _relationship_goals_summary():
                 "count": None, "needs_human_count": None, "items": []}
 
 
+def _outcome_score_summary():
+    """结果代理分：只读原始台账，命令绿灯不冒充用户结果。"""
+    try:
+        import outcome_score
+        return outcome_score.compute(os.environ.get("KG_REPO") or _fallback_repo())
+    except Exception as exc:
+        return {"status": "unknown", "score": None, "grade": "未知",
+                "coverage": 0.0,
+                "headline": "结果代理分取不到（%s）" % exc,
+                "note": "取不到不等于 0 分；机器命令通过不等于用户结果变好。",
+                "components": [], "missing": ["结果代理分"], "shortfalls": []}
+
+
 def _screenshots_env(value):
     """把 MCP 的 screenshots 数组归一成 truthctl 的 ':' 分隔 env。"""
     if value is None:
@@ -2328,6 +2341,7 @@ def _status_payload(fast=True):
             "autonomy": _autonomy_summary({}),
             "pm_briefing": _pm_briefing_summary({"blocked": {}}),
             "relationship_goals": _relationship_goals_summary(),
+            "outcome_score": _outcome_score_summary(),
         }
         payload["__text__"] = (
             "自动挡 · 安装绑定失效\n"
@@ -2547,6 +2561,7 @@ def _status_payload(fast=True):
         # 关系层：跨项目长期目标是显式账本，不属于某个项目真相；这里只读摘要，
         # 不把目标自动派给 worker，也不把「需要人」变成自动追问。
         "relationship_goals": _relationship_goals_summary(),
+        "outcome_score": _outcome_score_summary(),
         "harness_tune": _harness_tune_summary(),
         "constraint_candidates": _constraint_candidates_summary(),
         "acceptance_criteria": _acceptance_criteria_summary(),

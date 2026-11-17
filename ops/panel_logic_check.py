@@ -217,6 +217,8 @@ console.log(JSON.stringify({
   pmBriefingBox: read("pmBriefingBox") + " " + document.getElementById("pmBriefingBox").innerHTML,
   relationshipGoalsBox: read("relationshipGoalsBox") + " "
     + document.getElementById("relationshipGoalsBox").innerHTML,
+  outcomeScoreBox: read("outcomeScoreBox") + " "
+    + document.getElementById("outcomeScoreBox").innerHTML,
 }));
 """
 
@@ -725,6 +727,29 @@ def main(argv):
         rel_missing = run_once(dict(payload, relationship_goals=None))
         fails += has("关系层缺失时如实说取不到",
                      rel_missing["relationshipGoalsBox"], "取不到")
+
+        # 结果代理分：高级区只读展示，必须带机器绿灯不等于用户结果的边界。
+        out_payload = dict(payload)
+        out_payload["outcome_score"] = {
+            "status": "ok", "score": 72, "grade": "有基础",
+            "headline": "结果代理分 72/100（有基础；覆盖 100%）",
+            "note": "这是台账结果代理分；机器命令通过不等于用户结果变好。",
+            "components": [
+                {"key": "closure", "label": "首问闭环", "status": "ok",
+                 "score": 80.0, "weight": 35, "detail": "80.0%（4/5）"},
+                {"key": "health", "label": "全局健康", "status": "unknown",
+                 "score": None, "weight": 15, "detail": "取不到"},
+            ],
+            "missing": ["全局健康"], "shortfalls": [],
+        }
+        outcome_out = run_once(out_payload)
+        fails += has("结果代理分上屏", outcome_out["outcomeScoreBox"],
+                     "结果代理分 72/100", "首问闭环", "全局健康")
+        fails += has("结果代理分不冒充用户结果", outcome_out["outcomeScoreBox"],
+                     "机器命令通过不等于用户结果变好", "取不到，不计分")
+        outcome_missing = run_once(dict(payload, outcome_score=None))
+        fails += has("结果代理分缺失时如实说取不到",
+                     outcome_missing["outcomeScoreBox"], "取不到")
 
         fails += has("首屏开关文案与控制层一致", out["masterState"],
                      "已关闭" if not payload.get("enabled") else "正在运行")
