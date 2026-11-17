@@ -1716,6 +1716,44 @@ def test_broken_binding_panel_contract():
               "不伪装为空队列或 0。")
 
 
+def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
+    """发布树必须带上 PM 简报和复核截图通道，防止面板/后台版本回退。
+
+    这两项不是可选装饰：PM 简报承载预期、让路和追问候选；截图附件承载
+    「先自验再请人看」的复核现场。发布包缺任一项，现场就会静默退回旧产品。
+    """
+    root = OPS.parent
+    manifest = root / "plugin" / ".codex-plugin" / "plugin.json"
+    if not manifest.is_file():
+        manifest = root / ".codex-plugin" / "plugin.json"
+    version = json.loads(manifest.read_text(encoding="utf-8"))["version"]
+    def _version_key(text):
+        parts = text.replace("-preview.", ".").split(".")
+        return tuple(int(p) if p.isdigit() else 0 for p in parts)
+    assert _version_key(version) >= _version_key("0.6.0-preview.102"), \
+        f"发布清单版本低于 PM 简报首发版：{version}"
+
+    pm = root / "ops" / "pm_briefing.py"
+    assert pm.is_file(), "发布树缺少 ops/pm_briefing.py"
+    pm_text = pm.read_text(encoding="utf-8")
+    assert "follow_up_candidates" in pm_text, "PM 简报缺少追问候选契约"
+    assert "不会自动追问" in pm_text, "PM 简报必须明示候选不是动作"
+
+    panel_text = (root / "plugin" / "ui" / "panel.html").read_text(encoding="utf-8")
+    assert "pmBriefingBox" in panel_text, "面板缺少 PM 简报容器"
+    assert "renderPmBriefing" in panel_text, "面板未接 PM 简报渲染"
+    assert "复核截图" in panel_text, "面板缺少复核截图展示"
+
+    mcp = (root / "ops" / "central_mcp.py").read_text(encoding="utf-8")
+    assert '"screenshots"' in mcp, "MCP 工具契约缺少 screenshots"
+    assert "_pm_briefing_summary" in mcp, "MCP 状态未接 PM 简报"
+
+    truthctl = (root / "ops" / "truthctl.py").read_text(encoding="utf-8")
+    assert "_split_screenshots" in truthctl and "_merge_screenshots" in truthctl, \
+        "验收台账未接截图附件"
+    print(f"selftest ok: 发布包包含 PM 简报与验收截图通道，版本 {version}。")
+
+
 def test_preview_check_contract():
     """预览验收脚本是用户唯一的一键验收入口，必须真检查、真报错。
 
@@ -7316,6 +7354,7 @@ if __name__ == "__main__":
     test_daemon_liveness_shared_judge()
     test_companion_contract()
     test_panel_contract()
+    test_release_contract_includes_pm_briefing_and_acceptance_screenshots()
     test_preview_check_contract()
     test_installed_copy_binding()
     test_binding_preflight_rejects_empty_shell()
