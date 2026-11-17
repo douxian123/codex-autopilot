@@ -1,6 +1,27 @@
 {
  "tasks": [
   {
+   "slug": "truth-dedupe-pm-closure-20261118",
+   "branch": "codex/truth-dedupe-pm-closure-20261118",
+   "resolve_branch": "codex/resolve-truth-dedupe-pm-closure-20261118",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-truth-dedupe-pm-closure-20261118",
+   "base_main": "9ff339b92f9079018131ef26cee0f3a867f187d7",
+   "source_head": "cbef1c0e1346908225e71686655a337b988248a6",
+   "source_commits": [
+    "cbef1c0e1346908225e71686655a337b988248a6"
+   ],
+   "created": "2026-11-18 04:22:23",
+   "updated": "2026-11-18 04:22:23",
+   "conflict_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "unresolved_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
    "slug": "truth-close-pm-truth-closure-20261118",
    "branch": "codex/truth-close-pm-truth-closure-20261118",
    "resolve_branch": "codex/resolve-truth-close-pm-truth-closure-20261118",
@@ -298,5 +319,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-18 03:43:29"
+ "updated": "2026-11-18 04:22:24"
 }
