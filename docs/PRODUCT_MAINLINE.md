@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-18 02:51:02　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-18 03:27:03　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -40,6 +40,11 @@
 
 - （还没有进展记录）
 
+## 关键验收证据（核对用，不替代 mainline.json）
+
+- `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+
 ## 还差什么
 
 **bug（3 待处理）**
@@ -63,12 +68,12 @@
 
 ## 已机器验收
 
-- （还没有机器自证的验收项）
+- `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 
 ## 进度概览
 
 - 累计关闭问题：0 条
 - 累计落盘：0 条
 - 未决问题：9 条
-- 已验收：0 条
+- 已验收：1 条
 

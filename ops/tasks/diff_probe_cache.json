@@ -46,5 +46,13 @@
  "codex/snapshot-budget-archive-20261113@ad220fb88c2b2546a3c807dd4229971473f806c7@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
   "files": 8,
   "lines": 438
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@d22efa139c572ab227ef06e16f16be70064765cc": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/pm-truth-closure-20261118@784dd43fcdc777f65d8af58a9cf2f8f54e43256b@d22efa139c572ab227ef06e16f16be70064765cc": {
+  "files": 10,
+  "lines": 621
  }
 }

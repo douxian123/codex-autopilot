@@ -1,6 +1,28 @@
 {
  "tasks": [
   {
+   "slug": "pm-truth-closure-20261118",
+   "branch": "codex/pm-truth-closure-20261118",
+   "resolve_branch": "codex/resolve-pm-truth-closure-20261118",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-pm-truth-closure-20261118",
+   "base_main": "d22efa139c572ab227ef06e16f16be70064765cc",
+   "source_head": "784dd43fcdc777f65d8af58a9cf2f8f54e43256b",
+   "source_commits": [
+    "74fa5ba28594a1db850db091408b70ac9b8fb598",
+    "784dd43fcdc777f65d8af58a9cf2f8f54e43256b"
+   ],
+   "created": "2026-11-18 03:10:31",
+   "updated": "2026-11-18 03:10:31",
+   "conflict_files": [
+    "ops/panel_logic_check.py"
+   ],
+   "unresolved_files": [
+    "ops/panel_logic_check.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
    "slug": "daemon-liveness-20261110",
    "branch": "codex/daemon-liveness-20261110",
    "resolve_branch": "codex/resolve-daemon-liveness-20261110",
@@ -255,5 +277,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-17 19:46:53"
+ "updated": "2026-11-18 03:10:31"
 }
