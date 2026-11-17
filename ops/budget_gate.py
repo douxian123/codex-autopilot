@@ -486,8 +486,15 @@ def _maybe_pause_dispatch(usage: dict, cfg: dict) -> None:
                    f"近一小时用量越线，已暂停自动派活（落盘不受影响）。{why}",
                    key="pause-dispatch")
     else:
+<<<<<<< HEAD
         if st.get("dispatch_paused") and \
            usage["input"] <= cfg["resume_input_per_hour"] and \
+=======
+        # 恢复只看「真实新增」和请求压力，不拿总 input 当门槛。
+        # 总 input 含缓存命中；历史长上下文会让缓存量长期很高，
+        # 用它恢复会让熔断永久锁死新 worker。暂停阈值仍保留总 input。
+        if st.get("dispatch_paused") and \
+>>>>>>> codex/autopilot-health-20261019
            usage["fresh"] <= cfg["resume_fresh_per_hour"]:
             st["dispatch_paused"] = False
             st["dispatch_paused_reason"] = ""
