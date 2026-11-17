@@ -27,7 +27,11 @@
 `ops/relationship_ledger.py` 把「跨项目长期目标」做成 append-only JSONL 对象，默认落在
 `~/.codex-autopilot/relationships/goals.jsonl`，可用 `KG_RELATIONSHIP_GOALS_PATH` 覆盖。
 每条目标记 `id`、标题、优先级、涉及项目、状态、`needs_human`、原因、来源和更新时间；
-`create/update` 只接受 `user` / `operator` 显式来源，推断来源直接拒绝。
+可选字段记 `north_star`、`source_thread`、`linked_ledger`、`linked_acceptance`、
+`last_touched`、`evidence`，用于把跨项目目标和工作项、验收项、来源窗口、收口证据串起来。
+显式入口是 `truthctl goal <summary|list|create|update|link|close>`：`create/update` 只接受
+`user` / `operator` 显式来源，`link` 追加关联不覆盖旧链接，`close` 必须写结论和证据。
+推断来源直接拒绝。
 
 读取层只做投影：`central_mcp.relationship_goals` 把摘要交给高级区折叠展示，不派活，
 不替用户决定优先级，也不把聊天里的一句话自动升成生效目标。文件不存在、空账本、

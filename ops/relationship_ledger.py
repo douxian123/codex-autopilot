@@ -37,6 +37,10 @@ EVENT_TYPES = (CREATED, UPDATED)
 EXPLICIT_SOURCES = ("user", "operator")
 PRIORITIES = ("high", "normal", "low")
 STATUSES = ("proposed", "active", "waiting_human", "paused", "done")
+OPTIONAL_FIELDS = (
+    "north_star", "source_thread", "linked_ledger", "linked_acceptance",
+    "last_touched", "evidence",
+)
 
 PRIORITY_ALIASES = {
     "high": "high", "urgent": "high", "p0": "high", "高": "high",
@@ -81,7 +85,12 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _normalize_goal(raw: Any) -> dict:
+def now() -> str:
+    """公开时间戳入口；上层命令不直接依赖私有函数。"""
+    return _now()
+
+
+def _normalize_goal(raw: Any, allow_legacy: bool = False) -> dict:
     if not isinstance(raw, dict):
         raise RelationshipError("关系目标必须是对象")
 
@@ -122,6 +131,48 @@ def _normalize_goal(raw: Any) -> dict:
     if needs_human and not reason:
         raise RelationshipError("needs_human=true 必须说明 reason（需要人的时机与原因）")
 
+    optional: dict[str, Any] = {}
+    if not allow_legacy or "north_star" in raw:
+        north_star = str(raw.get("north_star") or "").strip()
+        if len(north_star) > 300:
+            raise RelationshipError("north_star 不能超过 300 字")
+        optional["north_star"] = north_star
+
+    if not allow_legacy or "source_thread" in raw:
+        source_thread = str(raw.get("source_thread") or "").strip()
+        if len(source_thread) > 200:
+            raise RelationshipError("source_thread 不能超过 200 字")
+        optional["source_thread"] = source_thread
+
+    for key in ("linked_ledger", "linked_acceptance"):
+        if allow_legacy and key not in raw:
+            continue
+        raw_items = raw.get(key) or []
+        if not isinstance(raw_items, (list, tuple)):
+            raise RelationshipError("%s 必须是数组" % key)
+        values = []
+        for item in raw_items:
+            value = str(item or "").strip()
+            if not value:
+                continue
+            if len(value) > 120:
+                raise RelationshipError("%s 单项不能超过 120 字" % key)
+            if value not in values:
+                values.append(value)
+        optional[key] = values
+
+    if not allow_legacy or "last_touched" in raw:
+        last_touched = str(raw.get("last_touched") or "").strip()
+        if len(last_touched) > 120:
+            raise RelationshipError("last_touched 不能超过 120 字")
+        optional["last_touched"] = last_touched or _now()
+
+    if not allow_legacy or "evidence" in raw:
+        evidence = str(raw.get("evidence") or "").strip()
+        if len(evidence) > 500:
+            raise RelationshipError("evidence 不能超过 500 字")
+        optional["evidence"] = evidence
+
     goal_id = str(raw.get("id") or "").strip()
     if goal_id:
         if not GOAL_ID_RE.match(goal_id):
@@ -137,6 +188,7 @@ def _normalize_goal(raw: Any) -> dict:
         "status": status,
         "needs_human": needs_human,
         "reason": reason,
+        **optional,
         "source": source,
     }
 
@@ -160,10 +212,11 @@ def _validate_event(row: Any, expected_seq: int, seen: set[str]) -> None:
     if not str(row.get("updated_at") or "").strip():
         raise LedgerCorrupt("事件缺少 updated_at")
     try:
-        normalized = _normalize_goal(row)
+        normalized = _normalize_goal(row, allow_legacy=True)
     except RelationshipError as exc:
         raise LedgerCorrupt("事件字段不合法：%s" % exc) from exc
-    allowed = {"type", "id", "seq", "ts", "updated_at"} | set(normalized)
+    allowed = ({"type", "id", "seq", "ts", "updated_at"}
+               | set(normalized) | set(OPTIONAL_FIELDS))
     unexpected = sorted(set(row) - allowed)
     if unexpected:
         raise LedgerCorrupt("事件含未知字段：%s" % "、".join(unexpected))
@@ -217,6 +270,79 @@ def project(events: Iterable[dict]) -> list[dict]:
     )
 
 
+def list_goals(path: str | os.PathLike | None = None) -> list[dict]:
+    """返回全部当前目标；文件不存在返回空，损坏 fail-closed。"""
+    target = ledger_path(path)
+    if not target.exists():
+        return []
+    return project(_read_events(target))
+
+
+def get(goal_id: str, path: str | os.PathLike | None = None) -> dict:
+    """取一条当前目标；不存在或损坏都拒绝操作。"""
+    gid = str(goal_id or "").strip()
+    if not GOAL_ID_RE.match(gid):
+        raise ConflictError("目标 id 不合法：%r" % gid)
+    for row in list_goals(path):
+        if str(row.get("id")) == gid:
+            return row
+    raise ConflictError("目标 %s 不存在" % gid)
+
+
+def fields_for(goal_id: str, path: str | os.PathLike | None = None,
+               source: str = "user") -> dict:
+    """取当前目标的可写字段，供局部更新使用；source 必须显式传入。"""
+    current = get(goal_id, path)
+    fields = {}
+    for key in ("title", "priority", "status", "reason", "north_star",
+                "source_thread", "last_touched", "evidence"):
+        fields[key] = current.get(key) or ""
+    for key in ("projects", "linked_ledger", "linked_acceptance"):
+        fields[key] = list(current.get(key) or [])
+    fields["needs_human"] = bool(current.get("needs_human"))
+    fields["source"] = source
+    return fields
+
+
+def _append_unique(values, additions) -> list[str]:
+    result = []
+    for value in list(values or []) + list(additions or []):
+        text = str(value or "").strip()
+        if text and text not in result:
+            result.append(text)
+    return result
+
+
+def link(goal_id: str, *, ledger=None, acceptance=None, thread: str = "",
+         source: str = "user", path: str | os.PathLike | None = None) -> dict:
+    """追加关联，不覆盖已有链接；每一项都显式声明来源。"""
+    fields = fields_for(goal_id, path, source)
+    if ledger:
+        fields["linked_ledger"] = _append_unique(fields["linked_ledger"], ledger)
+    if acceptance:
+        fields["linked_acceptance"] = _append_unique(fields["linked_acceptance"], acceptance)
+    if thread:
+        fields["source_thread"] = str(thread).strip()
+    fields["last_touched"] = _now()
+    return update(goal_id, fields, path)
+
+
+def close(goal_id: str, conclusion: str, *, source: str = "user",
+          evidence: str = "", path: str | os.PathLike | None = None) -> dict:
+    """收口必须有理由；理由同时进 reason 和可复核 evidence。"""
+    text = str(conclusion or "").strip()
+    if not text:
+        raise RelationshipError("close 必须写结论（证据或人确认的理由）")
+    fields = fields_for(goal_id, path, source)
+    prior_reason = str(fields.get("reason") or "").strip()
+    fields["reason"] = (prior_reason + "；收口：" + text).strip("；")
+    fields["status"] = "done"
+    fields["needs_human"] = False
+    fields["evidence"] = str(evidence or text).strip()
+    fields["last_touched"] = _now()
+    return update(goal_id, fields, path)
+
+
 def _unknown(reason: str) -> dict:
     return {
         "status": "unknown",
@@ -248,6 +374,12 @@ def summary(path: str | os.PathLike | None = None) -> dict:
         "projects": list(r.get("projects") or []),
         "needs_human": bool(r.get("needs_human")),
         "reason": r.get("reason") or "",
+        "north_star": r.get("north_star") or "",
+        "source_thread": r.get("source_thread") or "",
+        "linked_ledger": list(r.get("linked_ledger") or []),
+        "linked_acceptance": list(r.get("linked_acceptance") or []),
+        "last_touched": r.get("last_touched"),
+        "evidence": r.get("evidence") or "",
         "updated_at": r.get("updated_at"),
     } for r in goals[:8]]
     headline = ("跨项目目标 %d 条，其中 %d 条需要人判断"
@@ -346,6 +478,14 @@ def main(argv: list[str] | None = None) -> int:
                        help="proposed/active/waiting_human/paused/done")
         p.add_argument("--needs-human", action="store_true")
         p.add_argument("--reason", default="")
+        p.add_argument("--north-star", default="")
+        p.add_argument("--source-thread", default="")
+        p.add_argument("--linked-ledger", default="",
+                       help="逗号分隔的 L-id")
+        p.add_argument("--linked-acceptance", default="",
+                       help="逗号分隔的 A-id")
+        p.add_argument("--last-touched", default="")
+        p.add_argument("--evidence", default="", help="收口证据或人确认理由")
         p.add_argument("--source", required=True, help="user 或 operator")
         p.add_argument("--path")
 
@@ -367,6 +507,12 @@ def main(argv: list[str] | None = None) -> int:
             "status": args.status,
             "needs_human": bool(args.needs_human),
             "reason": args.reason,
+            "north_star": args.north_star,
+            "source_thread": args.source_thread,
+            "linked_ledger": [x.strip() for x in args.linked_ledger.split(",") if x.strip()],
+            "linked_acceptance": [x.strip() for x in args.linked_acceptance.split(",") if x.strip()],
+            "last_touched": args.last_touched,
+            "evidence": args.evidence,
             "source": args.source,
         }
         try:

@@ -714,6 +714,9 @@ def main(argv):
                 "priority": "high", "status": "waiting_human",
                 "projects": ["codex-autopilot", "personal-memory"],
                 "needs_human": True, "reason": "等用户判断要不要改产品方向",
+                "north_star": "用户只说一次，跨项目长期记住并推进",
+                "source_thread": "thread-relationship-20261118",
+                "linked_ledger": ["L-0076"], "linked_acceptance": ["A-0069"],
                 "updated_at": "2026-11-18T00:00:00Z",
             }],
         }
@@ -722,6 +725,12 @@ def main(argv):
                      "跨项目目标", "G-9001", "codex-autopilot")
         fails += has("关系层需要人原因上屏", rel_out["relationshipGoalsBox"],
                      "需要人", "等用户判断要不要改产品方向")
+        fails += has("关系层北极星上屏", rel_out["relationshipGoalsBox"],
+                     "北极星", "用户只说一次，跨项目长期记住并推进")
+        fails += has("关系层工作项与验收关联上屏", rel_out["relationshipGoalsBox"],
+                     "工作项 L-0076", "验收 A-0069")
+        fails += has("关系层来源窗口上屏", rel_out["relationshipGoalsBox"],
+                     "来源窗口", "thread-relationship-20261118")
         fails += has("关系层明示不派活", rel_out["relationshipGoalsBox"],
                      "不会自动派活")
         rel_missing = run_once(dict(payload, relationship_goals=None))
