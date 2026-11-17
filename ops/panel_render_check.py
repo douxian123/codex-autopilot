@@ -312,6 +312,17 @@ def main(argv):
                 "pending": [{"id": "CC-9001", "text": "绝不影响用户正在用的服务"}],
                 "active": [], "missing": [],
             },
+            "acceptance_criteria": {
+                "status": "ok", "pending_count": 1,
+                "items": [{
+                    "id": "AC-9001",
+                    "text": "落盘后必须能在面板看到闭环结果",
+                    "needs_human": True,
+                    "signals": ["必须能", "看到"],
+                    "files": ["ops/kgctl.py"],
+                }],
+                "note": "确认后才登记验收项；机器项仍需真门禁证据。",
+            },
             "overlap_holds": {
                 "status": "ok", "items": [{
                     "id": "L-0021", "title": "撞文件的后开工项",
@@ -343,6 +354,9 @@ def main(argv):
             ("PM 简报折叠区实际展开", str(adv_snapshot.get("pmBriefingFoldOpen")) == "1"),
             ("PM 简报上屏：待确认预期",
              "待确认" in pm_box and "绝不影响用户正在用的服务" in pm_box),
+            ("PM 简报上屏：验收标准候选",
+             "验收标准" in pm_box and "AC-9001" in pm_box
+             and "需要人看" in pm_box),
             ("PM 简报上屏：让路与追问候选",
              "L-0021" in pm_box and "thread-abc" in pm_box),
             ("人工验收上屏：复核截图与补图按钮",

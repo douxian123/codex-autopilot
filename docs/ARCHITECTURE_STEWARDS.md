@@ -18,7 +18,7 @@
 | 层 | 责任 | 我们的对应物 | 当前缺口 |
 |---|---|---|---|
 | 关系层 | 一个持续对话/入口维护目标、优先级、需要人的时机 | 唯一输入框、`ops/tasks/inbox.jsonl`、面板三问、`needs_human` 的人工验收队列 | 还没有把跨项目长期目标做成稳定关系对象 |
-| 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/exec_overlap.py`、observe/propose/auto 与 explicit/inferred 分级 | 模糊需求自动生成可判定验收标准仍未完成 |
+| 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/exec_overlap.py`、`ops/acceptance_criteria.py`、observe/propose/auto 与 explicit/inferred 分级 | 候选已能生成可判定标准；语义仍停在候选，必须人确认后才进验收台账 |
 | 执行层 | 隔离会话里并行研究/实现/验证，再做串行合流 | 路由/实现/合并/验收管家、独立 worktree、`kgctl land` 门禁、`ops/worker_lifecycle.py` 生命周期契约、`ops/exec_lifecycle.py` 生产接线 | 已接管真实派发；定时唤醒只写回入口，仍不直接开 worker |
 | 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、`ops/wake_resume.py`、`worker_lifecycle`、`ops/exec_lifecycle.py`、truth 台账、全局待路由箱、`project_health` | 到期唤醒、显式恢复、资源/工具白名单与逐 pass 授权审计已落地；Outcomes 式独立评分仍缺 |
 
@@ -76,7 +76,7 @@ running 账本，也不会占并发槽位。未声明 allowlist 时沿用旧请�
 |---|---|---|---|
 | 上下文管家 | 从任意入口的预期、返修、决策、禁忌中提候选；按 `scope` 精准调取 | 不能未经用户确认就写生效约束 | `ops/constraint_candidates.py`、`ops/constraints.py`、面板候选卡 |
 | PM 管家 | 理解预期、拆施工项、判断文件占地重复、规划不互相覆盖的路线、汇总追问候选 | 不能替用户决定产品方向、删数据或发布；不能自动发追问 | `ops/pm_briefing.py`、`ops/exec_overlap.py`、`ops/central_daemon.py` 的 `overlap_hold` |
-| 验收管家 | 先定义验收标准并自己跑门禁；有证据后才请用户看，并带上复核截图附件 | 不能把没有证据的项伪装成「需要你验收」；截图不参与证据闸门 | `ops/central_mcp.py` 的 `_acceptance_board()`、`ops/truthctl.py` 的 `cmd_accept()` |
+| 验收管家 | 从已路由原话提名验收标准候选；先定义标准并自己跑门禁；有证据后才请用户看，并带上复核截图附件 | 不能把候选直接写成验收项或把没有证据的项伪装成「需要你验收」；截图不参与证据闸门 | `ops/acceptance_criteria.py`、`ops/central_mcp.py` 的 `_acceptance_board()`、`ops/truthctl.py` 的 `cmd_accept()` |
 | 路由管家 | 从混合输入判断项目与泳道，把活派出去 | 不能把判不清的输入猜进某个项目 | `ops/project_router.py`、全局 routing inbox |
 | 实现管家 | 按相关上下文实现，跑验证，提交到隔离 worktree | 不能在共享 checkout 上改别人文件 | `ops/central_daemon.py` 的派发与 `exec_status` |
 | 合并管家 | 合并前自检、防丢失防覆盖、拆冲突、自动 land | 不能绕过门禁或把合并决策推回用户 | `ops/kgctl.py` 的 gate / land / resolve / port / supersede |
@@ -94,9 +94,13 @@ running 账本，也不会占并发槽位。未声明 allowlist 时沿用旧请�
 1. 排队不占并发槽位，也不计失败次数；`overlap_hold` 在面板里归到 `exec_waiting`，不进 `stuck_n`。
 2. 没有 `files` 线索时不做判断，也不假装「不重叠」。这如实保留未知，后续应由 PM 管家在需求拆解阶段补足文件声明。
 
-PM 视角新增一层只读简报：把待确认预期、已生效约束、主线阶段、让路工作项（等谁、撞哪些文件）和长时间无进展的追问候选聚到一处。它的边界很硬：只读台账、不派活、不自动发追问；台账读不到写 `unknown`，不写 `0` 冒充正常。
+PM 视角新增一层只读简报：把待确认预期、验收标准候选、已生效约束、主线阶段、让路工作项（等谁、撞哪些文件）和长时间无进展的追问候选聚到一处。它的边界很硬：只读台账、不派活、不自动发追问；台账读不到写 `unknown`，不写 `0` 冒充正常。
 
 ## 验收管家：先自验，再打扰用户
+
+前半截是「什么算成」：`ops/acceptance_criteria.py` 从**已路由**的入口原话里识别明确验收信号（必须能、看到、跑通、测试通过、门禁等），提名可判定标准候选，并附原话、命中信号、建议复核步骤、是否建议机器门禁。候选只进 `acceptance_criteria_candidates.jsonl`，不写 `acceptance.jsonl`；重复原话和 `dismiss` 过的原话不再弹。人明确 `confirm=true` 后才调用 `truthctl accept` 登记 A-id，原话 hash 一并落进验收台账，候选文件丢失也不会让同一句话复发。
+
+确认候选只是登记验收项，**不是验收通过**：人工项带复核步骤但没有 `evidence`，机器项也只建议真门禁。两者都不能被自动标成 `verified`，也不能直接进「需要你验收」。
 
 人工验收项只有 `needs_human=true` 还不够。若没有 `evidence`，它进入「待自验」，不进入「需要你验收」。`evidence` 必须是可复核的命令、cwd 和退出码；验收管家自己先把机器能跑的部分跑完，再把确实需要人的部分截图提醒用户。
 
@@ -124,7 +128,7 @@ PM 视角新增一层只读简报：把待确认预期、已生效约束、主�
 
 管家状态位于第二问下方，一行一个角色，顺序由后台按 `attention / unknown / off / ok` 排好；面板只照抄，不重排。最后一行是「全局健康」，用的是同一套四态点阵，但语义是项目级结论，不是第八个施工管家。
 
-工程详情里新增「PM 简报」折叠区：待确认预期、已生效约束、让路队列、追问候选都在那里，首屏不增噪音。追问候选只展示建议提示，不会自动向任何 Codex 窗口发消息。
+工程详情里新增「PM 简报」折叠区：待确认预期、验收标准候选、已生效约束、让路队列、追问候选都在那里，首屏不增噪音。追问候选只展示建议提示，不会自动向任何 Codex 窗口发消息。验收标准候选在「需要你决策」区提供「确认成验收项 / 不算」两条出口，文案明确说确认只登记验收项、不写证据；首屏不因此新增噪音。
 
 ## 与 DeepSeek Super-agent 的关系
 
