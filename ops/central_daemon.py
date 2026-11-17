@@ -110,6 +110,7 @@ from ledger_state import latest_ledger_by_id  # noqa: E402
 import constraints as constraints_mod  # noqa: E402
 import exec_overlap  # noqa: E402
 import exec_lifecycle  # noqa: E402
+import wake_resume  # noqa: E402
 import live_guard  # noqa: E402
 import workspace_guard  # noqa: E402
 
@@ -4510,6 +4511,7 @@ def _new_cycle_ctx(dry: bool, max_land: int, deadline) -> dict:
         "max_land": max_land,
         "deadline": deadline,
         "passes": [],
+        "wake": {},
         "route_rc": 0,
         "route_out": "",
         "exec_cfg": {},
@@ -4533,6 +4535,50 @@ def _new_cycle_ctx(dry: bool, max_land: int, deadline) -> dict:
         "resolve_gate_fail": [],
         "resolve_blocked": {},
     }
+
+
+def _deliver_wake_to_inbox(text: str, spec: dict) -> str:
+    """把 timer / resume 请求写回唯一入口，不直接开 worker。"""
+    env_extra = {
+        "KG_INBOX_SOURCE": "timer" if spec.get("kind") == wake_resume.KIND_WAKE
+        else "resume",
+        "KG_INBOX_KIND": "unknown",
+    }
+    if spec.get("project"):
+        env_extra["KG_INBOX_PROJECT"] = str(spec["project"])
+    if spec.get("files"):
+        env_extra["KG_INBOX_FILES"] = ":".join(str(x) for x in spec["files"])
+    rc, out = run_kgctl(["inbox", text], timeout=TICK_TIMEOUT,
+                        env_extra=env_extra)
+    if rc != 0:
+        raise RuntimeError(f"kgctl inbox rc={rc}: {out.strip()[:500]}")
+    return out.strip()[-1000:]
+
+
+def _pass_wake(ctx: dict) -> dict:
+    """把到期的 timer / 显式恢复请求写回唯一入口。
+
+    放在 route 之前：这一拍刚写回的唤醒项应当立刻被同一拍路由，不必白等一轮。
+    这里只投递消息，不启动 worker、不改分支；worker 仍由 exec pass 按生命周期
+    账本派发。投递失败由 wake_resume 账本退避重试，坏账本 fail-closed。
+    """
+    if ctx["dry"]:
+        return {"dry": True}
+    service = wake_resume.WakeResume(RUNTIME)
+    fired: list[str] = []
+    failures: list[dict] = []
+    for projection in service.due():
+        rid = projection["request_id"]
+        result = service.fire(
+            rid,
+            lambda spec, current: wake_resume.deliver_to_inbox(
+                spec, current, _deliver_wake_to_inbox))
+        if result["state"] == wake_resume.STATE_DELIVERED:
+            fired.append(rid)
+        elif result["state"] == wake_resume.STATE_FAILED:
+            failures.append({"id": rid, "error": result.get("last_error", "")})
+    ctx["wake"] = {"fired": fired, "failures": failures}
+    return {"fired": len(fired), "failed": len(failures)}
 
 
 def _pass_route(ctx: dict) -> dict:
@@ -4833,7 +4879,7 @@ def _build_cycle_registry(ctx: dict):
     注册顺序 = 执行顺序（见文件头注释）。
 
     pass_registry 现在默认 `observe`：**没写 level 的 pass 只会观察，不执行副作用**。
-    下面这十条是既有自动挡工序，逐条显式转正 —— 每条都声明 `level=auto` 加
+    下面这十一条是既有自动挡工序，逐条显式转正 —— 每条都声明 `level=auto` 加
     `authorization=explicit`，表示「人已经授权这条工序自动跑」，不是系统自行升权。
     这样新加的 pass 不会因为忘记声明就悄悄执行（fail-closed），而既有行为保持原样。
     `effect` 区分可逆与破坏性：`route/checkpoint/tick/tick-post` 只改控制面与账本
@@ -4843,6 +4889,9 @@ def _build_cycle_registry(ctx: dict):
     """
     reg = Registry(log=log,
                    over_budget=lambda step: _over_budget(ctx["deadline"], step))
+    reg.register(Pass("wake", lambda: _pass_wake(ctx), title="到期唤醒写回唯一入口",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
     reg.register(Pass("route", lambda: _pass_route(ctx), title="路由新收需求",
                       level=MODE_AUTO, authorization=AUTH_EXPLICIT,
                       effect=EFFECT_REVERSIBLE))

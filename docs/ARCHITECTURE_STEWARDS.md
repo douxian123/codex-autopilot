@@ -19,8 +19,8 @@
 |---|---|---|---|
 | 关系层 | 一个持续对话/入口维护目标、优先级、需要人的时机 | 唯一输入框、`ops/tasks/inbox.jsonl`、面板三问、`needs_human` 的人工验收队列 | 还没有把跨项目长期目标做成稳定关系对象 |
 | 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/exec_overlap.py`、observe/propose/auto 与 explicit/inferred 分级 | 模糊需求自动生成可判定验收标准仍未完成 |
-| 执行层 | 隔离会话里并行研究/实现/验证，再做串行合流 | 路由/实现/合并/验收管家、独立 worktree、`kgctl land` 门禁、`ops/worker_lifecycle.py` 生命周期契约、`ops/exec_lifecycle.py` 生产接线 | 已接管真实派发；timer 唤醒与显式跨工单恢复仍未完成 |
-| 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、truth 台账、全局待路由箱、`project_health` | 定时器和显式恢复协议仍弱，当前主要靠守护轮询与台账快照 |
+| 执行层 | 隔离会话里并行研究/实现/验证，再做串行合流 | 路由/实现/合并/验收管家、独立 worktree、`kgctl land` 门禁、`ops/worker_lifecycle.py` 生命周期契约、`ops/exec_lifecycle.py` 生产接线 | 已接管真实派发；定时唤醒只写回入口，仍不直接开 worker |
+| 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、`ops/wake_resume.py`、truth 台账、全局待路由箱、`project_health` | 到期唤醒与显式恢复已有 append-only 协议；按工单资源/工具白名单仍弱 |
 
 ## Worker 生命周期契约
 
@@ -41,9 +41,27 @@
 `ops/test-exec-lifecycle.py` 锁住这些生产接线约束。
 
 当前边界要说清：生产 worker 已经按上述生命周期契约运行；跨项目的 timer 唤醒、
-显式跨工单恢复、按工单资源/工具白名单仍未完成，不能把运行层整体说成「已最优」。
+显式跨工单恢复已有运行层协议，但按工单资源/工具白名单仍未完成，不能把运行层整体说成「已最优」。
 
 因此当前不是「最优已完成」，而是「架构收敛正确、运行层还在补」。最优路线不是继续加第八、第九个管家，而是把四层之间的契约写硬：谁可以唤醒谁、谁拥有写权限、什么证据允许合流、什么情况必须回到人这里。全局健康只读这四层的事实，不替任何一层做决定。
+
+## 定时唤醒与显式跨工单恢复契约
+
+`ops/wake_resume.py` 把 timer 唤醒和显式跨工单恢复收敛为 append-only 请求账本。
+请求从 `scheduled` 进入 `firing`，再落 `delivered`、`failed` 或 `cancelled`；
+每次投递都带幂等标记、理由、授权来源和 attempt，失败按退避重试且次数有上限，
+送达成功后永不重复打扰唯一入口。账本 seq 断裂、非法跳转或 JSON 损坏时 fail-closed，
+不能把「读不懂」当成「没有到期任务」。
+
+安全边界是硬的：timer 只允许 `explicit` 授权，不接受 `inferred` 自动升权；它只能把
+消息写回 `kgctl inbox`，不能启动 worker。daemon 的 `wake` pass 注册在 `route` 之前，
+到期项在同一拍进入路由，随后仍由 `exec` pass 与 `worker_lifecycle` 决定是否派发。
+跨工单恢复还必须声明 `resume_from`；旧 worker 处于 active、resumable 或 absent 时
+一律拒绝，要求调用方回到 `worker_lifecycle.resume`，不能借 timer 绕过生命周期。
+
+门禁 `ops/test-wake-resume.py` 锁住 inferred 拒绝、活跃旧 worker 拒绝、重复投递拒绝、
+失败退避与上限、坏账本 fail-closed，以及 daemon 只写 inbox 不派 worker；已登记进
+`selftest.py`。
 
 ## 责任边界
 

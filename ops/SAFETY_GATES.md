@@ -5,7 +5,8 @@
 | 闸门 | 函数 | 作用 | 关闭方式 |
 |---|---|---|---|
 | 防重复派发 | `_live_exec_slugs()` | 同一工作区已有 `codex exec` 时不派第二个 | 无常驻开关，只在日志留痕 |
-| worker 生命周期 | `ops/worker_lifecycle.py` | append-only 账本锁住 `start/status/stop/event/handback/resume`、generation、授权与 fail-closed；当前是独立契约，未接管生产派发 | `KG_WORKER_LIFECYCLE_ROOT` 指定账本根；接生产需单独授权与验证 |
+| worker 生命周期 | `ops/worker_lifecycle.py` | append-only 账本锁住 `start/status/stop/event/handback/resume`、generation、授权与 fail-closed；`ops/exec_lifecycle.py` 已接管真实派发 | `KG_WORKER_LIFECYCLE_ROOT` 指定账本根 |
+| 定时唤醒 / 跨工单恢复 | `ops/wake_resume.py` | append-only 账本锁住到期、投递、失败退避与显式授权；只写回唯一入口，不启动 worker，旧 worker 活跃时必须走 lifecycle resume | `KG_WAKE_RESUME_ROOT` 指定账本根，`KG_WAKE_RETRY_SECONDS` / `KG_WAKE_MAX_ATTEMPTS` 调退避和上限 |
 | 派发上限 | `_exec_attempt_gate()` | 6h 窗口内同一需求最多派 3 次，超限进 blocked | 调 `EXEC_REPEAT_CAP` |
 | 冲突停手 | `_escalate_conflict_block()` | 同一组冲突文件连续撞 2 次后停手等待裁决 | 面板 blocked 人工放行 |
 | 磁盘准入 | `_disk_pressure()` | 可用空间低于 6GB 时只停新 worker；恢复到 10GB 才放行 | `KG_EXEC_DISK_STOP_FREE_GB` / `KG_EXEC_DISK_RESUME_FREE_GB` |
@@ -68,6 +69,18 @@ append-only 账本里声明，再由生命周期层调用 `Popen`。账本损坏
 worker 的 PID 写入账本 `external_ref`，回收结果回写 `completed` / `failed` /
 `handed_back`；终态后同一 ticket 重派必须生成新 worker，不能复用已结束账本。
 门禁 `ops/test-exec-lifecycle.py` 锁住这些失败路径，并已登记进 `selftest.py`。
+
+## timer 唤醒不能直接派发（2026-11-18）
+
+`central_daemon` 的 `wake` pass 扫描 `ops/wake_resume.py` 的到期请求，只把带幂等
+marker 的消息写回 `kgctl inbox`；同一拍再由 `route` 路由、`exec` 按 worker 生命周期
+账本决定是否派发。timer 不接受 `inferred` 授权，不能开 worker、改分支或合流。
+
+送达成功后账本落 `delivered`，重复到期不再打扰入口；投递失败落 `failed` 并按退避
+重试，超过上限即停。账本 seq 断裂、非法状态跳转或 JSON 损坏时 fail-closed。跨工单
+恢复必须声明 `resume_from`，旧 worker 处于 active、resumable 或 absent 时一律拒绝，
+要求调用方回到 `worker_lifecycle.resume`。门禁 `ops/test-wake-resume.py` 锁住这些
+失败路径，并已登记进 `selftest.py`。
 
 ## 设计纪律
 
