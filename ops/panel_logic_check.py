@@ -223,6 +223,23 @@ def main(argv):
             print(f"  PASS  {label}")
             return 0
 
+        def hierarchy_work_text(state):
+            """镜像面板的工作项优先级，别把现场状态写死成某一种空态。"""
+            doing_items = state.get("doing_items") or []
+            todo_items = state.get("todo_items") or []
+            current = doing_items[0] if doing_items else state.get("exec_now")
+            if current is None and todo_items:
+                current = todo_items[0]
+            if current is not None:
+                if isinstance(current, dict):
+                    return current.get("title") or current.get("detail") or "正在处理"
+                return "正在处理"
+            if state.get("human_acceptance") or []:
+                return "等待人工验收"
+            if state.get("state") in ("blocked", "error"):
+                return "等待解除卡点"
+            return "等待下一条需求"
+
         fails = 0
         if not quiet:
             print("Codex 自动挡 面板首屏逻辑检查")
@@ -238,11 +255,22 @@ def main(argv):
         expected_project = project.get("name") or str(project.get("path") or "").rstrip("/").split("/")[-1] or "未绑定项目"
         fails += has("路线图显示项目归属", out["hierarchyProject"], expected_project)
         fails += has("路线图显示产品路线与当前阶段", out["hierarchyRoad"], expected_product, expected_stage)
-        current_items = payload.get("doing_items") or payload.get("todo_items") or []
-        expected_work = ((current_items[0].get("title") or current_items[0].get("detail"))
-                         if current_items
-                         else ("等待人工验收" if human_acc else "等待下一条需求"))
+        expected_work = hierarchy_work_text(payload)
         fails += has("路线图显示当前工作项", out["hierarchyWork"], expected_work)
+        # 上面那条跟随现场状态；再把两条空态分支单独钉住，避免现场恰好只有一种
+        # 状态时另一种分支腐化而无人发现。
+        blocked_empty = dict(payload)
+        blocked_empty.update({
+            "doing_items": [], "todo_items": [], "exec_now": None,
+            "human_acceptance": [], "state": "blocked",
+        })
+        blocked_out = run_once(blocked_empty)
+        fails += has("路线图卡点空态显示等待解除卡点",
+                     blocked_out["hierarchyWork"], "等待解除卡点")
+        idle_empty = dict(blocked_empty, state="ok")
+        idle_out = run_once(idle_empty)
+        fails += has("路线图普通空态显示等待下一条需求",
+                     idle_out["hierarchyWork"], "等待下一条需求")
         folders = ((payload.get("project_folders") or {}).get("folders") or [])
         if folders:
             folder = folders[0]

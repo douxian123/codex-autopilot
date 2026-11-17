@@ -19,8 +19,24 @@
 |---|---|---|---|
 | 关系层 | 一个持续对话/入口维护目标、优先级、需要人的时机 | 唯一输入框、`ops/tasks/inbox.jsonl`、面板三问、`needs_human` 的人工验收队列 | 还没有把跨项目长期目标做成稳定关系对象 |
 | 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/exec_overlap.py`、observe/propose/auto 与 explicit/inferred 分级 | 模糊需求自动生成可判定验收标准仍未完成 |
-| 执行层 | 隔离会话里并行研究/实现/验证，再做串行合流 | 路由/实现/合并/验收管家、独立 worktree、`kgctl land` 门禁 | 后台 worker 的显式 `start/status/stop/event` 契约还没成形 |
+| 执行层 | 隔离会话里并行研究/实现/验证，再做串行合流 | 路由/实现/合并/验收管家、独立 worktree、`kgctl land` 门禁、`ops/worker_lifecycle.py` 生命周期契约 | 生命周期契约已独立成形，但尚未接管 `central_daemon` 的真实派发 |
 | 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、truth 台账、全局待路由箱、`project_health` | 定时器和显式恢复协议仍弱，当前主要靠守护轮询与台账快照 |
+
+## Worker 生命周期契约
+
+`ops/worker_lifecycle.py` 把后台 worker 的 `start/status/stop/event/handback/resume`
+收敛为 append-only JSONL 事件账本：每次动作都带 seq、理由、授权来源和 generation，
+当前状态由事件投影得出，不允许跳过中间态。重复 `start` 幂等，避免开出第二个 session；
+`stop` / `interrupted` 可显式 `resume` 并升 generation；`handed_back` 是终态，
+只能由路由层开新 worker。
+
+授权边界复用 `pass_registry`：`inferred + destructive` 直接拒绝，`destructive`
+必须带 `authorization_reason`。账本损坏、事件 seq 断裂、非法状态转移都 fail-closed，
+不能把「读不懂」当成「没有任务」。反向门禁 `ops/test-worker-lifecycle.py` 锁住这些失败路径。
+
+当前边界要说清：这是可验证的独立运行层契约，还没有接进生产派发路径。
+把 `central_daemon` 的 `_prepare_exec` / `_start_exec` / `_reap_exec` 改成走这套账本，
+需要单独一次正向改动和真实验证；在接上之前不能说「生产 worker 已经按新契约运行」。
 
 因此当前不是「最优已完成」，而是「架构收敛正确、运行层还在补」。最优路线不是继续加第八、第九个管家，而是把四层之间的契约写硬：谁可以唤醒谁、谁拥有写权限、什么证据允许合流、什么情况必须回到人这里。全局健康只读这四层的事实，不替任何一层做决定。
 
