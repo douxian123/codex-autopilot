@@ -192,6 +192,33 @@ def _constraint_candidates_summary():
     return {"status": "ok", "count": len(items), "items": items}
 
 
+def _project_health_summary(payload):
+    """全局健康层：项目真相 / 执行流动 / 验收三层，只读聚合，不造第二套台账。
+
+    与 `harness_health` 分开：那个回答「这台 harness 累不累」，这个回答
+    「这个项目还健康吗」。判据全部来自已有台账与面板已算好的运行面字段，
+    取不到就 unknown，绝不降级成「正常」。
+    """
+    try:
+        import project_health
+        blocked = payload.get("blocked") or {}
+        return project_health.compute(
+            os.environ.get("KG_REPO") or _fallback_repo(),
+            runtime={
+                "auto_exec": bool((payload.get("switches") or {}).get("auto_exec")),
+                "exec_stuck": len(blocked.get("exec") or []),
+                "land_failures": len(blocked.get("failures") or []),
+                "resolve": len(blocked.get("resolve") or []),
+                "overlap_waiting": len(blocked.get("exec_waiting") or []),
+            },
+        )
+    except Exception as exc:
+        # 模块坏了本身就是要上报的问题，不能静默成「没问题」。
+        return {"status": "unknown", "level": "unknown",
+                "headline": "项目健康算不出来（%s）" % exc,
+                "layers": [], "signals": {}}
+
+
 def _n(value):
     """把可能为 None 的计数渲染成面板能读的字样。
 
@@ -218,7 +245,8 @@ def _steward_health(payload):
     daemon = payload.get("daemon") or {}
     tune = payload.get("harness_tune") or {}
     cand = payload.get("constraint_candidates") or {}
-    health = payload.get("harness_health") or {}
+    harness_health = payload.get("harness_health") or {}
+    project_health = payload.get("project_health") or {}
     queue = payload.get("queue") or {}
     counters = payload.get("counters") or {}
     blocked = payload.get("blocked") or {}
@@ -277,12 +305,12 @@ def _steward_health(payload):
     elif tune.get("count"):
         rows.append({"key": "tune", "state": "attention",
                      "label": "状态管家：%s 张调整卡等你点头（config 未动）" % tune.get("count")})
-    elif health.get("status") == "ok" and health.get("level") in ("warn", "over"):
+    elif harness_health.get("status") == "ok" and harness_health.get("level") in ("warn", "over"):
         rows.append({"key": "tune", "state": "attention",
-                     "label": "状态管家：%s" % (health.get("headline") or "上下文偏紧")})
+                     "label": "状态管家：%s" % (harness_health.get("headline") or "上下文偏紧")})
     else:
         rows.append({"key": "tune", "state": "ok",
-                     "label": "状态管家：%s" % (health.get("headline") or "当前无待调整项")})
+                     "label": "状态管家：%s" % (harness_health.get("headline") or "当前无待调整项")})
 
     # 5. 实现管家：auto_exec 开关。关着是用户的选择（off），不是故障。
     if not sw.get("auto_exec"):
@@ -323,6 +351,18 @@ def _steward_health(payload):
     else:
         rows.append({"key": "accept", "state": "ok",
                      "label": "验收管家：没有待你验收的项"})
+
+    # 8. 全局健康：不只 harness，而是项目真相 / 执行流动 / 验收三层。
+    # 与上面七行不同，它不为某一道工序负责，专门回答「这个项目还健康吗」。
+    p_state = project_health.get("level")
+    if project_health.get("status") != "ok" or p_state not in ("ok", "attention", "unknown"):
+        rows.append({"key": "health", "state": "unknown",
+                     "label": "全局健康：%s" % (project_health.get("headline")
+                                               or "结论取不到")})
+    else:
+        rows.append({"key": "health", "state": p_state,
+                     "label": "全局健康：%s" % (project_health.get("headline")
+                                               or "暂无异常")})
 
     order = {"attention": 0, "unknown": 1, "off": 2, "ok": 3}
     rows.sort(key=lambda r: order.get(r["state"], 9))
@@ -2094,6 +2134,13 @@ def _status_payload(fast=True):
             "judgments": [],
             "last_verification": None,
             "closure_rate": _closure_rate_summary(),
+            "project_health": {
+                "status": "unknown",
+                "level": "unknown",
+                "headline": "项目健康取不到：安装绑定失效",
+                "layers": [],
+                "signals": {},
+            },
             "mainline": {},
             "route": {},
             "roadmap": [],
@@ -2299,6 +2346,19 @@ def _status_payload(fast=True):
         "last_verification": _last_verification(),
         "closure_rate": _closure_rate_summary(),
         "harness_health": _harness_health(),
+        # 全局项目健康：项目真相 / 执行流动 / 验收三层。与 harness_health 分开。
+        "project_health": _project_health_summary({
+            "switches": {
+                "auto_exec": bool(ctrl.get("auto_exec", False)),
+            },
+            "blocked": {
+                "exec": [{"id": k, "reason": (v or {}).get("reason")}
+                         for k, v in list(exec_blocked_stuck.items())[:20]],
+                "exec_waiting": list(overlap_holds),
+                "failures": failures,
+                "resolve": list(blocked),
+            },
+        }),
         "harness_tune": _harness_tune_summary(),
         "constraint_candidates": _constraint_candidates_summary(),
         "autonomy": _autonomy_summary(st),

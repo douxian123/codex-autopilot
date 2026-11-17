@@ -390,7 +390,7 @@ def main(argv):
         fails += has("候选写明不算就什么都不生效", cout["blockedList"],
                      "不算", "什么都不生效")
 
-        # 六管家健康条：六个管家的状态必须在一个地方可读，且四态语义不能混。
+        # 管家健康条：各管家 + 全局项目健康必须在一个地方可读，且四态语义不能混。
         # 这是用户「万法归一入口 + 背后许多管家」设想的落地面——面板此前没有任何
         # 一处能一眼看出「哪个管家断了」。unknown 必须如实说「取不到」，绝不用绿点
         # 冒充正常；off（用户自己关的）也不能被当成故障报警。
@@ -399,7 +399,7 @@ def main(argv):
         fails += has("管家健康条上屏", out["stewardBar"], "管家")
         # accept 是这一轮新增的验收管家：它管的是「先自己验完，再来找你」这个顺序。
         # 少一条断言，就等于这个管家断了也没人知道。
-        for key in ("context", "route", "merge", "tune", "exec", "pm", "accept"):
+        for key in ("context", "route", "merge", "tune", "exec", "pm", "accept", "health"):
             got = [r for r in rows if r.get("key") == key]
             if not got:
                 fails += 1
