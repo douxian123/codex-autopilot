@@ -4223,6 +4223,7 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     pending = truth_pending_status(wt)
     if not pending:
         return False
+<<<<<<< HEAD
     dirty = [line for line in trunk_status(wt)
              if not is_truth_path(line) and not is_runtime_sidecar(line)]
     if dirty:
@@ -4254,6 +4255,13 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     for rel in APPEND_ONLY_MARKDOWN:
         _reconcile_append_only_with_head(wt, rel)
     add_failures = []
+=======
+    non_truth = [line for line in trunk_status(wt) if not is_truth_path(line)]
+    if non_truth:
+        print(f"× 主干工作树有非真相层改动，拒绝同步真相层：{wt}")
+        print("\n".join(non_truth[:20])[:1000])
+        return False
+>>>>>>> codex/autopilot-truth-sync-failclosed
     for rel in TRUTH_PATHS:
         if not (wt / rel).exists():
             continue

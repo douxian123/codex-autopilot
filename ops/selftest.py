@@ -937,11 +937,19 @@ def test_sync_trunk_truth_failclosed_non_truth():
 
         before = git(trunk, "rev-parse", "HEAD").stdout.strip()
         sys.path.insert(0, str(OPS))
+<<<<<<< HEAD
         os.environ["KG_REPO"] = str(repo)
         os.environ["KG_TRUNK"] = str(trunk)
         os.environ.pop("KG_TICK_LIGHT", None)
         import kgctl
         importlib.reload(kgctl)
+=======
+        import kgctl
+        importlib.reload(kgctl)
+        os.environ["KG_REPO"] = str(repo)
+        os.environ["KG_TRUNK"] = str(trunk)
+        os.environ.pop("KG_TICK_LIGHT", None)
+>>>>>>> codex/autopilot-truth-sync-failclosed
         ok = kgctl.sync_trunk_truth(trunk, "sync from tick")
         if ok:
             raise AssertionError("非真相层改动存在时 sync_trunk_truth 仍提交了")
@@ -956,6 +964,7 @@ def test_sync_trunk_truth_failclosed_non_truth():
     print("selftest ok: 工作树夹带代码改动时，真相同步 fail-closed 不吞文件、不产生 chore(truth) 提交。")
 
 
+<<<<<<< HEAD
 def test_publish_lock_and_origin_containment():
     """锁住并发发布故障：land 与真相推送不能同时持有发布权，成功必须由远端祖先证明。"""
     import importlib
@@ -1166,6 +1175,8 @@ def test_remote_benchmark_pollution_failclosed():
     print("selftest ok: 远端基准被污染时 tick fail-closed，本地真实基线不被动、不传播伪快照。")
 
 
+=======
+>>>>>>> codex/autopilot-truth-sync-failclosed
 def test_control_state():
     """用户级开关：暂停闸门、开关持久化、损坏即安全暂停。"""
     import importlib
@@ -7338,9 +7349,12 @@ if __name__ == "__main__":
     test_prune_keeps_open_resolve_hold()
     test_reset_trunk_truth_conflict()
     test_sync_trunk_truth_failclosed_non_truth()
+<<<<<<< HEAD
     test_publish_lock_and_origin_containment()
     test_stale_lock_selfheals_and_never_deletes_others()
     test_remote_benchmark_pollution_failclosed()
+=======
+>>>>>>> codex/autopilot-truth-sync-failclosed
     test_control_state()
     test_project_auto_exec_default_is_off()
     test_installer()
