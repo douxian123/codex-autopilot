@@ -303,6 +303,27 @@ def _steward_health(payload):
         rows.append({"key": "pm", "state": "unknown",
                      "label": "项目经理：还没绑定项目"})
 
+    # 7. 验收管家：先把活自己跑一遍，验完了才来提醒人。顺序是语义，不是礼貌：
+    # 没人自验的人工项如果直接进「等你验收」，用户就成了第一道测试。
+    self_check_n = payload.get("self_check_count")
+    human_ready = payload.get("human_acceptance") or []
+    if self_check_n is None:
+        rows.append({"key": "accept", "state": "unknown",
+                     "label": "验收管家：待自验项读不到"})
+    elif self_check_n and not sw.get("auto_exec"):
+        # 待自验却没人会去跑，是真实卡点，不是「正在处理」。
+        rows.append({"key": "accept", "state": "attention",
+                     "label": "验收管家：%s 条还没自验，但自动实现已关，没人会去跑" % self_check_n})
+    elif self_check_n:
+        rows.append({"key": "accept", "state": "ok",
+                     "label": "验收管家：%s 条正在自验，验完才提醒你" % self_check_n})
+    elif human_ready:
+        rows.append({"key": "accept", "state": "attention",
+                     "label": "验收管家：%s 条已自验，等你确认" % len(human_ready)})
+    else:
+        rows.append({"key": "accept", "state": "ok",
+                     "label": "验收管家：没有待你验收的项"})
+
     order = {"attention": 0, "unknown": 1, "off": 2, "ok": 3}
     rows.sort(key=lambda r: order.get(r["state"], 9))
     counts = {}
@@ -1667,8 +1688,13 @@ def _acceptance_board():
         if r.get("id"):
             acc_latest[r["id"]] = r
     acc = list(acc_latest.values())
-    human = [r for r in acc
-             if r.get("needs_human") and r.get("status") in ("todo", "wip", "blocked")]
+    # 验收管家必须先自己跑完一遍，才有资格来敲用户的门。判据就是 evidence：
+    # 没有机器自验证据的人工验收项，先留在「待自验」，不进「需要你验收」。
+    # 否则登记一条 needs_human=true 就能把活直接推给用户，等于让用户当第一道测试。
+    human_pending = [r for r in acc
+                     if r.get("needs_human") and r.get("status") in ("todo", "wip", "blocked")]
+    human = [r for r in human_pending if str(r.get("evidence") or "").strip()]
+    self_check = [r for r in human_pending if not str(r.get("evidence") or "").strip()]
     machine = [r for r in acc if r.get("status") == "verified" and not r.get("needs_human")]
     human_done = [r for r in acc if r.get("status") == "verified" and r.get("needs_human")]
 
@@ -1682,6 +1708,7 @@ def _acceptance_board():
     def acc_brief(r):
         return {"id": r.get("id"), "title": r.get("title", ""), "level": r.get("level"),
                 "status": r.get("status"), "steps": r.get("steps") or "", "lane": r.get("lane"),
+                "evidence": r.get("evidence") or "",
                 "project_id": r.get("project_id"), "route_id": r.get("route_id"),
                 "work_item_id": r.get("work_item_id"),
                 "source_thread_id": r.get("source_thread_id") or r.get("thread_id")}
@@ -1691,6 +1718,8 @@ def _acceptance_board():
         "todo": [brief(r) for r in todo[:8]],
         "todo_count": len(todo),
         "human": [acc_brief(r) for r in human[:8]],
+        "self_check": [acc_brief(r) for r in self_check[:8]],
+        "self_check_count": len(self_check),
         "machine": [acc_brief(r) for r in machine[:8]],
         "human_done_count": len(human_done),
         "machine_count": len(machine),
@@ -2282,6 +2311,9 @@ def _status_payload(fast=True):
         "todo_items": board["todo"],
         "todo_count": board["todo_count"],
         "human_acceptance": board["human"],
+        # 「还没自验完的人工验收项」：先自己跑一遍，再拿来打扰用户。
+        "self_check_acceptance": board["self_check"],
+        "self_check_count": board["self_check_count"],
         "machine_verified": board["machine"],
         "human_accepted_count": board["human_done_count"],
         # stage_table 的同一个结论：面板拿它填格子与状态，不必再自己算一遍。

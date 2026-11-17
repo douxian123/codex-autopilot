@@ -396,14 +396,16 @@ def main(argv):
         # 冒充正常；off（用户自己关的）也不能被当成故障报警。
         stew = payload.get("stewards") or {}
         rows = stew.get("rows") or []
-        fails += has("六管家健康条上屏", out["stewardBar"], "管家")
-        for key in ("context", "route", "merge", "tune", "exec", "pm"):
+        fails += has("管家健康条上屏", out["stewardBar"], "管家")
+        # accept 是这一轮新增的验收管家：它管的是「先自己验完，再来找你」这个顺序。
+        # 少一条断言，就等于这个管家断了也没人知道。
+        for key in ("context", "route", "merge", "tune", "exec", "pm", "accept"):
             got = [r for r in rows if r.get("key") == key]
             if not got:
                 fails += 1
-                print(f"  FAIL  六管家缺 {key}")
+                print(f"  FAIL  管家健康条缺 {key}")
             else:
-                print(f"  PASS  六管家含 {key}")
+                print(f"  PASS  管家健康条含 {key}")
         # 每个管家的 label 都要真的渲染到页面上（不是只存在于 payload）。
         for r in rows:
             fail = has(f"健康条渲染：{r.get('key')}", out["stewardBar"], r.get("label"))
