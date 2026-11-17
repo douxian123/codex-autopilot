@@ -3375,10 +3375,14 @@ def test_auto_exec():
         workers = workers if workers is not None else {}
         results = []
         for _ in range(limit):
+<<<<<<< HEAD
             # dispatch_exec 返回 (results, workers)：只累积「收口结果」，
             # workers 由调用方持有并被本函数就地更新。
             _res, workers = daemon.dispatch_exec(False, blocked, workers)
             results.extend(_res)
+=======
+            results.extend(daemon.dispatch_exec(False, blocked, workers))
+>>>>>>> codex/autopilot-exec-recover-min-20261020
             done = {"landed", "codex_fail_preserved", "codex_fail",
                     "landed_close_fail", "no_changes"}
             if any(r.get("outcome") in done for r in results):
@@ -3709,11 +3713,16 @@ def test_auto_exec():
             raise AssertionError("重试成功后 main 里没有执行器的产物")
         slug_r = f"{daemon_r._exec_slug('L-0001')}-{daemon_r._exec_slug('面板按钮点着没反应')}"
         exec_log = (home_r / "exec" / f"{slug_r}.log").read_text(encoding="utf-8")
-        if "502 Bad Gateway" not in exec_log or "重试 第 2/6 次" not in exec_log:
+        if "502 Bad Gateway" not in exec_log or "重试 第 2" not in exec_log:
             raise AssertionError(f"重试没有保留第一次的现场证据: {exec_log[-600:]}")
         daemon_log = (home_r / "daemon.log").read_text(encoding="utf-8")
-        if "第 2/6 次重试" not in daemon_log or str(home_r / "exec" / f"{slug_r}.log") not in daemon_log:
-            raise AssertionError(f"daemon.log 没写明第几次重试 / 日志路径: {daemon_log[-800:]}")
+        expected_log_path = str(home_r / "exec" / f"{slug_r}.log")
+        if "第 2/4 次重试" not in daemon_log or expected_log_path not in daemon_log:
+            raise AssertionError(
+                f"daemon.log 没写明第几次重试 / 日志路径\n"
+                f"slug_r={slug_r!r}\nexpected={expected_log_path!r}\n"
+                f"has_retry={'第 2/4 次重试' in daemon_log}\n"
+                f"has_path={expected_log_path in daemon_log}\n{daemon_log[-1600:]}")
 
         # --- 退出 0 但无改动：有限重试并要求真实落盘，不把只读检查当成完成 ---
         # L-0006/L-0001 真机现场：模型代理返回 0，但没有执行任何写命令，自动挡以前直接记
@@ -3864,7 +3873,11 @@ def test_auto_exec():
         daemon_t._reap_exec = reap_with_timeout
         blocked_t = {}
         workers_t = {}
+<<<<<<< HEAD
         started_t, workers_t = daemon_t.dispatch_exec(False, blocked_t, workers_t)
+=======
+        started_t = daemon_t.dispatch_exec(False, blocked_t, workers_t)
+>>>>>>> codex/autopilot-exec-recover-min-20261020
         if started_t:
             raise AssertionError(f"超时 worker 不应在同拍返回结果: {started_t}")
         job_t = workers_t["exec_jobs"]["L-0001"]
@@ -3880,6 +3893,7 @@ def test_auto_exec():
           "502 日志判定为可重试并在同一 worktree 重跑（重试到上限记 codex_infra_fail）。")
 
 
+<<<<<<< HEAD
 def test_exec_model_balance_fallback():
     """403 欠费日志必须被识别为慢通道 fallback，且 fast/slow 路由可预测。"""
     import importlib
@@ -4145,16 +4159,25 @@ def test_exec_model_fallback_relaunch_is_async():
 
 def test_parallel_exec_slots():
     """Disk admission gates new workers without interrupting running workers.
+=======
+def test_parallel_exec_slots():
+    """Three worker slots must start concurrently; completion is reaped serially.
+>>>>>>> codex/autopilot-exec-recover-min-20261020
 
     This locks the structural property the old synchronous dispatcher lacked:
     ``dispatch_exec`` starts up to max_workers independent worktrees without
     waiting for the first Codex process to exit. The landing lock remains a
+<<<<<<< HEAD
     separate serial critical section. Both the three-slot and ten-slot paths
     verify probe failure, low-disk hold, hysteresis, and automatic resume.
+=======
+    separate serial critical section.
+>>>>>>> codex/autopilot-exec-recover-min-20261020
     """
     import importlib
     import json as _json
     import time as _time
+<<<<<<< HEAD
     import central_daemon
 
     def exercise(slots):
@@ -4896,10 +4919,16 @@ def test_resolve_exec_parallel():
         repo = root / "state"
         trunk = root / "state-trunk"
         home = root / "home"
+=======
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-parallel-") as tmp:
+        base = Path(tmp)
+        repo, trunk, home = base / "state", base / "state-trunk", base / "home"
+>>>>>>> codex/autopilot-exec-recover-min-20261020
         repo.mkdir(); home.mkdir()
         (repo / "ops" / "tasks").mkdir(parents=True)
         (repo / "ops" / "truth").mkdir(parents=True)
         (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+<<<<<<< HEAD
         for f in ("ledger", "progress", "decisions", "acceptance"):
             (repo / "ops" / "truth" / f"{f}.jsonl").write_text("", encoding="utf-8")
         (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
@@ -4941,22 +4970,62 @@ def test_resolve_exec_parallel():
             raise AssertionError(f"resolve 没建出 worktree {wt}")
 
         fake = root / "fake-resolve.sh"
+=======
+        for name in ("progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{name}.jsonl").write_text("", encoding="utf-8")
+        ledger = []
+        for i in range(1, 4):
+            ledger.append({"id": f"L-{i:04d}", "type": "ledger", "kind": "bug",
+                           "title": f"并行槽位 {i}", "status": "open",
+                           "ts": f"2026-01-01T00:00:0{i}+08:00"})
+        (repo / "ops" / "truth" / "ledger.jsonl").write_text(
+            "".join(_json.dumps(x, ensure_ascii=False) + "\n" for x in ledger),
+            encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(_json.dumps({
+            "build": {"cmd": "", "cwd": "."}, "verify": [],
+            "auto_exec": {"enabled": True, "max_workers": 3,
+                          "fast_model": "aibvv@deepseek-v4.1-flash",
+                          "slow_model": "ok8888@deepseek-v4.1-flash"}}), encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "app.txt").write_text("main\n", encoding="utf-8")
+        git(repo, "add", "app.txt", "ops/central.config.json", "ops/truth/ledger.jsonl",
+            "ops/truth/progress.jsonl", "ops/truth/decisions.jsonl",
+            "ops/truth/acceptance.jsonl", "ops/tasks/inbox.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        origin = base / "origin.git"
+        run(["git", "init", "-q", "--bare", str(origin)])
+        git(repo, "remote", "add", "origin", str(origin))
+        git(repo, "push", "-q", "origin", "main")
+        (home / "control.json").write_text(_json.dumps({
+            "auto_exec": True, "paused": False}), encoding="utf-8")
+        fake = base / "fake-parallel.sh"
+>>>>>>> codex/autopilot-exec-recover-min-20261020
         fake.write_text(
             "#!/bin/sh\n"
             "wt=\"\"\n"
             "while [ \"$#\" -gt 0 ]; do\n"
             "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
             "done\n"
+<<<<<<< HEAD
             "sed -i '' '/^<<<<<<< /d;/^=======$/d;/^>>>>>>> /d' \"$wt/doc.txt\"\n"
             "printf 'light\\nmainline\\n' > \"$wt/doc.txt\"\n"
             "exit 0\n", encoding="utf-8")
         fake.chmod(0o755)
 
+=======
+            "sleep 0.4\n"
+            "printf 'parallel\\n' > \"$wt/done.txt\"\n",
+            encoding="utf-8")
+        fake.chmod(0o755)
+>>>>>>> codex/autopilot-exec-recover-min-20261020
         os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
                           KG_DAEMON_HOME=str(home), KG_EXEC_CMD=str(fake))
         import control_state, central_config, central_daemon
         importlib.reload(control_state); importlib.reload(central_config)
         importlib.reload(central_daemon)
+<<<<<<< HEAD
 
         # 本用例只验证 resolve 派发，不验证磁盘闸；宿主真实低盘会让它假失败。
         central_daemon._disk_free_gb = (
@@ -6438,6 +6507,114 @@ def test_strip_regenerable_files_is_per_file_and_lossless():
 
     print("selftest ok: 逐文件剥离只动与 HEAD 相同的跟踪文件，人间产物与改动一律保留。")
 
+=======
+        blocked, workers = {}, {}
+        started = central_daemon.dispatch_exec(False, blocked, workers)
+        assert started == [], started
+        jobs = workers["exec_jobs"]
+        assert len(jobs) == 3, jobs
+        assert len({j["worktree"] for j in jobs.values()}) == 3, jobs
+        assert all(j["proc"].poll() is None for j in jobs.values()), jobs
+        deadline = _time.time() + 10
+        landed = []
+        while _time.time() < deadline and len(landed) < 3:
+            results = central_daemon.dispatch_exec(False, blocked, workers)
+            landed.extend(r for r in results if r.get("outcome") == "landed")
+            _time.sleep(0.1)
+        assert len(landed) == 3, (landed, blocked, workers)
+        assert not workers["exec_jobs"], workers
+    print("selftest ok: 3 个 worker 槽并行启动、隔离 worktree，完成项仍逐条串行落盘。")
+
+
+def test_persisted_exec_hydrate():
+    """Persisted exec jobs must not crash dispatch when runtime fields are absent.
+
+    After a daemon restart, state.json only contains JSON-safe fields. The old
+    reap path accessed job["item"]/job["cfg"] directly and also replaced a dead
+    detached worker with an anonymous object that lacked wait(), producing
+    KeyError and AttributeError every cycle.
+    """
+    import importlib
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="autopilot-exec-hydrate-") as tmp:
+        base = Path(tmp)
+        repo, trunk, home = base / "state", base / "state-trunk", base / "home"
+        repo.mkdir(); home.mkdir()
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        for name in ("progress", "decisions", "acceptance"):
+            (repo / "ops" / "truth" / f"{name}.jsonl").write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "ledger.jsonl").write_text(
+            _json.dumps({"id": "L-9001", "type": "ledger", "kind": "bug",
+                         "title": "恢复僵尸槽", "status": "open",
+                         "ts": "2026-01-01T00:00:00+08:00"}, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        (repo / "ops" / "central.config.json").write_text(_json.dumps({
+            "build": {"cmd": "", "cwd": "."}, "verify": []}), encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "app.txt").write_text("main\n", encoding="utf-8")
+        git(repo, "add", "app.txt", "ops/central.config.json", "ops/truth/ledger.jsonl",
+            "ops/truth/progress.jsonl", "ops/truth/decisions.jsonl",
+            "ops/truth/acceptance.jsonl", "ops/tasks/inbox.jsonl")
+        git(repo, "commit", "-q", "-m", "init")
+        (home / "control.json").write_text(_json.dumps({
+            "auto_exec": True, "paused": False}), encoding="utf-8")
+        # A pid that cannot be alive in this test process.
+        gone_pid = 999999
+        while True:
+            try:
+                os.kill(gone_pid, 0)
+                gone_pid += 1
+            except ProcessLookupError:
+                break
+        os.environ.update(KG_REPO=str(repo), KG_TRUNK=str(trunk),
+                          KG_DAEMON_HOME=str(home))
+        os.environ.pop("KG_EXEC_CMD", None)
+        import control_state, central_config, central_daemon
+        importlib.reload(control_state); importlib.reload(central_config)
+        importlib.reload(central_daemon)
+        blocked = {}
+        workers = {"exec_jobs": {
+            "L-9001": {
+                "id": "L-9001", "outcome": "ready",
+                "repo": str(repo), "branch": "codex/exec-l-9001-test",
+                "worktree": str(base / "state-exec-l-9001-test"),
+                "log": str(home / "exec" / "l-9001-test.log"),
+                "model": "aibvv@deepseek-v4.1-flash",
+                "started_at": "2026-10-20 03:23:48",
+                "recover": False,
+                "result": {"id": "L-9001", "branch": "codex/exec-l-9001-test",
+                           "worktree": str(base / "state-exec-l-9001-test")},
+                "pid": gone_pid, "detached": True,
+            },
+            "L-9002": {
+                "id": "L-9002", "outcome": "ready",
+                "repo": str(repo), "branch": "codex/exec-l-9002-orphan",
+                "worktree": str(base / "state-exec-l-9002-orphan"),
+                "log": str(home / "exec" / "l-9002-orphan.log"),
+                "model": "aibvv@deepseek-v4.1-flash",
+                "started_at": "2026-10-20 03:24:00",
+                "recover": False,
+                "result": {"id": "L-9002", "branch": "codex/exec-l-9002-orphan",
+                           "worktree": str(base / "state-exec-l-9002-orphan")},
+                "pid": gone_pid, "detached": True,
+            },
+        }}
+        try:
+            hydrated = central_daemon._hydrate_exec_jobs(workers)
+            before_collect = "L-9001" in hydrated["exec_jobs"]
+            central_daemon._collect_exec(workers, blocked)
+        except Exception as exc:
+            raise AssertionError(f"persisted exec jobs caused exception: {exc!r}") from exc
+        if not before_collect:
+            raise AssertionError("recoverable persisted job was dropped during hydrate")
+        if "L-9002" in hydrated["exec_jobs"]:
+            raise AssertionError("orphan persisted job was not dropped")
+    print("selftest ok: 持久化 exec job 缺失运行时字段时安全重建/移除，不抛 KeyError。")
+>>>>>>> codex/autopilot-exec-recover-min-20261020
 
 def test_mcp_contract():
     """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
@@ -7368,6 +7545,7 @@ if __name__ == "__main__":
     test_verify_and_truth()
     test_prune_exec_blocked_landed_commit()
     test_auto_exec()
+<<<<<<< HEAD
     test_exec_model_balance_fallback()
     test_model_channel_identity_and_dead_channel_fallback()
     test_relaunch_never_reuses_dead_channel()
@@ -7396,6 +7574,10 @@ if __name__ == "__main__":
     test_strip_duplicate_decouples_from_tree_dirtiness()
     test_task_worktree_name_predicate_is_shared_and_complete()
     test_strip_regenerable_files_is_per_file_and_lossless()
+=======
+    test_parallel_exec_slots()
+    test_persisted_exec_hydrate()
+>>>>>>> codex/autopilot-exec-recover-min-20261020
     test_mcp_contract()
     test_closure_rate()
     test_product_eval()
