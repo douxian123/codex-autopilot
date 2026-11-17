@@ -3142,6 +3142,7 @@ def _trunk_worktree():
     return wt
 
 
+<<<<<<< HEAD
 def _fetch_origin_main(attempts: int = 5, delay: float = 3.0) -> bool:
     """fetch origin/main，带重试。
 
@@ -3186,6 +3187,82 @@ def _align_main():
     """落盘前先把本地 main 引用对齐 origin/main，拒绝在分叉引用上继续。"""
     if not _fetch_origin_main():
         return
+=======
+def _is_network_unreachable(text: str) -> bool:
+    """只识别传输层不可达；认证/non-fast-forward/hook 拒绝绝不能降成本地落盘。"""
+    lowered = (text or "").lower()
+    signals = (
+        "couldn't connect to server",
+        "could not connect to server",
+        "failed to connect",
+        "connection refused",
+        "connection timed out",
+        "operation timed out",
+        "network is unreachable",
+        "could not resolve host",
+        "temporary failure in name resolution",
+        "proxy connect",
+        "could not read from remote repository",
+        "operation too slow",
+        "less than 1 bytes/sec",
+    )
+    return any(s in lowered for s in signals)
+
+
+def _push_main_with_offline_fallback(wt: Path) -> str:
+    """推送 main；网络明确不可达时本地推进，其他失败仍 fail-closed。"""
+    try:
+        return _push_main_with_one_retry(wt)
+    except RuntimeError as exc:
+        text = str(exc)
+        if not _is_network_unreachable(text):
+            raise
+        # The merge happened in the trunk worktree. Advance the local main
+        # ref only when it is still exactly the pre-merge value; this is a
+        # compare-and-swap, so a concurrent writer can never be overwritten.
+        new = git("-C", str(wt), "rev-parse", "HEAD")
+        pre = git("rev-parse", MAIN)
+        if not new or not pre:
+            raise
+        if not git("rev-parse", "--verify", new):
+            raise RuntimeError("离线落盘无法读取合并提交")
+        cas = subprocess.run(
+            ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}", new, pre],
+            capture_output=True, text=True)
+        if cas.returncode != 0:
+            raise RuntimeError(
+                f"离线落盘无法安全推进本地 {MAIN}（引用已变化）："
+                f"{pre[:10]} -> {new[:10]}；{(cas.stdout + cas.stderr).strip()[:500]}")
+        return ("origin 当前网络不可达，已在本地安全推进 main，尚未推送；"
+                "联网后 daemon 会继续推送。原始错误：" + text[:300])
+
+
+def _align_main():
+    """落盘前对齐 origin/main；断网时快速使用最后一次已知的远端引用。"""
+    fetched = None
+    last = ""
+    for attempt in range(2):
+        fetched = subprocess.run(
+            ["git", "-C", str(REPO), "-c", "http.connectTimeout=5",
+             "-c", "http.lowSpeedLimit=1", "-c", "http.lowSpeedTime=8",
+             "fetch", "origin", MAIN],
+            capture_output=True, text=True)
+        if fetched.returncode == 0:
+            break
+        last = (fetched.stderr or fetched.stdout).strip()
+        if not _is_network_unreachable(last):
+            raise RuntimeError(f"fetch origin/{MAIN} 失败: {last}")
+        if attempt == 0:
+            time.sleep(1)
+    if fetched is not None and fetched.returncode != 0:
+        # Network outage is different from an unknown remote state: use the
+        # last fetched origin/main only, and never invent or fetch a new one.
+        remote = git("rev-parse", f"origin/{MAIN}")
+        if not remote:
+            raise RuntimeError(
+                f"fetch origin/{MAIN} 失败且本地没有已知 origin/{MAIN}：{last}")
+        print(f"  ! origin 网络不可达，使用已知 origin/{MAIN} {remote[:8]} 本地收口：{last[:180]}")
+>>>>>>> codex/autopilot-parallel-runtime-fix-20261019
     local = git("rev-parse", MAIN)
     remote = git("rev-parse", f"origin/{MAIN}")
     if local == remote:
@@ -3193,10 +3270,80 @@ def _align_main():
     ff = proc_run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
                          local, remote], capture_output=True, text=True)
     if ff.returncode != 0:
+<<<<<<< HEAD
         raise RuntimeError(
             f"本地 {MAIN} 与 origin/{MAIN} 已分叉：local={local[:10]} remote={remote[:10]}；"
             "先人工合并/推送本地提交，再执行 land")
     proc_run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
+=======
+        rev = subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
+                              remote, local], capture_output=True, text=True)
+        if rev.returncode == 0:
+            # Truth-only local commits can be safely aligned after snapshotting
+            # their files. Never drop a local product commit.
+            if trunk_head_is_truth_only(REPO, remote):
+                snap = _snapshot_truth_files(REPO)
+                subprocess.run(
+                    ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
+                     remote, local], check=True)
+                _restore_truth_files(REPO, snap)
+                print(f"  {MAIN} 本地领先的纯真相提交已安全对齐到已知 origin/{MAIN}")
+                return
+            raise RuntimeError(
+                f"本地 {MAIN} 领先且包含产品提交，拒绝自动对齐："
+                f"local={local[:10]} remote={remote[:10]}；先推送或人工合并")
+        # A landing can be merged locally while the remote advances. If the
+        # local-only side is already present in the remote history, align the
+        # ref directly; otherwise replay in a fresh detached worktree so the
+        # user's shared checkout is never switched or overwritten.
+        local_delta = subprocess.run(
+            ["git", "-C", str(REPO), "diff", "--quiet", local, remote, "--"],
+            capture_output=True, text=True)
+        if local_delta.returncode == 0:
+            subprocess.run(
+                ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
+                 remote, local], check=True)
+            print(f"  {MAIN} 本地分叉内容已在 origin/{MAIN}，引用已安全对齐")
+            return
+        wt = _trunk_worktree()
+        replay_temp = Path(tempfile.mkdtemp(prefix="kg-replay-", dir="/private/tmp"))
+        tmp = f"refs/kgctl/replay/{os.getpid()}"
+        subprocess.run(["git", "-C", str(REPO), "update-ref", tmp, remote],
+                       check=True)
+        try:
+            added = subprocess.run(
+                ["git", "-C", str(REPO), "worktree", "add", "--detach",
+                 str(replay_temp), tmp],
+                capture_output=True, text=True)
+            if added.returncode != 0:
+                raise RuntimeError(
+                    "安全重放准备失败，无法创建临时 worktree："
+                    f"{(added.stdout + added.stderr).strip()[:500]}")
+            replayed = subprocess.run(
+                ["git", "-C", str(replay_temp), "merge", "--no-ff", local,
+                 "-m", f"train: replay local {MAIN} over origin/{MAIN}"],
+                capture_output=True, text=True)
+            if replayed.returncode != 0:
+                subprocess.run(["git", "-C", str(replay_temp), "merge", "--abort"],
+                               capture_output=True, text=True)
+                raise RuntimeError(
+                    f"本地 {MAIN} 与 origin/{MAIN} 分叉且重放冲突，"
+                    "已放弃并保持 main 不动；需人工裁决")
+            replay_head = git("-C", str(replay_temp), "rev-parse", "HEAD")
+            subprocess.run(
+                ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
+                 replay_head, local], check=True)
+            print(f"  {MAIN} 本地分叉已安全重放到 origin/{MAIN}："
+                  f"{local[:8]} + {remote[:8]} -> {replay_head[:8]}（尚未推送）")
+            return
+        finally:
+            subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force",
+                            str(replay_temp)], capture_output=True, text=True)
+            subprocess.run(["git", "-C", str(REPO), "update-ref", "-d", tmp],
+                           check=False)
+            shutil.rmtree(replay_temp, ignore_errors=True)
+    subprocess.run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
+>>>>>>> codex/autopilot-parallel-runtime-fix-20261019
                     remote, local], check=True)
     print(f"  {MAIN} 本地引用 {local[:8]} -> {remote[:8]}（同步 origin）")
 
@@ -5102,7 +5249,7 @@ def cmd_land(args):
                                       capture_output=True, text=True).stdout.strip()
         manifest = _land_manifest(wt, branch, merge_commit, pre)
         _record_land_progress(wt, branch, merge_commit, gate_results, manifest, pre)
-        pushed = _push_main_with_one_retry(wt)
+        pushed = _push_main_with_offline_fallback(wt)
         if pushed:
             print("  " + pushed.replace("\n", "\n  "))
         new = proc_run(["git", "-C", str(wt), "rev-parse", "HEAD"],
