@@ -49,7 +49,8 @@ ops/truth/
 
 ### ledger.jsonl
 
-额外字段：`kind` ∈ `visual` | `ux` | `bug` | `arch`、`detail`（复现/根因/证据）。
+额外字段：`kind` ∈ `visual` | `ux` | `bug` | `arch`、`detail`（复现/根因/证据）、
+`acceptance_plan`（路由时编译的机器门禁/人工复核计划，含 `machine_checks`、`human_checks`、`summary`；只是执行自证依据，不替代 `acceptance.jsonl` 的验收项或 `evidence`）。
 `status` ∈ `open` | `doing` | `done` | `wontfix`。
 
 ### progress.jsonl
