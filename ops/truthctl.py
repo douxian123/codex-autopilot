@@ -493,7 +493,7 @@ def cmd_promote(args):
                       source=f"inbox#{n}")
     # 回写 inbox 的 routed 标记
     items[n - 1]['routed'] = True
-    items[n - 1]['lane'] = rec['id']
+    items[n - 1]['ledger_id'] = rec['id']
     with INBOX.open('w') as fh:
         for x in items:
             fh.write(json.dumps(x, ensure_ascii=False) + '\n')
@@ -602,26 +602,44 @@ def _append_ledger(kind, title, detail, files, source, lane) -> dict:
                        status='open', lane=lane, files=files or [], source=source)
 
 
+def _lane_names() -> set:
+    """固定泳道名的唯一读取口径：lanes.json 优先，缺文件时用配置内置。"""
+    data = []
+    if LANES.exists():
+        try:
+            data = json.loads(LANES.read_text())
+        except Exception:
+            data = []
+    if not isinstance(data, list):
+        data = []
+    return {r.get('name') for r in data if isinstance(r, dict) and r.get('name')} \
+        or {r.get('name') for r in CFG.get('lanes') or [] if r.get('name')}
+
+
 def _candidates(kind, text, files):
-    """在既有泳道里找这条 intake 该去哪：文件路径优先，代码标识匹配兜底。"""
+    """在既有泳道里找这条 intake 该去哪：文件路径优先，代码标识匹配兜底。
+
+    归并必须同时满足两点：
+      1) kind 相同。arch 和 gate 都可能改同一个守护进程文件，但它们是两件不同的事；
+         只凭文件重叠归并，会把一条架构需求挂到磁盘门禁下面。
+      2) 至少有一个**具体标识**命中（同一文件路径，或同一个代码标识）。只共享目录
+         前缀 / 同一个大文件名不算：`central_daemon.py` 这种公共文件几乎每条记录都有。
+    """
     files = list(files or [])
     query_tokens = _tokens(text or '')
     out = []
     for line in _read(TRUTH / FILES['ledger']):
         if line.get('status') not in ('open', 'doing', 'todo'):
             continue
+        if kind and line.get('kind') and line.get('kind') != kind:
+            continue
         own = list(line.get('files') or [])
         exact = len(set(files) & set(own))
-        broad = 0
-        for f in files:
-            for o in own:
-                if f != o and (f.startswith(o + '/') or o.startswith(f + '/')):
-                    broad += 1
         own_text = ' '.join([line.get('title', ''), line.get('detail', ''), *own])
         token_hits = len(query_tokens & _tokens(own_text)) if query_tokens else 0
-        if not exact and not broad and not token_hits:
+        if not exact and not token_hits:
             continue
-        out.append((1 if (exact or token_hits) else 0, exact, broad, line['id'],
+        out.append((1 if (exact or token_hits) else 0, exact, 0, line['id'],
                     line.get('lane'), line.get('title', ''), token_hits))
     out.sort(key=lambda x: (-x[0], -x[1], -x[2], -x[6], x[3]))
     return out
@@ -659,13 +677,7 @@ def cmd_route(args):
     pending = [(i, it) for i, it in enumerate(items, 1) if not it.get('routed')]
     if not pending:
         print('没有待路由项'); return
-    lanes = []
-    if LANES.exists():
-        try:
-            lanes = json.loads(LANES.read_text())
-        except Exception:
-            lanes = []
-    names = {r.get('name') for r in lanes} or {r.get('name') for r in CFG.get('lanes') or []}
+    names = _lane_names()
     plan = []
     for i, it in pending:
         kind = infer_kind(it.get('text', ''), it.get('files'), it.get('kind'))
@@ -705,7 +717,7 @@ def cmd_route(args):
         it = items[p['n'] - 1]
         if p['cand']:
             ref = p['cand'][0][3]
-            it['lane'], it['routed'] = ref, True
+            it['lane'], it['ledger_id'], it['routed'] = p['lane'], ref, True
             target = None
             for rec in _read(TRUTH / FILES['ledger']):
                 if rec.get('id') == ref:
@@ -728,13 +740,13 @@ def cmd_route(args):
         else:
             rec = _append_ledger(p['kind'], p['text'][:80].replace('\n', ' '),
                                  p['text'], p['files'], f"inbox#{p['n']}", p['lane'])
-            it['lane'], it['routed'] = rec['lane'], True
+            it['lane'], it['ledger_id'], it['routed'] = rec['lane'], rec['id'], True
             made.append(rec['id'])
     merged = 0
     for p in dups:
         it = items[p['n'] - 1]
         ref = seen[p['text'][:120]]
-        it['lane'], it['routed'] = ref, True
+        it['lane'], it['ledger_id'], it['routed'] = p['lane'], ref, True
         note = f"[inbox#{p['n']}] {p['text']}"
         path = TRUTH / FILES['ledger']
         rows = _read(path)

@@ -273,6 +273,12 @@ def main():
         # 预演只读不写、不碰绑定项目账本，且守护那层确实挂着 --all。
         run([sys.executable, str(OPS / "test-route-all-projects.py")],
             cwd=str(OPS.parent), check=True)
+        # 路由归并的语义边界：kind 不同不能因为引用同一个公共文件就并到一起。
+        # 2026-11-17 真实现场：两条 arch 输入都引用 ops/central_daemon.py，被并进了
+        # gate 台账 L-0001；同时 inbox 的 lane 字段被写成台账 ID，面板按泳道过滤时
+        # 整条消失。这条锁住：同 kind 才归并、lane 只放固定泳道名、ledger_id 单独存。
+        run([sys.executable, str(OPS / "test-route-lane-semantics.py")],
+            cwd=str(OPS.parent), check=True)
         # 状态管家：`budget_gate` 只测不改，于是「压缩线/工具输出上限该不该调」
         # 仍然要人肉判断 + 人肉改 config + 人肉记回滚点 —— 承诺的「提卡 → 点头才改
         # → 备份 → 一键回滚」根本没接线（2026-11-18 实测：没有任何代码写 config.toml）。
