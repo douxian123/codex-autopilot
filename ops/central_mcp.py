@@ -555,6 +555,7 @@ SERVER_VERSION = _server_version()
 
 import control_state  # noqa: E402
 import codex_native  # noqa: E402
+import acceptance_criteria  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
 
 try:
@@ -2014,6 +2015,8 @@ def _work_rows(project_name, limit=40):
             "stage": stage,
             "stage_label": stage_table.item_stage_label(stage),
             "evidence": evidence_text(rec, None),
+            "acceptance_summary": acceptance_criteria_compiler.summary_label(
+                rec.get("acceptance_plan")),
         })
     # 「要人拍板」的排前面，其次进行中，再次待处理；同组按 id。
     prio = {"person/review": 0, stage_table.BUCKET_DOING: 1,

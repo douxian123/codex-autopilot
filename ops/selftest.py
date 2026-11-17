@@ -142,6 +142,7 @@ def main():
             "test-snapshot-clone-prune.py",
             "test-runtime-truthctl-selection.py",
             "test-gate-registration.py",
+            "test-acceptance-criteria.py",
             "test-worker-lifecycle.py",
             "test-exec-lifecycle.py",
             "test-wake-resume.py",
