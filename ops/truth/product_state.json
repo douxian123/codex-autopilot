@@ -117,6 +117,16 @@
     "plugin/ui/panel.html"
    ],
    "updated": "2026-11-18"
+  },
+  {
+   "area": "安全闸事实边界",
+   "behavior": "worker 资源/工具越界在 Popen 前拒绝；逐 pass 授权来源与副作用在面板工程详情只读展示。",
+   "why": "运行层资源/工具白名单与逐 pass 授权审计已有真实门禁，文档旧边界与当前代码不一致",
+   "files": [
+    "docs/ARCHITECTURE_STEWARDS.md",
+    "ops/SAFETY_GATES.md"
+   ],
+   "updated": "2026-11-18"
   }
  ]
 }
