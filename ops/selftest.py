@@ -216,6 +216,10 @@ def main():
         # 这条同时锁住「没有文件线索不做判断 / 自己不算自己的持有者」两个反向边界。
         run([sys.executable, str(OPS / "test-exec-overlap.py")],
             cwd=str(OPS.parent), check=True)
+        # 验收管家必须先自己验一遍，才有资格来敲用户的门。没有自验证据就跑过来说
+        # 「需要你验收」，等于让用户当第一道测试——用户明确要求过这个顺序。
+        run([sys.executable, str(OPS / "test-acceptance-selfcheck.py")],
+            cwd=str(OPS.parent), check=True)
         # 归属判定：「万法归一」入口后面那一层。最容易腐化的形态不是「判错」而是
         # 「判不清时悄悄猜」——插件 .mcp.json 写死一个 KG_REPO，于是用户在 A 项目
         # 窗口里说 B 项目的事，记录照样落进 A（2026-11-16 用户实测的 bug）。
@@ -6468,8 +6472,30 @@ def test_mcp_contract():
         assert not recv()["result"].get("isError"), "register_acceptance 调用失败"
         send({"jsonrpc": "2.0", "id": 35, "method": "tools/call",
               "params": {"name": "autopilot_status", "arguments": {"fast": True}}})
-        hum = recv()["result"]["structuredContent"].get("human_acceptance") or []
-        assert hum and hum[0].get("title") == "首页第一屏不挤", f"人工验收没进状态: {hum}"
+        sc35 = recv()["result"]["structuredContent"]
+        hum = sc35.get("human_acceptance") or []
+        pend = sc35.get("self_check_acceptance") or []
+        # 刚登记的人工验收项还没跑过任何机器自验：必须留在「待自验」，
+        # 不许直接进「需要你验收」。这条是反向断言——去掉顺序闸门就会变红。
+        assert not hum, f"没自验的人工项直接进了等你验收: {hum}"
+        assert pend and pend[0].get("title") == "首页第一屏不挤", \
+            f"人工验收没进待自验: {pend}"
+
+        # 补上自验证据之后，它才有资格来敲用户的门。
+        _aid = pend[0]["id"]
+        send({"jsonrpc": "2.0", "id": 36, "method": "tools/call",
+              "params": {"name": "resolve_acceptance",
+                         "arguments": {"id": _aid, "status": "wip",
+                                       "evidence": "panel-render: python3 ops/panel_render_check.py -> exit 0"}}})
+        assert not recv()["result"].get("isError"), "补自验证据失败"
+        send({"jsonrpc": "2.0", "id": 37, "method": "tools/call",
+              "params": {"name": "autopilot_status", "arguments": {"fast": True}}})
+        sc37 = recv()["result"]["structuredContent"]
+        hum2 = sc37.get("human_acceptance") or []
+        assert hum2 and hum2[0].get("id") == _aid, \
+            f"补了自验证据仍没进等你验收: {hum2} / {sc37.get('self_check_acceptance')}"
+        assert "panel_render_check" in (hum2[0].get("evidence") or ""), \
+            f"自验证据没带给面板: {hum2[0]}"
 
         send({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
               "params": {"name": "autopilot_control", "arguments": {"action": "pause"}}})
