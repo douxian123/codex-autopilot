@@ -11,6 +11,19 @@
 
 这个结构保留「万法归一」入口：用户仍然只在一个输入框里说话，不需要选项目、对话、分支或角色。内部由路由管家根据入口上下文和项目注册表判断归属；判不清的留在全局待路由箱，不硬塞进某个项目账本。
 
+## 四层运行契约
+
+两平面回答「谁负责什么」，四层回答「一个长期任务怎么活下来」。长期最优解必须同时满足这四层，不能只做其中一层：
+
+| 层 | 责任 | 我们的对应物 | 当前缺口 |
+|---|---|---|---|
+| 关系层 | 一个持续对话/入口维护目标、优先级、需要人的时机 | 唯一输入框、`ops/tasks/inbox.jsonl`、面板三问、`waiting on you` 语义 | 还没有把跨项目长期目标做成稳定关系对象 |
+| 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/exec_overlap.py`、observe/auto 分级 | 模糊需求自动生成可判定验收标准仍未完成 |
+| 执行层 | 隔离会话里并行研究/实现/验证，再做串行合流 | 路由/实现/合并/验收管家、独立 worktree、`kgctl land` 门禁 | 后台 worker 的显式 `start/status/stop/event` 契约还没成形 |
+| 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、truth 台账、全局待路由箱、`project_health` | 定时器和显式恢复协议仍弱，当前主要靠守护轮询与台账快照 |
+
+因此当前不是「最优已完成」，而是「架构收敛正确、运行层还在补」。最优路线不是继续加第八、第九个管家，而是把四层之间的契约写硬：谁可以唤醒谁、谁拥有写权限、什么证据允许合流、什么情况必须回到人这里。全局健康只读这四层的事实，不替任何一层做决定。
+
 ## 责任边界
 
 | 角色 | 拥有的判断 | 不拥有的权力 | 当前落点 |
@@ -72,6 +85,15 @@
 3. 首屏三问的注意力纪律，以及这层可计算、可上屏的全局健康。
 
 因此路线不是「再造一个多 agent 框架」，而是把编排复用给成熟方案，在 Codex 现有会话、worktree、skill 和 MCP UI 扩展点上，把项目真相、验收顺序和健康信号做穿。
+
+## 事实边界
+
+外部资料必须分层写，不能把营销转述当成上游事实：
+
+- Claude 官方已核实：Projects 是长期协调对话，任务拆到独立 thread，并用 `waiting on you` 汇总需要人的事项；Claude Code slash commands 文档包含 `/btw` 旁问、`/fork` 复制会话到后台；agent view 文档描述后台会话与 worktree 隔离。来源：`https://docs.claude.com/en/docs/claude-code/projects`、`https://code.claude.com/docs/en/commands.md`、`https://code.claude.com/docs/en/agent-view.md`、`https://code.claude.com/docs/en/sub-agents.md`。
+- DSH 本机可核实：`~/.dsh/profiles/web/cordis.yml` 明确写着 profile 由 package bundle 与 patch 组合；本机 session 状态包含 `inbox`、`subagentCatalog`、`subagent` 等键。这支持「插件化 + 收件箱 + subagent」的运行层判断，但不等于验证了 Super-agent 原型的所有指标。
+- 小红书线索里的 `Grok Bot 1.0`、多 Bot 群聊、自动优化 Skill、p50/p95、缓存读取倍数和订阅直通比例，目前没有在官方原文中逐条核实，只作为产品方向信号，不写成已发布事实。
+- proto 与产品要分开：DeepSeek Super-agent 原型属于研究原型；Claude 的 projects / background / fork 是已上线功能。两者不能混成一句「大家都已支持 Super Agent」。
 
 ## 已知边界
 

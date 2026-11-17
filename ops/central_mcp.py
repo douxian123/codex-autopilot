@@ -230,7 +230,7 @@ def _n(value):
 
 
 def _steward_health(payload):
-    """六管家健康条：把六个管家的真实状态收敛成一份面板可读的清单。
+    """七管家健康条：把七个管家的真实状态收敛成一份面板可读的清单。
 
     用户问过「面板要怎么做」，也给过「万法归一入口 + 背后许多管家」的完整设想。
     面板此前只散着显示路由/合并/实现/项目经理的一部分，状态与上下文管家按到最近
@@ -240,6 +240,8 @@ def _steward_health(payload):
     每个管家给三样：`key`（稳定标识）、`state`（ok / attention / off / unknown）、
     `label`（人话一行）。`state` 只有这四态：`attention` = 需要人或需要修，
     `off` = 用户自己关的（不是故障），`unknown` = 取不到（不冒充正常）。
+
+    末尾另有一行 `health`，它不是第八个管家，而是只读的项目级全局健康结论。
     """
     sw = payload.get("switches") or {}
     daemon = payload.get("daemon") or {}
@@ -2384,7 +2386,7 @@ def _status_payload(fast=True):
         # 面板只渲染，不再自己算 stage（唯一判据仍是 ops/stage_table.py）。
         "work_rows": _work_rows(Path(current_project).name),
     }
-    # 六管家健康条：一眼看出哪个管家断了（ok/attention/off/unknown 四态）。
+    # 七管家健康条 + 全局项目健康：一眼看出哪个管家断了、项目整体是否还健康。
     # 必须等 payload 构造完再算——判据全来自上面这些字段，不能引用还在构造的自己。
     payload["stewards"] = _steward_health(payload)
     payload["__text__"] = _status_text(payload)
