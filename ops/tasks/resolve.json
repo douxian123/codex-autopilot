@@ -1,6 +1,27 @@
 {
  "tasks": [
   {
+   "slug": "truth-close-pm-truth-closure-20261118",
+   "branch": "codex/truth-close-pm-truth-closure-20261118",
+   "resolve_branch": "codex/resolve-truth-close-pm-truth-closure-20261118",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-truth-close-pm-truth-closure-20261118",
+   "base_main": "0fd2177bea6a39fa0f26822a6064529b44ee2a30",
+   "source_head": "c8b9f37b322a7cf772b4974c6ed1ce60ff8e4602",
+   "source_commits": [
+    "c8b9f37b322a7cf772b4974c6ed1ce60ff8e4602"
+   ],
+   "created": "2026-11-18 03:43:28",
+   "updated": "2026-11-18 03:43:28",
+   "conflict_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "unresolved_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
    "slug": "pm-truth-closure-20261118",
    "branch": "codex/pm-truth-closure-20261118",
    "resolve_branch": "codex/resolve-pm-truth-closure-20261118",
@@ -277,5 +298,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-18 03:10:31"
+ "updated": "2026-11-18 03:43:29"
 }

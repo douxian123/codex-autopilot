@@ -54,5 +54,17 @@
  "codex/pm-truth-closure-20261118@784dd43fcdc777f65d8af58a9cf2f8f54e43256b@d22efa139c572ab227ef06e16f16be70064765cc": {
   "files": 10,
   "lines": 621
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@d36087b804b052de2e40cd0e655bc432b11541f5": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@0fd2177bea6a39fa0f26822a6064529b44ee2a30": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/truth-close-pm-truth-closure-20261118@c8b9f37b322a7cf772b4974c6ed1ce60ff8e4602@0fd2177bea6a39fa0f26822a6064529b44ee2a30": {
+  "files": 7,
+  "lines": 82
  }
 }

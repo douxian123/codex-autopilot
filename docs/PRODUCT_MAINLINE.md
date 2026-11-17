@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-18 03:36:34　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-18 03:50:48　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -31,20 +31,27 @@
 - **合并编排**：每个任务独立 worktree；合并前用 git merge-tree 预演，门禁通过且无冲突时自动 land 并同步 main 引用，不把要不要合推回用户。
 - **常驻守护与面板**：面板显示运行状态、当前处理的分支合并逻辑、开关与必要信息；支持暂停/自动合入/自动拆冲突/常驻。
 - **视觉/设计方案提示词**：做视觉/设计前先当产品经理+产品设计师，尊重用户、保护注意力：先截图看现状再改，改完再截图对比，只允许正向改动，不能更丑、更乱、更难读。
+- **两平面架构**：用户仍从唯一输入框提需求；项目真相面负责预期、验收和是否值得打扰人，执行面负责路由、实现、合并与 harness 状态；全局健康只读聚合事实，不派活、不改配置、不替任何平面做决定。
+- **PM 管家**：PM 管家只读聚合待确认预期、已生效约束、主线阶段、让路工作项和追问候选；文件占地重复时让新项排队且保留未知，不自动发追问，不替用户决定方向、删数据或发布。
+- **验收管家**：人工验收项先由机器跑真实验证，只有带可复核命令、cwd、退出码的项才进入“需要你验收”；用户点击后才会调系统截图器补复核附件，补图只追加附件，不替用户收口。
+- **全局项目健康**：全局健康从真相层、执行层和验收层已有事实聚合为 attention/unknown/off/ok 四态；取不到就说取不到，正常排队不报警，不新建分数台账，也不自动触发修复。
 
 ## 决策脉络
 
-- （还没有决策记录）
+- 自动挡架构收敛为两平面七管家与一层全局健康 —— 继续横向加管家会把职责变成角色堆叠，无法说清谁拥有事实、谁执行、谁能改状态。两平面先分真相与执行，再以四层契约处理关系、规划、执行、运行，能保留万法归一入口，同时把写权限和人工介入边界写硬。
 
 ## 最近在推进
 
-- （还没有进展记录）
+- [已落盘] @ d36087b804 首屏三问与 PM/验收管家闭环已落盘：首屏只回答要不要我、是不是在干对的事、替我做成了什么；PM 简报、人工验收复核截图与补图按钮进入折叠区；补图不替人收口。落盘 commit 3a950f4e，真相记录 d36087b8。
+- [已落盘] @ 89c79304e6 codex/runtime-lifecycle-dispatch-20261118 验证门禁通过，已落盘 main @ 89c79304e6；改动 6 个文件：docs/ARCHITECTURE_STEWARDS.md（+9/-4）、ops/SAFETY_GATES.md（+12/-0）、ops/central_daemon.py（+127/-54）、ops/exec_lifecycle.py（+235/-0）、ops/selftest.py（+1/-0），另有 1 个文件｜6 files changed, 620 insertions(+), 58 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
 - `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0004` [P1] codex/runtime-lifecycle-dispatch-20261118 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
@@ -61,9 +68,6 @@
 - `L-0007` 【launchd 陈旧项·非 Stop 复发链】freshness 门禁真机实测 4 条 stale：ai.danta.codex-proxy-watchdog
 - `L-0008` 【既存·门禁环境】在部署目录 ~/plugins/codex-autopilot/releases/0.6.0-preview.82 里直接跑 ops/self
 
-**ux（1 待处理）**
-- `L-0009` 【项目经理·面板首屏收敛成三问】首屏只回答：① 有东西需要我吗（person/* 集合：等回答/等验收/卡住；没有就一句不需要你做什么）② 系统在干对的事吗（正
-
 ## 需要你验收
 
 - （当前没有需要你人工拍板的验收项）
@@ -72,11 +76,12 @@
 
 - `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
+- `A-0004` [P1] codex/runtime-lifecycle-dispatch-20261118 落盘验收
 
 ## 进度概览
 
-- 累计关闭问题：0 条
-- 累计落盘：0 条
-- 未决问题：9 条
-- 已验收：2 条
+- 累计关闭问题：1 条
+- 累计落盘：2 条
+- 未决问题：8 条
+- 已验收：3 条
 
