@@ -18,7 +18,7 @@
 | 层 | 责任 | 我们的对应物 | 当前缺口 |
 |---|---|---|---|
 | 关系层 | 一个持续对话/入口维护目标、优先级、需要人的时机 | 唯一输入框、`ops/tasks/inbox.jsonl`、面板三问、`needs_human` 的人工验收队列 | 还没有把跨项目长期目标做成稳定关系对象 |
-| 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/exec_overlap.py`、observe/propose/auto 与 explicit/inferred 分级 | 模糊需求自动生成可判定验收标准仍未完成 |
+| 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/acceptance_criteria.py`、`ops/exec_overlap.py`、observe/propose/auto 与 explicit/inferred 分级 | 路由时能编译出机器门禁与人工复核；推不出时如实标 `unknown`，不冒充完成 |
 | 执行层 | 隔离会话里并行研究/实现/验证，再做串行合流 | 路由/实现/合并/验收管家、独立 worktree、`kgctl land` 门禁、`ops/worker_lifecycle.py` 生命周期契约、`ops/exec_lifecycle.py` 生产接线 | 已接管真实派发；定时唤醒只写回入口，仍不直接开 worker |
 | 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、`ops/wake_resume.py`、`worker_lifecycle`、`ops/exec_lifecycle.py`、truth 台账、全局待路由箱、`project_health` | 到期唤醒、显式恢复、资源/工具白名单与逐 pass 授权审计已落地；Outcomes 式独立评分仍缺 |
 
@@ -150,6 +150,7 @@ PM 视角新增一层只读简报：把待确认预期、已生效约束、主�
 
 ## 已知边界
 
+- 验收标准编译是确定性的：只把项目 verify 配置和文件线索翻译成 `cmd + cwd + exit 0`，再为视觉/交互项补人工复核；它不替产品做审美判断。推不出条件时留 `unknown`，不是绿色通过。
 - PM 管家的预期打磨已上屏为简报，但候选升成生效约束仍需人确认；这是有意的，避免一句自然语言直接进机器门禁全局污染。
 - 进度追问已能生成候选，但不会自动发消息；是否追问仍由人决定。
 - 全局健康目前是面板可见的只读结论，还没有在守护里自动触发修复；这是有意的，避免越过用户授权改配置或动工作进程。

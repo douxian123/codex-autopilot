@@ -419,7 +419,8 @@ def main(argv):
             {"id": "L-9001", "title": "真实工单标题", "kind": "bug",
              "source": "inbox", "project": "demo-project", "lane": "codex/lane-x",
              "branch": "codex/lane-x", "stage": "doing", "stage_label": "进行中",
-             "evidence": "npm run build -> exit 0"},
+             "evidence": "npm run build -> exit 0",
+             "acceptance": "验收标准：机器 3 条 / 人工 0 条"},
             {"id": "A-9002", "title": "真实待验收标题", "kind": "acceptance",
              "source": "kgctl land", "project": "demo-project", "lane": "codex/lane-y",
              "branch": "codex/lane-y-impl", "stage": "person/review",
@@ -433,6 +434,8 @@ def main(argv):
                      "泳道 codex/lane-x", "分支 codex/lane-y-impl")
         fails += has("工单表 stage 用控制层算好的文案", wout["workTableBox"], "进行中", "需要你验收")
         fails += has("工单表带证据链", wout["workTableBox"], "证据：npm run build -> exit 0")
+        fails += has("工单表带验收标准摘要", wout["workTableBox"],
+                     "验收标准：机器 3 条 / 人工 0 条")
         wempty = dict(payload)
         wempty["work_rows"] = []
         eout = run_once(wempty)

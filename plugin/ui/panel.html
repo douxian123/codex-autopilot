@@ -1490,6 +1490,11 @@
         ev.textContent = "证据：" + r.evidence;
         li.appendChild(ev);
       }
+      if (r.acceptance){
+        var ac = document.createElement("div"); ac.className = "ev";
+        ac.textContent = r.acceptance;
+        li.appendChild(ac);
+      }
       ul.appendChild(li);
     });
     box.appendChild(ul);
