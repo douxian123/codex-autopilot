@@ -311,6 +311,41 @@ def _steward_health(payload):
     return {"rows": rows, "counts": counts}
 
 
+def _autonomy_summary(state):
+    """自治分级摘要：这一拍有多少工序是明确授权执行的、多少还在观察、多少等你转正。
+
+    判据只读守护写进 `state.json` 的 `last_passes`，不重算注册表、不维护第二套真相。
+    取不到时返回 `unknown` 并如实写「取不到」——不能把「没有记录」显示成
+    「0 条在观察」，那等于假装一切正常。
+    """
+    passes = (state or {}).get("last_passes")
+    if not isinstance(passes, list) or not passes:
+        return {
+            "status": "unknown",
+            "label": "自治分级：本轮工序记录取不到",
+            "explicit": None,
+            "observing": None,
+            "proposed": None,
+        }
+    explicit = sum(1 for p in passes if (p or {}).get("authorization") == "explicit")
+    observing = sum(1 for p in passes if (p or {}).get("mode") == "observe")
+    proposed = sum(1 for p in passes if (p or {}).get("status") == "proposed")
+    errored = sum(1 for p in passes if (p or {}).get("status") == "errored")
+    bits = ["已明确授权 %d 条" % explicit, "观察中 %d 条" % observing]
+    if proposed:
+        bits.append("%d 条等你转正" % proposed)
+    if errored:
+        bits.append("%d 条出错" % errored)
+    return {
+        "status": "ok",
+        "label": "自治分级：" + " · ".join(bits),
+        "explicit": explicit,
+        "observing": observing,
+        "proposed": proposed,
+        "errored": errored,
+    }
+
+
 def _server_version() -> str:
     """版本以插件清单为准，避免 MCP 里再写死一份导致漂移。
 
@@ -2042,6 +2077,7 @@ def _status_payload(fast=True):
             "human_accepted_count": None,
             "binding": health,
             "stewards": _steward_health({}),
+            "autonomy": _autonomy_summary({}),
         }
         payload["__text__"] = (
             "自动挡 · 安装绑定失效\n"
@@ -2225,6 +2261,7 @@ def _status_payload(fast=True):
         "harness_health": _harness_health(),
         "harness_tune": _harness_tune_summary(),
         "constraint_candidates": _constraint_candidates_summary(),
+        "autonomy": _autonomy_summary(st),
         "mainline": _mainline_summary(),
         # fast=True 是面板/开关那条路：只读缓存，不连宿主，绝不因此变慢。
         "route": _route_summary(timeout=0.0 if fast else None),

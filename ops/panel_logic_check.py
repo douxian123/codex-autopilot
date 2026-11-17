@@ -157,6 +157,7 @@ console.log(JSON.stringify({
   recentHtml: document.getElementById("recentBox").innerHTML,
   routeText: read("routeBox"),
   stewardBar: read("stewardBar"),
+  autonomyLine: read("autonomyLine"),
 }));
 """
 
@@ -423,6 +424,19 @@ def main(argv):
                 print(f"  FAIL  健康条泄漏内部字面量 {bad}")
             else:
                 print(f"  PASS  健康条不泄漏 {bad}")
+
+        # 自治分级：这一拍跑过哪些工序、多少条是明确授权、多少条只在观察，
+        # 必须原样上屏。取不到时不许显示成「0 条在观察」——那是把未知冒充正常。
+        au = payload.get("autonomy") or {}
+        fails += has("自治分级摘要上屏", out["autonomyLine"], au.get("label"))
+        blank["autonomy"] = central_mcp._autonomy_summary({})
+        bout3 = run_once(blank)
+        fails += has("自治分级取不到时如实说明", bout3["autonomyLine"], "取不到")
+        if "0 条" in str(bout3["autonomyLine"]):
+            fails += 1
+            print("  FAIL  自治分级把取不到显示成 0 条")
+        else:
+            print("  PASS  自治分级不把取不到显示成 0 条")
 
         fails += has("首屏开关文案与控制层一致", out["masterState"],
                      "已关闭" if not payload.get("enabled") else "正在运行")

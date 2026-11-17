@@ -49,6 +49,18 @@ def load_pass_registry():
     return mod
 
 
+def auto_pass(pr, name, fn, **kw):
+    """构造一条「已显式转正」的 pass，等价于既有工序。
+
+    pass_registry 的默认是 `observe` + `inferred`（都最保守），所以想真正执行副作用
+    必须同时声明 `level=auto` 和 `authorization=explicit`。旧用例测的是「能执行」的
+    语义，因此用这个 helper 显式转正，而不是悄悄依赖默认值。
+    """
+    kw.setdefault("level", pr.MODE_AUTO)
+    kw.setdefault("authorization", pr.AUTH_EXPLICIT)
+    return pr.Pass(name, fn, **kw)
+
+
 def main():
     pr = load_pass_registry()
 
@@ -59,10 +71,10 @@ def main():
         raise RuntimeError("回收阶段炸了")
 
     reg = pr.Registry()
-    reg.register(pr.Pass("a", lambda: ran.append("a")))
-    reg.register(pr.Pass("b", boom))
-    reg.register(pr.Pass("c", lambda: ran.append("c")))
-    res = reg.run()  # 默认口径：每个 pass 按自己声明的等级（这里都是 auto）
+    reg.register(auto_pass(pr, "a", lambda: ran.append("a")))
+    reg.register(auto_pass(pr, "b", boom))
+    reg.register(auto_pass(pr, "c", lambda: ran.append("c")))
+    res = reg.run()  # 默认口径：每个 pass 按自己显式声明的等级（这里都是 auto+explicit）
     by = {r.name: r for r in res}
     check("异常隔离：后续 pass 仍然执行", ran == ["a", "c"], f"ran={ran}")
     check("异常隔离：a 是 ok", by["a"].status == "ok", by["a"].status)
@@ -92,15 +104,16 @@ def main():
     side2 = []
     reg2b = pr.Registry()
     reg2b.register(pr.Pass("semantic", lambda: side2.append("ran"),
-                           level=pr.MODE_PROPOSE))
+                           level=pr.MODE_PROPOSE,
+                           authorization=pr.AUTH_EXPLICIT))
     out2b = reg2b.run(override=pr.MODE_AUTO)
     check("显式 override=auto 才执行", side2 == ["ran"], f"side2={side2}")
     check("显式 override 后状态是 ok", out2b[0].status == "ok", out2b[0].status)
 
     # ---- 3. observe 与 propose 可区分（override 降权）----
     reg3 = pr.Registry()
-    reg3.register(pr.Pass("s1", lambda: "ran", level=pr.MODE_AUTO,
-                          propose_fn=lambda: "会做 Y"))
+    reg3.register(auto_pass(pr, "s1", lambda: "ran",
+                            propose_fn=lambda: "会做 Y"))
     prop = reg3.run(override=pr.MODE_PROPOSE)[0]
     obs = reg3.run(override=pr.MODE_OBSERVE)[0]
     check("propose 标 proposed（要给人看）", prop.status == "proposed", prop.status)
@@ -112,7 +125,8 @@ def main():
     # ---- 4. 预算统一检查：超预算不执行 ----
     called = []
     reg4 = pr.Registry(over_budget=lambda step: True)
-    reg4.register(pr.Pass("expensive", lambda: called.append(1), title="全量扫描"))
+    reg4.register(auto_pass(pr, "expensive", lambda: called.append(1),
+                            title="全量扫描"))
     out4 = reg4.run()[0]
     check("超预算：不执行 fn", called == [], f"called={called}")
     check("超预算：状态是 over_budget", out4.status == "over_budget", out4.status)
@@ -129,15 +143,16 @@ def main():
     order = []
     reg6 = pr.Registry()
     for name in ("route", "exec", "reap", "land"):
-        reg6.register(pr.Pass(name, (lambda n: (lambda: order.append(n)))(name)))
+        reg6.register(auto_pass(pr, name,
+                                (lambda n: (lambda: order.append(n)))(name)))
     reg6.run()
     check("执行顺序 = 注册顺序", order == ["route", "exec", "reap", "land"], f"{order}")
 
     # ---- 7. 名字重复必须报错 ----
     reg7 = pr.Registry()
-    reg7.register(pr.Pass("dup", lambda: None))
+    reg7.register(auto_pass(pr, "dup", lambda: None))
     try:
-        reg7.register(pr.Pass("dup", lambda: None))
+        reg7.register(auto_pass(pr, "dup", lambda: None))
         check("重名必须报错", False, "没报错")
     except ValueError:
         check("重名必须报错", True)
@@ -146,7 +161,8 @@ def main():
     order8 = []
     reg8 = pr.Registry()
     for name in ("x", "y", "z"):
-        reg8.register(pr.Pass(name, (lambda n: (lambda: order8.append(n)))(name)))
+        reg8.register(auto_pass(pr, name,
+                                (lambda n: (lambda: order8.append(n)))(name)))
     reg8.run(only=["z", "x"])
     check("only 过滤且保序", order8 == ["x", "z"], f"{order8}")
 
@@ -181,6 +197,67 @@ def main():
                             level=pr.MODE_PROPOSE))
     e2e_reg.run()
     check("端到端：默认口径下 propose 级 pass 零副作用", e2e_side == [], f"{e2e_side}")
+
+    # ---- 11. 声明默认值必须 fail-closed ----
+    # 新加的 pass 如果忘了声明等级/授权/副作用，必须落到最保守的一档：
+    # 只观察、授权来源按系统推断、副作用按最具破坏性处理。这样忘声明的后果是
+    # 「不执行」而不是「静默执行」，这是整套分级自治的安全底座。
+    default_pass = pr.Pass("undeclared", lambda: None)
+    check("默认 level 是 observe", default_pass.level == pr.MODE_OBSERVE,
+          default_pass.level)
+    check("默认 authorization 是 inferred",
+          default_pass.authorization == pr.AUTH_INFERRED, default_pass.authorization)
+    check("默认 effect 是 destructive",
+          default_pass.effect == pr.EFFECT_DESTRUCTIVE, default_pass.effect)
+
+    check("授权归一：垃圾值回 inferred",
+          pr.normalize_authorization("garbage") == pr.AUTH_INFERRED)
+    check("授权归一：大写可识别",
+          pr.normalize_authorization("EXPLICIT") == pr.AUTH_EXPLICIT)
+    check("副作用归一：垃圾值回 destructive（fail-closed）",
+          pr.normalize_effect("garbage") == pr.EFFECT_DESTRUCTIVE)
+    check("副作用归一：未知类型也回 destructive",
+          pr.normalize_effect(None) == pr.EFFECT_DESTRUCTIVE)
+
+    # ---- 12. inferred + destructive 即使 override=auto 也绝不执行 ----
+    # 这是「系统推断不能触发破坏性动作」的硬闸。override=auto 是显式升权，
+    # 但升的是「等级」不是「授权来源」，破坏性动作仍必须有人明确授权。
+    gate_side = []
+    gate_reg = pr.Registry()
+    gate_reg.register(pr.Pass("danger", lambda: gate_side.append("boom"),
+                              level=pr.MODE_OBSERVE,
+                              authorization=pr.AUTH_INFERRED,
+                              effect=pr.EFFECT_DESTRUCTIVE))
+    gate_out = gate_reg.run(override=pr.MODE_AUTO)[0]
+    check("inferred+destructive：override=auto 也不执行",
+          gate_side == [], f"gate_side={gate_side}")
+    check("inferred+destructive：状态是 proposed",
+          gate_out.status == "proposed", gate_out.status)
+
+    # 同一个 fn，只要授权来源换成 explicit，就能执行 —— 证明拦截点只在授权，
+    # 不是把这条 pass 永久锁死。
+    ok_side = []
+    ok_reg = pr.Registry()
+    ok_reg.register(pr.Pass("safe", lambda: ok_side.append("done"),
+                            level=pr.MODE_AUTO,
+                            authorization=pr.AUTH_EXPLICIT,
+                            effect=pr.EFFECT_DESTRUCTIVE))
+    ok_out = ok_reg.run()[0]
+    check("explicit+destructive：无 override 也执行",
+          ok_side == ["done"] and ok_out.status == "ok",
+          f"{ok_side} {ok_out.status}")
+
+    # 可逆动作不受这条闸门约束：inferred 的 route/checkpoint 类应能执行。
+    rev_side = []
+    rev_reg = pr.Registry()
+    rev_reg.register(pr.Pass("route", lambda: rev_side.append("routed"),
+                             level=pr.MODE_AUTO,
+                             authorization=pr.AUTH_INFERRED,
+                             effect=pr.EFFECT_REVERSIBLE))
+    rev_out = rev_reg.run()[0]
+    check("inferred+reversible：可逆动作放行执行",
+          rev_side == ["routed"] and rev_out.status == "ok",
+          f"{rev_side} {rev_out.status}")
 
     print()
     if failures:
