@@ -33,6 +33,7 @@ DISABLED_FILE = Path(
         str(Path.home() / ".codex" / "hooks" / "RESOURCE_ADMISSION_DISABLED"),
     )
 )
+<<<<<<< HEAD
 DEFAULT_MAX_LEASES = max(1, int(os.environ.get("CODEX_RESOURCE_ADMISSION_SLOTS", "2")))
 PRESSURE_MAX_LEASES = max(
     1,
@@ -41,6 +42,9 @@ PRESSURE_MAX_LEASES = max(
         int(os.environ.get("CODEX_RESOURCE_ADMISSION_PRESSURE_SLOTS", "1")),
     ),
 )
+=======
+MAX_LEASES = max(1, int(os.environ.get("CODEX_RESOURCE_ADMISSION_SLOTS", "2")))
+>>>>>>> codex/resource-admission-verify-narrowing-20261115
 MIN_FREE_GIB = float(os.environ.get("CODEX_RESOURCE_ADMISSION_MIN_FREE_GIB", "8"))
 # Heavy verification gates can also flood RAM before they fill the disk.
 # Keep this fail-open and only gate new heavy commands; never kill live work.
