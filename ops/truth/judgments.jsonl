@@ -1,1 +1,2 @@
 
+{"id": "J-0002", "ts": "2026-11-18 03:41:19", "type": "judgment", "title": "自动挡架构按“谁能改变事实”分平面，不按愿望数量加管家；全局健康只读，PM 不自动追问，验收截图不替人收口。", "statement": "自动挡架构按“谁能改变事实”分平面，不按愿望数量加管家；全局健康只读，PM 不自动追问，验收截图不替人收口。", "why": "DeepSeek Super-agent 与开源方案已把 Router/Worker/隔离 worktree/面板做成熟；继续平铺角色只会增加注意力成本。我们的价值应集中在可验证真相、落盘防丢失和首屏注意力纪律，并把不能自动化的部分清楚交还用户。", "scope": "product-architecture", "source": "agent", "status": "active"}
