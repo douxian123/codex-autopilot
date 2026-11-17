@@ -2113,7 +2113,14 @@ def _status_payload(fast=True):
     # 正常现场抬成警报——这里保持原语义，不动。
     blocked_n = len(failures)
     # 面板第 4 格「卡住」沿用原口径：failures + resolve + exec（port 仍只进明细面板）。
-    stuck_n = len(failures) + len(blocked) + len(st.get("exec_blocked") or {})
+    # `overlap_hold` 是排队让路，不是卡住：它在等前一条落地，下一拍就会重新判。
+    # 把它算进「卡住」会让正常调度把首屏抬成报警，用户白看一次不需要他处理的事。
+    exec_blocked_all = dict(st.get("exec_blocked") or {})
+    overlap_holds = {k: v for k, v in exec_blocked_all.items()
+                     if isinstance(v, dict) and v.get("reason") == "overlap_hold"}
+    exec_blocked_stuck = {k: v for k, v in exec_blocked_all.items()
+                          if k not in overlap_holds}
+    stuck_n = len(failures) + len(blocked) + len(exec_blocked_stuck)
     review_n = len(board["human"])
     stage = stage_table.panel_stage({
         "error": ctrl.get("error"),
@@ -2250,7 +2257,11 @@ def _status_payload(fast=True):
             "port": [{"branch": b, "reason": (v or {}).get("reason")}
                      for b, v in list(port_blocked.items())[:20]],
             "exec": [{"id": k, "reason": (v or {}).get("reason")}
-                     for k, v in list((st.get("exec_blocked") or {}).items())[:20]],
+                     for k, v in list(exec_blocked_stuck.items())[:20]],
+            "exec_waiting": [{"id": k, "reason": (v or {}).get("reason"),
+                              "holders": (v or {}).get("holders") or [],
+                              "files": (v or {}).get("files") or []}
+                             for k, v in list(overlap_holds.items())[:20]],
         },
         "resolve_tasks": rtasks[:20],
         "events": control_state.read_events(30),

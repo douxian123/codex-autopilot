@@ -211,6 +211,11 @@ def main():
         # 这条门禁同时锁住异常隔离、模式分级（auto/propose/observe）与预算统一。
         run([sys.executable, str(OPS / "test-pass-registry.py")],
             cwd=str(OPS.parent), check=True)
+        # 并发施工项的文件占地：两条需求声明改同一批文件时，后开工的那条必须
+        # 先排队等前一条落地，而不是各改一版、落盘时白干一条或变成语义冲突。
+        # 这条同时锁住「没有文件线索不做判断 / 自己不算自己的持有者」两个反向边界。
+        run([sys.executable, str(OPS / "test-exec-overlap.py")],
+            cwd=str(OPS.parent), check=True)
         # 归属判定：「万法归一」入口后面那一层。最容易腐化的形态不是「判错」而是
         # 「判不清时悄悄猜」——插件 .mcp.json 写死一个 KG_REPO，于是用户在 A 项目
         # 窗口里说 B 项目的事，记录照样落进 A（2026-11-16 用户实测的 bug）。
@@ -3391,6 +3396,83 @@ def test_auto_exec():
             raise AssertionError(f"成功路径不应留下 blocked: {blocked}")
         if git(repo, "branch", "--list", "codex/exec-*").stdout.strip():
             raise AssertionError("成功路径应回收执行分支")
+
+        # --- 文件占地：两条需求声明改同一批文件时，后一条先排队，前一条落地后自动开工 ---
+        # worktree 隔离只解决「同时写同一目录」，解决不了「同一件事做两遍」。这里用
+        # 台账里真实的 files 字段造重叠，断言三件事：后一条真的没开工、它记的是
+        # overlap_hold 而不是失败、前一条收口后它自动被放行并落成。
+        repo_o, trunk_o, home_o = fixture(base / "overlap")
+        with (repo_o / "ops" / "truth" / "ledger.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(_json.dumps({"id": "L-0002", "type": "ledger", "kind": "bug",
+                                  "title": "同一处再改一版", "status": "open",
+                                  "files": ["app.txt"],
+                                  "ts": "2026-01-02T00:00:00+08:00"},
+                                 ensure_ascii=False) + "\n")
+        # 让第一条也声明同一个文件（fixture 里的原行没有 files）。
+        with (repo_o / "ops" / "truth" / "ledger.jsonl").open("a", encoding="utf-8") as fh:
+            fh.write(_json.dumps({"id": "L-0001", "type": "ledger", "kind": "bug",
+                                  "title": "面板按钮点着没反应", "status": "open",
+                                  "files": ["app.txt"],
+                                  "ts": "2026-01-01T00:00:00+08:00"},
+                                 ensure_ascii=False) + "\n")
+        git(repo_o, "add", "ops/truth/ledger.jsonl")
+        git(repo_o, "commit", "-q", "-m", "two overlapping items")
+        # land 会要求本地 main 与 origin/main 对齐；这条 fixture 在 origin 建好之后
+        # 才追加了台账行，不推上去会让第一条死在 land_diverged，测的就不是闸门了。
+        git(repo_o, "push", "-q", "origin", "main")
+
+        per_wt = base / "fake-overlap.sh"
+        per_wt.write_text(
+            "#!/bin/sh\n"
+            "wt=\"\"\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  if [ \"$1\" = \"-C\" ]; then wt=\"$2\"; shift 2; else shift; fi\n"
+            "done\n"
+            "printf 'fake codex\\n' > \"$wt/$(basename \"$wt\").txt\"\n"
+            "exit 0\n", encoding="utf-8")
+        per_wt.chmod(0o755)
+        daemon_o = load_daemon(repo_o, trunk_o, home_o, per_wt)
+        blocked_o, workers_o = {}, {}
+        daemon_o.dispatch_exec(False, blocked_o, workers_o)
+        jobs_o = workers_o.get("exec_jobs") or {}
+        if "L-0001" not in jobs_o:
+            raise AssertionError(f"第一条没有开工: {jobs_o} blocked={blocked_o}")
+        if "L-0002" in jobs_o:
+            raise AssertionError(f"撞同一批文件的第二条也开了工: {jobs_o}")
+        hold_o = blocked_o.get("L-0002") or {}
+        if hold_o.get("reason") != "overlap_hold":
+            raise AssertionError(f"第二条没有记成排队让路: {blocked_o}")
+        if [h.get("id") for h in hold_o.get("holders") or []] != ["L-0001"]:
+            raise AssertionError(f"排队没有说清在等谁: {hold_o}")
+        if hold_o.get("files") != ["app.txt"]:
+            raise AssertionError(f"排队没有说清撞了哪个文件: {hold_o}")
+
+        results_o = []
+        for _ in range(200):
+            _r_o, workers_o = daemon_o.dispatch_exec(False, blocked_o, workers_o)
+            results_o.extend(_r_o)
+            if "L-0002" in (workers_o.get("exec_jobs") or {}):
+                break
+            if blocked_o.get("L-0002", {}).get("reason") not in (None, "overlap_hold"):
+                raise AssertionError(f"第二条没被放行，反而记成卡住: {blocked_o}")
+            _time.sleep(0.05)
+        if "L-0002" not in (workers_o.get("exec_jobs") or {}):
+            raise AssertionError(
+                f"前一条落地后第二条没有被自动放行: blocked={blocked_o} results={results_o}")
+        if ledger_latest(repo_o).get("L-0001", {}).get("status") != "done":
+            raise AssertionError(
+                f"第一条没有落成: {ledger_latest(repo_o)}\n"
+                f"blocked={blocked_o}\nresults={results_o}\n"
+                f"log={(home_o / 'daemon.log').read_text(encoding='utf-8')[-3000:]}")
+        for _ in range(200):
+            _r_o, workers_o = daemon_o.dispatch_exec(False, blocked_o, workers_o)
+            results_o.extend(_r_o)
+            if not (workers_o.get("exec_jobs") or {}):
+                break
+            _time.sleep(0.05)
+        if ledger_latest(repo_o).get("L-0002", {}).get("status") != "done":
+            raise AssertionError(
+                f"第二条排队后没有落成: {ledger_latest(repo_o)} {results_o}")
 
         # --- 失败路径：写了一半就崩，必须保留分支和 worktree，绝不能丢在途工作 ---
         repo_f, trunk_f, home_f = fixture(base / "fail")
