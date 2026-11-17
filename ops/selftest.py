@@ -226,6 +226,10 @@ def main():
         # 「需要你验收」，等于让用户当第一道测试——用户明确要求过这个顺序。
         run([sys.executable, str(OPS / "test-acceptance-selfcheck.py")],
             cwd=str(OPS.parent), check=True)
+        # 复核截图必须由人点确认、只追加附件、失败时不写假路径。
+        # 面板按钮和 MCP 工具都靠这条门禁守住边界，不能只做静态文案检查。
+        run([sys.executable, str(OPS / "test-acceptance-screenshot.py")],
+            cwd=str(OPS.parent), check=True)
         # 全局项目健康：只读聚合真相/执行/验收三层，取不到必须 unknown。
         # 这条同时锁住「空台账与文件缺失不同」「overlap 排队不是病」「待自验没人跑是真卡点」。
         run([sys.executable, str(OPS / "test-project-health.py")],
@@ -1744,10 +1748,19 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     assert "pmBriefingBox" in panel_text, "面板缺少 PM 简报容器"
     assert "renderPmBriefing" in panel_text, "面板未接 PM 简报渲染"
     assert "复核截图" in panel_text, "面板缺少复核截图展示"
+    assert "capture_acceptance_screenshot" in panel_text, \
+        "面板补图按钮没有接 MCP 工具"
+    assert "补一张复核截图" in panel_text, "面板缺少补图按钮"
+    assert "{id:a.id, confirm:true}" in panel_text, \
+        "面板补图按钮没有显式带 confirm=true"
 
     mcp = (root / "ops" / "central_mcp.py").read_text(encoding="utf-8")
     assert '"screenshots"' in mcp, "MCP 工具契约缺少 screenshots"
     assert "_pm_briefing_summary" in mcp, "MCP 状态未接 PM 简报"
+    assert '"name": "capture_acceptance_screenshot"' in mcp, \
+        "MCP 未注册 capture_acceptance_screenshot"
+    assert "SCREENSHOT_CONFIRM_REQUIRED" in mcp, \
+        "MCP 补图工具缺少显式确认闸门"
 
     truthctl = (root / "ops" / "truthctl.py").read_text(encoding="utf-8")
     assert "_split_screenshots" in truthctl and "_merge_screenshots" in truthctl, \

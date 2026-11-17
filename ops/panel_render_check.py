@@ -31,7 +31,7 @@ SHOT = REPO / "docs" / "panel-first-screen.png"
 
 WRAPPER = """<!doctype html><meta charset="utf-8">
 <style>html,body{margin:0;background:#fff}#f{width:560px;height:1500px;border:0;display:block}</style>
-<iframe id="f" src="panel.html"></iframe>
+<iframe id="f" src="panel.html__QUERY__"></iframe>
 <script>
 var payload = __PAYLOAD__;
 window.addEventListener("message", function(ev){
@@ -46,14 +46,23 @@ window.addEventListener("message", function(ev){
 setTimeout(function(){
   var d = document.getElementById("f").contentDocument;
   var out = {};
-  ["stateLabel","statusTime","projectLine","focusStatus","focusDoing","focusStep",
-   "hierProject","hierRoad","hierWork","sysLine"].forEach(function(id){
-    var n = d.getElementById(id);
-    out[id] = n ? n.textContent.trim() : "";
-      out["__body__"] = (d.body ? d.body.innerText : "");
-      var ns = d.getElementById("nativeState");
-      out["nativeState"] = ns ? ns.textContent.trim() : "";
+  if (__OPEN_FOLD__) {
+    var pmFold = d.getElementById("pmBriefingFold");
+    if (pmFold) pmFold.open = true;
+  }
+  __IDS__.forEach(function(id){
+    var domId = (id === "pmBriefingFoldOpen") ? "pmBriefingFold" : id;
+    var n = d.getElementById(domId);
+    if (id === "pmBriefingFoldOpen") {
+      out[id] = n ? ((n.open || n.hasAttribute("open")) ? "1" : "0") : "";
+    } else {
+      out[id] = n ? n.textContent.trim() : "";
+    }
   });
+  out["__body__"] = (d.body ? d.body.innerText : "");
+  out["bodyClass"] = d.body ? d.body.className : "";
+  var ns = d.getElementById("nativeState");
+  out["nativeState"] = ns ? ns.textContent.trim() : "";
   var pre = document.createElement("pre");
   pre.id = "panel-mirror";
   pre.style.display = "none";
@@ -62,6 +71,12 @@ setTimeout(function(){
 }, 5000);
 </script>
 """
+
+FIRST_SCREEN_IDS = [
+    "stateLabel", "statusTime", "projectLine", "focusStatus", "focusDoing",
+    "focusStep", "hierProject", "hierRoad", "hierWork", "sysLine",
+]
+ADV_SCREEN_IDS = FIRST_SCREEN_IDS + ["pmBriefingBox", "acceptBox", "pmBriefingFoldOpen"]
 
 
 def find_chromium():
@@ -141,38 +156,49 @@ def main(argv):
         print("面板 HTML 结构异常：没有 </body>")
         return 1
     (workdir / "panel.html").write_text(html, encoding="utf-8")
-    wrapper = workdir / "panel-harness.html"
-    wrapper.write_text(
-        WRAPPER.replace("__PAYLOAD__", json.dumps(payload, ensure_ascii=False)),
-        encoding="utf-8")
 
-    dom_proc = _run(chromium, workdir, ["--virtual-time-budget=9000", "--dump-dom",
+    def build_wrapper(name, state, query="", ids=None, open_fold=False):
+        path = workdir / name
+        path.write_text(
+            WRAPPER.replace("__QUERY__", query)
+                   .replace("__OPEN_FOLD__", "true" if open_fold else "false")
+                   .replace("__IDS__", json.dumps(ids or FIRST_SCREEN_IDS))
+                   .replace("__PAYLOAD__", json.dumps(state, ensure_ascii=False)),
+            encoding="utf-8")
+        return path
+
+    def render_snapshot(wrapper, label):
+        proc = _run(chromium, workdir, ["--virtual-time-budget=9000", "--dump-dom",
                                         "--allow-file-access-from-files",
                                         wrapper.as_uri()])
-    if not (dom_proc.stdout or "").strip() and dom_proc.returncode != 0:
-        candidates = find_chromium()
-        candidates = [c for c in candidates if c != chromium] if isinstance(candidates, list) else []
-        for fallback in candidates:
-            print(f"  ! {Path(chromium).name} 启动失败，改用 {Path(fallback).name} 重试")
-            dom_proc = _run(fallback, workdir, ["--virtual-time-budget=9000", "--dump-dom",
+        if not (proc.stdout or "").strip() and proc.returncode != 0:
+            candidates = find_chromium()
+            candidates = [c for c in candidates if c != chromium] if isinstance(candidates, list) else []
+            for fallback in candidates:
+                print(f"  ! {Path(chromium).name} 启动失败，改用 {Path(fallback).name} 重试")
+                proc = _run(fallback, workdir, ["--virtual-time-budget=9000", "--dump-dom",
                                                 "--allow-file-access-from-files",
                                                 wrapper.as_uri()])
-            if (dom_proc.stdout or "").strip():
-                break
-    dom = dom_proc.stdout or ""
-    import re
-    m = re.search(r'id="panel-mirror"[^>]*>(.*?)</pre>', dom, re.S)
-    snapshot = {}
-    if m:
-        raw = (m.group(1).replace("&quot;", '"').replace("&amp;", "&")
-               .replace("&lt;", "<").replace("&gt;", ">"))
-        try:
-            snapshot = json.loads(raw)
-        except Exception:
-            snapshot = {}
+                if (proc.stdout or "").strip():
+                    break
+        dom = proc.stdout or ""
+        m = re.search(r'id="panel-mirror"[^>]*>(.*?)</pre>', dom, re.S)
+        result = {}
+        if m:
+            raw = (m.group(1).replace("&quot;", '"').replace("&amp;", "&")
+                   .replace("&lt;", "<").replace("&gt;", ">"))
+            try:
+                result = json.loads(raw)
+            except Exception:
+                result = {}
+        if not result:
+            print(f"{label}没有渲染出快照（浏览器可能启动失败）。stderr 摘要：")
+            print((proc.stderr or "")[-600:])
+        return result, dom, proc
+
+    wrapper = build_wrapper("panel-harness.html", payload)
+    snapshot, dom, dom_proc = render_snapshot(wrapper, "首屏")
     if not snapshot:
-        print("面板没有渲染出快照（浏览器可能启动失败）。stderr 摘要：")
-        print((dom_proc.stderr or "")[-600:])
         return 1
 
     # 注入的 payload 和面板源码都在 <script> 里。比对前必须移除脚本，
@@ -265,6 +291,70 @@ def main(argv):
         else:
             print(f"  FAIL  {label}（期望文本：{expected!r}）")
             fails += 1
+
+    # 高级区不能靠改真实 payload 上屏，否则会把 PM 简报/截图塞进首屏。
+    # 这里用 fixture 单独渲染 ?adv=1 并展开 PM 折叠区，验证按钮和证据真的能上屏。
+    adv_payload = dict(payload)
+    adv_payload.update({
+        "state": "blocked",
+        "state_label": "需要你验收",
+        "need_action": "需要你验收：真实桌面验收",
+        "human_acceptance": [{
+            "id": "A-9001", "title": "真实桌面验收",
+            "steps": "1) 打开面板 2) 看复核截图",
+            "screenshots": ["/tmp/first.png"],
+        }],
+        "pm_briefing": {
+            "status": "attention",
+            "expectations": {
+                "status": "ok", "pending_count": 1, "active_count": 2,
+                "mainline_stage": "架构闭环",
+                "pending": [{"id": "CC-9001", "text": "绝不影响用户正在用的服务"}],
+                "active": [], "missing": [],
+            },
+            "overlap_holds": {
+                "status": "ok", "items": [{
+                    "id": "L-0021", "title": "撞文件的后开工项",
+                    "holders": [{"id": "L-0020"}], "files": ["ops/truthctl.py"],
+                }],
+                "note": "正常排队，不计入卡住；前一项落地后自动重算。",
+            },
+            "follow_up_candidates": {
+                "status": "ok", "items": [{
+                    "id": "L-0021", "idle_minutes": 90, "thread_id": "thread-abc",
+                }],
+                "note": "只生成候选，不会自动追问；你点头才会发消息。",
+                "missing": [],
+            },
+        },
+    })
+    adv_wrapper = build_wrapper(
+        "panel-adv-harness.html", adv_payload, query="?adv=1",
+        ids=ADV_SCREEN_IDS, open_fold=True)
+    adv_snapshot, _, _ = render_snapshot(adv_wrapper, "高级区")
+    if not adv_snapshot:
+        fails += 1
+    else:
+        print("Codex 自动挡 高级区渲染检查")
+        pm_box = str(adv_snapshot.get("pmBriefingBox") or "")
+        accept_box = str(adv_snapshot.get("acceptBox") or "")
+        adv_checks = [
+            ("高级区由 ?adv=1 打开", "adv" in str(adv_snapshot.get("bodyClass") or "")),
+            ("PM 简报折叠区实际展开", str(adv_snapshot.get("pmBriefingFoldOpen")) == "1"),
+            ("PM 简报上屏：待确认预期",
+             "待确认" in pm_box and "绝不影响用户正在用的服务" in pm_box),
+            ("PM 简报上屏：让路与追问候选",
+             "L-0021" in pm_box and "thread-abc" in pm_box),
+            ("人工验收上屏：复核截图与补图按钮",
+             "真实桌面验收" in accept_box and "/tmp/first.png" in accept_box
+             and "补一张复核截图" in accept_box),
+        ]
+        for label, ok in adv_checks:
+            if ok:
+                print(f"  PASS  {label}")
+            else:
+                print(f"  FAIL  {label}")
+                fails += 1
 
     if want_shot:
         # 不可变的发布目录里没有 docs/（源码仓才有）。截图是验证产物，不是源码：

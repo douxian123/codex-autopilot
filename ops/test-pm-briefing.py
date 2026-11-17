@@ -62,7 +62,8 @@ def main():
         check("台账缺失时整体 unknown", blank["status"] == "unknown", blank)
         check("台账缺失时预期 unknown",
               blank["expectations"]["status"] == "unknown"
-              and blank["expectations"]["pending_count"] is None,
+              and "constraints.jsonl" in blank["expectations"]["missing"]
+              and "mainline.json" in blank["expectations"]["missing"],
               blank["expectations"])
         check("台账缺失时追问 unknown",
               blank["follow_up_candidates"]["status"] == "unknown",
@@ -71,6 +72,42 @@ def main():
               blank["overlap_holds"]["status"] == "unknown"
               and "取不到" in blank["overlap_holds"]["note"],
               blank["overlap_holds"])
+
+        # native_routes.jsonl 是「派过活才有」的可选运行台账：从未派活的
+        # 干净项目本来就没有它。它缺失时应是 0 条绑定，不是探针坏掉；
+        # ledger.jsonl 缺失才继续保持 unknown，两者语义不同。
+        write_jsonl(truth / "ledger.jsonl", [])
+        seeded = pm_briefing.compute(repo, now=now)
+        check("只有原生路由台账缺失时追问为零条候选",
+              seeded["follow_up_candidates"]["status"] == "ok"
+              and seeded["follow_up_candidates"]["items"] == []
+              and "native_routes.jsonl" not in seeded["follow_up_candidates"]["missing"],
+              seeded["follow_up_candidates"])
+        write_jsonl(truth / "native_routes.jsonl", [])
+        seeded = pm_briefing.compute(repo, now=now)
+        check("空原生路由台账是零条候选",
+              seeded["follow_up_candidates"]["status"] == "ok"
+              and seeded["follow_up_candidates"]["items"] == [],
+              seeded["follow_up_candidates"])
+
+        # 候选台账同样只在守护扫到候选后才出现：首装缺它应是 0 条待确认，
+        # 不能因为「没生成过」就把 PM 简报整体压成 unknown。
+        write_jsonl(truth / "constraints.jsonl", [])
+        (truth / "mainline.json").write_text(json.dumps({
+            "stage": "首装", "current_focus": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        no_candidates = pm_briefing.compute(repo, now=now)
+        check("候选台账缺失是零条待确认",
+              no_candidates["expectations"]["status"] == "ok"
+              and no_candidates["expectations"]["pending_count"] == 0
+              and "constraint_candidates.jsonl" not in no_candidates["expectations"]["missing"],
+              no_candidates["expectations"])
+        write_jsonl(truth / "constraint_candidates.jsonl", [])
+        empty_candidates = pm_briefing.compute(repo, now=now)
+        check("空候选台账是零条待确认",
+              empty_candidates["expectations"]["status"] == "ok"
+              and empty_candidates["expectations"]["pending_count"] == 0,
+              empty_candidates["expectations"])
 
         write_jsonl(truth / "constraints.jsonl", [{
             "id": "C-0001", "status": "active",
