@@ -17,6 +17,7 @@
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -40,6 +41,15 @@ def load(name, filename, env):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def truthctl(repo, *args):
+    env = os.environ.copy()
+    env["KG_REPO"] = str(repo)
+    env["KG_TRUTH_ID_STATE_ROOT"] = str(repo.parent / "acceptance-route-ids")
+    return subprocess.run(
+        [sys.executable, str(OPS / "truthctl.py"), *args],
+        cwd=str(OPS.parent), env=env, capture_output=True, text=True)
 
 
 INBOX = [
@@ -134,6 +144,62 @@ def main():
         acc = briefing.get("acceptance_criteria") or {}
         check("PM 简报聚合验收标准候选", acc.get("status") == "ok", acc)
         check("PM 简报候选计数只读", acc.get("pending_count") == 0, acc)
+
+        # 规划层编译器与候选确认是两层：候选负责「要不要算验收项」，编译器负责
+        # 「worker 拿到工单后怎样逐条自证」。这里锁住完整链路：路由预演可见 ->
+        # --go 落 ledger -> 执行 prompt 带命令/cwd/退出码 -> 工单表只显示紧凑摘要。
+        (repo / "ops" / "central.config.json").write_text(
+            json.dumps({"verify": [
+                {"name": "acceptance-gate", "cmd": "python3 -m py_compile ops/truthctl.py",
+                 "cwd": "."}]}, ensure_ascii=False), encoding="utf-8")
+        (repo / "ops" / "tasks" / "inbox.jsonl").write_text(
+            json.dumps({"ts": "2026-11-18 13:00:00",
+                        "text": "面板点击后必须看到结果，刷新后也要保持",
+                        "files": ["plugin/ui/panel.html", "ops/truthctl.py"],
+                        "kind": "visual",
+                        "routed": False, "lane": None}, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        preview = truthctl(repo, "route")
+        check("路由预演成功", preview.returncode == 0, preview.stderr[-300:])
+        check("路由预演显示验收标准摘要",
+              "验收标准：机器" in preview.stdout and "人工" in preview.stdout,
+              preview.stdout[-400:])
+        routed = truthctl(repo, "route", "--go")
+        check("路由落账成功", routed.returncode == 0, routed.stderr[-300:])
+        led = [json.loads(line) for line in
+               (repo / "ops" / "truth" / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+               if line.strip()]
+        check("路由只新增一条工作项", len(led) == 1, led)
+        plan = (led[0].get("acceptance_plan") or {}) if led else {}
+        check("验收标准编译结果落进 ledger", plan.get("status") == "ok", plan)
+        check("编译器带项目配置门禁",
+              any(c.get("name") == "acceptance-gate" and c.get("cmd")
+                  for c in plan.get("machine_checks") or []), plan)
+        check("视觉需求带人工复核步骤", len(plan.get("human_checks") or []) >= 2, plan)
+        check("编译器没有代写验收台账",
+              len([line for line in acceptance.read_text(encoding="utf-8").splitlines()
+                   if line.strip()]) == 1, acceptance.read_text(encoding="utf-8"))
+
+        compiler = load("acceptance_compiler_t", "acceptance_criteria_compiler.py", {})
+        check("工单摘要只报条数不堆命令",
+              compiler.summary_label(plan) == "验收标准：机器 4 条 / 人工 2 条",
+              compiler.summary_label(plan))
+        env = {"KG_REPO": str(repo),
+               "KG_TRUTH_ID_STATE_ROOT": str(repo.parent / "acceptance-route-ids")}
+        dm = load("central_daemon_acceptance_t", "central_daemon.py", env)
+        prompt = dm._exec_prompt(led[0])
+        check("执行 prompt 带可判定验收标准", "可判定验收标准" in prompt, prompt[-500:])
+        check("执行 prompt 带命令与 cwd",
+              "acceptance-gate" in prompt and "cwd=" in prompt and "exit 0" in prompt,
+              prompt[-800:])
+        check("执行 prompt 要求写退出码", "退出码" in prompt, prompt[-500:])
+        check("执行 prompt 保留人工复核", "人工复核 1" in prompt, prompt[-500:])
+        cm = load("central_mcp_acceptance_t", "central_mcp.py", env)
+        work_rows = cm._work_rows("demo-project")
+        routed_row = next((r for r in work_rows if r.get("id") == led[0].get("id")), None)
+        check("工单行带验收标准摘要",
+              bool(routed_row) and routed_row.get("acceptance_summary")
+              == compiler.summary_label(plan), routed_row or work_rows[:1])
 
     print()
     if failures:

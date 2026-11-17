@@ -1930,6 +1930,7 @@ def _work_rows(project_name, limit=40):
     没有的证据字段留空，不用编的字符串填空。
     """
     import stage_table  # noqa: E402  只读纯函数，无副作用
+    import acceptance_criteria_compiler  # noqa: E402  只读纯函数，无副作用
 
     latest = {}
     for r in _read_jsonl(_truth_dir() / "ledger.jsonl"):
@@ -1970,6 +1971,8 @@ def _work_rows(project_name, limit=40):
             "stage": stage,
             "stage_label": stage_table.item_stage_label(stage),
             "evidence": evidence_text(rec, binding),
+            "acceptance_summary": acceptance_criteria_compiler.summary_label(
+                rec.get("acceptance_plan")),
         })
     for rec in acc_latest.values():
         if not (rec.get("needs_human") and rec.get("status") in ("todo", "wip", "blocked")):

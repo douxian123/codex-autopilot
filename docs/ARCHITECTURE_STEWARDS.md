@@ -18,7 +18,7 @@
 | 层 | 责任 | 我们的对应物 | 当前缺口 |
 |---|---|---|---|
 | 关系层 | 一个持续对话/入口维护目标、优先级、需要人的时机 | 唯一输入框、`ops/tasks/inbox.jsonl`、面板三问、`needs_human` 的人工验收队列 | 还没有把跨项目长期目标做成稳定关系对象 |
-| 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/exec_overlap.py`、`ops/acceptance_criteria.py`、observe/propose/auto 与 explicit/inferred 分级 | 候选已能生成可判定标准；语义仍停在候选，必须人确认后才进验收台账 |
+| 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/exec_overlap.py`、`ops/acceptance_criteria.py`、`ops/acceptance_criteria_compiler.py`、observe/propose/auto 与 explicit/inferred 分级 | 候选确认与路由编译已落地；编译器只产出工单自证计划，不创建验收项，也不替代人工确认 |
 | 执行层 | 隔离会话里并行研究/实现/验证，再做串行合流 | 路由/实现/合并/验收管家、独立 worktree、`kgctl land` 门禁、`ops/worker_lifecycle.py` 生命周期契约、`ops/exec_lifecycle.py` 生产接线 | 已接管真实派发；定时唤醒只写回入口，仍不直接开 worker |
 | 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、`ops/wake_resume.py`、`worker_lifecycle`、`ops/exec_lifecycle.py`、truth 台账、全局待路由箱、`project_health` | 到期唤醒、显式恢复、资源/工具白名单与逐 pass 授权审计已落地；Outcomes 式独立评分仍缺 |
 
@@ -100,6 +100,8 @@ PM 视角新增一层只读简报：把待确认预期、验收标准候选、�
 
 前半截是「什么算成」：`ops/acceptance_criteria.py` 从**已路由**的入口原话里识别明确验收信号（必须能、看到、跑通、测试通过、门禁等），提名可判定标准候选，并附原话、命中信号、建议复核步骤、是否建议机器门禁。候选只进 `acceptance_criteria_candidates.jsonl`，不写 `acceptance.jsonl`；重复原话和 `dismiss` 过的原话不再弹。人明确 `confirm=true` 后才调用 `truthctl accept` 登记 A-id，原话 hash 一并落进验收台账，候选文件丢失也不会让同一句话复发。
 
+规划层另有一条独立的确定性编译链，和候选确认互补：`ops/truthctl.py route` 在预演与落账时用 `ops/acceptance_criteria_compiler.py` 把已路由工作项编译成 `acceptance_plan`，写进 `ledger.jsonl`。它只从项目 `verify` 配置和文件线索推出能真跑的机器门禁（命令、cwd、`exit 0`）与必须人看的复核步骤；推不出可判定条件就如实写 `unknown`。`central_daemon._exec_prompt()` 读这份计划，要求执行者逐条写出命令、cwd 和退出码；`central_mcp._work_rows()` 与工程详情工单表只显示 `验收标准：机器 N 条 / 人工 M 条`，不把命令堆到首屏。编译器不创建 A-id、不写 `evidence`，也不把人工项伪装成机器 verdict。
+
 确认候选只是登记验收项，**不是验收通过**：人工项带复核步骤但没有 `evidence`，机器项也只建议真门禁。两者都不能被自动标成 `verified`，也不能直接进「需要你验收」。
 
 人工验收项只有 `needs_human=true` 还不够。若没有 `evidence`，它进入「待自验」，不进入「需要你验收」。`evidence` 必须是可复核的命令、cwd 和退出码；验收管家自己先把机器能跑的部分跑完，再把确实需要人的部分截图提醒用户。
@@ -155,6 +157,7 @@ PM 视角新增一层只读简报：把待确认预期、验收标准候选、�
 ## 已知边界
 
 - PM 管家的预期打磨已上屏为简报，但候选升成生效约束仍需人确认；这是有意的，避免一句自然语言直接进机器门禁全局污染。
+- 验收标准编译器只按项目配置和文件线索产出工单自证计划；推不出时保持 `unknown`，且不替代候选确认、人工验收或真跑门禁的证据。
 - 进度追问已能生成候选，但不会自动发消息；是否追问仍由人决定。
 - 全局健康目前是面板可见的只读结论，还没有在守护里自动触发修复；这是有意的，避免越过用户授权改配置或动工作进程。
 - 截图附件已能写入、透传、上屏，但系统不会自动截屏；真实桌面验收动作仍需用户或执行者提供截图路径，面板负责把附件展示出来。
