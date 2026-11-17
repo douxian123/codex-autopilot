@@ -329,6 +329,10 @@ def main():
         # 过的同句不再弹回）。
         run([sys.executable, str(OPS / "test-constraint-candidates.py")],
             cwd=str(OPS.parent), check=True)
+        # 验收管家：模糊预期必须先变成「怎么算完成」的候选，确认前不写验收台账；
+        # 人点头后登记 A-id，但仍不伪造 evidence，机器项要真门禁、人工项先自验。
+        run([sys.executable, str(OPS / "test-acceptance-criteria.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()
@@ -1750,6 +1754,14 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     pm_text = pm.read_text(encoding="utf-8")
     assert "follow_up_candidates" in pm_text, "PM 简报缺少追问候选契约"
     assert "不会自动追问" in pm_text, "PM 简报必须明示候选不是动作"
+    assert "acceptance_criteria" in pm_text, "PM 简报缺少验收标准候选契约"
+
+    acceptance = root / "ops" / "acceptance_criteria.py"
+    assert acceptance.is_file(), "发布树缺少 ops/acceptance_criteria.py"
+    acceptance_text = acceptance.read_text(encoding="utf-8")
+    assert "confirm" in acceptance_text and "不在这里伪造" in acceptance_text, \
+        "验收标准候选缺少显式确认与不伪造证据约束"
+    assert "routed" in acceptance_text, "验收标准候选没有沿用已路由入口闸门"
 
     panel_text = (root / "plugin" / "ui" / "panel.html").read_text(encoding="utf-8")
     assert "pmBriefingBox" in panel_text, "面板缺少 PM 简报容器"
@@ -1764,6 +1776,10 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     mcp = (root / "ops" / "central_mcp.py").read_text(encoding="utf-8")
     assert '"screenshots"' in mcp, "MCP 工具契约缺少 screenshots"
     assert "_pm_briefing_summary" in mcp, "MCP 状态未接 PM 简报"
+    assert "_acceptance_criteria_summary" in mcp, "MCP 状态未接验收标准候选"
+    for tool in ("acceptance_criteria_list", "acceptance_criteria_promote",
+                 "acceptance_criteria_dismiss"):
+        assert f'"name": "{tool}"' in mcp, f"MCP 未注册 {tool}"
     assert '"name": "capture_acceptance_screenshot"' in mcp, \
         "MCP 未注册 capture_acceptance_screenshot"
     assert "SCREENSHOT_CONFIRM_REQUIRED" in mcp, \
@@ -1772,7 +1788,9 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     truthctl = (root / "ops" / "truthctl.py").read_text(encoding="utf-8")
     assert "_split_screenshots" in truthctl and "_merge_screenshots" in truthctl, \
         "验收台账未接截图附件"
-    print(f"selftest ok: 发布包包含 PM 简报与验收截图通道，版本 {version}。")
+    assert "KG_TRUTH_SOURCE_HASH" in truthctl, \
+        "验收台账未记原话 hash，候选台账丢失后同一条会复发"
+    print(f"selftest ok: 发布包包含 PM 简报、验收标准候选与截图通道，版本 {version}。")
 
 
 def test_preview_check_contract():

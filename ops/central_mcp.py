@@ -192,6 +192,31 @@ def _constraint_candidates_summary():
     return {"status": "ok", "count": len(items), "items": items}
 
 
+def _acceptance_criteria_summary():
+    """验收管家：待用户点头的「可判定验收标准候选」（只读）。
+
+    候选从已路由原话里提名，确认前不进 acceptance.jsonl；确认后也只是登记
+    验收项，机器自证项仍需真门禁证据。取不到就说取不到，不用 0 冒充正常。
+    """
+    try:
+        import acceptance_criteria
+        rows = acceptance_criteria.pending()
+    except Exception as exc:
+        return {"status": "unknown", "reason": f"读不到验收标准候选（{exc!r}）",
+                "items": []}
+    items = [{
+        "id": r.get("id"),
+        "text": r.get("text"),
+        "title": r.get("title"),
+        "needs_human": bool(r.get("needs_human")),
+        "machine_gate_suggested": bool(r.get("machine_gate_suggested")),
+        "steps": r.get("steps") or "",
+        "signals": r.get("signals") or [],
+        "files": r.get("files") or [],
+    } for r in rows]
+    return {"status": "ok", "count": len(items), "items": items}
+
+
 def _project_health_summary(payload):
     """全局健康层：项目真相 / 执行流动 / 验收三层，只读聚合，不造第二套台账。
 
@@ -298,6 +323,7 @@ def _steward_health(payload):
     daemon = payload.get("daemon") or {}
     tune = payload.get("harness_tune") or {}
     cand = payload.get("constraint_candidates") or {}
+    acc_criteria = payload.get("acceptance_criteria") or {}
     harness_health = payload.get("harness_health") or {}
     project_health = payload.get("project_health") or {}
     queue = payload.get("queue") or {}
@@ -391,6 +417,13 @@ def _steward_health(payload):
     if self_check_n is None:
         rows.append({"key": "accept", "state": "unknown",
                      "label": "验收管家：待自验项读不到"})
+    elif acc_criteria.get("status") != "ok":
+        rows.append({"key": "accept", "state": "unknown",
+                     "label": "验收管家：验收标准候选取不到"})
+    elif acc_criteria.get("count"):
+        rows.append({"key": "accept", "state": "attention",
+                     "label": "验收管家：%s 条验收标准候选等你确认（未登记）"
+                     % acc_criteria.get("count")})
     elif self_check_n and not sw.get("auto_exec"):
         # 待自验却没人会去跑，是真实卡点，不是「正在处理」。
         rows.append({"key": "accept", "state": "attention",
@@ -1081,6 +1114,40 @@ TOOLS = [
             "type": "object",
             "properties": {
                 "id": {"type": "string", "description": "候选 id，如 CC-0001"},
+                "reason": {"type": "string", "description": "为什么不算（可选，仅留档）"},
+            },
+            "required": ["id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "acceptance_criteria_list",
+        "description": "验收管家：列出待确认的「可判定验收标准候选」。守护从已路由原话里提名“怎么算完成”，候选阶段不写验收台账、不伪造自验证据，也不会自动催用户。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "acceptance_criteria_promote",
+        "description": "验收管家：用户点头后，把一条验收标准候选登记成正式验收项（走 truthctl accept）。confirm=true 表示用户已明确同意；确认后仍需真门禁证据，机器自证项不会自动标 verified，人工项也不会自动催用户。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "候选 id，如 AC-0001"},
+                "confirm": {"type": "boolean", "description": "必须为 true：代表用户已明确同意"},
+                "needs_human": {"type": "boolean", "description": "是否必须人看；默认按候选建议"},
+                "steps": {"type": "string", "description": "复核步骤（可选，默认按原话生成）"},
+                "level": {"type": "string", "description": "优先级，如 P0 / P1"},
+            },
+            "required": ["id", "confirm"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "acceptance_criteria_dismiss",
+        "description": "验收管家：把一条验收标准候选标记为「不算」——不登记验收项，同一句原话以后也不会再弹回来。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "候选 id，如 AC-0001"},
                 "reason": {"type": "string", "description": "为什么不算（可选，仅留档）"},
             },
             "required": ["id"],
@@ -2463,6 +2530,7 @@ def _status_payload(fast=True):
         }),
         "harness_tune": _harness_tune_summary(),
         "constraint_candidates": _constraint_candidates_summary(),
+        "acceptance_criteria": _acceptance_criteria_summary(),
         "autonomy": _autonomy_summary(st),
         "mainline": _mainline_summary(),
         # fast=True 是面板/开关那条路：只读缓存，不连宿主，绝不因此变慢。
@@ -2692,6 +2760,7 @@ def call_tool(name, args):
         "dashboard", "autopilot_status", "render_autopilot_panel",
         "autopilot_settings_read", "codex_native_threads", "codex_native_probe",
         "harness_tune_list", "constraint_candidates_list",
+        "acceptance_criteria_list",
     }
     control_tools = {
         "autopilot_control", "autopilot_run_once",
@@ -2954,6 +3023,32 @@ def call_tool(name, args):
             res = constraint_candidates.promote(cid)
         else:
             res = constraint_candidates.dismiss(cid, args.get("reason") or "")
+        return json.dumps(res, ensure_ascii=False, indent=1), (
+            0 if res.get("status") != "error" else 2)
+    if name in ("acceptance_criteria_list", "acceptance_criteria_promote",
+                "acceptance_criteria_dismiss"):
+        import acceptance_criteria
+        if name == "acceptance_criteria_list":
+            rows = acceptance_criteria.pending()
+            if not rows:
+                return ("验收管家：当前没有待确认的验收标准候选。"
+                        "（验收台账一个字都没动）", 0)
+            return acceptance_criteria.human(), 0
+        cid = (args.get("id") or "").strip()
+        if not cid:
+            return f"{name} 需要 id（如 AC-0001）", 2
+        if name == "acceptance_criteria_promote":
+            # confirm 就是「人已明确同意」的语义；不点头绝不登记验收项，
+            # 更不会把候选直接标成 verified 或塞进「需要你验收」。
+            if not bool(args.get("confirm")):
+                return ("登记验收项必须由人明确点头：请带 confirm=true（或直接在面板上点确认）。"
+                        "候选本身不写验收台账，也不伪造证据。", 2)
+            res = acceptance_criteria.promote(
+                cid, confirm=True,
+                needs_human=args.get("needs_human"),
+                steps=args.get("steps") or "", level=args.get("level") or "")
+        else:
+            res = acceptance_criteria.dismiss(cid, args.get("reason") or "")
         return json.dumps(res, ensure_ascii=False, indent=1), (
             0 if res.get("status") != "error" else 2)
     if name == "suggest_branch":

@@ -413,7 +413,8 @@ def cmd_add(args):
                       status=os.environ.get('KG_TRUTH_STATUS', 'todo'),
                       needs_human=os.environ.get('KG_TRUTH_NEEDS_HUMAN', '') == '1',
                       steps=os.environ.get('KG_TRUTH_STEPS', ''),
-                      evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''))
+                      evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''),
+                      source_hash=os.environ.get('KG_TRUTH_SOURCE_HASH') or None)
     elif t == 'judgment':
         fields.update(statement=os.environ.get('KG_TRUTH_STATEMENT', '') or title,
                       why=os.environ.get('KG_TRUTH_WHY', ''),
@@ -497,6 +498,7 @@ def cmd_accept(args):
                       screenshots=_merge_screenshots(
                           [], screenshots or os.environ.get('KG_TRUTH_SHOTS', '')),
                       evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''),
+                      source_hash=os.environ.get('KG_TRUTH_SOURCE_HASH') or None,
                       lane=lane or os.environ.get('KG_TRUTH_LANE') or None,
                       files=_files(),
                       source=os.environ.get('KG_TRUTH_SOURCE', 'agent'))
