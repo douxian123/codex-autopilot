@@ -39,6 +39,11 @@ try:
 except Exception:  # pragma: no cover
     candidates_mod = None
 
+try:
+    import acceptance_criteria as acceptance_mod
+except Exception:  # pragma: no cover
+    acceptance_mod = None
+
 
 DEFAULT_STALE_MINUTES = 30
 ACTIVE_STATUSES = ("open", "doing", "todo", "wip", "blocked")
@@ -155,6 +160,33 @@ def _expectations(truth):
     }
 
 
+def _acceptance_criteria(truth):
+    """验收标准候选：从预期编译成标准，确认前不进验收台账。
+
+    这是可选运行台账，从未提名时缺文件等于「0 条候选」，不冒充探针坏掉；
+    读到了坏 JSON 才报 unknown。机器建议项仍需真门禁证据，候选不自动 verified。
+    """
+    path = truth / "acceptance_criteria_candidates.jsonl"
+    if not path.exists():
+        return {"status": "ok", "items": [], "pending_count": 0,
+                "note": "确认后才登记验收项；机器项仍需真门禁证据。"}
+    try:
+        rows = _latest(_read_jsonl(path))
+        pending = [r for r in rows.values() if r.get("status") == "proposed"]
+    except Exception:
+        return {"status": "unknown", "items": [], "pending_count": None,
+                "note": "验收标准候选取不到；不拿 0 冒充正常。"}
+    items = [{
+        "id": r.get("id"),
+        "text": _text(r.get("text") or r.get("title")),
+        "needs_human": bool(r.get("needs_human")),
+        "signals": r.get("signals") or [],
+        "files": [str(f) for f in (r.get("files") or [])][:6],
+    } for r in pending[:6]]
+    return {"status": "ok", "items": items, "pending_count": len(pending),
+            "note": "确认后才登记验收项；机器项仍需真门禁证据。"}
+
+
 def _overlap_holds(runtime):
     blocked = (runtime or {}).get("blocked")
     if not isinstance(blocked, dict) or "exec_waiting" not in blocked:
@@ -240,21 +272,25 @@ def compute(repo, runtime=None, now=None, stale_minutes=DEFAULT_STALE_MINUTES):
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     expectations = _expectations(truth)
+    acceptance = _acceptance_criteria(truth)
     overlap = _overlap_holds(runtime)
     follow_up = _follow_up(runtime, truth, now, stale_minutes)
-    statuses = [expectations["status"], overlap["status"], follow_up["status"]]
+    statuses = [expectations["status"], acceptance["status"],
+                overlap["status"], follow_up["status"]]
     if "unknown" in statuses:
         overall = "unknown"
-    elif expectations["pending_count"] or follow_up["items"]:
+    elif (expectations["pending_count"] or acceptance["pending_count"]
+          or follow_up["items"]):
         overall = "attention"
     else:
         overall = "ok"
     return {
         "status": overall,
         "expectations": expectations,
+        "acceptance_criteria": acceptance,
         "overlap_holds": overlap,
         "follow_up_candidates": follow_up,
-        "source": "只读聚合：constraints / candidates / mainline / ledger / native_routes / 运行面",
+        "source": "只读聚合：constraints / candidates / acceptance_criteria / mainline / ledger / native_routes / 运行面",
     }
 
 

@@ -102,6 +102,10 @@ def main():
               and no_candidates["expectations"]["pending_count"] == 0
               and "constraint_candidates.jsonl" not in no_candidates["expectations"]["missing"],
               no_candidates["expectations"])
+        check("验收标准候选缺失是零条待确认",
+              no_candidates["acceptance_criteria"]["status"] == "ok"
+              and no_candidates["acceptance_criteria"]["pending_count"] == 0,
+              no_candidates["acceptance_criteria"])
         write_jsonl(truth / "constraint_candidates.jsonl", [])
         empty_candidates = pm_briefing.compute(repo, now=now)
         check("空候选台账是零条待确认",
@@ -116,6 +120,11 @@ def main():
         write_jsonl(truth / "constraint_candidates.jsonl", [{
             "id": "CC-0001", "status": "proposed", "kind": "taboo",
             "text": "绝不影响用户正在用的服务",
+        }])
+        write_jsonl(truth / "acceptance_criteria_candidates.jsonl", [{
+            "id": "AC-0001", "status": "proposed", "needs_human": True,
+            "text": "落盘后必须能在面板看到闭环结果",
+            "signals": ["必须能", "看到"], "files": ["ops/kgctl.py"],
         }])
         (truth / "mainline.json").write_text(json.dumps({
             "stage": "架构闭环", "current_focus": ["PM 简报", "验收截图"],
@@ -146,6 +155,11 @@ def main():
               and "先自验" in exp["active"][0]["text"], exp)
         check("主线阶段进简报", exp["mainline_stage"] == "架构闭环", exp)
         check("PM 感知到待确认预期", brief["status"] == "attention", brief)
+        acc = brief["acceptance_criteria"]
+        check("验收标准候选进简报", acc["status"] == "ok"
+              and acc["pending_count"] == 1
+              and "闭环结果" in acc["items"][0]["text"], acc)
+        check("验收标准候选明示确认边界", "确认后才登记验收项" in acc["note"], acc)
 
         hold = brief["overlap_holds"]
         check("让路信号进简报", hold["status"] == "ok" and len(hold["items"]) == 1, hold)
