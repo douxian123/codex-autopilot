@@ -30,6 +30,7 @@ generation；`handed_back` 不能原地恢复，只能由路由层开新 worker�
   * `effect` 复用 pass_registry 的 read / proposal / reversible / destructive。
   * `inferred + destructive` 直接拒绝，和 pass_registry 的禁行线一致。
   * destructive 还必须有 `authorization_reason`，否则 fail-closed。
+  * worker 请求的 resources / tools 必须落在工单声明的 allowlist 内。
   * 每个 worker 只记自己的账本文件，worker_id 受白名单字符约束。
   * 事件带递增 seq；调用方可传 `expected_seq` 做乐观并发检查。
   * 账本损坏时抛 `LedgerCorrupt`，绝不把「读不懂」当成「没有任务」。
@@ -154,6 +155,27 @@ def normalize_spec(raw: Any) -> dict[str, Any]:
             raise LifecycleError(f"{key} 必须是数组")
         return tuple(str(x) for x in value)
 
+    resources = _string_tuple("resources")
+    tools = _string_tuple("tools")
+
+    def _allowlist(key: str, requested: tuple[str, ...]) -> tuple[str, ...]:
+        # 未显式声明时，沿用本次请求作为兼容边界；一旦工单给出 allowlist，
+        # 请求越界就在 start/resume 之前 fail-closed，绝不进入 Popen。
+        if key not in raw or raw.get(key) is None:
+            return requested
+        return _string_tuple(key)
+
+    allowed_resources = _allowlist("allowed_resources", resources)
+    allowed_tools = _allowlist("allowed_tools", tools)
+    over_resources = sorted(set(resources) - set(allowed_resources))
+    over_tools = sorted(set(tools) - set(allowed_tools))
+    if over_resources:
+        raise AuthorizationError(
+            "worker 请求了工单未授权的资源：" + ", ".join(over_resources))
+    if over_tools:
+        raise AuthorizationError(
+            "worker 请求了工单未授权的工具：" + ", ".join(over_tools))
+
     authorization = normalize_authorization(
         raw.get("authorization"), default=AUTH_INFERRED)
     effect = normalize_effect(raw.get("effect"), default=EFFECT_DESTRUCTIVE)
@@ -170,8 +192,10 @@ def normalize_spec(raw: Any) -> dict[str, Any]:
         "lane": lane,
         "worktree": str(raw.get("worktree") or "").strip(),
         "command": command,
-        "resources": list(_string_tuple("resources")),
-        "tools": list(_string_tuple("tools")),
+        "resources": list(resources),
+        "tools": list(tools),
+        "allowed_resources": list(allowed_resources),
+        "allowed_tools": list(allowed_tools),
         "authorization": authorization,
         "effect": effect,
         "authorization_reason": reason,

@@ -197,6 +197,7 @@ console.log(JSON.stringify({
   routeText: read("routeBox"),
   stewardBar: read("stewardBar"),
   autonomyLine: read("autonomyLine"),
+  autonomyAudit: read("autonomyAudit"),
   pmBriefingBox: read("pmBriefingBox") + " " + document.getElementById("pmBriefingBox").innerHTML,
 }));
 """
@@ -564,6 +565,30 @@ def main(argv):
             print("  FAIL  自治分级把取不到显示成 0 条")
         else:
             print("  PASS  自治分级不把取不到显示成 0 条")
+        fails += has("逐条授权来源取不到时如实说明", bout3["autonomyAudit"],
+                     "逐条授权来源", "取不到")
+        # 逐条审计必须来自 last_passes，不让面板自己重算第二套真相；
+        # 首屏只留摘要，明细放工程详情折叠区，避免把内部读数糊到读者面。
+        audit_passes = [
+            {"name": "exec", "mode": "auto", "status": "ok",
+             "authorization": "explicit", "effect": "destructive"},
+            {"name": "route", "mode": "observe", "status": "proposed",
+             "authorization": "inferred", "effect": "reversible"},
+        ]
+        audit_summary = central_mcp._autonomy_summary(
+            {"last_passes": audit_passes})
+        if len(audit_summary.get("passes") or []) != len(audit_passes):
+            fails += 1
+            print("  FAIL  自治摘要没有原样带出逐条工序")
+        else:
+            print("  PASS  自治摘要原样带出逐条工序")
+        audit = dict(payload)
+        audit["autonomy"] = audit_summary
+        aout = run_once(audit)
+        fails += has("逐条授权来源上屏", aout["autonomyAudit"],
+                     "逐条授权来源", "exec", "明确授权", "破坏性")
+        fails += has("逐条授权来源不丢观察项", aout["autonomyAudit"],
+                     "route", "观察", "系统推断", "可逆", "待转正")
 
         # PM 简报：预期、让路、追问候选必须来自控制层聚合，面板只照抄。
         # 这里同时锁住两个反向边界：缺失时不说 0 / 正常；候选只展示，不自动发消息。
