@@ -395,8 +395,14 @@ def main(argv):
         fails += has("冲突暂缓给放宽闸门的入口", bout["blockedList"], "放宽闸门再拆一次")
         fails += has("卡点写明不点的后果", bout["blockedList"], "不点就继续")
         bempty = dict(payload)
-        bempty["blocked"] = {"failures": [], "resolve": [], "exec": [], "port": []}
-        bempty["error"] = None
+        bempty.update({
+            "blocked": {"failures": [], "resolve": [], "exec": [], "port": []},
+            "error": None,
+            # 这三块共用 blockedList：不清空现场候选，空态断言会被真候选污染，
+            # 上一次 land 因此在 trunk 上假红。逐项清空后才是确定性的空态夹具。
+            "harness_tune": {"status": "ok", "count": 0, "items": []},
+            "constraint_candidates": {"status": "ok", "count": 0, "items": []},
+        })
         beout = run_once(bempty)
         fails += has("没有卡点时给出空态说明",
                      beout["blockedList"] or beout["blockedHtml"], "没有需要你决策的")
