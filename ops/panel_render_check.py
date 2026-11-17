@@ -214,11 +214,28 @@ def main(argv):
             return False
         return any(text in v for v in snapshot.values())
 
+    # 面板的「正在做什么」有固定优先级：人工验收 > 自动实现 > 工作项 > 卡点 >
+    # 控制层 doing。门禁必须照同一优先级算期望，并只核对 focusDoing；
+    # 在全文里搜字符串会放过「期望文案出现在别处、真正的位置却错了」。
+    def expected_doing_text(state):
+        human = state.get("human_acceptance") or []
+        if human:
+            return "等待你验收：" + (human[0].get("title") or "人工验收")
+        exec_now = state.get("exec_now")
+        if exec_now:
+            return ((exec_now.get("id") + " · ") if exec_now.get("id") else "") + \
+                   (exec_now.get("title") or "正在自动实现")
+        doing_items = state.get("doing_items") or []
+        if doing_items:
+            return doing_items[0].get("title") or doing_items[0].get("detail") or \
+                   "正在处理工作项"
+        blocked = state.get("blocked") or {}
+        if any(blocked.get(k) for k in ("failures", "resolve", "exec")):
+            return "等待处理卡点"
+        return state.get("doing") or "当前没有进行中的工作"
+
     def visible_doing(text):
-        if not text:
-            return False
-        return any(text in v or f"等待你验收：{text}" in v
-                   or f"需要你验收：{text}" in v for v in snapshot.values())
+        return str(snapshot.get("focusDoing") or "").strip() == text
 
     checks = [
         ("首屏显示绑定项目名", project.get("name")),
@@ -229,10 +246,8 @@ def main(argv):
         ("首屏显示上下文健康结论",
          (payload.get("harness_health") or {}).get("headline")
          or ("上下文健康：" + ((payload.get("harness_health") or {}).get("reason") or "取不到"))),
-        # 三问②的显示优先级：需要人行动的最优先（与 J-0001 一致）——
-        # 有人工验收时显示验收项，否则显示正在做的事。
-        ("首屏显示正在做什么", (payload.get("human_acceptance") or [{}])[0].get("title")
-         if payload.get("human_acceptance") else payload.get("doing")),
+        # 三问②的显示优先级与 plugin/ui/panel.html setFocusAnswers 一致。
+        ("首屏显示正在做什么", expected_doing_text(payload)),
         ("首屏显示原生直连结论", (payload.get("native") or {}).get("label")),
         ("有「项目文件夹」区块", "项目文件夹"),
         ("有「需要你介入」区块", "需要你介入"),
