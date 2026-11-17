@@ -215,6 +215,8 @@ console.log(JSON.stringify({
   autonomyLine: read("autonomyLine"),
   autonomyAudit: read("autonomyAudit"),
   pmBriefingBox: read("pmBriefingBox") + " " + document.getElementById("pmBriefingBox").innerHTML,
+  relationshipGoalsBox: read("relationshipGoalsBox") + " "
+    + document.getElementById("relationshipGoalsBox").innerHTML,
 }));
 """
 
@@ -695,6 +697,34 @@ def main(argv):
         pm_missing = run_once(dict(payload, pm_briefing=None))
         fails += has("PM 简报缺失时如实说取不到",
                      pm_missing["pmBriefingBox"], "取不到")
+
+        # 关系层：跨项目长期目标在高级区折叠展示。它必须照抄控制层摘要，
+        # 缺失时说取不到，不能把 G-id / 优先级 / 需要人的原因藏在首屏。
+        rel_payload = dict(payload)
+        rel_payload["relationship_goals"] = {
+            "status": "ok", "level": "attention", "count": 1,
+            "needs_human_count": 1,
+            "headline": "跨项目目标 1 条，其中 1 条需要人判断",
+            "note": "只记录你显式登记的目标；不会自动派活，也不会替你决定优先级。",
+            "items": [{
+                "id": "G-9001",
+                "title": "把自动挡做成长期可信的个人助理",
+                "priority": "high", "status": "waiting_human",
+                "projects": ["codex-autopilot", "personal-memory"],
+                "needs_human": True, "reason": "等用户判断要不要改产品方向",
+                "updated_at": "2026-11-18T00:00:00Z",
+            }],
+        }
+        rel_out = run_once(rel_payload)
+        fails += has("关系层摘要上屏", rel_out["relationshipGoalsBox"],
+                     "跨项目目标", "G-9001", "codex-autopilot")
+        fails += has("关系层需要人原因上屏", rel_out["relationshipGoalsBox"],
+                     "需要人", "等用户判断要不要改产品方向")
+        fails += has("关系层明示不派活", rel_out["relationshipGoalsBox"],
+                     "不会自动派活")
+        rel_missing = run_once(dict(payload, relationship_goals=None))
+        fails += has("关系层缺失时如实说取不到",
+                     rel_missing["relationshipGoalsBox"], "取不到")
 
         fails += has("首屏开关文案与控制层一致", out["masterState"],
                      "已关闭" if not payload.get("enabled") else "正在运行")
