@@ -18,11 +18,7 @@
 | 层 | 责任 | 我们的对应物 | 当前缺口 |
 |---|---|---|---|
 | 关系层 | 一个持续对话/入口维护目标、优先级、需要人的时机 | 唯一输入框、`ops/tasks/inbox.jsonl`、面板三问、`needs_human` 的人工验收队列 | 还没有把跨项目长期目标做成稳定关系对象 |
-<<<<<<< HEAD
-| 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/exec_overlap.py`、`ops/acceptance_criteria.py`、observe/propose/auto 与 explicit/inferred 分级 | 候选已能生成可判定标准；语义仍停在候选，必须人确认后才进验收台账 |
-=======
-| 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/acceptance_criteria.py`、`ops/exec_overlap.py`、observe/propose/auto 与 explicit/inferred 分级 | 路由时能编译出机器门禁与人工复核；推不出时如实标 `unknown`，不冒充完成 |
->>>>>>> codex/acceptance-criteria-compiler-20261118
+| 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/acceptance_criteria.py`、`ops/exec_overlap.py`、observe/propose/auto 与 explicit/inferred 分级 | 候选提名不冒充门禁；路由时确定性编译机器门禁与人工复核，推不出时如实标 `unknown`，人确认后才进验收台账 |
 | 执行层 | 隔离会话里并行研究/实现/验证，再做串行合流 | 路由/实现/合并/验收管家、独立 worktree、`kgctl land` 门禁、`ops/worker_lifecycle.py` 生命周期契约、`ops/exec_lifecycle.py` 生产接线 | 已接管真实派发；定时唤醒只写回入口，仍不直接开 worker |
 | 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、`ops/wake_resume.py`、`worker_lifecycle`、`ops/exec_lifecycle.py`、truth 台账、全局待路由箱、`project_health` | 到期唤醒、显式恢复、资源/工具白名单与逐 pass 授权审计已落地；Outcomes 式独立评分仍缺 |
 

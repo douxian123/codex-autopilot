@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-<<<<<<< HEAD
 """回归：模糊预期先编译成可判定验收标准候选，确认前不进验收台账。
 
 此前验收链只有 `acceptance.jsonl` 登记和「先自验再请人看」闸门，缺了前半截：
@@ -18,13 +17,19 @@
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
+REPO = OPS.parent
 failures = []
+
+# 编译器回归与候选闭环共用同一模块实例，避免两套导入口径。
+sys.path.insert(0, str(OPS))
+import acceptance_criteria as ac  # noqa: E402
 
 
 def check(label, cond, detail=""):
@@ -41,6 +46,23 @@ def load(name, filename, env):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def read_jsonl(path):
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()]
+
+
+def make_state_root(base):
+    root = base / "project"
+    (root / "ops" / "tasks").mkdir(parents=True)
+    (root / "ops" / "truth").mkdir(parents=True)
+    for rel in ("ops/tasks/inbox.jsonl", "ops/truth/ledger.jsonl",
+                "ops/truth/progress.jsonl", "ops/truth/decisions.jsonl",
+                "ops/truth/acceptance.jsonl"):
+        (root / rel).write_text("", encoding="utf-8")
+    (root / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+    return root
 
 
 INBOX = [
@@ -146,60 +168,7 @@ def main():
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
-=======
-"""回归：模糊需求必须在路由时编译成可判定验收标准，并被执行/面板消费。
-
-它锁住四件事：
-  1) 编译器是确定性的，机器门禁落到 name + cmd + cwd + exit 0；
-  2) 视觉/交互需求必须带人工复核的通过条件，不能只写「看一眼」；
-  3) truthctl route --go 把标准写进 ledger，归并时不覆盖已有标准；
-  4) 执行 prompt 与面板工单表都只读这份标准，不各自重新解释「做完」。
-"""
-
-import json
-import os
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
-
-OPS = Path(__file__).resolve().parent
-REPO = OPS.parent
-sys.path.insert(0, str(OPS))
-
-import acceptance_criteria as ac  # noqa: E402
-
-FAILS = []
-
-
-def check(label, ok, detail=""):
-    if ok:
-        print(f"  ok   {label}")
-    else:
-        FAILS.append(label)
-        print(f"  FAIL {label}" + (f"（{detail}）" if detail else ""))
-
-
-def read_jsonl(path):
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()]
-
-
-def make_state_root(base):
-    root = base / "project"
-    (root / "ops" / "tasks").mkdir(parents=True)
-    (root / "ops" / "truth").mkdir(parents=True)
-    for rel in ("ops/tasks/inbox.jsonl", "ops/truth/ledger.jsonl",
-                "ops/truth/progress.jsonl", "ops/truth/decisions.jsonl",
-                "ops/truth/acceptance.jsonl"):
-        (root / rel).write_text("", encoding="utf-8")
-    (root / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
-    return root
-
-
-def main():
+def _routing_compiler_regressions():
     # ---- 1) 纯函数编译：命令可跑、cwd 明确、通过条件是 exit 0 ----
     cfg = {"verify": [{"name": "unit", "cmd": "python3 -m unittest discover", "cwd": "."}]}
     criteria = ac.compile_criteria(
@@ -317,11 +286,17 @@ def main():
               len(after) == 1 and after[0].get("acceptance_criteria", {}).get("status")
               == "existing", json.dumps(after, ensure_ascii=False))
 
-    return len(FAILS)
+def _run_routing_compiler_regressions():
+    failures = _routing_compiler_regressions()
+    if failures:
+        raise AssertionError(f"acceptance-criteria routing compiler: {failures} 项未通过")
 
 
 if __name__ == "__main__":
     code = main()
-    print(f"\nacceptance-criteria: {'PASS' if code == 0 else str(code) + ' 项未通过'}")
+    try:
+        _run_routing_compiler_regressions()
+    except AssertionError as exc:
+        print(f"FAIL {exc}")
+        code = max(1, code)
     raise SystemExit(code)
->>>>>>> codex/acceptance-criteria-compiler-20261118

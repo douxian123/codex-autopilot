@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-<<<<<<< HEAD
 """acceptance_criteria —— 验收管家的「标准候选」（stdlib only）。
 
 用户提出的完整链路是：先确认预期，再把预期编译成可判定验收标准，自己跑完
@@ -15,22 +14,14 @@
 的候选制：只扫已路由的入口原话，命中明确验收信号才提名；人显式确认后才调用
 `truthctl accept` 登记验收项。候选阶段不写 `acceptance.jsonl`，promote 时也不
 写 evidence / screenshots，机器自证项仍要真门禁补证据。
-=======
-"""把模糊需求编译成可判定验收标准（stdlib only）。
 
-这不是让模型再写一句“验收通过”，而是路由层的确定性编译：
-
-  * 机器门禁必须落到 `name + cmd + cwd + pass_condition=exit 0`，由项目配置和文件线索推导；
-  * 人工复核必须落到“打开哪里、看什么、什么算通过”，只用于视觉/交互/语义项；
-  * 推不出任何可判定条件时返回 `unknown`，绝不编一个“通过”出来。
-
-编译结果挂在问题台账 `acceptance_criteria` 字段；执行 prompt 与工程详情工单表只读它。
->>>>>>> codex/acceptance-criteria-compiler-20261118
+它同时提供路由层的确定性编译：机器门禁必须落到
+`name + cmd + cwd + pass_condition=exit 0`，人工复核必须写清打开哪里、看什么、什么算通过；
+推不出任何可判定条件时返回 `unknown`，绝不冒充完成。
 """
 
 from __future__ import annotations
 
-<<<<<<< HEAD
 import argparse
 import hashlib
 import json
@@ -336,10 +327,6 @@ def main(argv=None) -> int:
             print(f"[{res.get('status')}] {res.get('reason') or res.get('status')}")
     return 2 if res.get("status") == "error" else 0
 
-
-if __name__ == "__main__":
-    sys.exit(main())
-=======
 import shlex
 from pathlib import Path
 from typing import Any
@@ -508,4 +495,6 @@ def render_for_prompt(criteria: Any) -> list[str]:
     if lines and len(lines) == 1:
         lines.append("- 当前没有推导出可判定条件；先补文件线索或验收标准，不许自己宣布完成。")
     return lines
->>>>>>> codex/acceptance-criteria-compiler-20261118
+
+if __name__ == "__main__":
+    sys.exit(main())
