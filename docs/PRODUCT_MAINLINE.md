@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-18 04:22:21　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-18 04:58:34　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -33,7 +33,7 @@
 - **视觉/设计方案提示词**：做视觉/设计前先当产品经理+产品设计师，尊重用户、保护注意力：先截图看现状再改，改完再截图对比，只允许正向改动，不能更丑、更乱、更难读。
 - **两平面架构**：用户仍从唯一输入框提需求；项目真相面负责预期、验收和是否值得打扰人，执行面负责路由、实现、合并与 harness 状态；全局健康只读聚合事实，不派活、不改配置、不替任何平面做决定。
 - **PM 管家**：PM 管家只读聚合待确认预期、已生效约束、主线阶段、让路工作项和追问候选；文件占地重复时让新项排队且保留未知，不自动发追问，不替用户决定方向、删数据或发布。
-- **验收管家**：人工验收项先由机器跑真实验证，只有带可复核命令、cwd、退出码的项才进入“需要你验收”；用户点击后才会调系统截图器补复核附件，补图只追加附件，不替用户收口。
+- **验收管家**：从已路由原话提名可判定验收标准候选；人确认后才登记验收项，机器项仍需真门禁证据，人工项先自验再提醒。
 - **全局项目健康**：全局健康从真相层、执行层和验收层已有事实聚合为 attention/unknown/off/ok 四态；取不到就说取不到，正常排队不报警，不新建分数台账，也不自动触发修复。
 
 ## 决策脉络
@@ -46,6 +46,7 @@
 - [已落盘] @ 89c79304e6 codex/runtime-lifecycle-dispatch-20261118 验证门禁通过，已落盘 main @ 89c79304e6；改动 6 个文件：docs/ARCHITECTURE_STEWARDS.md（+9/-4）、ops/SAFETY_GATES.md（+12/-0）、ops/central_daemon.py（+127/-54）、ops/exec_lifecycle.py（+235/-0）、ops/selftest.py（+1/-0），另有 1 个文件｜6 files changed, 620 insertions(+), 58 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 36400c9350 codex/truth-close-pm-truth-closure-20261118 验证门禁通过，已落盘 main @ 36400c9350；改动 6 个文件：docs/PRODUCT_MAINLINE.md（+5/-4）、ops/truth/constraints.jsonl（+2/-0）、ops/truth/decisions.jsonl（+1/-0）、ops/truth/judgments.jsonl（+1/-0）、ops/truth/ledger.jsonl（+1/-0），另有 1 个文件｜6 files changed, 13 insertions(+), 4 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0004、A-0005
 - [已落盘] @ 4216556b40 codex/runtime-wake-resume-20261118 验证门禁通过，已落盘 main @ 4216556b40；改动 6 个文件：docs/ARCHITECTURE_STEWARDS.md（+21/-3）、ops/SAFETY_GATES.md（+14/-1）、ops/central_daemon.py（+50/-1）、ops/selftest.py（+1/-0）、ops/test-wake-resume.py（+189/-0），另有 1 个文件｜6 files changed, 928 insertions(+), 5 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ 7eb536d25b codex/truth-dedupe-pm-closure-20261118 验证门禁通过，已落盘 main @ 7eb536d25b；改动 4 个文件：ops/kgctl.py（+4/-2）、ops/selftest.py（+5/-0）、ops/test-truth-dedupe.py（+194/-0）、ops/truthctl.py（+27/-5）｜4 files changed, 230 insertions(+), 7 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
@@ -58,6 +59,8 @@
 - `A-0005` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0006` [P1] codex/runtime-wake-resume-20261118 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0068` [P1] codex/truth-dedupe-pm-closure-20261118 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
@@ -85,11 +88,12 @@
 - `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0005` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0006` [P1] codex/runtime-wake-resume-20261118 落盘验收
+- `A-0068` [P1] codex/truth-dedupe-pm-closure-20261118 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：1 条
-- 累计落盘：4 条
+- 累计落盘：5 条
 - 未决问题：8 条
-- 已验收：5 条
+- 已验收：6 条
 

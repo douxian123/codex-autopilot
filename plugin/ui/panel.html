@@ -980,6 +980,7 @@
       return;
     }
     var exp = pb.expectations || {};
+    var ac = pb.acceptance_criteria || {};
     var hold = pb.overlap_holds || {};
     var follow = pb.follow_up_candidates || {};
     var list = document.createElement("ul"); list.className = "list";
@@ -989,6 +990,13 @@
     pmRow(list, "预期", expText);
     (exp.pending || []).slice(0, 2).forEach(function(r){
       pmRow(list, "待确认", r.text || r.id || "（无文案）");
+    });
+    var acItems = ac.items || [];
+    pmRow(list, "验收标准", pmCount(ac.status === "ok" ? ac.pending_count : null)
+      + " 条候选 · " + (ac.note || "验收标准候选取不到"));
+    acItems.slice(0, 2).forEach(function(r){
+      pmRow(list, r.id || "候选", (r.needs_human ? "需要人看 · " : "先跑门禁 · ")
+        + (r.text || "（无文案）"));
     });
     var holdItems = hold.items || [];
     pmRow(list, "让路", pmCount(hold.status === "ok" ? holdItems.length : null)
@@ -1768,6 +1776,18 @@
         why:"命中信号：" + sig + "；适用范围：" + scope +
           "。点「算」会把它收进项目规范，之后落盘门禁与执行者都按它办事；点「不算」这条不再出现，什么都不生效。"});
     });
+    // 验收管家提出的验收标准候选：先把“怎么算完成”编译成可判定标准，但确认前
+    // 不写验收台账；确认后也只登记验收项，机器项仍要真门禁证据，人工项先自验。
+    var ac = s.acceptance_criteria || {};
+    (ac.items || []).forEach(function(x){
+      var who = x.needs_human ? "需要人看" : "先跑门禁自证";
+      var sig = (x.signals && x.signals.length) ? x.signals.join("、") : "预期信号";
+      items.push({tag:"待你确认", cls:"warn",
+        text:(x.id||"") + " · " + (x.text||x.title||""),
+        act:"acceptance", id:x.id,
+        why:"建议：" + who + "；命中信号：" + sig +
+          "。点「确认成验收项」只登记验收项，不写证据；机器项仍要真门禁，人工项先自验才提醒你。点「不算」这条不再出现，验收台账什么都不写。"});
+    });
     if (s.error) items.unshift({tag:"异常", cls:"err", text:s.error, act:"retry",
       why:"点它会立刻让自动挡再检查一轮（不改代码、不动 main）；不点就继续停在异常。"});
     if (!items.length){ ul.innerHTML = '<div class="empty">没有需要你决策的，也没有异常。</div>'; return; }
@@ -1788,26 +1808,36 @@
     var row = document.createElement("div"); row.className = "accact";
     var msg = document.createElement("span"); msg.className = "accmsg";
     msg.textContent = it.why || "点它会推进一步；不点就继续挂着。";
-    // 约束候选有两个方向：收进规范 / 明确不算。其余卡点只有单一出口，照旧一个按钮。
-    if (it.act === "constraint"){
+    // 约束候选 / 验收标准候选都有两个方向：确认 / 明确不算。
+    // 其余卡点只有单一出口，照旧一个按钮。
+    if (it.act === "constraint" || it.act === "acceptance"){
       var yes = document.createElement("button");
       yes.className = "btn primary"; yes.type = "button"; yes.textContent = "算，收进规范";
       var no = document.createElement("button");
       no.className = "btn"; no.type = "button"; no.textContent = "不算";
+      if (it.act === "acceptance") yes.textContent = "确认成验收项";
       var ring = document.createElement("span");
       ring.className = "accbtns";
       ring.appendChild(yes); ring.appendChild(no);
       yes.addEventListener("click", function(){
         yes.disabled = true; no.disabled = true; yes.textContent = "正在收…";
-        callTool("constraint_candidate_promote", {id: it.id, confirm: true})
-          .then(function(){ toast("已收进项目规范，之后按它办事", "ok"); return loadStatus(false); })
+        var call = it.act === "acceptance"
+          ? callTool("acceptance_criteria_promote", {id: it.id, confirm: true})
+          : callTool("constraint_candidate_promote", {id: it.id, confirm: true});
+        call.then(function(){
+          toast(it.act === "acceptance" ? "已登记验收项，证据仍需真跑" : "已收进项目规范，之后按它办事", "ok");
+          return loadStatus(false);
+        })
           .catch(function(e){ toast("操作没成功：" + (e && e.message || e), "err");
-            yes.disabled = false; no.disabled = false; yes.textContent = "算，收进规范"; });
+            yes.disabled = false; no.disabled = false;
+            yes.textContent = it.act === "acceptance" ? "确认成验收项" : "算，收进规范"; });
       });
       no.addEventListener("click", function(){
         yes.disabled = true; no.disabled = true; no.textContent = "正在处理…";
-        callTool("constraint_candidate_dismiss", {id: it.id, reason: "panel: 用户点了不算"})
-          .then(function(){ toast("这条不算，以后不会再出现", "ok"); return loadStatus(false); })
+        var call = it.act === "acceptance"
+          ? callTool("acceptance_criteria_dismiss", {id: it.id, reason: "panel: 用户点了不算"})
+          : callTool("constraint_candidate_dismiss", {id: it.id, reason: "panel: 用户点了不算"});
+        call.then(function(){ toast("这条不算，以后不会再出现", "ok"); return loadStatus(false); })
           .catch(function(e){ toast("操作没成功：" + (e && e.message || e), "err");
             yes.disabled = false; no.disabled = false; no.textContent = "不算"; });
       });

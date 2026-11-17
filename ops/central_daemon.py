@@ -5592,6 +5592,14 @@ def loop(interval_min: int, max_land: int, dry: bool,
                 constraint_candidates.daemon_hook(dry=dry, log_fn=log)
             except Exception as exc:
                 log(f"[constraint] 提名跳过（fail-open）：{exc!r}")
+            # 验收管家（fail-open）：把已路由的「怎么算完成」原话提名成验收标准候选。
+            # 这里只提名、绝不登记验收项：promote 必须人显式确认，且不得伪造证据。
+            # 顺序放在上下文候选之后，两个候选来源彼此独立；异常一律吞掉。
+            try:
+                import acceptance_criteria
+                acceptance_criteria.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[acceptance] 提名跳过（fail-open）：{exc!r}")
             # 空转记分（fail-open）：给每一拍分类，连续空转就点名并把记分写进下一拍的 prompt。
             # 与预算闸门同族：只读判定、动作显式、一键关、异常一律吞掉。
             try:

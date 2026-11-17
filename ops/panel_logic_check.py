@@ -151,6 +151,16 @@ if (shotButton) {
   shotButton._clickHandlers.slice().forEach(function (fn) { fn(); });
 }
 
+// 验收标准候选的「确认 / 不算」也必须真点一次：只检查屏幕文字，挡不住按钮没接线。
+var acPromoteButton = findButton(document.getElementById("blockedList"), "确认成验收项");
+if (acPromoteButton) {
+  acPromoteButton._clickHandlers.slice().forEach(function (fn) { fn(); });
+}
+var acDismissButton = findButton(document.getElementById("blockedList"), "不算");
+if (acDismissButton) {
+  acDismissButton._clickHandlers.slice().forEach(function (fn) { fn(); });
+}
+
 const read = function (id) { return document.getElementById(id).textContent; };
 console.log(JSON.stringify({
   ok: true,
@@ -163,6 +173,12 @@ console.log(JSON.stringify({
   captureToolConfirm: (((toolCalls.find(function (c) {
     return c.name === "capture_acceptance_screenshot";
   }) || {}).arguments) || {}).confirm,
+  acceptancePromoteCalls: toolCalls.filter(function (c) {
+    return c.name === "acceptance_criteria_promote";
+  }).map(function (c) { return c.arguments || {}; }),
+  acceptanceDismissCalls: toolCalls.filter(function (c) {
+    return c.name === "acceptance_criteria_dismiss";
+  }).map(function (c) { return c.arguments || {}; }),
   projectLine: read("projectLine"),
   projectTitle: document.getElementById("projectLine").title,
   hierarchyProject: read("hierProject"),
@@ -495,6 +511,43 @@ def main(argv):
         fails += has("候选写明不算就什么都不生效", cout["blockedList"],
                      "不算", "什么都不生效")
 
+        # 验收标准候选是「先确认什么算成，再进入验收台账」的前半截。
+        # 必须真点一次确认/不算：只检查文案挡不住按钮接错工具，也挡不住
+        # confirm 漏传后 MCP 静默拒绝；确认后仍不能伪造自验证据。
+        ac = dict(payload)
+        ac.update({
+            "blocked": {"failures": [], "resolve": [], "exec": [], "port": []},
+            "error": None,
+            "harness_tune": {"status": "ok", "count": 0, "items": []},
+            "constraint_candidates": {"status": "ok", "count": 0, "items": []},
+            "acceptance_criteria": {"status": "ok", "count": 1, "items": [{
+                "id": "AC-9001",
+                "text": "落盘后必须能在面板看到闭环结果",
+                "needs_human": True,
+                "signals": ["必须能", "看到"],
+                "steps": "1) 打开面板 2) 看结果",
+            }]},
+        })
+        acout = run_once(ac)
+        fails += has("验收标准候选上屏", acout["blockedList"],
+                     "AC-9001", "落盘后必须能在面板看到闭环结果")
+        fails += has("验收标准候选写明确认边界", acout["blockedList"],
+                     "确认成验收项", "不写证据", "机器项仍要真门禁")
+        promote_calls = acout.get("acceptancePromoteCalls") or []
+        if (len(promote_calls) == 1
+                and promote_calls[0].get("id") == "AC-9001"
+                and promote_calls[0].get("confirm") is True):
+            print("  PASS  验收标准确认按钮带 id 与 confirm=true")
+        else:
+            fails += 1
+            print(f"  FAIL  验收标准确认按钮调用不对：{promote_calls}")
+        dismiss_calls = acout.get("acceptanceDismissCalls") or []
+        if len(dismiss_calls) == 1 and dismiss_calls[0].get("id") == "AC-9001":
+            print("  PASS  验收标准不算按钮调用正确工具")
+        else:
+            fails += 1
+            print(f"  FAIL  验收标准不算按钮调用不对：{dismiss_calls}")
+
         # 管家健康条：七个管家 + 一层全局项目健康必须在一个地方可读，四态语义不能混。
         # 这是用户「万法归一入口 + 背后许多管家」设想的落地面——面板此前没有任何
         # 一处能一眼看出「哪个管家断了」。unknown 必须如实说「取不到」，绝不用绿点
@@ -576,6 +629,17 @@ def main(argv):
                 "pending": [{"id": "CC-9001", "text": "绝不影响用户正在用的服务"}],
                 "active": [], "missing": [],
             },
+            "acceptance_criteria": {
+                "status": "ok", "pending_count": 1,
+                "items": [{
+                    "id": "AC-9001",
+                    "text": "落盘后必须能在面板看到闭环结果",
+                    "needs_human": False,
+                    "signals": ["必须能", "看到"],
+                    "files": ["ops/kgctl.py"],
+                }],
+                "note": "确认后才登记验收项；机器项仍需真门禁证据。",
+            },
             "overlap_holds": {
                 "status": "ok", "items": [{
                     "id": "L-0021", "title": "撞文件的后开工项",
@@ -594,6 +658,8 @@ def main(argv):
         pm_out = run_once(pm_payload)
         fails += has("PM 简报上屏：待确认预期", pm_out["pmBriefingBox"],
                      "待确认", "绝不影响用户正在用的服务")
+        fails += has("PM 简报上屏：验收标准候选", pm_out["pmBriefingBox"],
+                     "验收标准", "AC-9001", "先跑门禁")
         fails += has("PM 简报上屏：让路工作项", pm_out["pmBriefingBox"],
                      "L-0021", "L-0020", "ops/truthctl.py")
         fails += has("PM 简报上屏：追问候选", pm_out["pmBriefingBox"],
