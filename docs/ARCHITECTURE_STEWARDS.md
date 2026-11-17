@@ -11,6 +11,19 @@
 
 这个结构保留「万法归一」入口：用户仍然只在一个输入框里说话，不需要选项目、对话、分支或角色。内部由路由管家根据入口上下文和项目注册表判断归属；判不清的留在全局待路由箱，不硬塞进某个项目账本。
 
+## 四层运行契约
+
+两平面回答「谁负责什么」，四层回答「一个长期任务怎么活下来」。长期最优解必须同时满足这四层，不能只做其中一层：
+
+| 层 | 责任 | 我们的对应物 | 当前缺口 |
+|---|---|---|---|
+| 关系层 | 一个持续对话/入口维护目标、优先级、需要人的时机 | 唯一输入框、`ops/tasks/inbox.jsonl`、面板三问、`needs_human` 的人工验收队列 | 还没有把跨项目长期目标做成稳定关系对象 |
+| 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/exec_overlap.py`、observe/propose/auto 与 explicit/inferred 分级 | 模糊需求自动生成可判定验收标准仍未完成 |
+| 执行层 | 隔离会话里并行研究/实现/验证，再做串行合流 | 路由/实现/合并/验收管家、独立 worktree、`kgctl land` 门禁 | 后台 worker 的显式 `start/status/stop/event` 契约还没成形 |
+| 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、truth 台账、全局待路由箱、`project_health` | 定时器和显式恢复协议仍弱，当前主要靠守护轮询与台账快照 |
+
+因此当前不是「最优已完成」，而是「架构收敛正确、运行层还在补」。最优路线不是继续加第八、第九个管家，而是把四层之间的契约写硬：谁可以唤醒谁、谁拥有写权限、什么证据允许合流、什么情况必须回到人这里。全局健康只读这四层的事实，不替任何一层做决定。
+
 ## 责任边界
 
 | 角色 | 拥有的判断 | 不拥有的权力 | 当前落点 |
@@ -79,9 +92,20 @@ PM 视角新增一层只读简报：把待确认预期、已生效约束、主�
 
 因此路线不是「再造一个多 agent 框架」，而是把编排复用给成熟方案，在 Codex 现有会话、worktree、skill 和 MCP UI 扩展点上，把项目真相、验收顺序和健康信号做穿。
 
+## 事实边界
+
+外部资料必须分层写，不能把营销转述当成上游事实：
+
+- Claude 官方已核实：Projects 是一个持续对话，Claude 为每项工作建立 thread，Overview 汇总已完成、待评审和等待回答的 thread；Claude Code slash commands 文档包含 `/btw` 旁问、`/background` 脱离当前终端继续运行、`/fork` 复制会话到后台；scheduled tasks 文档给出会话内轮询与提醒。我们的 `needs_human` 队列与「等待回答」是同类产品语义，不是 Claude 的功能别名。来源：`https://code.claude.com/docs/en/claude-projects.md`、`https://code.claude.com/docs/en/commands.md`、`https://code.claude.com/docs/en/agent-view.md`、`https://code.claude.com/docs/en/scheduled-tasks.md`、`https://code.claude.com/docs/en/sub-agents.md`。
+- DeepSeek 官方原型文档已核实：README 自述是研究原型、不是官方产品；授权文档定义 `explicit/inferred`，执行文档明确 host 没有 merge-specific decision logic、auto-merge 由 Delivery requirements 约束，面板文档说明优先展示需要人的工作。来源：`https://github.com/deepseek-ai/dsh-superagent-prototype/blob/main/README.md`、`docs/002-authorization.md`、`docs/003-execution.md`、`docs/005-panel.md`。
+- DSH 本机可核实：`~/.dsh/profiles/web/cordis.yml` 明确写着 profile 由 package bundle 与 patch 组合；本机 session 状态包含 `inbox`、`subagentCatalog`、`subagent` 等键。这支持「插件化 + 收件箱 + subagent」的运行层判断，但不等于验证了 Super-agent 原型的所有指标。
+- 小红书线索里的 `Grok Bot 1.0`、多 Bot 群聊、自动优化 Skill、p50/p95、缓存读取倍数和订阅直通比例，目前没有在官方原文中逐条核实，只作为产品方向信号，不写成已发布事实。
+- proto 与产品要分开：DeepSeek Super-agent 原型属于研究原型；Claude 的 projects / background / fork 是已上线功能。两者不能混成一句「大家都已支持 Super Agent」。
+
 ## 已知边界
 
 - PM 管家的预期打磨已上屏为简报，但候选升成生效约束仍需人确认；这是有意的，避免一句自然语言直接进机器门禁全局污染。
 - 进度追问已能生成候选，但不会自动发消息；是否追问仍由人决定。
 - 全局健康目前是面板可见的只读结论，还没有在守护里自动触发修复；这是有意的，避免越过用户授权改配置或动工作进程。
 - 截图附件已能写入、透传、上屏，但系统不会自动截屏；真实桌面验收动作仍需用户或执行者提供截图路径，面板负责把附件展示出来。
+- `pass_registry` 已实现 `explicit/inferred` 两级授权和 `inferred + destructive` 禁行；但每个真实 pass 的授权来源声明、面板对这两种来源的可读呈现，还没有做完整审计。旧对照稿曾写「两级授权未落地」，那是对旧基线的判断，不适用于当前代码。
