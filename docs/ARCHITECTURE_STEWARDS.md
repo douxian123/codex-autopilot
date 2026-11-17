@@ -17,10 +17,23 @@
 
 | 层 | 责任 | 我们的对应物 | 当前缺口 |
 |---|---|---|---|
-| 关系层 | 一个持续对话/入口维护目标、优先级、需要人的时机 | 唯一输入框、`ops/tasks/inbox.jsonl`、面板三问、`needs_human` 的人工验收队列 | 还没有把跨项目长期目标做成稳定关系对象 |
+| 关系层 | 一个持续对话/入口维护目标、优先级、需要人的时机 | 唯一输入框、`ops/relationship_ledger.py`、`ops/tasks/inbox.jsonl`、面板三问、`needs_human` 的人工验收队列 | 显式目标对象已落地，但不会自动从聊天或主线升成生效目标；跨项目目标仍需人显式登记 |
 | 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/exec_overlap.py`、`ops/acceptance_criteria.py`、`ops/acceptance_criteria_compiler.py`、observe/propose/auto 与 explicit/inferred 分级 | 候选确认与路由编译已落地；编译器只产出工单自证计划，不创建验收项，也不替代人工确认 |
 | 执行层 | 隔离会话里并行研究/实现/验证，再做串行合流 | 路由/实现/合并/验收管家、独立 worktree、`kgctl land` 门禁、`ops/worker_lifecycle.py` 生命周期契约、`ops/exec_lifecycle.py` 生产接线 | 已接管真实派发；定时唤醒只写回入口，仍不直接开 worker |
 | 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、`ops/wake_resume.py`、`worker_lifecycle`、`ops/exec_lifecycle.py`、truth 台账、全局待路由箱、`project_health` | 到期唤醒、显式恢复、资源/工具白名单与逐 pass 授权审计已落地；Outcomes 式独立评分仍缺 |
+
+## 关系层契约
+
+`ops/relationship_ledger.py` 把「跨项目长期目标」做成 append-only JSONL 对象，默认落在
+`~/.codex-autopilot/relationships/goals.jsonl`，可用 `KG_RELATIONSHIP_GOALS_PATH` 覆盖。
+每条目标记 `id`、标题、优先级、涉及项目、状态、`needs_human`、原因、来源和更新时间；
+`create/update` 只接受 `user` / `operator` 显式来源，推断来源直接拒绝。
+
+读取层只做投影：`central_mcp.relationship_goals` 把摘要交给高级区折叠展示，不派活，
+不替用户决定优先级，也不把聊天里的一句话自动升成生效目标。文件不存在、空账本、
+账本损坏是三种不同事实：分别是 `unknown`、0 条、`unknown`；`unknown` 不写成 0 或正常。
+`ops/test-relationship-ledger.py` 锁住来源边界、id/seq 稳定、只读投影和损坏 fail-closed，
+`panel_logic_check` / `panel_render_check` 锁住上屏与缺失时的诚实文案。
 
 ## Worker 生命周期契约
 

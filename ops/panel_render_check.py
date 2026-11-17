@@ -76,7 +76,10 @@ FIRST_SCREEN_IDS = [
     "stateLabel", "statusTime", "projectLine", "focusStatus", "focusDoing",
     "focusStep", "hierProject", "hierRoad", "hierWork", "sysLine",
 ]
-ADV_SCREEN_IDS = FIRST_SCREEN_IDS + ["pmBriefingBox", "acceptBox", "pmBriefingFoldOpen"]
+ADV_SCREEN_IDS = FIRST_SCREEN_IDS + [
+    "pmBriefingBox", "acceptBox", "pmBriefingFoldOpen",
+    "relationshipGoalsBox",
+]
 
 
 def find_chromium():
@@ -338,6 +341,20 @@ def main(argv):
                 "missing": [],
             },
         },
+        "relationship_goals": {
+            "status": "ok", "level": "attention", "count": 1,
+            "needs_human_count": 1,
+            "headline": "跨项目目标 1 条，其中 1 条需要人判断",
+            "note": "只记录你显式登记的目标；不会自动派活，也不会替你决定优先级。",
+            "items": [{
+                "id": "G-9001",
+                "title": "把自动挡做成长期可信的个人助理",
+                "priority": "high", "status": "waiting_human",
+                "projects": ["codex-autopilot", "personal-memory"],
+                "needs_human": True, "reason": "等用户判断要不要改产品方向",
+                "updated_at": "2026-11-18T00:00:00Z",
+            }],
+        },
     })
     adv_wrapper = build_wrapper(
         "panel-adv-harness.html", adv_payload, query="?adv=1",
@@ -349,6 +366,7 @@ def main(argv):
         print("Codex 自动挡 高级区渲染检查")
         pm_box = str(adv_snapshot.get("pmBriefingBox") or "")
         accept_box = str(adv_snapshot.get("acceptBox") or "")
+        rel_box = str(adv_snapshot.get("relationshipGoalsBox") or "")
         adv_checks = [
             ("高级区由 ?adv=1 打开", "adv" in str(adv_snapshot.get("bodyClass") or "")),
             ("PM 简报折叠区实际展开", str(adv_snapshot.get("pmBriefingFoldOpen")) == "1"),
@@ -359,6 +377,10 @@ def main(argv):
              and "需要人看" in pm_box),
             ("PM 简报上屏：让路与追问候选",
              "L-0021" in pm_box and "thread-abc" in pm_box),
+            ("关系层上屏：跨项目目标与需要人的原因",
+             "跨项目目标" in rel_box and "G-9001" in rel_box
+             and "等用户判断要不要改产品方向" in rel_box),
+            ("关系层明示不会自动派活", "不会自动派活" in rel_box),
             ("人工验收上屏：复核截图与补图按钮",
              "真实桌面验收" in accept_box and "/tmp/first.png" in accept_box
              and "补一张复核截图" in accept_box),
