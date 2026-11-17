@@ -220,6 +220,10 @@ def main():
         # 「需要你验收」，等于让用户当第一道测试——用户明确要求过这个顺序。
         run([sys.executable, str(OPS / "test-acceptance-selfcheck.py")],
             cwd=str(OPS.parent), check=True)
+        # 全局项目健康：只读聚合真相/执行/验收三层，取不到必须 unknown。
+        # 这条同时锁住「空台账与文件缺失不同」「overlap 排队不是病」「待自验没人跑是真卡点」。
+        run([sys.executable, str(OPS / "test-project-health.py")],
+            cwd=str(OPS.parent), check=True)
         # 归属判定：「万法归一」入口后面那一层。最容易腐化的形态不是「判错」而是
         # 「判不清时悄悄猜」——插件 .mcp.json 写死一个 KG_REPO，于是用户在 A 项目
         # 窗口里说 B 项目的事，记录照样落进 A（2026-11-16 用户实测的 bug）。
@@ -1682,6 +1686,7 @@ def test_broken_binding_panel_contract():
             assert "普通目录无法闭环" in payload["why"], payload
             for key in ("project", "switches", "queue", "counters", "closure_rate",
                         "human_acceptance", "daemon", "doing_items", "todo_items",
+                        "project_health",
                         "machine_verified", "roadmap", "project_folders"):
                 assert key in payload, f"坏绑定状态缺少面板字段：{key}"
             assert payload["counters"]["landed"] is None, "坏绑定的计数不能伪装成 0"
@@ -6448,8 +6453,10 @@ def test_mcp_contract():
         assert "route" in sc and sc["route"]["commander"]["label"] == "主司令窗", \
             "状态快照缺少主司令窗路线"
         for key in ("roadmap", "doing_items", "todo_items", "todo_count",
-                    "human_acceptance", "machine_verified"):
+                    "human_acceptance", "machine_verified", "project_health"):
             assert key in sc, f"状态快照缺少 {key}"
+        assert sc["project_health"].get("status") in ("ok", "unknown"), \
+            f"项目健康结论状态不对: {sc['project_health']}"
 
         send({"jsonrpc": "2.0", "id": 31, "method": "tools/call",
               "params": {"name": "product_update",

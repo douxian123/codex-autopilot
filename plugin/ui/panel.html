@@ -110,7 +110,7 @@
   .q .card .chead{margin-bottom:10px}
   .q .card + .card,.q .northstar,.q .sysline{margin-top:10px}
   .sysline{font-size:11.5px;color:var(--ink-3);line-height:1.6;overflow-wrap:anywhere}
-  /* 六管家健康条：一行一个管家，浅色状态点 + 一行话。attention 才用警告色，
+  /* 管家健康条：一行一个管家（含全局健康），浅色状态点 + 一行话。attention 才用警告色，
      off（用户自己关的）用中性灰，绝不用红绿把人吓一跳。 */
   .stewards{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);display:grid;gap:6px}
   .steward{display:flex;align-items:baseline;gap:8px;font-size:11.5px;color:var(--ink-2);line-height:1.5;overflow-wrap:anywhere}
@@ -453,7 +453,7 @@
       <div class="execnow" id="execNow" hidden><span class="edot"></span><span class="etx" id="execNowText"></span></div>
     </section>
     <div class="sysline" id="sysLine">正在读取常驻与调度…</div>
-    <div class="stewards" id="stewardBar" aria-label="六个管家状态"></div>
+    <div class="stewards" id="stewardBar" aria-label="管家状态与全局健康"></div>
     <div class="sysline" id="autonomyLine" hidden></div>
   </section>
 
@@ -932,7 +932,7 @@
 
   var LANE_LABEL = {design:"体验 / 视觉", bug:"Bug", arch:"架构", gate:"门禁", reprocess:"待重排"};
   function laneLabel(lane){ return LANE_LABEL[lane] || lane || "未分泳道"; }
-  // 六管家健康条：一行一个管家。四态各有含义——ok 正常、attention 需要人或需要修、
+  // 管家健康条：一行一个管家（末行是全局项目健康）。四态各有含义——ok 正常、attention 需要人或需要修、
   // off 是用户自己关的（不是故障）、unknown 是取不到（不冒充正常）。排序由后台给
   // 好（需要介入的排前面），面板照抄，不自己重排判据。
   function renderStewards(st){
@@ -943,7 +943,7 @@
       var empty = document.createElement("div");
       empty.className = "steward s-unknown";
       var edot = document.createElement("span"); edot.className = "sdot";
-      var etx = document.createElement("span"); etx.textContent = "六管家状态取不到";
+      var etx = document.createElement("span"); etx.textContent = "管家状态取不到";
       empty.appendChild(edot); empty.appendChild(etx); box.appendChild(empty);
       return;
     }
