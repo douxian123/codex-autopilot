@@ -32,6 +32,7 @@ truthctl 管「这个项目现在到底是什么状态」。
   truthctl reopen <L-id> "<原因>"  把已关闭的问题重新打开
   truthctl accept "<标题>" [--human --steps "..."]  登记验收项，分清机器自证/人工验收
   truthctl accept --id <A-id> --status verified [--note "..."]  收敛一条验收项（人工拍板/机器复核）
+  truthctl goal <summary|list|create|update|link|close>  跨项目长期目标（显式账本）
   truthctl synthesize          把决策/进展/问题/验收综合成 docs/PRODUCT_MAINLINE.md
 
 add 的环境变量：
@@ -78,6 +79,7 @@ from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, resolve_state_root  # noqa: E402
 import constraints as constraints_mod  # noqa: E402
 import central_config  # noqa: E402
+import relationship_ledger  # noqa: E402
 import acceptance_criteria_compiler  # noqa: E402
 
 # 自包含安装下，绑定的项目写在插件 .mcp.json 里；显式 KG_REPO 优先。
@@ -1513,12 +1515,167 @@ def cmd_snapshot(args):
     print(f'\n已写出 {STATUS.relative_to(REPO)}', file=sys.stderr)
 
 
+def cmd_goal(args):
+    """关系层显式入口：跨项目长期目标不混进单个项目真相。"""
+    if not args:
+        print(__doc__)
+        print('用法: truthctl goal <summary|list|create|update|link|close> ...')
+        return 1
+    sub, rest = args[0], args[1:]
+    if sub == 'summary':
+        result = relationship_ledger.summary(*rest)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if sub == 'list':
+        path = rest[0] if rest else None
+        state = relationship_ledger.summary(path)
+        if state.get('status') == 'unknown':
+            print('关系目标取不到：%s' % state.get('headline'), file=sys.stderr)
+            return 1
+        try:
+            rows = relationship_ledger.list_goals(path)
+        except relationship_ledger.RelationshipError as exc:
+            print('关系目标取不到：%s' % exc, file=sys.stderr)
+            return 1
+        for row in rows:
+            print(json.dumps(row, ensure_ascii=False))
+        return 0
+
+    if sub not in ('create', 'update', 'link', 'close'):
+        raise SystemExit('用法: truthctl goal <summary|list|create|update|link|close> ...')
+
+    source = os.environ.get('KG_GOAL_SOURCE', 'user').strip()
+    if source not in ('user', 'operator'):
+        raise SystemExit('KG_GOAL_SOURCE 只能是 user 或 operator')
+    path = os.environ.get('KG_RELATIONSHIP_GOALS_PATH') or None
+
+    if sub in ('link', 'close'):
+        if not rest:
+            raise SystemExit('用法: truthctl goal link <G-id> [--ledger L-id,...] '
+                             '[--acceptance A-id,...] [--thread id] | '
+                             'truthctl goal close <G-id> "<结论>"')
+        gid = rest[0]
+        try:
+            if sub == 'link':
+                def values(flag):
+                    if flag not in rest:
+                        return []
+                    idx = rest.index(flag) + 1
+                    if idx >= len(rest):
+                        raise SystemExit('%s 后面缺少值' % flag)
+                    return [x.strip() for x in rest[idx].split(',') if x.strip()]
+                def value(flag):
+                    if flag not in rest:
+                        return ''
+                    idx = rest.index(flag) + 1
+                    if idx >= len(rest):
+                        raise SystemExit('%s 后面缺少值' % flag)
+                    return rest[idx]
+                row = relationship_ledger.link(
+                    gid, ledger=values('--ledger'),
+                    acceptance=values('--acceptance'),
+                    thread=value('--thread'),
+                    source=source, path=path)
+            else:
+                if len(rest) < 2 or not rest[1].strip():
+                    raise SystemExit('close 必须写结论（证据或人确认的理由）')
+                conclusion = rest[1]
+                if conclusion.startswith('--'):
+                    raise SystemExit('close 的第二个参数必须是结论')
+                evidence = conclusion
+                if '--evidence' in rest:
+                    idx = rest.index('--evidence') + 1
+                    if idx >= len(rest):
+                        raise SystemExit('--evidence 后面缺少值')
+                    evidence = rest[idx]
+                row = relationship_ledger.close(
+                    gid, conclusion, source=source, evidence=evidence, path=path)
+        except relationship_ledger.RelationshipError as exc:
+            print('关系目标写入被拒绝：%s' % exc, file=sys.stderr)
+            return 2
+        print(json.dumps(row, ensure_ascii=False, indent=2))
+        return 0
+
+    def has(flag):
+        return flag in rest
+
+    def take(flag, default=''):
+        if flag not in rest:
+            return default
+        index = rest.index(flag) + 1
+        if index >= len(rest):
+            raise SystemExit('%s 后面缺少值' % flag)
+        return rest[index]
+
+    if sub == 'update':
+        if not rest or not rest[0].startswith('G-'):
+            raise SystemExit('用法: truthctl goal update <G-id> [--title "..." ...]')
+        gid = rest[0]
+        try:
+            fields = relationship_ledger.fields_for(gid, path, source)
+        except relationship_ledger.RelationshipError as exc:
+            print('关系目标写入被拒绝：%s' % exc, file=sys.stderr)
+            return 2
+        if has('--title'):
+            fields['title'] = take('--title')
+        if has('--priority'):
+            fields['priority'] = take('--priority')
+        if has('--projects'):
+            fields['projects'] = [x.strip() for x in take('--projects').split(',')
+                                  if x.strip()]
+        if has('--status'):
+            fields['status'] = take('--status')
+        if has('--reason'):
+            fields['reason'] = take('--reason')
+        if has('--north-star'):
+            fields['north_star'] = take('--north-star')
+        if has('--thread'):
+            fields['source_thread'] = take('--thread')
+        if has('--ledger'):
+            fields['linked_ledger'] = [x.strip() for x in take('--ledger').split(',')
+                                       if x.strip()]
+        if has('--acceptance'):
+            fields['linked_acceptance'] = [
+                x.strip() for x in take('--acceptance').split(',') if x.strip()]
+        if has('--evidence'):
+            fields['evidence'] = take('--evidence')
+        if has('--needs-human'):
+            fields['needs_human'] = True
+        fields['id'] = gid
+        fields['last_touched'] = take('--touched') or relationship_ledger.now()
+    else:
+        fields = {
+            'title': take('--title'),
+            'priority': take('--priority', 'normal'),
+            'projects': [x.strip() for x in take('--projects').split(',') if x.strip()],
+            'status': take('--status', 'proposed'),
+            'reason': take('--reason'),
+            'north_star': take('--north-star'),
+            'source_thread': take('--thread'),
+            'linked_ledger': [x.strip() for x in take('--ledger').split(',') if x.strip()],
+            'linked_acceptance': [x.strip() for x in take('--acceptance').split(',')
+                                  if x.strip()],
+            'last_touched': take('--touched') or relationship_ledger.now(),
+            'needs_human': has('--needs-human'),
+            'source': source,
+            'evidence': take('--evidence'),
+        }
+    try:
+        row = (relationship_ledger.update(fields['id'], fields, path)
+               if sub == 'update' else relationship_ledger.create(fields, path))
+    except relationship_ledger.RelationshipError as exc:
+        print('关系目标写入被拒绝：%s' % exc, file=sys.stderr)
+        return 2
+    print(json.dumps(row, ensure_ascii=False, indent=2))
+    return 0
+
+
 CMDS = {'add': cmd_add, 'ls': cmd_ls, 'snapshot': cmd_snapshot, 'promote': cmd_promote,
         'route': cmd_route, 'lanes': cmd_lanes, 'next': cmd_next,
         'product': cmd_product, 'distill': cmd_distill,
         'constraints': cmd_constraints, 'retire': cmd_retire,
         'close': cmd_close, 'open': cmd_open, 'synthesize': cmd_synthesize,
-        'accept': cmd_accept}
+        'accept': cmd_accept, 'goal': cmd_goal}
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
@@ -1529,5 +1686,5 @@ if __name__ == '__main__':
         print(__doc__)
         print('命令：' + ' | '.join(['snapshot', 'ls', 'add', 'promote', 'route', 'lanes',
                                      'next', 'product', 'distill', 'constraints', 'retire',
-                                     'close', 'open', 'synthesize']))
+                                     'close', 'open', 'synthesize', 'accept', 'goal']))
         sys.exit(1)

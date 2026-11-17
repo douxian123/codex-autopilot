@@ -1077,8 +1077,25 @@
       var projects = (r.projects || []).join("、") || "项目取不到";
       pmRow(list, label, priority + " · " + status + " · " + projects
         + " · " + (r.title || "无标题"));
+      if (r.north_star){
+        pmRow(list, "北极星", r.north_star);
+      }
+      var links = [];
+      var ledgers = r.linked_ledger || [];
+      var accepts = r.linked_acceptance || [];
+      if (ledgers.length) links.push("工作项 " + ledgers.join("、"));
+      if (accepts.length) links.push("验收 " + accepts.join("、"));
+      if (links.length){
+        pmRow(list, "关联", links.join(" · "));
+      }
+      if (r.source_thread){
+        pmRow(list, "来源窗口", r.source_thread);
+      }
       if (r.needs_human){
         pmRow(list, "需要人", r.reason || "原因未写明");
+      }
+      if (r.status === "done" && r.evidence){
+        pmRow(list, "收口证据", r.evidence);
       }
     });
     box.appendChild(list);

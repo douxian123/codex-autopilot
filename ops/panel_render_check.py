@@ -352,6 +352,9 @@ def main(argv):
                 "priority": "high", "status": "waiting_human",
                 "projects": ["codex-autopilot", "personal-memory"],
                 "needs_human": True, "reason": "等用户判断要不要改产品方向",
+                "north_star": "用户只说一次，跨项目长期记住并推进",
+                "source_thread": "thread-relationship-20261118",
+                "linked_ledger": ["L-0076"], "linked_acceptance": ["A-0069"],
                 "updated_at": "2026-11-18T00:00:00Z",
             }],
         },
@@ -380,6 +383,11 @@ def main(argv):
             ("关系层上屏：跨项目目标与需要人的原因",
              "跨项目目标" in rel_box and "G-9001" in rel_box
              and "等用户判断要不要改产品方向" in rel_box),
+            ("关系层上屏：北极星与关联工作项",
+             "北极星" in rel_box and "用户只说一次，跨项目长期记住并推进" in rel_box
+             and "工作项 L-0076" in rel_box and "验收 A-0069" in rel_box),
+            ("关系层上屏：来源窗口", "来源窗口" in rel_box
+             and "thread-relationship-20261118" in rel_box),
             ("关系层明示不会自动派活", "不会自动派活" in rel_box),
             ("人工验收上屏：复核截图与补图按钮",
              "真实桌面验收" in accept_box and "/tmp/first.png" in accept_box
