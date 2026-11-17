@@ -78,7 +78,7 @@ FIRST_SCREEN_IDS = [
 ]
 ADV_SCREEN_IDS = FIRST_SCREEN_IDS + [
     "pmBriefingBox", "acceptBox", "pmBriefingFoldOpen",
-    "relationshipGoalsBox",
+    "relationshipGoalsBox", "outcomeScoreBox",
 ]
 
 
@@ -358,6 +358,18 @@ def main(argv):
                 "updated_at": "2026-11-18T00:00:00Z",
             }],
         },
+        "outcome_score": {
+            "status": "ok", "score": 72, "grade": "有基础",
+            "headline": "结果代理分 72/100（有基础；覆盖 100%）",
+            "note": "这是台账结果代理分；机器命令通过不等于用户结果变好。",
+            "components": [
+                {"key": "closure", "label": "首问闭环", "status": "ok",
+                 "score": 80.0, "weight": 35, "detail": "80.0%（4/5）"},
+                {"key": "health", "label": "全局健康", "status": "unknown",
+                 "score": None, "weight": 15, "detail": "取不到"},
+            ],
+            "missing": ["全局健康"], "shortfalls": [],
+        },
     })
     adv_wrapper = build_wrapper(
         "panel-adv-harness.html", adv_payload, query="?adv=1",
@@ -370,6 +382,7 @@ def main(argv):
         pm_box = str(adv_snapshot.get("pmBriefingBox") or "")
         accept_box = str(adv_snapshot.get("acceptBox") or "")
         rel_box = str(adv_snapshot.get("relationshipGoalsBox") or "")
+        outcome_box = str(adv_snapshot.get("outcomeScoreBox") or "")
         adv_checks = [
             ("高级区由 ?adv=1 打开", "adv" in str(adv_snapshot.get("bodyClass") or "")),
             ("PM 简报折叠区实际展开", str(adv_snapshot.get("pmBriefingFoldOpen")) == "1"),
@@ -389,6 +402,10 @@ def main(argv):
             ("关系层上屏：来源窗口", "来源窗口" in rel_box
              and "thread-relationship-20261118" in rel_box),
             ("关系层明示不会自动派活", "不会自动派活" in rel_box),
+            ("结果代理分上屏：总分、判据与边界",
+             "结果代理分 72/100" in outcome_box
+             and "机器命令通过不等于用户结果变好" in outcome_box
+             and "全局健康" in outcome_box),
             ("人工验收上屏：复核截图与补图按钮",
              "真实桌面验收" in accept_box and "/tmp/first.png" in accept_box
              and "补一张复核截图" in accept_box),

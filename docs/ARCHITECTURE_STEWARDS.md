@@ -20,7 +20,7 @@
 | 关系层 | 一个持续对话/入口维护目标、优先级、需要人的时机 | 唯一输入框、`ops/relationship_ledger.py`、`ops/tasks/inbox.jsonl`、面板三问、`needs_human` 的人工验收队列 | 显式目标对象已落地，但不会自动从聊天或主线升成生效目标；跨项目目标仍需人显式登记 |
 | 规划层 | 把模糊输入编译成工作项、约束、排期、授权级别 | 上下文管家、PM 管家、`ops/truth`、`ops/exec_overlap.py`、`ops/acceptance_criteria.py`、`ops/acceptance_criteria_compiler.py`、observe/propose/auto 与 explicit/inferred 分级 | 候选确认与路由编译已落地；编译器只产出工单自证计划，不创建验收项，也不替代人工确认 |
 | 执行层 | 隔离会话里并行研究/实现/验证，再做串行合流 | 路由/实现/合并/验收管家、独立 worktree、`kgctl land` 门禁、`ops/worker_lifecycle.py` 生命周期契约、`ops/exec_lifecycle.py` 生产接线 | 已接管真实派发；定时唤醒只写回入口，仍不直接开 worker |
-| 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、`ops/wake_resume.py`、`worker_lifecycle`、`ops/exec_lifecycle.py`、truth 台账、全局待路由箱、`project_health` | 到期唤醒、显式恢复、资源/工具白名单与逐 pass 授权审计已落地；Outcomes 式独立评分仍缺 |
+| 运行层 | 收件箱、定时器、记忆、权限、会话、发件箱、审计，让任务可唤醒、可恢复、可送达 | `central_daemon`、`pass_registry`、`ops/wake_resume.py`、`worker_lifecycle`、`ops/exec_lifecycle.py`、truth 台账、全局待路由箱、`project_health`、`ops/outcome_score.py` | 到期唤醒、显式恢复、资源/工具白名单与逐 pass 授权审计已落地；结果代理分为只读独立评分，不替代真用户结果 |
 
 ## 关系层契约
 
@@ -38,6 +38,18 @@
 账本损坏是三种不同事实：分别是 `unknown`、0 条、`unknown`；`unknown` 不写成 0 或正常。
 `ops/test-relationship-ledger.py` 锁住来源边界、id/seq 稳定、只读投影和损坏 fail-closed，
 `panel_logic_check` / `panel_render_check` 锁住上屏与缺失时的诚实文案。
+
+## 结果代理分契约
+
+`ops/outcome_score.py` 是独立的结果代理评分：只读 `closure_rate`、问题台账、
+验收台账、`project_health` 和关系目标账本，不读发布认证，不把机器命令绿灯
+当成用户结果变好。五类判据分别回答首问闭环、完成项证据、人工验收边界、
+全局健康和显式目标收口；`unknown` 不按 0 分计入，北极星判据「首问闭环」
+取不到时整体只能 `unknown`，有效覆盖不足 60% 也不报分。
+
+它接进 `central_mcp.outcome_score`，只在高级区折叠展示。`ops/test-outcome-score.py`
+锁住缺台账、无样本、假人工验收、机器绿灯冒充结果等失败路径；面板门禁锁住
+「取不到」「不计分」和边界文案都真实上屏。这是结果代理，不是用户内心结果真值。
 
 ## Worker 生命周期契约
 
