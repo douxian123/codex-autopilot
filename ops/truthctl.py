@@ -130,6 +130,28 @@ def _files() -> list:
     return [f for f in os.environ.get('KG_TRUTH_FILES', '').split(':') if f]
 
 
+def _split_screenshots(value) -> list:
+    """把 --screenshots / KG_TRUTH_SHOTS 归一成有序、去重的路径列表。
+
+    截图是给人复核用的附件，不参与 verified 的证据闸门：没有 evidence 时，
+    就算塞了十张图也不许把人工项推进「需要你验收」。
+    """
+    if value is None:
+        return []
+    raw = value if isinstance(value, (list, tuple, set)) else str(value).replace(',', ':').split(':')
+    out = []
+    for item in raw:
+        text = str(item or '').strip()
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+def _merge_screenshots(existing, incoming) -> list:
+    """幂等合并截图：同 id 的追加收敛不能把上一版附件冲掉。"""
+    return _split_screenshots(list(_split_screenshots(existing)) + list(_split_screenshots(incoming)))
+
+
 def _read(path: Path) -> list:
     if not path.exists():
         return []
@@ -412,6 +434,7 @@ def cmd_accept(args):
 
     用法：
       truthctl accept "<标题>" [--human] [--steps "1) 打开X 2) 点Y 3) 看到Z"]
+                                [--screenshots "path1:path2"]
                                 [--level P0] [--lane <分支>] [--status todo]
       truthctl accept --id <A-id> --status verified [--note "..."]
                                  （收敛一条已有验收项：人工拍板或机器复核后翻状态）
@@ -419,7 +442,7 @@ def cmd_accept(args):
     if not args:
         sys.exit('用法: truthctl accept "<标题>" [--human --steps "..."] [--level P1]')
     human = '--human' in args
-    title_parts, steps, level, lane, status = [], '', None, None, None
+    title_parts, steps, screenshots, level, lane, status = [], '', [], None, None, None
     acc_id, note = None, ''
     i = 0
     while i < len(args):
@@ -434,6 +457,9 @@ def cmd_accept(args):
             i += 2
         elif a == '--steps' and i + 1 < len(args):
             steps = args[i + 1]
+            i += 2
+        elif a == '--screenshots' and i + 1 < len(args):
+            screenshots = _split_screenshots(args[i + 1])
             i += 2
         elif a == '--level' and i + 1 < len(args):
             level = args[i + 1]
@@ -454,7 +480,8 @@ def cmd_accept(args):
         rec = _set_acceptance_status(
             acc_id, status, note,
             evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''),
-            source=os.environ.get('KG_TRUTH_SOURCE'))
+            source=os.environ.get('KG_TRUTH_SOURCE'),
+            screenshots=_split_screenshots(os.environ.get('KG_TRUTH_SHOTS', '')))
         print('已收敛验收 [%s] -> %s：%s'
               % (rec['id'], rec['status'], rec.get('title', '')[:70]))
         return
@@ -466,6 +493,8 @@ def cmd_accept(args):
                       status=status or os.environ.get('KG_TRUTH_STATUS', 'todo'),
                       needs_human=human or os.environ.get('KG_TRUTH_NEEDS_HUMAN', '') == '1',
                       steps=steps or os.environ.get('KG_TRUTH_STEPS', ''),
+                      screenshots=_merge_screenshots(
+                          [], screenshots or os.environ.get('KG_TRUTH_SHOTS', '')),
                       evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''),
                       lane=lane or os.environ.get('KG_TRUTH_LANE') or None,
                       files=_files(),
@@ -1046,7 +1075,8 @@ def _set_ledger_status(rid, status, note, evidence='', commit=''):
 ACCEPTANCE_STATUSES = ('todo', 'wip', 'blocked', 'verified')
 
 
-def _set_acceptance_status(rid, status, note='', evidence='', source=None):
+def _set_acceptance_status(rid, status, note='', evidence='', source=None,
+                           screenshots=None):
     """按 id 收敛一条验收项（JSONL 只追加：同 id 的新记录覆盖旧记录）。
 
     这是「验收关闭口」。之前 acceptance.jsonl 只有 _append_new（永远分配新 id）、
@@ -1066,6 +1096,9 @@ def _set_acceptance_status(rid, status, note='', evidence='', source=None):
         if note:
             merged['note'] = ((merged.get('note') + '\n') if merged.get('note')
                               else '') + note
+        shots = _merge_screenshots(merged.get('screenshots') or [], screenshots or [])
+        if shots:
+            merged['screenshots'] = shots
         ev = _coerce_evidence(evidence)
         if ev:
             merged['evidence'] = ev

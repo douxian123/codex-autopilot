@@ -48,7 +48,8 @@ def main():
             {"id": "A-0001", "type": "acceptance", "title": "已自验的人工项",
              "status": "todo", "needs_human": True,
              "steps": "1) 打开面板 2) 看第一屏",
-             "evidence": "panel-render: python3 ops/panel_render_check.py -> exit 0"},
+             "evidence": "panel-render: python3 ops/panel_render_check.py -> exit 0",
+             "screenshots": ["/tmp/first.png", "/tmp/second.png"]},
             # 没有自验证据：必须留在「待自验」。
             {"id": "A-0002", "type": "acceptance", "title": "还没自验的人工项",
              "status": "todo", "needs_human": True, "steps": "1) 打开面板"},
@@ -90,6 +91,9 @@ def main():
         check("自验证据原样带给面板",
               "panel_render_check" in (board["human"][0].get("evidence") or ""),
               board["human"][0])
+        check("人工验收截图原样带给面板",
+              board["human"][0].get("screenshots") == ["/tmp/first.png", "/tmp/second.png"],
+              board["human"][0].get("screenshots"))
 
     print()
     if failures:

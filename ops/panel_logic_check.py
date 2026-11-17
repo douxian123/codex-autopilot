@@ -158,6 +158,7 @@ console.log(JSON.stringify({
   routeText: read("routeBox"),
   stewardBar: read("stewardBar"),
   autonomyLine: read("autonomyLine"),
+  pmBriefingBox: read("pmBriefingBox") + " " + document.getElementById("pmBriefingBox").innerHTML,
 }));
 """
 
@@ -311,6 +312,19 @@ def main(argv):
         # 「点它会怎样 / 不点会怎样」和一个真的能收口的按钮。
         fails += has("验收项带可点的收口动作", review_out["acceptBox"], "我确认通过")
         fails += has("验收项写明不点的后果", review_out["acceptBox"], "不点就继续")
+        # 人工验收必须能把「机器已看过的现场」带给用户。截图只是复核附件，
+        # 不参与自验 gate：没有 evidence 的项仍留在待自验。
+        shots = dict(payload)
+        shots["state"] = "blocked"
+        shots["state_label"] = "需要你验收"
+        shots["need_action"] = "需要你验收：看截图"
+        shots["human_acceptance"] = [{
+            "id": "A-9002", "title": "带截图的验收项",
+            "screenshots": ["/tmp/first.png", "/tmp/second.png"],
+        }]
+        shots_out = run_once(shots)
+        fails += has("验收项展示复核截图", shots_out["acceptBox"],
+                     "复核截图", "/tmp/first.png", "/tmp/second.png")
         # 二级工单表：每条必须把「来源 → 项目 → 泳道 → 分支 → stage → 证据」
         # 串出来，stage 用控制层算好的值照抄。只显示一个标题等于没回答
         # 「这条到底走到哪了、依据是什么」。
@@ -439,6 +453,43 @@ def main(argv):
             print("  FAIL  自治分级把取不到显示成 0 条")
         else:
             print("  PASS  自治分级不把取不到显示成 0 条")
+
+        # PM 简报：预期、让路、追问候选必须来自控制层聚合，面板只照抄。
+        # 这里同时锁住两个反向边界：缺失时不说 0 / 正常；候选只展示，不自动发消息。
+        pm_payload = dict(payload)
+        pm_payload["pm_briefing"] = {
+            "status": "attention",
+            "expectations": {
+                "status": "ok", "pending_count": 1, "active_count": 2,
+                "mainline_stage": "架构闭环",
+                "pending": [{"id": "CC-9001", "text": "绝不影响用户正在用的服务"}],
+                "active": [], "missing": [],
+            },
+            "overlap_holds": {
+                "status": "ok", "items": [{
+                    "id": "L-0021", "title": "撞文件的后开工项",
+                    "holders": [{"id": "L-0020"}], "files": ["ops/truthctl.py"],
+                }],
+                "note": "正常排队，不计入卡住；前一项落地后自动重算。",
+            },
+            "follow_up_candidates": {
+                "status": "ok", "items": [{
+                    "id": "L-0021", "idle_minutes": 90, "thread_id": "thread-abc",
+                }],
+                "note": "只生成候选，不会自动追问；你点头才会发消息。",
+                "missing": [],
+            },
+        }
+        pm_out = run_once(pm_payload)
+        fails += has("PM 简报上屏：待确认预期", pm_out["pmBriefingBox"],
+                     "待确认", "绝不影响用户正在用的服务")
+        fails += has("PM 简报上屏：让路工作项", pm_out["pmBriefingBox"],
+                     "L-0021", "L-0020", "ops/truthctl.py")
+        fails += has("PM 简报上屏：追问候选", pm_out["pmBriefingBox"],
+                     "90 分钟", "thread-abc", "不会自动追问")
+        pm_missing = run_once(dict(payload, pm_briefing=None))
+        fails += has("PM 简报缺失时如实说取不到",
+                     pm_missing["pmBriefingBox"], "取不到")
 
         fails += has("首屏开关文案与控制层一致", out["masterState"],
                      "已关闭" if not payload.get("enabled") else "正在运行")

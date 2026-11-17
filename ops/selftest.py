@@ -229,6 +229,10 @@ def main():
         # 这条同时锁住「空台账与文件缺失不同」「overlap 排队不是病」「待自验没人跑是真卡点」。
         run([sys.executable, str(OPS / "test-project-health.py")],
             cwd=str(OPS.parent), check=True)
+        # PM 简报：预期打磨、施工让路、进度追问候选必须来自已有台账，
+        # 取不到说 unknown；尤其不许把「只生成候选」做成自动发消息。
+        run([sys.executable, str(OPS / "test-pm-briefing.py")],
+            cwd=str(OPS.parent), check=True)
         # 归属判定：「万法归一」入口后面那一层。最容易腐化的形态不是「判错」而是
         # 「判不清时悄悄猜」——插件 .mcp.json 写死一个 KG_REPO，于是用户在 A 项目
         # 窗口里说 B 项目的事，记录照样落进 A（2026-11-16 用户实测的 bug）。
@@ -6435,7 +6439,7 @@ def test_mcp_contract():
         assert contents["mimeType"] == "text/html;profile=mcp-app"
         assert "总输入框" in contents["text"], "面板没讲清「总输入框」"
         for anchor in ("productList", "judgmentList", "verifyBox", "mainlineBox",
-                       "roadmapBox", "acceptBox", "progressBox"):
+                       "roadmapBox", "acceptBox", "progressBox", "pmBriefingBox"):
             assert anchor in contents["text"], f"面板缺少 {anchor}"
         assert 'data-key="auto_exec"' in contents["text"], "面板缺少 auto_exec 开关"
 
@@ -6458,10 +6462,13 @@ def test_mcp_contract():
         assert "route" in sc and sc["route"]["commander"]["label"] == "主司令窗", \
             "状态快照缺少主司令窗路线"
         for key in ("roadmap", "doing_items", "todo_items", "todo_count",
-                    "human_acceptance", "machine_verified", "project_health"):
+                    "human_acceptance", "machine_verified", "project_health",
+                    "pm_briefing"):
             assert key in sc, f"状态快照缺少 {key}"
         assert sc["project_health"].get("status") in ("ok", "unknown"), \
             f"项目健康结论状态不对: {sc['project_health']}"
+        assert sc["pm_briefing"].get("status") in ("ok", "attention", "unknown"), \
+            f"PM 简报状态不对: {sc['pm_briefing']}"
 
         send({"jsonrpc": "2.0", "id": 31, "method": "tools/call",
               "params": {"name": "product_update",
@@ -6480,7 +6487,8 @@ def test_mcp_contract():
         send({"jsonrpc": "2.0", "id": 34, "method": "tools/call",
               "params": {"name": "register_acceptance",
                          "arguments": {"title": "首页第一屏不挤", "needs_human": True,
-                                       "steps": "1) 打开首页 2) 看第一屏", "level": "P0"}}})
+                                       "steps": "1) 打开首页 2) 看第一屏", "level": "P0",
+                                       "screenshots": ["/tmp/acceptance-shot.png"]}}})
         assert not recv()["result"].get("isError"), "register_acceptance 调用失败"
         send({"jsonrpc": "2.0", "id": 35, "method": "tools/call",
               "params": {"name": "autopilot_status", "arguments": {"fast": True}}})
@@ -6492,6 +6500,8 @@ def test_mcp_contract():
         assert not hum, f"没自验的人工项直接进了等你验收: {hum}"
         assert pend and pend[0].get("title") == "首页第一屏不挤", \
             f"人工验收没进待自验: {pend}"
+        assert pend[0].get("screenshots") == ["/tmp/acceptance-shot.png"], \
+            f"截图附件没进待自验台账: {pend}"
 
         # 补上自验证据之后，它才有资格来敲用户的门。
         _aid = pend[0]["id"]
@@ -6508,6 +6518,8 @@ def test_mcp_contract():
             f"补了自验证据仍没进等你验收: {hum2} / {sc37.get('self_check_acceptance')}"
         assert "panel_render_check" in (hum2[0].get("evidence") or ""), \
             f"自验证据没带给面板: {hum2[0]}"
+        assert hum2[0].get("screenshots") == ["/tmp/acceptance-shot.png"], \
+            f"收敛状态时截图附件丢失: {hum2[0]}"
 
         send({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
               "params": {"name": "autopilot_control", "arguments": {"action": "pause"}}})

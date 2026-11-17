@@ -635,6 +635,11 @@
       </div>
     </details>
 
+    <details class="card fold" id="pmBriefingFold">
+      <summary>PM 简报 · 预期、让路与追问候选</summary>
+      <div class="foldbody"><div id="pmBriefingBox"></div></div>
+    </details>
+
     <details class="card fold">
       <summary>进行中的冲突任务</summary>
       <div class="foldbody"><ul class="list" id="resolveList"></ul></div>
@@ -868,6 +873,7 @@
     renderFolders(s.project_folders || {}, s);
     renderOrientation(s);
     renderAcceptance(humanAcc, s.machine_verified || []);
+    renderPmBriefing(s.pm_briefing);
     renderRecent(s.recent_completed || []);
     renderThreeQuestions(s, humanAcc, doingItems, stuckN);
     renderProgress(doingItems, s.todo_items || [], todoCount);
@@ -955,6 +961,59 @@
       li.appendChild(dot); li.appendChild(tx); box.appendChild(li);
     });
   }
+
+  // PM 简报：预期磨到哪、谁给谁让路、哪条该追进度。只照抄控制层结论，
+  // 不在面板重算、也不自动发任何追问。取不到就写「取不到」，不拿 0 冒充正常。
+  function pmCount(value){
+    return (value === undefined || value === null) ? "取不到" : String(value);
+  }
+  function pmRow(list, tagText, text){
+    var li = document.createElement("li");
+    var tag = document.createElement("span"); tag.className = "tag"; tag.textContent = tagText;
+    var grow = document.createElement("span"); grow.className = "grow"; grow.textContent = text;
+    li.appendChild(tag); li.appendChild(grow); list.appendChild(li);
+  }
+  function renderPmBriefing(pb){
+    var box = el("pmBriefingBox"); if (!box) return; box.innerHTML = "";
+    if (!pb){
+      box.innerHTML = '<div class="empty">PM 简报取不到；不把不知道当成正常。</div>';
+      return;
+    }
+    var exp = pb.expectations || {};
+    var hold = pb.overlap_holds || {};
+    var follow = pb.follow_up_candidates || {};
+    var list = document.createElement("ul"); list.className = "list";
+    var expText = "待确认：" + pmCount(exp.pending_count) + " 条 · 已生效："
+      + pmCount(exp.active_count) + " 条";
+    if (exp.mainline_stage) expText += " · 主线阶段：" + exp.mainline_stage;
+    pmRow(list, "预期", expText);
+    (exp.pending || []).slice(0, 2).forEach(function(r){
+      pmRow(list, "待确认", r.text || r.id || "（无文案）");
+    });
+    var holdItems = hold.items || [];
+    pmRow(list, "让路", pmCount(hold.status === "ok" ? holdItems.length : null)
+      + " 条在排队 · " + (hold.note || "让路信号取不到"));
+    holdItems.slice(0, 2).forEach(function(r){
+      var waiting = (r.holders || []).map(function(h){ return h.id || "未知"; }).join("、") || "未知";
+      var files = (r.files || []).join("、") || "无文件线索";
+      pmRow(list, r.id || "排队", (r.title || "工作项") + " 等 " + waiting + " · " + files);
+    });
+    var followItems = follow.items || [];
+    pmRow(list, "追问", pmCount(follow.status === "ok" ? followItems.length : null)
+      + " 条候选 · " + (follow.note || "追问候选取不到"));
+    followItems.slice(0, 2).forEach(function(r){
+      pmRow(list, r.id || "候选", "空闲 " + pmCount(r.idle_minutes) + " 分钟 · "
+        + (r.thread_id || "无窗口绑定"));
+    });
+    box.appendChild(list);
+    var missing = (exp.missing || []).concat(follow.missing || []);
+    if (missing.length){
+      var meta = document.createElement("div"); meta.className = "meta";
+      meta.textContent = "取不到：" + missing.join("、") + "；这些项不计入正常。";
+      box.appendChild(meta);
+    }
+  }
+
   function renderFolders(folders, s){
     var box = el("folderBox"); if (!box) return;
     box.innerHTML = "";
@@ -1528,6 +1587,12 @@
         } else {
           var hint = document.createElement("div"); hint.className = "accnote"; hint.textContent = "（还没写明复核步骤）";
           li.appendChild(hint);
+        }
+        var shots = a.screenshots || [];
+        if (shots.length){
+          var shotLine = document.createElement("div"); shotLine.className = "accnote";
+          shotLine.textContent = "复核截图：" + shots.join(" · ");
+          li.appendChild(shotLine);
         }
         li.appendChild(buildAcceptanceAction(a));
         ul.appendChild(li);

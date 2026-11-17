@@ -219,6 +219,35 @@ def _project_health_summary(payload):
                 "layers": [], "signals": {}}
 
 
+def _pm_briefing_summary(runtime=None):
+    """PM 简报：只读聚合预期、让路与追问候选，不新增台账、不派活。"""
+    try:
+        import pm_briefing
+        return pm_briefing.compute(
+            os.environ.get("KG_REPO") or _fallback_repo(),
+            runtime=runtime or {},
+        )
+    except Exception as exc:
+        return {"status": "unknown",
+                "expectations": {"status": "unknown", "items": [], "missing": [str(exc)]},
+                "overlap_holds": {"status": "unknown", "items": [],
+                                  "note": "PM 简报算不出来（%s）" % exc},
+                "follow_up_candidates": {"status": "unknown", "items": [],
+                                         "note": "PM 简报算不出来（%s）" % exc},
+                "source": "pm_briefing 模块不可用"}
+
+
+def _screenshots_env(value):
+    """把 MCP 的 screenshots 数组归一成 truthctl 的 ':' 分隔 env。"""
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple, set)):
+        items = [str(v).strip() for v in value if str(v or "").strip()]
+    else:
+        items = [x.strip() for x in str(value).replace(",", ":").split(":") if x.strip()]
+    return ":".join(items) or None
+
+
 def _n(value):
     """把可能为 None 的计数渲染成面板能读的字样。
 
@@ -641,6 +670,8 @@ TOOLS = [
                 "title": {"type": "string", "description": "验收项标题，一句话"},
                 "needs_human": {"type": "boolean", "description": "true=必须人拍板（审美/手感/真实产品里点一下）；false=机器自证"},
                 "steps": {"type": "string", "description": "人要怎么复核，如“1) 打开面板 2) 看第一屏 3) 确认不挤”"},
+                "screenshots": {"type": "array", "items": {"type": "string"},
+                                "description": "待用户复核的截图/录屏路径，可选；不参与机器自验判定"},
                 "level": {"type": "string", "description": "优先级，默认 P1"},
                 "lane": {"type": "string", "description": "归属分支，可选"},
                 "status": {"type": "string", "description": "todo / wip / verified，默认 todo"},
@@ -666,6 +697,8 @@ TOOLS = [
                            "description": "目标状态；人工验收通过用 verified"},
                 "note": {"type": "string", "description": "为什么翻成这个状态，一句话，可选"},
                 "evidence": {"type": "string", "description": "机器复核的命令+结果，可选"},
+                "screenshots": {"type": "array", "items": {"type": "string"},
+                                "description": "补充待复核截图路径，可选；只追加，不覆盖已有附件"},
             },
             "required": ["id", "status"],
             "additionalProperties": False,
@@ -1749,6 +1782,7 @@ def _acceptance_board():
         return {"id": r.get("id"), "title": r.get("title", ""), "level": r.get("level"),
                 "status": r.get("status"), "steps": r.get("steps") or "", "lane": r.get("lane"),
                 "evidence": r.get("evidence") or "",
+                "screenshots": r.get("screenshots") or [],
                 "project_id": r.get("project_id"), "route_id": r.get("route_id"),
                 "work_item_id": r.get("work_item_id"),
                 "source_thread_id": r.get("source_thread_id") or r.get("thread_id")}
@@ -2154,6 +2188,7 @@ def _status_payload(fast=True):
             "binding": health,
             "stewards": _steward_health({}),
             "autonomy": _autonomy_summary({}),
+            "pm_briefing": _pm_briefing_summary({"blocked": {}}),
         }
         payload["__text__"] = (
             "自动挡 · 安装绑定失效\n"
@@ -2351,6 +2386,17 @@ def _status_payload(fast=True):
             "switches": {
                 "auto_exec": bool(ctrl.get("auto_exec", False)),
             },
+            "blocked": {
+                "exec": [{"id": k, "reason": (v or {}).get("reason")}
+                         for k, v in list(exec_blocked_stuck.items())[:20]],
+                "exec_waiting": list(overlap_holds),
+                "failures": failures,
+                "resolve": list(blocked),
+            },
+        }),
+        # PM 简报：只读聚合「预期磨到哪、谁给谁让路、哪条该追进度」。
+        # 与项目健康同源运行面数据，但不新增台账、不派活、不自动追问。
+        "pm_briefing": _pm_briefing_summary({
             "blocked": {
                 "exec": [{"id": k, "reason": (v or {}).get("reason")}
                          for k, v in list(exec_blocked_stuck.items())[:20]],
@@ -2754,7 +2800,8 @@ def call_tool(name, args):
                "KG_TRUTH_LEVEL": args.get("level") or None,
                "KG_TRUTH_LANE": args.get("lane") or None,
                "KG_TRUTH_STATUS": args.get("status") or None,
-               "KG_TRUTH_EVIDENCE": args.get("evidence") or None}
+               "KG_TRUTH_EVIDENCE": args.get("evidence") or None,
+               "KG_TRUTH_SHOTS": _screenshots_env(args.get("screenshots"))}
         return truthctl(*argv, extra_env=env)
     if name == "resolve_acceptance":
         rid = (args.get("id") or "").strip()
@@ -2767,6 +2814,7 @@ def call_tool(name, args):
         if args.get("note"):
             argv += ["--note", args["note"]]
         env = {"KG_TRUTH_EVIDENCE": args.get("evidence") or None,
+               "KG_TRUTH_SHOTS": _screenshots_env(args.get("screenshots")),
                "KG_TRUTH_SOURCE": "user"}
         return truthctl(*argv, extra_env=env)
     if name == "reopen_item":
