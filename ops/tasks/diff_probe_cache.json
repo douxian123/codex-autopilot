@@ -82,5 +82,13 @@
  "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@95ff40ac62a58629381e846aae97b4f56d07a238": {
   "files": 15,
   "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@4ee15aaa53f5d8785d8fc06cee028a06d924313e": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/acceptance-criteria-closure-20261118@99283f276e57c4fb56327d0a50cc242b79fdda45@4ee15aaa53f5d8785d8fc06cee028a06d924313e": {
+  "files": 15,
+  "lines": 818
  }
 }

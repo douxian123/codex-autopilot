@@ -1,6 +1,7 @@
 {
- "main": "95ff40ac62a58629381e846aae97b4f56d07a238",
+ "main": "4ee15aaa53f5d8785d8fc06cee028a06d924313e",
  "branches": [
+  "codex/acceptance-criteria-closure-20261118",
   "codex/autopilot-close-gate-20261026",
   "codex/autopilot-exec-recover-min-20261020",
   "codex/autopilot-health-20261019",
@@ -15,6 +16,7 @@
   "codex/snapshot-budget-archive-20261113"
  ],
  "burden": {
+  "codex/acceptance-criteria-closure-20261118": 1,
   "codex/autopilot-close-gate-20261026": 2,
   "codex/autopilot-exec-recover-min-20261020": 2,
   "codex/autopilot-health-20261019": 1,
