@@ -11,7 +11,7 @@
     "96f177802653d3bfb879a0b47deff4395a53c083"
    ],
    "created": "2026-11-18 05:18:14",
-   "updated": "2026-11-18 05:18:14",
+   "updated": "2026-11-18 06:48:22",
    "conflict_files": [
     "docs/ARCHITECTURE_STEWARDS.md",
     "ops/acceptance_criteria.py",
@@ -23,7 +23,8 @@
     "ops/test-acceptance-criteria.py"
    ],
    "auto_resolved_jsonl": [],
-   "status": "needs_agent"
+   "status": "gate_fail",
+   "gate_output": "× codex/resolve-acceptance-criteria-compiler-20261118 与 main 有 7 个冲突文件，拒绝自动 land：\n    docs/ARCHITECTURE_STEWARDS.md\n    ops/central_daemon.py\n    ops/central_mcp.py\n    ops/panel_logic_check.py\n    ops/test-acceptance-criteria.py\n    ops/truthctl.py\n    plugin/ui/panel.html\n  这是需要归属裁决的信号（kgctl matrix 的 C 组）。"
   },
   {
    "slug": "truth-dedupe-pm-closure-20261118",
@@ -344,5 +345,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-18 05:18:15"
+ "updated": "2026-11-18 06:48:22"
 }

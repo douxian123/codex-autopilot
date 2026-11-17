@@ -4,7 +4,7 @@
 - 执行分支：`codex/resolve-acceptance-criteria-compiler-20261118`
 - 工作树：`/Users/danta/.newmax/workspace/codex-autopilot-resolve-acceptance-criteria-compiler-20261118`
 - 基于：`68c89020bd72`（origin/main）
-- 状态：`needs_agent`
+- 状态：`gate_fail`
 
 ## 要解的冲突文件（保留的 marker）
 - `docs/ARCHITECTURE_STEWARDS.md`

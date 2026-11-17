@@ -116,6 +116,21 @@
     "plugin/ui/panel.html"
    ],
    "updated": "2026-11-18"
+  },
+  {
+   "area": "关系层",
+   "behavior": "跨项目长期目标通过 truthctl goal 显式登记，支持 summary/list/create/update/link/close；可关联工作项、验收项、来源窗口和收口证据，并在高级面板折叠区展示。聊天里的一句话不会自动升成生效目标；账本取不到显示 unknown。",
+   "why": "长期目标跨项目、跨会话，必须可追溯且不能被推断污染；用户只说一次后要靠显式账本和面板证据持续召回，而不是靠聊天上下文。",
+   "files": [
+    "ops/relationship_ledger.py",
+    "ops/truthctl.py",
+    "ops/test-relationship-ledger.py",
+    "ops/panel_logic_check.py",
+    "ops/panel_render_check.py",
+    "plugin/ui/panel.html",
+    "docs/ARCHITECTURE_STEWARDS.md"
+   ],
+   "updated": "2026-11-18"
   }
  ]
 }
