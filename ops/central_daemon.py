@@ -108,6 +108,7 @@ from pass_registry import (
 )  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
 import constraints as constraints_mod  # noqa: E402
+import acceptance_criteria  # noqa: E402
 import exec_overlap  # noqa: E402
 import exec_lifecycle  # noqa: E402
 import wake_resume  # noqa: E402
@@ -1292,6 +1293,8 @@ def _exec_prompt(item: dict) -> str:
     if _constraints:
         lines += ["", "本项目已确认的约束（用户说过一次，必须遵守）："]
         lines += [constraints_mod.render_line(r) for r in _constraints]
+    # 验收标准由路由层确定性编译并写进台账；执行者只读，不自己重新解释什么算完成。
+    lines += acceptance_criteria.render_for_prompt(item.get("acceptance_criteria"))
     lines += [
         "",
         "硬规则（必须遵守）：",

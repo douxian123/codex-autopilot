@@ -78,6 +78,7 @@ from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, resolve_state_root  # noqa: E402
 import constraints as constraints_mod  # noqa: E402
 import central_config  # noqa: E402
+import acceptance_criteria  # noqa: E402
 
 # 自包含安装下，绑定的项目写在插件 .mcp.json 里；显式 KG_REPO 优先。
 apply_plugin_env()
@@ -630,8 +631,11 @@ def infer_lane(kind: str, text: str, files) -> str:
 
 
 def _append_ledger(kind, title, detail, files, source, lane) -> dict:
+    criteria = acceptance_criteria.compile_criteria(
+        text=detail or title, kind=kind, files=files or [], lane=lane, cfg=CFG)
     return _append_new('ledger', kind=kind, title=title, detail=detail,
-                       status='open', lane=lane, files=files or [], source=source)
+                       status='open', lane=lane, files=files or [], source=source,
+                       acceptance_criteria=criteria)
 
 
 def _lane_names() -> set:
@@ -739,6 +743,9 @@ def cmd_route(args):
     for p in plan:
         mark = f"  <已有 {p['cand'][0][3]}>" if p['cand'] else ''
         print(f" #{p['n']:03d} [{p['kind']:6s}] -> {p['lane']:14s} {p['text'][:78]}{mark}")
+        criteria = acceptance_criteria.compile_criteria(
+            text=p['text'], kind=p['kind'], files=p['files'], lane=p['lane'], cfg=CFG)
+        print(f"       验收标准：{criteria['summary']}")
     for p in dups:
         print(f" #{p['n']:03d} [{p['kind']:6s}] -> 归并 {seen[p['text'][:120]]}  {p['text'][:70]}")
     if not go:
@@ -761,6 +768,10 @@ def cmd_route(args):
                 if note not in ev:
                     ev.append(note)
                     target['evidence'] = ev
+                if not target.get('acceptance_criteria'):
+                    target['acceptance_criteria'] = acceptance_criteria.compile_criteria(
+                        text=p['text'], kind=p['kind'], files=p['files'],
+                        lane=p['lane'], cfg=CFG)
                     path = TRUTH / FILES['ledger']
                     rows = _read(path)
                     for i, rec in enumerate(rows):
@@ -788,6 +799,10 @@ def cmd_route(args):
                 if note not in ev:
                     ev.append(note)
                     rec['evidence'] = ev
+                if not rec.get('acceptance_criteria'):
+                    rec['acceptance_criteria'] = acceptance_criteria.compile_criteria(
+                        text=p['text'], kind=p['kind'], files=p['files'],
+                        lane=p['lane'], cfg=CFG)
                     rows[j] = rec
                 break
         with path.open('w') as fh:
