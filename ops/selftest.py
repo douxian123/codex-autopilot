@@ -144,6 +144,7 @@ def main():
             "test-gate-registration.py",
             "test-worker-lifecycle.py",
             "test-exec-lifecycle.py",
+            "test-wake-resume.py",
         )
         for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)
