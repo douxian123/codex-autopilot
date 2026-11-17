@@ -4671,10 +4671,18 @@ def _resolve_land(rec: dict, wt: Path) -> int:
     resolve_branch = rec["resolve_branch"]
     res = proc_run([sys.executable, str(Path(__file__).resolve()), "land", resolve_branch],
                          capture_output=True, text=True)
+<<<<<<< HEAD
     # land 的失败原因可能只写 stderr（例如写台账时抛错）。旧实现只打印 stdout，
     # 调用方既看不到根因，又会因为本函数正常返回而把失败误报成 resolve rc=0。
     out = "\n".join(
         part.rstrip() for part in (res.stdout or "", res.stderr or "") if part.strip())
+=======
+    out = "\n".join(
+        part.rstrip()
+        for part in (res.stdout or "", res.stderr or "")
+        if part.strip()
+    )
+>>>>>>> codex/autopilot-resolve-stderr
     print(out)
     rec["updated"] = time.strftime("%Y-%m-%d %H:%M:%S")
     # land 在写门禁之前可能因分支已被合入而短路（"已完全合并，无需 land"）。那同样是
