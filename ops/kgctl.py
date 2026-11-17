@@ -3679,6 +3679,11 @@ TRUTH_COMMIT_RE = re.compile(r"^(chore\(truth\)|train: (sync|merge))")
 # 追加型台账：每拍追加 `## ` 条目，绝不能因为工作副本落后于 HEAD 而删掉已落盘章节。
 APPEND_ONLY_MARKDOWN = ("docs/COCKPIT_BRIEF.md", "docs/AGENT_SYNC.md")
 
+# 从台账/真相综合出来的 Markdown 视图。它们有稳定的「生成时间」行，恢复主干工作树
+# 时不能用旧快照覆盖 main 已经综合好的新视图；否则 PRODUCT_MAINLINE 会退回几个月前。
+GENERATED_MARKDOWN_VIEWS = ("docs/PRODUCT_MAINLINE.md", "docs/PROJECT_STATUS.md",
+                            "docs/CONTROL_BOARD.md", "docs/OCT29_PROGRESS_RADAR.generated.md")
+
 # 产品真相证据：这些文件由真实质量/运维命令生成，不能由旧真相同步或冲突合并覆盖。
 TRUTH_KEEP_IF_BASELINE_MISSING = ("ops/truth/benchmark-contract-report.json",
                                   "ops/truth/stability-alerts.jsonl",
@@ -4016,27 +4021,79 @@ def _snapshot_truth_files(wt: Path) -> dict:
 
 
 def _restore_truth_files(wt: Path, snap: dict) -> None:
-    """把 `_snapshot_truth_files` 抓到的真相文件写回工作树（纯加法，只写真相路径）。
+    """把 `_snapshot_truth_files` 抓到的真相文件安全写回工作树（只写真相路径）。
 
     追加型台账（Cockpit / Agent Sync）不能盲写回：快照抓到的常常是**落后于 main 的
     陈旧副本**（实测 2026-11-16：工作副本比 main 少 10318 / 10616 行）。盲写回等于用
     截断版盖掉 main 的完整章节，然后再提交——这正是历史上「一次删 232 行 + 75 行」的
     同一种病。这里改成与切换后（= main）的内容做二级标题并集：main 的章节一个不少，
     快照里独有的条目也保留。
+
+    同一原则扩展到全部真相路径：
+      * JSONL 做行级并集，旧快照不许删掉 main 上已经落盘的记录；
+      * 结构化 JSON 按 `updated` 选择较新的一侧作为权威，只递归补齐它缺失的键；
+      * 生成视图按「生成时间」选择更新的一侧，不让旧视图回退；
+      * 其余文件维持原先的快照恢复语义，避免改变未分类真相路径的行为。
     """
+    def generated_time(text: str) -> str:
+        match = re.search(
+            r"(?:生成时间|更新时间)\s+(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2})?)",
+            text)
+        return match.group(1) if match else ""
+
+    def fill_missing(preferred, supplemental):
+        """重叠字段以较新文档为准，只补它缺失的键；字典可递归补缺，列表不拼接。"""
+        if isinstance(preferred, dict) and isinstance(supplemental, dict):
+            out = dict(preferred)
+            for key, value in supplemental.items():
+                if key not in out:
+                    out[key] = value
+                elif isinstance(out[key], dict) and isinstance(value, dict):
+                    out[key] = fill_missing(out[key], value)
+            return out
+        return preferred
+
     for rel, data in snap.items():
         dst = wt / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
-        if rel in APPEND_ONLY_MARKDOWN:
+        is_text = (
+            rel.endswith((".jsonl", ".json"))
+            or rel in APPEND_ONLY_MARKDOWN
+            or rel in GENERATED_MARKDOWN_VIEWS
+        )
+        if is_text and dst.exists():
             try:
                 snap_text = data.decode("utf-8")
                 current = dst.read_text(encoding="utf-8") if dst.exists() else ""
             except (UnicodeDecodeError, OSError):
                 dst.write_bytes(data)
                 continue
-            # base = 切换后的内容（main）：同标题冲突时优先保住已经落盘的完整章节。
-            merged = _union_markdown_sections(current, snap_text, current)
-            dst.write_text(merged, encoding="utf-8")
+            if rel.endswith(".jsonl"):
+                dst.write_text(_union_jsonl_text(current, snap_text), encoding="utf-8")
+            elif rel in APPEND_ONLY_MARKDOWN:
+                # base = 切换后的内容（main）：同标题冲突时优先保住已落盘的完整章节。
+                merged = _union_markdown_sections(current, snap_text, current)
+                dst.write_text(merged, encoding="utf-8")
+            elif rel in GENERATED_MARKDOWN_VIEWS:
+                # 生成视图谁新留谁；同时间戳时 main 已是权威，不让旧工作副本回退。
+                if generated_time(snap_text) > generated_time(current):
+                    dst.write_text(snap_text, encoding="utf-8")
+            elif rel.endswith(".json"):
+                try:
+                    old_json, new_json = json.loads(snap_text), json.loads(current)
+                    if isinstance(old_json, dict) and isinstance(new_json, dict):
+                        if str(old_json.get("updated", "")) > str(new_json.get("updated", "")):
+                            # 快照的时间戳更新：保留它，同时并进 main 新增的键。
+                            merged = fill_missing(old_json, new_json)
+                        else:
+                            # main 更新或同时间：main 胜，仍保留快照独有键。
+                            merged = fill_missing(new_json, old_json)
+                        dst.write_text(json.dumps(merged, ensure_ascii=False, indent=1) + "\n",
+                                       encoding="utf-8")
+                    else:
+                        dst.write_text(current, encoding="utf-8")
+                except (ValueError, TypeError):
+                    dst.write_text(current, encoding="utf-8")
             continue
         dst.write_bytes(data)
 
