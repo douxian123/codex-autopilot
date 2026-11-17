@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-10-13 21:42:52　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-18 02:51:02　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -42,7 +42,20 @@
 
 ## 还差什么
 
-- 台账里没有未决问题
+**bug（3 待处理）**
+- `L-0004` 【守护起不来·机械根因】install.sh 5.5 段的守护改指被条件锁死：if [ -f "$HOME/Library/LaunchAgents/com.c
+- `L-0005` 【发布一致性·真短项】product_eval 判据5(修掉跨库比对后)暴露：已发布的 0.6.0-preview.56 的 source_commit=001
+- `L-0006` codex-guard 的 snapshot 清理助手在 Python 3.9 上崩：/Users/danta/plugins/codex-autopilot/
+
+**gate（5 待处理）**
+- `L-0001` 磁盘曾达 99%（可用 1.6GB）。/tmp 有 228 个 autopilot 临时目录约 3.87GB，其中 kg-gate-* 由 kgctl gate
+- `L-0002` 落盘门禁被过期真相卡死：kgctl land 在 _mirror_truth_into_trunk 时把状态根(/Users/danta/.newmax/wor
+- `L-0003` 状态根解析把「停在旧分支的共享检出」当权威状态根：resolve_state_root 的候选顺序是 (main, trunk, current_worktre
+- `L-0007` 【launchd 陈旧项·非 Stop 复发链】freshness 门禁真机实测 4 条 stale：ai.danta.codex-proxy-watchdog
+- `L-0008` 【既存·门禁环境】在部署目录 ~/plugins/codex-autopilot/releases/0.6.0-preview.82 里直接跑 ops/self
+
+**ux（1 待处理）**
+- `L-0009` 【项目经理·面板首屏收敛成三问】首屏只回答：① 有东西需要我吗（person/* 集合：等回答/等验收/卡住；没有就一句不需要你做什么）② 系统在干对的事吗（正
 
 ## 需要你验收
 
@@ -56,6 +69,6 @@
 
 - 累计关闭问题：0 条
 - 累计落盘：0 条
-- 未决问题：0 条
+- 未决问题：9 条
 - 已验收：0 条
 

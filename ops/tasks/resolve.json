@@ -1,95 +1,259 @@
 {
  "tasks": [
   {
-   "slug": "disk-admission-clean-20261027",
-   "branch": "codex/disk-admission-clean-20261027",
-   "resolve_branch": "codex/resolve-disk-admission-clean-20261027",
-   "worktree": "/Users/danta/autopilot-worktrees/install-49-resolve-disk-admission-clean-20261027",
-   "base_main": "79eaf7b43ae4eeb4b2a275d30ee06430cecbdf17",
-   "source_head": "728b93900d9e3376026062185d606bdc24523a25",
+   "slug": "daemon-liveness-20261110",
+   "branch": "codex/daemon-liveness-20261110",
+   "resolve_branch": "codex/resolve-daemon-liveness-20261110",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-daemon-liveness-20261110",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "fc8773ee4dd038ebabf552769f1f755e5a7b6c52",
    "source_commits": [
-    "3896b32e0e20d8035a6ac5b3dd657a7dbbd6e7ee",
-    "99f8548bb8568a994776f4d1516480f9d383942b",
-    "50c852b82371cfec53b9798d232f09cfa42d6e0d",
-    "728b93900d9e3376026062185d606bdc24523a25"
+    "fc8773ee4dd038ebabf552769f1f755e5a7b6c52"
    ],
-   "created": "2026-10-27 21:01:20",
-   "updated": "2026-10-27 21:01:20",
+   "created": "2026-11-17 19:46:52",
+   "updated": "2026-11-17 19:46:52",
    "conflict_files": [
-    "ops/central_daemon.py",
-    "ops/selftest.py",
-    "plugin/.codex-plugin/plugin.json"
+    "ops/central_mcp.py",
+    "ops/kgctl.py",
+    "ops/selftest.py"
    ],
    "unresolved_files": [
-    "ops/central_daemon.py",
-    "ops/selftest.py",
-    "plugin/.codex-plugin/plugin.json"
+    "ops/central_mcp.py",
+    "ops/kgctl.py",
+    "ops/selftest.py"
    ],
    "auto_resolved_jsonl": [],
    "status": "needs_agent"
   },
   {
-   "slug": "panel-project-route-ia",
-   "branch": "codex/panel-project-route-ia",
-   "base_main": "7c7d8ddaf58c7582293f4b11bec9e9dcef1f0342",
-   "source_head": "19e3f6375587b50188b4167c4d574f093e75e0c9",
-   "source_commits": [
-    "19e3f6375587b50188b4167c4d574f093e75e0c9",
-    "07679c3aee746184138705c0f68a9b793c38f6eb",
-    "db5d13f4cff6cdee7a955e6910cf57ce77df9c6f",
-    "143af791e4432915f4e412c8589a877e2fdf6231",
-    "07fa6bcd3bd0325cc006b2e1a649e29476e9e088",
-    "f4e13aec71c0f3e53c33b10571c0e7bcf45e93ff",
-    "9cb202ae984704558cf8a6b0926c75d3dffb7de1",
-    "b9b28a9d89e0a093811aa3d2035f4828772eb02c"
-   ],
+   "slug": "disk-production-admission-20261112",
+   "branch": "codex/disk-production-admission-20261112",
+   "resolve_branch": "codex/resolve-disk-production-admission-20261112",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-disk-production-admission-20261112",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "34296b378968b3164b732eecebcaee65a75c28df",
+   "source_commits": [],
+   "created": "2026-11-17 19:44:30",
+   "updated": "2026-11-17 19:44:30",
    "conflict_files": [
-    "docs/PRODUCT_MAINLINE.md",
-    "ops/panel_logic_check.py",
+    "ops/disk_reap.py",
     "ops/selftest.py",
-    "plugin/.codex-plugin/plugin.json",
-    "plugin/ui/panel.html"
+    "ops/test-reap-zstd-path.py"
    ],
    "unresolved_files": [
-    "docs/PRODUCT_MAINLINE.md",
-    "ops/panel_logic_check.py",
+    "ops/disk_reap.py",
     "ops/selftest.py",
-    "plugin/.codex-plugin/plugin.json",
-    "plugin/ui/panel.html"
+    "ops/test-reap-zstd-path.py"
    ],
    "auto_resolved_jsonl": [],
-   "created": "2026-10-17 07:17:30",
-   "updated": "2026-10-17 07:17:30",
-   "status": "abandoned",
-   "reason": "面板三问/项目文件夹/菜单栏层级与渲染门禁已由 f1942be 落盘；旧分支剩余差异含版本回退与旧 truth 内容，不应整支合并"
+   "status": "needs_agent"
   },
   {
-   "slug": "closure-rate-metric",
-   "branch": "codex/closure-rate-metric",
-   "base_main": "7c7d8ddaf58c7582293f4b11bec9e9dcef1f0342",
-   "source_head": "0f0c23e75f8a5298fdc6557df710d56ae5ae1d77",
+   "slug": "autopilot-exec-recover-min-20261020",
+   "branch": "codex/autopilot-exec-recover-min-20261020",
+   "resolve_branch": "codex/resolve-autopilot-exec-recover-min-20261020",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-exec-recover-min-20261020",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "9c5f53f80858de40418294585dc0af81fbd6b25b",
    "source_commits": [
-    "0f0c23e75f8a5298fdc6557df710d56ae5ae1d77",
-    "f0c49022f59e226a3e1a338533d1fe5400c23b65",
-    "177d8ea81646747714590e7a908e3b3b0e894031",
-    "129a090719f0b1dc3d539137285974ca471ef249"
+    "587196186a68bf2e6a210d65b5dee1db1332ed6c",
+    "36b914265b8c825a4609a2662bfa7b9c21554d82",
+    "9c5f53f80858de40418294585dc0af81fbd6b25b"
    ],
+   "created": "2026-11-17 19:43:04",
+   "updated": "2026-11-17 19:43:04",
    "conflict_files": [
-    "ops/codex_native.py",
-    "ops/panel_logic_check.py",
-    "plugin/ui/panel.html"
+    "ops/central_daemon.py",
+    "ops/selftest.py"
    ],
    "unresolved_files": [
-    "ops/codex_native.py",
-    "ops/panel_logic_check.py",
-    "plugin/ui/panel.html"
+    "ops/central_daemon.py",
+    "ops/selftest.py"
    ],
    "auto_resolved_jsonl": [],
-   "created": "2026-10-17 07:17:30",
-   "updated": "2026-10-17 07:17:30",
-   "status": "abandoned",
-   "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
+   "status": "needs_agent"
+  },
+  {
+   "slug": "resource-admission-verify-narrowing-20261115",
+   "branch": "codex/resource-admission-verify-narrowing-20261115",
+   "resolve_branch": "codex/resolve-resource-admission-verify-narrowing-20261115",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-resource-admission-verify-narrowing-20261115",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "cf6e7668f10ac03ac42ccf258192d39fa0c15666",
+   "source_commits": [
+    "2ac1fa10624c491adac90a6175f495bc77597cac",
+    "cf6e7668f10ac03ac42ccf258192d39fa0c15666"
+   ],
+   "created": "2026-11-17 19:41:58",
+   "updated": "2026-11-17 19:41:58",
+   "conflict_files": [
+    "ops/guards/resource-admission.py",
+    "ops/tasks/conflict_burden.json"
+   ],
+   "unresolved_files": [
+    "ops/guards/resource-admission.py",
+    "ops/tasks/conflict_burden.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
+   "slug": "reap-branch-preserve-20261111",
+   "branch": "codex/reap-branch-preserve-20261111",
+   "resolve_branch": "codex/resolve-reap-branch-preserve-20261111",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-reap-branch-preserve-20261111",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "b4d56939cf323ba107e321ade73fe96e8247ca06",
+   "source_commits": [
+    "b4d56939cf323ba107e321ade73fe96e8247ca06"
+   ],
+   "created": "2026-11-17 19:38:15",
+   "updated": "2026-11-17 19:38:15",
+   "conflict_files": [
+    "ops/kgctl.py",
+    "ops/test-reap-branch-preserve.py"
+   ],
+   "unresolved_files": [
+    "ops/kgctl.py",
+    "ops/test-reap-branch-preserve.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
+   "slug": "autopilot-close-gate-20261026",
+   "branch": "codex/autopilot-close-gate-20261026",
+   "resolve_branch": "codex/resolve-autopilot-close-gate-20261026",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-close-gate-20261026",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "80afdc3670903d66e9187e534661cc7c97775f27",
+   "source_commits": [
+    "80afdc3670903d66e9187e534661cc7c97775f27"
+   ],
+   "created": "2026-11-17 19:37:07",
+   "updated": "2026-11-17 19:37:07",
+   "conflict_files": [
+    "ops/selftest.py",
+    "ops/truthctl.py"
+   ],
+   "unresolved_files": [
+    "ops/selftest.py",
+    "ops/truthctl.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
+   "slug": "autopilot-truth-sync-failclosed",
+   "branch": "codex/autopilot-truth-sync-failclosed",
+   "resolve_branch": "codex/resolve-autopilot-truth-sync-failclosed",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-truth-sync-failclosed",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "e63c220e3a6da8877a8ef196a7169e3d3b4b2f4e",
+   "source_commits": [
+    "e63c220e3a6da8877a8ef196a7169e3d3b4b2f4e"
+   ],
+   "created": "2026-11-17 19:34:25",
+   "updated": "2026-11-17 19:34:25",
+   "conflict_files": [
+    "ops/kgctl.py",
+    "ops/selftest.py"
+   ],
+   "unresolved_files": [
+    "ops/kgctl.py",
+    "ops/selftest.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
+   "slug": "autopilot-resolve-stderr",
+   "branch": "codex/autopilot-resolve-stderr",
+   "resolve_branch": "codex/resolve-autopilot-resolve-stderr",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-resolve-stderr",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "3ab07ffa9ff49fd140b55f73e3272fa5277d6915",
+   "source_commits": [
+    "3ab07ffa9ff49fd140b55f73e3272fa5277d6915"
+   ],
+   "created": "2026-11-17 19:33:12",
+   "updated": "2026-11-17 19:33:12",
+   "conflict_files": [
+    "ops/kgctl.py",
+    "ops/selftest.py"
+   ],
+   "unresolved_files": [
+    "ops/kgctl.py",
+    "ops/selftest.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
+   "slug": "autopilot-health-20261019",
+   "branch": "codex/autopilot-health-20261019",
+   "resolve_branch": "codex/resolve-autopilot-health-20261019",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-health-20261019",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "c711255000695f1773b9573a46d51966131a2b16",
+   "source_commits": [
+    "c711255000695f1773b9573a46d51966131a2b16"
+   ],
+   "created": "2026-11-17 19:31:45",
+   "updated": "2026-11-17 19:31:45",
+   "conflict_files": [
+    "ops/budget_gate.py"
+   ],
+   "unresolved_files": [
+    "ops/budget_gate.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
+   "slug": "snapshot-budget-archive-20261113",
+   "branch": "codex/snapshot-budget-archive-20261113",
+   "resolve_branch": "codex/resolve-snapshot-budget-archive-20261113",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-snapshot-budget-archive-20261113",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "ad220fb88c2b2546a3c807dd4229971473f806c7",
+   "source_commits": [
+    "2ac1fa10624c491adac90a6175f495bc77597cac"
+   ],
+   "created": "2026-11-17 19:29:23",
+   "updated": "2026-11-17 19:29:23",
+   "conflict_files": [
+    "ops/tasks/conflict_burden.json"
+   ],
+   "unresolved_files": [
+    "ops/tasks/conflict_burden.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
+   "slug": "autopilot-parallel-runtime-fix-20261019",
+   "branch": "codex/autopilot-parallel-runtime-fix-20261019",
+   "resolve_branch": "codex/resolve-autopilot-parallel-runtime-fix-20261019",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-parallel-runtime-fix-20261019",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "38aed5c0e38e3cf92dc147982e2e68a35e37ec68",
+   "source_commits": [
+    "65d2dcc10ea4a8ac162592a03af025feac323b83",
+    "40d123b65f8159dc5f52e5729f7d39b6f7c024ae",
+    "38aed5c0e38e3cf92dc147982e2e68a35e37ec68"
+   ],
+   "created": "2026-11-17 19:28:05",
+   "updated": "2026-11-17 19:28:05",
+   "conflict_files": [
+    "ops/kgctl.py"
+   ],
+   "unresolved_files": [
+    "ops/kgctl.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
   }
  ],
- "updated": "2026-10-27 21:01:21"
+ "updated": "2026-11-17 19:46:53"
 }

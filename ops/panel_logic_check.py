@@ -221,9 +221,6 @@ def main(argv):
     project = payload.get("project") or {}
     counters = payload.get("counters") or {}
     human_acc = payload.get("human_acceptance") or []
-    # 与面板 renderRoute() 的优先级链一致：阻塞态没有工作项时必须说「等待解除卡点」。
-    # 旧断言只认「等待下一条需求」，在有卡点的真实状态下制造假红灯。
-    route_blocked = payload.get("state") in ("blocked", "error")
 
     workdir = Path(tempfile.mkdtemp(prefix="autopilot-panel-logic-"))
     try:
@@ -265,6 +262,23 @@ def main(argv):
             print(f"  PASS  {label}")
             return 0
 
+        def hierarchy_work_text(state):
+            """镜像面板的工作项优先级，别把现场状态写死成某一种空态。"""
+            doing_items = state.get("doing_items") or []
+            todo_items = state.get("todo_items") or []
+            current = doing_items[0] if doing_items else state.get("exec_now")
+            if current is None and todo_items:
+                current = todo_items[0]
+            if current is not None:
+                if isinstance(current, dict):
+                    return current.get("title") or current.get("detail") or "正在处理"
+                return "正在处理"
+            if state.get("human_acceptance") or []:
+                return "等待人工验收"
+            if state.get("state") in ("blocked", "error"):
+                return "等待解除卡点"
+            return "等待下一条需求"
+
         fails = 0
         if not quiet:
             print("Codex 自动挡 面板首屏逻辑检查")
@@ -280,12 +294,22 @@ def main(argv):
         expected_project = project.get("name") or str(project.get("path") or "").rstrip("/").split("/")[-1] or "未绑定项目"
         fails += has("路线图显示项目归属", out["hierarchyProject"], expected_project)
         fails += has("路线图显示产品路线与当前阶段", out["hierarchyRoad"], expected_product, expected_stage)
-        current_items = payload.get("doing_items") or payload.get("todo_items") or []
-        expected_work = ((current_items[0].get("title") or current_items[0].get("detail"))
-                         if current_items
-                         else ("等待人工验收" if human_acc else
-                               "等待解除卡点" if route_blocked else "等待下一条需求"))
+        expected_work = hierarchy_work_text(payload)
         fails += has("路线图显示当前工作项", out["hierarchyWork"], expected_work)
+        # 上面那条跟随现场状态；再把两条空态分支单独钉住，避免现场恰好只有一种
+        # 状态时另一种分支腐化而无人发现。
+        blocked_empty = dict(payload)
+        blocked_empty.update({
+            "doing_items": [], "todo_items": [], "exec_now": None,
+            "human_acceptance": [], "state": "blocked",
+        })
+        blocked_out = run_once(blocked_empty)
+        fails += has("路线图卡点空态显示等待解除卡点",
+                     blocked_out["hierarchyWork"], "等待解除卡点")
+        idle_empty = dict(blocked_empty, state="ok")
+        idle_out = run_once(idle_empty)
+        fails += has("路线图普通空态显示等待下一条需求",
+                     idle_out["hierarchyWork"], "等待下一条需求")
         folders = ((payload.get("project_folders") or {}).get("folders") or [])
         if folders:
             folder = folders[0]
@@ -428,13 +452,14 @@ def main(argv):
         fails += has("冲突暂缓给放宽闸门的入口", bout["blockedList"], "放宽闸门再拆一次")
         fails += has("卡点写明不点的后果", bout["blockedList"], "不点就继续")
         bempty = dict(payload)
-        bempty["blocked"] = {"failures": [], "resolve": [], "exec": [], "port": []}
-        bempty["error"] = None
-        # 「需要你决策」区块不只吃 blocked：状态管家的调整卡和上下文管家的
-        # 约束候选也会进同一个列表。要断言空态，必须把三类来源都清空；
-        # 否则 land 的临时主干里只要有一张待点头卡片，这里就会制造假红灯。
-        bempty["harness_tune"] = {"status": "ok", "count": 0, "items": []}
-        bempty["constraint_candidates"] = {"status": "ok", "count": 0, "items": []}
+        bempty.update({
+            "blocked": {"failures": [], "resolve": [], "exec": [], "port": []},
+            "error": None,
+            # 这三块共用 blockedList：不清空现场候选，空态断言会被真候选污染，
+            # 上一次 land 因此在 trunk 上假红。逐项清空后才是确定性的空态夹具。
+            "harness_tune": {"status": "ok", "count": 0, "items": []},
+            "constraint_candidates": {"status": "ok", "count": 0, "items": []},
+        })
         beout = run_once(bempty)
         fails += has("没有卡点时给出空态说明",
                      beout["blockedList"] or beout["blockedHtml"], "没有需要你决策的")

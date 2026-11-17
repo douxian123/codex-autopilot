@@ -5,6 +5,7 @@
 | 闸门 | 函数 | 作用 | 关闭方式 |
 |---|---|---|---|
 | 防重复派发 | `_live_exec_slugs()` | 同一工作区已有 `codex exec` 时不派第二个 | 无常驻开关，只在日志留痕 |
+| worker 生命周期 | `ops/worker_lifecycle.py` | append-only 账本锁住 `start/status/stop/event/handback/resume`、generation、授权与 fail-closed；当前是独立契约，未接管生产派发 | `KG_WORKER_LIFECYCLE_ROOT` 指定账本根；接生产需单独授权与验证 |
 | 派发上限 | `_exec_attempt_gate()` | 6h 窗口内同一需求最多派 3 次，超限进 blocked | 调 `EXEC_REPEAT_CAP` |
 | 冲突停手 | `_escalate_conflict_block()` | 同一组冲突文件连续撞 2 次后停手等待裁决 | 面板 blocked 人工放行 |
 | 磁盘准入 | `_disk_pressure()` | 可用空间低于 6GB 时只停新 worker；恢复到 10GB 才放行 | `KG_EXEC_DISK_STOP_FREE_GB` / `KG_EXEC_DISK_RESUME_FREE_GB` |
