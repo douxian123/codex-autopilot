@@ -142,6 +142,7 @@ def main():
             "test-snapshot-clone-prune.py",
             "test-runtime-truthctl-selection.py",
             "test-gate-registration.py",
+            "test-worker-lifecycle.py",
         )
         for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)
