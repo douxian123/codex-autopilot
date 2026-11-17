@@ -27,6 +27,7 @@ truthctl 管「这个项目现在到底是什么状态」。
   truthctl distill add "<判断>"  把判断背后的判断逻辑写回（why/scope 走环境变量）
   truthctl constraints add "<约束>"  记一条约束（kind/scope/enforceable 走环境变量）
   truthctl constraints [--files a:b]  列出约束；带 --files 只列命中的
+  truthctl retire <decision|judgment|constraint|progress> <id>  追加式停用一条真相
   truthctl close <L-id> "<结论>"  标 done（必须带证据：KG_TRUTH_EVIDENCE 或 KG_TRUTH_COMMIT）
   truthctl reopen <L-id> "<原因>"  把已关闭的问题重新打开
   truthctl accept "<标题>" [--human --steps "..."]  登记验收项，分清机器自证/人工验收
@@ -1027,6 +1028,23 @@ def cmd_constraints(args):
     print('\n调取约定：scope 为空 = 全局约束（恒命中）；写了 scope 就只在改动命中时带上。')
 
 
+def cmd_retire(args):
+    """按 id 追加一条「已停用」投影；决策/判断/约束/进展统一走加法。"""
+    if len(args) != 2 or args[0] not in ('decision', 'judgment', 'constraint', 'progress'):
+        sys.exit('用法: truthctl retire <decision|judgment|constraint|progress> <id>')
+    t, rid = args
+    with _truth_lock():
+        row = _latest_by_id(_read(TRUTH / FILES[t])).get(rid)
+        if row is None:
+            sys.exit(f'{t} 台账里没有 {rid}')
+        merged = dict(row)
+        merged['status'] = 'retired'
+        merged['ts'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        merged['retired_from'] = row.get('status')
+        _append(merged)
+    print(f'已停用 {t} [{rid}]')
+
+
 def _coerce_evidence(evidence):
     """evidence 历史上出现过 str / list / None 三种类型；统一成单个字符串。"""
     if not evidence:
@@ -1177,7 +1195,10 @@ def cmd_synthesize(args):
     dec = [r for r in _latest_by_id(_read(TRUTH / 'decisions.jsonl')).values()
            if r.get('status') == 'active']
     led = list(_latest_ledger(_read(TRUTH / 'ledger.jsonl')).values())
-    prg = sorted(_latest_by_id(_read(TRUTH / 'progress.jsonl')).values(),
+    # retire 是追加的状态覆盖行：历史行留着，但停用后的进展不许再渲染进
+    # 人看的主线（否则重复落盘会印两遍同一件事）。
+    prg = sorted([r for r in _latest_by_id(_read(TRUTH / 'progress.jsonl')).values()
+                  if (r.get('status') or 'active') != 'retired'],
                  key=lambda r: r.get('ts', ''))
     acc = list(_latest_by_id(_read(TRUTH / 'acceptance.jsonl')).values())
     ps = _read_json(PRODUCT_STATE)
@@ -1324,7 +1345,8 @@ def cmd_snapshot(args):
     ml = json.loads((TRUTH / 'mainline.json').read_text()) if (TRUTH / 'mainline.json').exists() else {}
     dec = list(_latest_by_id(_read(TRUTH / 'decisions.jsonl')).values())
     led = list(_latest_ledger(_read(TRUTH / 'ledger.jsonl')).values())
-    prg = sorted(_latest_by_id(_read(TRUTH / 'progress.jsonl')).values(),
+    prg = sorted([r for r in _latest_by_id(_read(TRUTH / 'progress.jsonl')).values()
+                  if (r.get('status') or 'active') != 'retired'],
                  key=lambda r: r.get('ts', ''))
     acc = list(_latest_by_id(_read(TRUTH / 'acceptance.jsonl')).values())
 
@@ -1459,7 +1481,7 @@ def cmd_snapshot(args):
 CMDS = {'add': cmd_add, 'ls': cmd_ls, 'snapshot': cmd_snapshot, 'promote': cmd_promote,
         'route': cmd_route, 'lanes': cmd_lanes, 'next': cmd_next,
         'product': cmd_product, 'distill': cmd_distill,
-        'constraints': cmd_constraints,
+        'constraints': cmd_constraints, 'retire': cmd_retire,
         'close': cmd_close, 'open': cmd_open, 'synthesize': cmd_synthesize,
         'accept': cmd_accept}
 
@@ -1471,6 +1493,6 @@ if __name__ == '__main__':
     else:
         print(__doc__)
         print('命令：' + ' | '.join(['snapshot', 'ls', 'add', 'promote', 'route', 'lanes',
-                                     'next', 'product', 'distill', 'close', 'open',
-                                     'synthesize']))
+                                     'next', 'product', 'distill', 'constraints', 'retire',
+                                     'close', 'open', 'synthesize']))
         sys.exit(1)

@@ -275,6 +275,11 @@ def main():
         # 写了不会被后续实现自动引用，等于「规范是文字，文字输给顺手」。
         run([sys.executable, str(OPS / "test-constraints-intake.py")],
             cwd=str(OPS.parent), check=True)
+        # 真相层 append-only 台账的 active 投影不能因为重复落盘长出双份：
+        # 决策/判断/约束同一内容出现两次，会把产品主线和实现 prompt 一起污染。
+        # 这条同时锁住 retire 必须追加状态行、不许删历史物理行。
+        run([sys.executable, str(OPS / "test-truth-dedupe.py")],
+            cwd=str(OPS.parent), check=True)
         # 约束必须真的能兜底：标了 enforceable=gate 的约束此前从没被执行过 ——
         # 落盘门禁只读 central.config.json，而 CLI/面板却渲染成「有门禁」，是实打实
         # 的假绿灯（2026-11-17 实测，knowledge-graph 的 C-0001 连命令都没写）。
