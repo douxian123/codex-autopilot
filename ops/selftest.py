@@ -120,8 +120,30 @@ def main():
             # 一拉起就会在磁盘压力下真跑 `reap --go`（2026-11-16 实测 34 条待删）。
             # 这条门禁不只断言 ref 存在，还用 `git gc --prune=now` 证明对象真的没被回收。
             "test-reap-branch-preserve.py",
+            # detached HEAD 的 worktree 里若带独占提交，判据必须拒绝回收，而不是
+            # 因为「拿不到分支名」就把 ahead 读成 0 放行。2026-11-17 实测这条路径
+            # 上有两个叠在一起的缺陷（计数 + 拦截条件），修完才拦住：这条门禁对
+            # 三种传参（""/"HEAD"/真实 sha）都断言，并用反向用例证明「无独占提交
+            # 仍可回收」，防止把它们一起焊死。
+            "test-reap-detached-head-guard.py",
         )
         for guard in reap_guards:
+            print(f"  run  {guard}", flush=True)
+            run([sys.executable, str(OPS / guard)],
+                cwd=str(OPS.parent), check=True)
+        # 同一类缺口：`ops/test-*.py` 里有门禁文件、也随发版进了版本目录，但
+        # selftest 是**显式点名**跑的（没有 glob 自动发现）。不点名 = 发了不跑 =
+        # 回归绿灯是假的。2026-11-17 审计实测：40 条 ops/test-*.py 里有 5 条从未
+        # 被总闸点名，其中就包括刚加的 detached HEAD 回收门禁。下面这几条补进总闸，
+        # 并由 `test-gate-registration.py` 锁住「不许再有漏网的门禁」。
+        standalone_guards = (
+            "test-reap-zstd-path.py",
+            "test-repoint-interval.py",
+            "test-snapshot-clone-prune.py",
+            "test-runtime-truthctl-selection.py",
+            "test-gate-registration.py",
+        )
+        for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)
             run([sys.executable, str(OPS / guard)],
                 cwd=str(OPS.parent), check=True)
