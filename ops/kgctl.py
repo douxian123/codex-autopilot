@@ -2622,17 +2622,23 @@ def cmd_dash(args):
     else:
         machine_html = '<div class="note">机器已自证 · 不需要你动手</div>'
 
-    # 当前在做什么 / 还差什么
+    # 当前在做什么 / 还差什么 / 等你确认
+    waiting = [r for r in led if r.get("status") == "awaiting_human"]
     doing = [r for r in open_led if r.get("status") == "doing"]
-    todo = [r for r in open_led if r.get("status") != "doing"]
+    todo = [r for r in open_led if r.get("status") not in ("doing", "awaiting_human")]
 
     def item_ul(items):
         return "".join(
             f'<li>{kind_tag(r.get("kind"))}<span class="grow">{esc(r.get("title"))}</span>'
             f'<span class="when">{esc(r.get("id"))}</span></li>' for r in items)
 
-    if doing or todo:
+    if doing or todo or waiting:
         parts = []
+        if waiting:
+            # 活已经干完，缺的是人这一票。放在「还差这些」之前，避免用户以为
+            # 机器还没做，也避免 agent 把这几条当成待办反复重做。
+            parts.append('<div class="subhead">等你确认（做完了，缺你看一眼）</div>'
+                         '<ul class="list">' + item_ul(waiting) + "</ul>")
         if doing:
             parts.append('<div class="subhead">正在做</div><ul class="list">' + item_ul(doing) + "</ul>")
         if todo:

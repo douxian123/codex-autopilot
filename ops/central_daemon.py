@@ -2930,7 +2930,7 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
                 continue
             job["item"] = item
         ledger_status = str((job.get("item") or {}).get("status") or "")
-        if ledger_status in ("done", "closed", "cancelled", "superseded"):
+        if ledger_status in TERMINAL_LEDGER_STATUSES:
             jobs.pop(rid, None)
             continue
         # 台账里这条已经 done/closed 时，job["item"] 可能是上一轮缓存下来的旧
@@ -2939,16 +2939,14 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
         # 真正要跑模型的位置只剩 1 个。
         try:
             _lts = open_items.get(rid)
-            if _lts is not None and str(_lts.get("status") or "") in (
-                    "done", "closed", "cancelled", "superseded"):
+            if _lts is not None and str(_lts.get("status") or "") in TERMINAL_LEDGER_STATUSES:
                 jobs.pop(rid, None)
                 continue
         except Exception:
             pass
         try:
             _live_status = (_ledger_latest() or {}).get(rid, {}).get("status")
-            if str(_live_status or "") in ("done", "closed", "cancelled",
-                                           "superseded"):
+            if str(_live_status or "") in TERMINAL_LEDGER_STATUSES:
                 jobs.pop(rid, None)
                 continue
         except Exception:
@@ -3078,6 +3076,11 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
             break
     return results
 
+
+# 台账里这些状态代表「不需要机器再动手」：留着并发槽位只会挤掉真正要跑的任务。
+# awaiting_human = 代码已落盘、等用户确认视觉/手感，机器这边已经收工。
+TERMINAL_LEDGER_STATUSES = ("done", "closed", "cancelled", "superseded",
+                            "awaiting_human")
 
 EXEC_REPEAT_CAP = 3            # 同一需求在窗口内最多派 3 次
 EXEC_REPEAT_WINDOW = 6 * 3600  # 6 小时
