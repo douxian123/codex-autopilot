@@ -110,6 +110,7 @@
   .q .card .chead{margin-bottom:10px}
   .q .card + .card,.q .northstar,.q .sysline{margin-top:10px}
   .sysline{font-size:11.5px;color:var(--ink-3);line-height:1.6;overflow-wrap:anywhere}
+  .need-evidence[hidden]{display:none}
   /* 管家健康条：首屏只留一行摘要和短名状态条，完整解释走 title / aria-label。
      attention 才用警告色；off 是用户自己关的，用中性灰，不冒充故障。 */
   .stewards{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);display:flex;align-items:center;flex-wrap:wrap;gap:5px 10px}
@@ -422,7 +423,7 @@
     <div class="qhead"><span class="qn">1</span><h2>有东西需要我吗？</h2><span class="qstate" id="q1State"></span></div>
     <div class="alert lv-ok" id="need">
       <span class="al-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/></svg></span>
-      <span class="al-tx">读取中…</span>
+      <span class="al-tx" id="needText">读取中…</span>
     </div>
     <section class="card" id="acceptCard">
       <div class="chead"><h2>需要你介入</h2><span class="count" id="accNote"></span></div>
@@ -495,6 +496,11 @@
     <div class="chead"><h2>项目文件夹</h2><span class="count" id="folderNote"></span></div>
     <div class="folders" id="folderBox"></div>
   </section>
+
+    <details class="card fold need-evidence" id="needEvidenceFold">
+      <summary>当前提醒的工程详情</summary>
+      <div class="foldbody"><div id="needEvidenceBox"></div></div>
+    </details>
 
   <section class="orientation" id="routeOverview">
     <div class="orientation-head">
@@ -803,6 +809,7 @@
     var box = el("need"); if(!box) return;
     var lv = "lv-brand", ic = IC_INFO;
     var txt = s.need_action || "—";
+    var detail = s.need_action_detail || "";
     var quiet = /不需要|无需|不用你/.test(txt);
     if (s.state === "error") { lv = "lv-err"; ic = IC_WARN; }
     else if (s.state === "blocked") { lv = "lv-warn"; ic = IC_WARN; }
@@ -810,6 +817,17 @@
     box.className = "alert " + lv;
     var icn = box.querySelector(".al-ic"); if (icn) icn.innerHTML = ic;
     var tx = box.querySelector(".al-tx"); if (tx) tx.textContent = txt;
+    if (txt) box.title = detail || txt;
+    box.setAttribute("aria-label", detail ? (txt + "。详情：" + detail) : txt);
+    renderNeedEvidence(detail);
+  }
+
+  // 工程路径、PID、修复命令只进折叠区和可访问属性；首屏保留用户结论。
+  function renderNeedEvidence(detail){
+    var fold = el("needEvidenceFold"); if (!fold) return;
+    var box = el("needEvidenceBox");
+    if (box) box.textContent = detail || "";
+    fold.hidden = !detail;
   }
 
   function render(s){

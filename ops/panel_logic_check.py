@@ -218,6 +218,10 @@ console.log(JSON.stringify({
   northStarDetail: read("nsDetail"),
   northStarClass: document.getElementById("northStar").className,
   needText: alertText.textContent,
+  needTitle: document.getElementById("need").title || "",
+  needAria: document.getElementById("need").getAttribute("aria-label") || "",
+  needEvidence: read("needEvidenceBox"),
+  needEvidenceHidden: document.getElementById("needEvidenceFold").hidden,
   nativeState: read("nativeState"),
   received: read("cReceived"),
   landned: read("cLanded"),
@@ -428,6 +432,46 @@ def main(argv):
         fails += has("验收项带可点的补图动作", review_out["acceptBox"], "补一张复核截图")
         fails += has("补图动作写明不会替人收口", review_out["acceptBox"],
                      "补图只追加附件", "不会替你收口")
+
+        # 守护绑定错位曾经把两个绝对路径直接铺在首屏，用户一眼只看到工程内部细节。
+        # 这里验证：首屏只留后果，完整路径仍在 title / aria-label / 工程详情里。
+        daemon_bound = "/tmp/autopilot-logic-bound-project"
+        daemon_current = "/tmp/autopilot-logic-current-project"
+        daemon_detail = "绑定的是 " + daemon_bound + "，不是 " + daemon_current
+        dm = dict(payload)
+        dm.update({
+            "state": "blocked",
+            "state_label": "需要你处理",
+            "need_action": "自动推进绑到了别的项目；当前项目不会自己往前走。",
+            "need_action_detail": daemon_detail,
+        })
+        dout = run_once(dm)
+        fails += has("守护异常首屏只显示用户结论", dout["needText"],
+                     "自动推进绑到了别的项目", "当前项目不会自己往前走")
+        if daemon_bound in str(dout["needText"]):
+            fails += 1
+            print("  FAIL  守护绑定路径不该进首屏正文")
+        else:
+            print("  PASS  守护绑定路径不进首屏正文")
+        fails += has("守护绑定路径仍可从 title 取到", dout["needTitle"], daemon_bound)
+        fails += has("守护绑定路径仍可从 aria-label 取到", dout["needAria"], daemon_bound)
+        fails += has("守护详情进入折叠区", dout["needEvidence"], daemon_bound, daemon_current)
+        if dout.get("needEvidenceHidden") is False:
+            print("  PASS  有详情时工程详情折叠区可见")
+        else:
+            fails += 1
+            print("  FAIL  有详情时工程详情折叠区被隐藏")
+        clean = dict(payload)
+        clean.update({
+            "need_action": "不需要你做什么，继续照常提需求就行",
+            "need_action_detail": "",
+        })
+        clean_out = run_once(clean)
+        if clean_out.get("needEvidenceHidden") is True:
+            print("  PASS  无详情时工程详情折叠区不占空间")
+        else:
+            fails += 1
+            print("  FAIL  无详情时工程详情折叠区仍显示")
         fails += has("补图按钮发起截图工具调用", review_out.get("captureToolName", ""),
                      "capture_acceptance_screenshot")
         fails += has("补图按钮带真实验收 id", review_out.get("captureToolId", ""),

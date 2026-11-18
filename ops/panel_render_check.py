@@ -86,7 +86,7 @@ setTimeout(function(){
 FIRST_SCREEN_IDS = [
     "stateLabel", "statusTime", "projectLine", "focusStatus", "focusDoing",
     "focusStep", "hierProject", "hierRoad", "hierWork", "sysLine",
-    "intakeRoute",
+    "intakeRoute", "needText",
 ]
 ADV_SCREEN_IDS = FIRST_SCREEN_IDS + [
     "pmBriefingBox", "acceptBox", "pmBriefingFoldOpen",
