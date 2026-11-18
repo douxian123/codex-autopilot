@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-19 04:34:35　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-19 05:02:22　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -46,23 +46,19 @@
 
 ## 最近在推进
 
-- [已落盘] @ b07f8317 已修复 sync_trunk_truth 暂存前 JSONL 与 HEAD 行级并集，新增 test-mirror-truth-jsonl-union 阴性对照；提交 d61f0194 已随 b07f8317 落盘 origin/main，插件运行时已同步同一哈希 4782a6eb；本提交恢复被旧状态根覆盖的 JSONL 历史。
-- [已落盘] @ 3660e786ef codex/truth-restore-union-20261118 验证门禁通过，已落盘 main @ 3660e786ef；改动 4 个文件：docs/PRODUCT_MAINLINE.md（+30/-16）、ops/truth/acceptance.jsonl（+8/-2）、ops/truth/ledger.jsonl（+4/-0）、ops/truth/progress.jsonl（+10/-0）｜4 files changed, 52 insertions(+), 18 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0008
-- [已落盘] @ 99cb2c660e codex/gate-selftest-release-dir-20261118 验证门禁通过，已落盘 main @ 99cb2c660e；改动 2 个文件：ops/selftest.py（+25/-3）、ops/test-selftest-release-dir.py（+65/-0）｜2 files changed, 90 insertions(+), 3 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0009
-- [已落盘] @ 97c1374e 已修复 release 目录总闸恒红：test_installer 自建临时 git 源仓与 detached worktree，不再把非 git 发版目录当状态根；新增 test-selftest-release-dir.py 锁住无 .git 副本可跑，并反向确认安装器仍拒绝非 git 状态根。提交 2ac41afc 已随 97c1374e 落盘 origin/main，门禁 selftest/panel-logic/panel-render 均 exit 0。
-- [已落盘] @ fc4ec4c22d codex/tmp-owner-cleanup-20261118 验证门禁通过，已落盘 main @ fc4ec4c22d；改动 5 个文件：ops/disk_reap.py（+31/-1）、ops/gate_owner.py（+73/-0）、ops/kgctl.py（+17/-5）、ops/selftest.py（+3/-0）、ops/test-gate-owner-reap.py（+216/-0）｜5 files changed, 340 insertions(+), 6 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0077
-- [已落盘] @ 7db4f0c9 临时 gate worktree 加 sidecar 归属标记与随机路径；无标记/外部标记/新标记/在用会话均不回收，过期且无人占用的归属树仍走 all 判活后回收；官方门禁与落盘 ancestry 均已核验
-- [已落盘] @ 5575426665 codex/tmp-owner-cleanup-20261118 验证门禁通过，已落盘 main @ 5575426665；改动 12 个文件：install.sh（+14/-0）、ops/guards/hyapi_burner.py（+206/-0）、ops/guards/hyapi_deadpool_reap.py（+428/-0）、ops/guards/hyapi_freewatch.py（+172/-0）、ops/guards/hyapi_secrets.py（+182/-0），另有 7 个文件｜12 files changed, 1497 insertions(+), 4 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0077、A-0078、A-0079、A-0080
-- [在途] @ ec369b7dc9 launchd 版本化代码与测试诊断已落盘 origin/main（ec369b7d）。真机 freshness 仍为 1：本机 5 条 launchd 入口仍指旧路径，当前安装版本缺新 guard 文件；真正的现场修复需要执行 install.sh 5.7 或 repoint_launchd.py --install，会改 plist 并 reload 后台服务，未获明确授权前不执行，L-0007 保持 open。
-- [已落盘] @ 5653e04e8d codex/panel-windshield-20261119 验证门禁通过，已落盘 main @ 5653e04e8d；改动 5 个文件：ops/central_mcp.py（+53/-1）、ops/kgctl.py（+108/-1）、ops/panel_render_check.py（+24/-1）、ops/test-project-router.py（+52/-0）、plugin/ui/panel.html（+35/-1）｜5 files changed, 272 insertions(+), 4 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [已落盘] @ 730b15607b codex/guard-release-version-20261119 验证门禁通过，已落盘 main @ 730b15607b；改动 2 个文件：ops/selftest.py（+15/-2）、plugin/.codex-plugin/plugin.json（+1/-1）｜2 files changed, 16 insertions(+), 3 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0084
+- [已落盘] @ 264527c29f codex/panel-route-contract-20261119 验证门禁通过，已落盘 main @ 264527c29f；改动 2 个文件：ops/panel_render_check.py（+45/-9）、ops/selftest.py（+5/-0）｜2 files changed, 50 insertions(+), 9 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ 7db4f0c9 依 P-0094 收口：临时 gate worktree 已加 sidecar 归属标记与随机路径，门禁和落盘 ancestry 已核验。
+- [已落盘] @ 5caaabb7 依 P-0085 收口：真相镜像改为 JSONL 行级并集，新增阴性对照，门禁通过。
+- [已落盘] @ 1358b850 依 P-0087 收口：状态根解析优先可用配置并按 HEAD 时间取最新，陈旧检出不再压过活主干。
+- [已落盘] @ b6e94f44 依 P-0078 与落盘记录收口：install.sh 补显式首次安装和 launchd running+pid 回读，修复提交 7d32dd97 随 b6e94f44 落盘。
+- [已落盘] @ 8cedc648 依 P-0088 收口：发布 lineage 门禁要求 source_commit 同时在本地 main 与 origin/main 祖先链，阴性对照通过。
+- [已落盘] @ 9a04e085 依 P-0080 收口：snapshot_prune.py 改为 Python 3.9 兼容注解，系统解释器与反向门禁通过。
+- [已落盘] @ 97c1374e 依 P-0092 收口：release 目录 selftest 自建 git 夹具，不再因非 git 发版目录恒红。
+- [已落盘] @ d36087b8 依 P-0072 收口：首屏三问、PM 简报、人工验收截图与补图按钮已落盘，补图不替人收口。
+- [已落盘] @ b07f8317 依 P-0089 收口：JSONL 真相镜像按 identity 行级并集，避免并发 land 覆盖同 ID 历史。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0007` [P1] codex/truth-sync-union-20261118 门禁预跑（未落盘）
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0008` [P1] codex/truth-restore-union-20261118 门禁预跑（未落盘）
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0075` [P1] codex/truth-restore-union-20261118 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0009` [P1] codex/gate-selftest-release-dir-20261118 门禁预跑（未落盘）
@@ -82,6 +78,10 @@
 - `A-0084` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0085` [P1] codex/guard-release-version-20261119 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0086` [P1] codex/guard-release-version-20261119 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0087` [P1] codex/panel-route-contract-20261119 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
@@ -116,11 +116,13 @@
 - `A-0083` [P1] codex/panel-windshield-20261119 落盘验收
 - `A-0084` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
 - `A-0085` [P1] codex/guard-release-version-20261119 落盘验收
+- `A-0086` [P1] codex/guard-release-version-20261119 落盘验收
+- `A-0087` [P1] codex/panel-route-contract-20261119 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：9 条
-- 累计落盘：18 条
+- 累计落盘：30 条
 - 未决问题：1 条
-- 已验收：21 条
+- 已验收：23 条
 
