@@ -247,6 +247,10 @@ def main():
         # 这条同时锁住「空台账与文件缺失不同」「overlap 排队不是病」「待自验没人跑是真卡点」。
         run([sys.executable, str(OPS / "test-project-health.py")],
             cwd=str(OPS.parent), check=True)
+        # 路线与效能健康：状态管家要能发现路线跑偏、无关卡点和重试空转，
+        # 但只能提复核。取不到必须 unknown；正常重试和 overlap 排队不能误报。
+        run([sys.executable, str(OPS / "test-route-health.py")],
+            cwd=str(OPS.parent), check=True)
         # 关系层：跨项目长期目标必须有稳定对象。显式来源、空账本与取不到的区别、
         # 损坏账本 fail-closed、只读投影不派活，都由这条门禁锁住。
         run([sys.executable, str(OPS / "test-relationship-ledger.py")],
@@ -1774,11 +1778,13 @@ def test_broken_binding_panel_contract():
             assert "普通目录无法闭环" in payload["why"], payload
             for key in ("project", "switches", "queue", "counters", "closure_rate",
                         "human_acceptance", "daemon", "doing_items", "todo_items",
-                        "project_health",
+                        "project_health", "route_health",
                         "machine_verified", "roadmap", "project_folders"):
                 assert key in payload, f"坏绑定状态缺少面板字段：{key}"
             assert payload["counters"]["landed"] is None, "坏绑定的计数不能伪装成 0"
             assert payload["queue"]["clean"] is None, "坏绑定的队列不能伪装成空"
+            assert payload["route_health"]["level"] == "unknown", \
+                "坏绑定时路线与效能不能伪装成正常"
             import central_mcp
             closure_line = central_mcp._closure_rate_line(payload["closure_rate"])
             assert "取不到" in closure_line, closure_line
@@ -1840,6 +1846,8 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     assert '"screenshots"' in mcp, "MCP 工具契约缺少 screenshots"
     assert "_pm_briefing_summary" in mcp, "MCP 状态未接 PM 简报"
     assert "_acceptance_criteria_summary" in mcp, "MCP 状态未接验收标准候选"
+    assert "_route_health_summary" in mcp, "MCP 状态未接路线与效能检测"
+    assert '"route_health"' in mcp, "MCP 状态快照缺少 route_health"
     for tool in ("acceptance_criteria_list", "acceptance_criteria_promote",
                  "acceptance_criteria_dismiss"):
         assert f'"name": "{tool}"' in mcp, f"MCP 未注册 {tool}"
@@ -1853,6 +1861,13 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
         "验收台账未接截图附件"
     assert "KG_TRUTH_SOURCE_HASH" in truthctl, \
         "验收台账未记原话 hash，候选台账丢失后同一条会复发"
+    route_health = root / "ops" / "route_health.py"
+    assert route_health.is_file(), "发布树缺少 ops/route_health.py"
+    route_health_text = route_health.read_text(encoding="utf-8")
+    assert "propose_review" in route_health_text, \
+        "路线与效能检测缺少只提复核的机器约束"
+    assert "不杀 worker" in route_health_text or "不自动纠偏" in route_health_text, \
+        "路线与效能检测缺少非破坏性边界"
     print(f"selftest ok: 发布包包含 PM 简报、验收标准候选与截图通道，版本 {version}。")
 
 

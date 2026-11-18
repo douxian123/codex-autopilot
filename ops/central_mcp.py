@@ -24,6 +24,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from datetime import datetime, timezone
 
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "codex-autopilot"
@@ -217,6 +218,159 @@ def _acceptance_criteria_summary():
     return {"status": "ok", "count": len(items), "items": items}
 
 
+def _scope_path(value):
+    text = str(value or "").strip().replace("\\", "/")
+    while text.startswith("./"):
+        text = text[2:]
+    return text.lstrip("/")
+
+
+def _path_in_scope(path, declared):
+    candidate = _scope_path(path)
+    if not candidate:
+        return False
+    for raw in declared:
+        scope = _scope_path(raw)
+        if not scope:
+            continue
+        if candidate == scope or candidate.startswith(scope.rstrip("/") + "/"):
+            return True
+    return False
+
+
+def _exec_changed_paths(worktree):
+    """只读取当前实现工作区的已跟踪改动；取不到就返回 None，不猜空。"""
+    text = str(worktree or "").strip()
+    if not text:
+        return None
+    wt = Path(text)
+    if not wt.is_dir():
+        return None
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(wt), "status", "--porcelain", "--untracked-files=no"],
+            capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    paths = []
+    for line in (proc.stdout or "").splitlines():
+        if len(line) < 4:
+            continue
+        raw = line[3:].strip()
+        if " -> " in raw:
+            raw = raw.split(" -> ", 1)[1].strip()
+        raw = raw.strip('"')
+        if raw:
+            paths.append(raw)
+    return paths
+
+
+def _stall_minutes_from_blocked(blocked, rid):
+    """从已知卡点算无关卡点分钟数；调度性等待不算偏航。"""
+    records = (blocked or {}).get("exec") or []
+    rec = next((r for r in records if isinstance(r, dict)
+                and str(r.get("id") or "") == str(rid)), None)
+    reason = str((rec or {}).get("reason") or "")
+    benign = {"overlap_hold", "land_locked", "channel_unavailable", "retry_after"}
+    if not reason or reason in benign:
+        return 0
+    ts = (rec or {}).get("ts")
+    try:
+        if isinstance(ts, (int, float)):
+            start = datetime.fromtimestamp(float(ts), timezone.utc)
+        else:
+            start = datetime.fromisoformat(str(ts or "").replace("Z", "+00:00"))
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    delta = (datetime.now(timezone.utc) - start).total_seconds() / 60
+    return max(0, int(delta))
+
+
+def _route_health_summary(payload, state=None):
+    """状态管家内部的路线/效能只读检测：不是第八个管家，不自动纠偏。
+
+    判据只来自现有现场：worker 生命周期声明的 scope、当前工作区改动、
+    生命周期世代/推进事件、已知 exec 卡点。拿不到就交给检测器输出 unknown；
+    没有在跑的实现时是明确的空闲 ok，不拿「没有对象」冒充「检测通过」。
+    """
+    try:
+        import route_health
+    except Exception as exc:
+        return {"status": "ok", "level": "unknown",
+                "headline": "路线与效能判据取不到：检测器不可用（%s）" % exc,
+                "unknown": ["检测器不可用"], "reasons": [], "action": "none"}
+
+    en = payload.get("exec_now")
+    if not en:
+        return route_health.evaluate({"idle": True})
+
+    rid = str(en.get("id") or "")
+    runtime = {}
+    declared = None
+    try:
+        import exec_lifecycle
+        jobs = ((state or {}).get("exec_workers") or {}).get("exec_jobs") or {}
+        job = jobs.get(rid) or {}
+        worker_id = str(job.get("lifecycle_worker_id")
+                        or exec_lifecycle.safe_worker_id(rid))
+        projection = exec_lifecycle._service(RUNTIME).status(worker_id)
+        spec = projection.get("spec") or {}
+        declared = [
+            str(x) for x in (spec.get("allowed_resources") or spec.get("resources") or [])
+            if str(x).strip()
+        ]
+        runtime["retry_count"] = max(0, int(projection.get("generation") or 1) - 1)
+        ledger = exec_lifecycle.lifecycle_root(RUNTIME) / f"worker-{worker_id}.jsonl"
+        progress = 0
+        for line in ledger.read_text(encoding="utf-8").splitlines():
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            if str((row or {}).get("type") or "") == "event.progress":
+                progress += 1
+        runtime["progress_events"] = progress
+    except Exception:
+        # 生命周期账本取不到，scope / 重试 / 推进都保持缺项，检测器会诚实报 unknown。
+        declared = None
+
+    if declared:
+        changed = _exec_changed_paths(en.get("worktree"))
+        if changed is None:
+            runtime["mandate_scope_ok"] = None
+            runtime["off_scope_changes"] = None
+        else:
+            offenders = [p for p in changed if not _path_in_scope(p, declared)]
+            runtime["mandate_scope_ok"] = not offenders
+            runtime["off_scope_changes"] = len(offenders)
+    else:
+        runtime["mandate_scope_ok"] = None
+        runtime["off_scope_changes"] = None
+
+    # 面板投影会丢掉 exec_blocked 的 ts。这里回读守护原始记录里的同一条，
+    # 否则「已经卡了多久」永远取不到，检测器只能一直报 unknown。
+    blocked_for_route = dict(payload.get("blocked") or {})
+    raw_rec = (((state or {}).get("exec_blocked") or {}).get(rid))
+    if isinstance(raw_rec, dict):
+        blocked_for_route["exec"] = [{
+            "id": rid,
+            "reason": raw_rec.get("reason"),
+            "ts": raw_rec.get("ts"),
+        }]
+    runtime["unrelated_stall_minutes"] = _stall_minutes_from_blocked(
+        blocked_for_route, rid)
+    try:
+        return route_health.evaluate(runtime)
+    except Exception as exc:
+        return {"status": "ok", "level": "unknown",
+                "headline": "路线与效能判据取不到：计算失败（%s）" % exc,
+                "unknown": ["计算失败"], "reasons": [], "action": "none"}
+
+
 def _project_health_summary(payload):
     """全局健康层：项目真相 / 执行流动 / 验收三层，只读聚合，不造第二套台账。
 
@@ -350,6 +504,7 @@ def _steward_health(payload):
     cand = payload.get("constraint_candidates") or {}
     acc_criteria = payload.get("acceptance_criteria") or {}
     harness_health = payload.get("harness_health") or {}
+    route_health = payload.get("route_health") or {}
     project_health = payload.get("project_health") or {}
     queue = payload.get("queue") or {}
     counters = payload.get("counters") or {}
@@ -402,16 +557,25 @@ def _steward_health(payload):
                      % (_n(queue.get("clean")), _n(counters.get("landed")),
                         _n(queue.get("conflict")))})
 
-    # 4. 状态管家：待点头的 harness 调整卡 + 上下文健康结论。
+    # 4. 状态管家：待点头的 harness 调整卡 + 上下文健康 + 路线/效能复核。
+    # 路线信号是同一个管家内部的只读检测器；不新增一行，也不生成动作。
+    route_level = route_health.get("level")
     if tune.get("status") != "ok":
         rows.append({"key": "tune", "state": "unknown",
                      "label": "状态管家：调整卡读不到"})
+    elif route_level == "unknown":
+        rows.append({"key": "tune", "state": "unknown",
+                     "label": "状态管家：%s" % (route_health.get("headline")
+                                              or "路线与效能判据取不到")})
     elif tune.get("count"):
         rows.append({"key": "tune", "state": "attention",
                      "label": "状态管家：%s 张调整卡等你点头（config 未动）" % tune.get("count")})
     elif harness_health.get("status") == "ok" and harness_health.get("level") in ("warn", "over"):
         rows.append({"key": "tune", "state": "attention",
                      "label": "状态管家：%s" % (harness_health.get("headline") or "上下文偏紧")})
+    elif route_level == "attention":
+        rows.append({"key": "tune", "state": "attention",
+                     "label": "状态管家：路线与效能需复核（只提复核，不自动纠偏）"})
     else:
         rows.append({"key": "tune", "state": "ok",
                      "label": "状态管家：%s" % (harness_health.get("headline") or "当前无待调整项")})
@@ -2347,6 +2511,14 @@ def _status_payload(fast=True):
                 "layers": [],
                 "signals": {},
             },
+            "route_health": {
+                "status": "ok",
+                "level": "unknown",
+                "headline": "路线与效能判据取不到：安装绑定失效",
+                "unknown": ["安装绑定失效"],
+                "reasons": [],
+                "action": "none",
+            },
             "mainline": {},
             "route": {},
             "roadmap": [],
@@ -2609,6 +2781,8 @@ def _status_payload(fast=True):
         # 面板只渲染，不再自己算 stage（唯一判据仍是 ops/stage_table.py）。
         "work_rows": _work_rows(Path(current_project).name),
     }
+    # 路线与效能是状态管家的内部只读检测器，不新增管家、不新增卡片。
+    payload["route_health"] = _route_health_summary(payload, st)
     # 七管家健康条 + 全局项目健康：一眼看出哪个管家断了、项目整体是否还健康。
     # 必须等 payload 构造完再算——判据全来自上面这些字段，不能引用还在构造的自己。
     payload["stewards"] = _steward_health(payload)
@@ -2667,6 +2841,10 @@ def _status_text(payload):
         _m = int((en.get("elapsed_sec") or 0) // 60)
         lines.append("执行中：%s %s（已 %d 分钟，独立工作区改代码，自测通过后自动合入）"
                      % (en.get("id") or "", en.get("title") or "", _m))
+    rh = payload.get("route_health") or {}
+    if rh.get("level") in ("attention", "unknown"):
+        lines.append("路线与效能：%s（仅提复核，不自动纠偏）"
+                     % (rh.get("headline") or "取不到"))
     ps = payload.get("product_state") or {}
     if ps.get("count"):
         lines.append("产品状态：已记录 %s 个模块行为（最后更新 %s）"
