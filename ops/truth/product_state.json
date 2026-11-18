@@ -131,6 +131,17 @@
     "docs/ARCHITECTURE_STEWARDS.md"
    ],
    "updated": "2026-11-18"
+  },
+  {
+   "area": "守护首次安装",
+   "behavior": "install.sh 默认不替用户启用常驻；只有 --install-daemon 才首次安装守护。central_daemon.py --install 在 bootstrap 后回读 launchd，只有 running 且有 pid 才返回成功，否则不写常驻开启。",
+   "why": "常驻守护曾经 plist 缺失时静默跳过，控制面板却显示开启；首次安装必须显式授权，并把 launchd 真运行的 pid 作为成功条件。",
+   "files": [
+    "install.sh",
+    "ops/central_daemon.py",
+    "ops/selftest.py"
+   ],
+   "updated": "2026-11-18"
   }
  ]
 }

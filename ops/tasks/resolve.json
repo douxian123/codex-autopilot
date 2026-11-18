@@ -11,7 +11,7 @@
     "96f177802653d3bfb879a0b47deff4395a53c083"
    ],
    "created": "2026-11-18 05:18:14",
-   "updated": "2026-11-18 06:53:04",
+   "updated": "2026-11-18 07:00:50",
    "conflict_files": [
     "docs/ARCHITECTURE_STEWARDS.md",
     "ops/acceptance_criteria.py",
@@ -23,7 +23,7 @@
     "ops/test-acceptance-criteria.py"
    ],
    "auto_resolved_jsonl": [],
-   "status": "gate_fail",
+   "status": "landed",
    "gate_output": "→ codex/resolve-acceptance-criteria-compiler-20261118: 4 提交、落后 0、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n已有 land 在进行（/Users/danta/.newmax/workspace/codex-autopilot/.git/kgctl-land.lock）"
   },
   {
@@ -345,5 +345,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-18 06:53:04"
+ "updated": "2026-11-18 07:00:50"
 }

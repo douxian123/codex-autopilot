@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-18 06:55:01　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-18 08:58:33　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -36,6 +36,7 @@
 - **验收管家**：人工验收项先由机器跑真实验证，只有带可复核命令、cwd、退出码的项才进入“需要你验收”；用户点击后才会调系统截图器补复核附件，补图只追加附件，不替用户收口。
 - **全局项目健康**：全局健康从真相层、执行层和验收层已有事实聚合为 attention/unknown/off/ok 四态；取不到就说取不到，正常排队不报警，不新建分数台账，也不自动触发修复。
 - **关系层**：跨项目长期目标通过 truthctl goal 显式登记，支持 summary/list/create/update/link/close；可关联工作项、验收项、来源窗口和收口证据，并在高级面板折叠区展示。聊天里的一句话不会自动升成生效目标；账本取不到显示 unknown。
+- **守护首次安装**：install.sh 默认不替用户启用常驻；只有 --install-daemon 才首次安装守护。central_daemon.py --install 在 bootstrap 后回读 launchd，只有 running 且有 pid 才返回成功，否则不写常驻开启。
 
 ## 决策脉络
 
@@ -44,6 +45,7 @@
 ## 最近在推进
 
 - [已落盘] @ d36087b804 首屏三问与 PM/验收管家闭环已落盘：首屏只回答要不要我、是不是在干对的事、替我做成了什么；PM 简报、人工验收复核截图与补图按钮进入折叠区；补图不替人收口。落盘 commit 3a950f4e，真相记录 d36087b8。
+- [在途] 补 --install-daemon 显式首次安装与 launchd 回读判活；默认不替用户启用常驻，回读不到 pid 不报成功。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
@@ -58,8 +60,7 @@
 
 ## 还差什么
 
-**bug（3 待处理）**
-- `L-0004` 【守护起不来·机械根因】install.sh 5.5 段的守护改指被条件锁死：if [ -f "$HOME/Library/LaunchAgents/com.c
+**bug（2 待处理）**
 - `L-0005` 【发布一致性·真短项】product_eval 判据5(修掉跨库比对后)暴露：已发布的 0.6.0-preview.56 的 source_commit=001
 - `L-0006` codex-guard 的 snapshot 清理助手在 Python 3.9 上崩：/Users/danta/plugins/codex-autopilot/
 
@@ -83,8 +84,8 @@
 
 ## 进度概览
 
-- 累计关闭问题：1 条
+- 累计关闭问题：2 条
 - 累计落盘：1 条
-- 未决问题：8 条
+- 未决问题：7 条
 - 已验收：4 条
 
