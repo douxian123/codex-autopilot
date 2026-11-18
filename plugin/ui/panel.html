@@ -110,11 +110,13 @@
   .q .card .chead{margin-bottom:10px}
   .q .card + .card,.q .northstar,.q .sysline{margin-top:10px}
   .sysline{font-size:11.5px;color:var(--ink-3);line-height:1.6;overflow-wrap:anywhere}
-  /* 管家健康条：一行一个管家（含全局健康），浅色状态点 + 一行话。attention 才用警告色，
-     off（用户自己关的）用中性灰，绝不用红绿把人吓一跳。 */
-  .stewards{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);display:grid;gap:6px}
-  .steward{display:flex;align-items:baseline;gap:8px;font-size:11.5px;color:var(--ink-2);line-height:1.5;overflow-wrap:anywhere}
-  .steward .sdot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--ink-3);margin-top:4px;opacity:.55}
+  /* 管家健康条：首屏只留一行摘要和短名状态条，完整解释走 title / aria-label。
+     attention 才用警告色；off 是用户自己关的，用中性灰，不冒充故障。 */
+  .stewards{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);display:flex;align-items:center;flex-wrap:wrap;gap:5px 10px}
+  .steward-summary{font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+  .steward-strip{display:flex;align-items:center;flex-wrap:wrap;gap:4px 9px}
+  .steward{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--ink-2);line-height:1.4;white-space:nowrap}
+  .steward .sdot{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:var(--ink-3);opacity:.55}
   .steward.s-ok .sdot{background:var(--ok);opacity:.85}
   .steward.s-attention .sdot{background:var(--warn);opacity:1}
   .steward.s-attention{color:var(--warn)}
@@ -986,28 +988,48 @@
 
   var LANE_LABEL = {design:"体验 / 视觉", bug:"Bug", arch:"架构", gate:"门禁", reprocess:"待重排"};
   function laneLabel(lane){ return LANE_LABEL[lane] || lane || "未分泳道"; }
-  // 管家健康条：一行一个管家（末行是全局项目健康）。四态各有含义——ok 正常、attention 需要人或需要修、
-  // off 是用户自己关的（不是故障）、unknown 是取不到（不冒充正常）。排序由后台给
-  // 好（需要介入的排前面），面板照抄，不自己重排判据。
+  // 管家健康条：首屏只显示摘要和短名状态条；完整解释放在 title / aria-label，
+  // 鼠标悬停或读屏器可以拿到，但不占用户默认注意力。四态语义仍由控制层给出，
+  // 面板照抄顺序，不自己重排判据。
+  var STEWARD_SHORT = {context:"上下文", route:"路由", merge:"合并", tune:"状态",
+    exec:"实现", pm:"项目", accept:"验收", health:"全局健康"};
+  var STEWARD_STATE = {ok:"正常", attention:"需关注", off:"已关闭", unknown:"取不到"};
   function renderStewards(st){
     var box = el("stewardBar"); if (!box) return;
     box.innerHTML = "";
     var rows = (st && st.rows) || [];
     if (!rows.length){
       var empty = document.createElement("div");
-      empty.className = "steward s-unknown";
-      var edot = document.createElement("span"); edot.className = "sdot";
-      var etx = document.createElement("span"); etx.textContent = "管家状态取不到";
-      empty.appendChild(edot); empty.appendChild(etx); box.appendChild(empty);
+      empty.className = "steward-summary"; empty.textContent = "管家状态取不到";
+      box.appendChild(empty);
       return;
     }
-    rows.forEach(function(r){
-      var li = document.createElement("div");
-      li.className = "steward s-" + (r.state || "unknown");
-      var dot = document.createElement("span"); dot.className = "sdot";
-      var tx = document.createElement("span"); tx.textContent = r.label || "";
-      li.appendChild(dot); li.appendChild(tx); box.appendChild(li);
+    var summary = document.createElement("div");
+    summary.className = "steward-summary";
+    var counts = (st && st.counts) || {};
+    var order = ["attention", "unknown", "off", "ok"];
+    var parts = [];
+    order.forEach(function(key){
+      var n = counts[key];
+      if (typeof n === "number") parts.push(n + " " + (STEWARD_STATE[key] || key));
     });
+    summary.textContent = "管家状态：" + (parts.length ? parts.join(" · ") : "取不到");
+    box.appendChild(summary);
+    var strip = document.createElement("div"); strip.className = "steward-strip";
+    rows.forEach(function(r){
+      var li = document.createElement("span");
+      li.className = "steward s-" + (r.state || "unknown");
+      var full = (r.label || "") + "（" + (STEWARD_STATE[r.state] || (r.state || "取不到")) + "）";
+      li.title = full;
+      li.setAttribute("aria-label", full);
+      li.setAttribute("data-key", r.key || "");
+      var dot = document.createElement("span"); dot.className = "sdot";
+      var tx = document.createElement("span");
+      tx.className = "sname";
+      tx.textContent = STEWARD_SHORT[r.key] || (r.label || "").split("：")[0];
+      li.appendChild(dot); li.appendChild(tx); strip.appendChild(li);
+    });
+    box.appendChild(strip);
   }
 
   // PM 简报：预期磨到哪、谁给谁让路、哪条该追进度。只照抄控制层结论，
