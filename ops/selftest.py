@@ -1363,6 +1363,19 @@ def test_installer():
         assert sentinel.read_text(encoding="utf-8") == "keep\n"
         release = release_dir
         assert (release / "ops" / "central_mcp.py").is_file()
+        # registry 登记的 launchd 脚本和依赖必须随版本目录一起发布。
+        # 少了任何一个，5.7 改指后会变成 missing-script 或任务启动即失败；
+        # 发布门禁必须比本机 freshness 更早发现这件事。
+        guard_registry = _json.loads(
+            (release / "ops" / "guards" / "registry.json").read_text(encoding="utf-8"))
+        for guard_entry in guard_registry.get("entries") or []:
+            _label = guard_entry["label"]
+            for rel in [guard_entry["script"], *(guard_entry.get("siblings") or [])]:
+                assert (release / rel).is_file(), (
+                    f"发布版本缺少 launchd 登记脚本 {rel}（{_label}）")
+        for required in ("ops/guards/repoint_launchd.py",
+                         "ops/guards/hyapi_secrets.py"):
+            assert (release / required).is_file(), f"发布版本缺少 {required}"
         resource_hook = home / ".codex" / "hooks" / "resource-admission.py"
         assert resource_hook.is_file(), "安装后没有落地资源准入 hook"
         installed_hooks = _json.loads(
@@ -1792,8 +1805,8 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     def _version_key(text):
         parts = text.replace("-preview.", ".").split(".")
         return tuple(int(p) if p.isdigit() else 0 for p in parts)
-    assert _version_key(version) >= _version_key("0.6.0-preview.102"), \
-        f"发布清单版本低于 PM 简报首发版：{version}"
+    assert _version_key(version) >= _version_key("0.6.0-preview.103"), \
+        f"发布清单版本低于 launchd guard 版本化版：{version}"
 
     pm = root / "ops" / "pm_briefing.py"
     assert pm.is_file(), "发布树缺少 ops/pm_briefing.py"
