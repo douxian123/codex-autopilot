@@ -7254,6 +7254,7 @@ def test_product_eval():
         (real_repo / "app.txt").write_text("x\n", encoding="utf-8")
         git(real_repo, "add", "app.txt")
         git(real_repo, "commit", "-q", "-m", "init")
+        git(real_repo, "update-ref", "refs/remotes/origin/main", "HEAD")
         ci = tmp / "install-bound"
         crel = ci / "releases" / "1.2.3"
         crel.mkdir(parents=True)
@@ -7282,17 +7283,35 @@ def test_product_eval():
             encoding="utf-8")
         assert product_eval.crit_effective(proj)["status"] == "fail"
 
-        # 5) 判据 5：三线一致 + 有回滚点才绿。
+        # 5) 判据 5：安装 / 缓存 / 本地主干 / 远端主干一致 + 有回滚点才绿。
         vi = tmp / "install-v"
         (vi / "releases" / "1.2.3").mkdir(parents=True)
         (vi / "releases" / "1.2.2").mkdir(parents=True)
+        (tmp / "cache-v" / "1.2.3").mkdir(parents=True)
+        released_commit = git(real_repo, "rev-parse", "HEAD").stdout.strip()
         (vi / "install-state.json").write_text(_json.dumps(
-            {"version": "1.2.3", "source_commit": git(real_repo, "rev-parse", "HEAD").stdout.strip(),
+            {"version": "1.2.3", "source_commit": released_commit,
              "previous_source": str(vi / "releases" / "1.2.2")}),
             encoding="utf-8")
-        (tmp / "cache-v" / "1.2.3").mkdir(parents=True)
         cok = product_eval.crit_consistent(vi, tmp / "cache-v", real_repo)
         assert cok["status"] == "pass", cok
+
+        # 5b) 发布提交只进本地主干、没进 origin/main：必须红，且红在远端锚点。
+        (real_repo / "app.txt").write_text("local-only\n", encoding="utf-8")
+        git(real_repo, "commit", "-q", "-am", "local-only release")
+        local_only_commit = git(real_repo, "rev-parse", "HEAD").stdout.strip()
+        assert local_only_commit != released_commit
+        (vi / "install-state.json").write_text(_json.dumps(
+            {"version": "1.2.3", "source_commit": local_only_commit,
+             "previous_source": str(vi / "releases" / "1.2.2")}),
+            encoding="utf-8")
+        remote_bad = product_eval.crit_consistent(vi, tmp / "cache-v", real_repo)
+        assert remote_bad["status"] == "fail", remote_bad
+        assert any("远端权威主干" in s for s in remote_bad["shortfall"]), remote_bad
+        (vi / "install-state.json").write_text(_json.dumps(
+            {"version": "1.2.3", "source_commit": released_commit,
+             "previous_source": str(vi / "releases" / "1.2.2")}),
+            encoding="utf-8")
 
         # 6) 认证物结构 + 人读报告必须带会红的结论。
         import os as _os
@@ -7379,7 +7398,8 @@ def test_product_eval():
                 else:
                     _os.environ[k] = v
 
-    print("selftest ok: 对外发布评估五条判据能红能绿，阴性对照 7/7 全部按预期变红。")
+    print("selftest ok: 对外发布评估五条判据能红能绿，阴性对照 %d/%d 全部按预期变红。"
+          % (len(rows) - len(bad), len(rows)))
 
 def test_compact_session_logs_is_lossless_and_under_pressure_only():
     import tempfile

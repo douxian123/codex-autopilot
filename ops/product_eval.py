@@ -176,6 +176,11 @@ def _git_ok(args, cwd):
     return p.returncode == 0
 
 
+def _remote_main_head(cwd):
+    """发布提交必须能追到远端权威主干，不能只存在于本地 HEAD。"""
+    return _git(["rev-parse", "--verify", "refs/remotes/origin/main"], cwd)
+
+
 def _age_days(path: Path):
     try:
         return (time.time() - path.stat().st_mtime) / 86400.0
@@ -333,7 +338,7 @@ def crit_effective(repo=None):
 
 # ----------------------------------------------------------------- 判据 5
 def crit_consistent(idir=None, cdir=None, trunk=None, repo=None):
-    """5 一致可回滚：release / Codex 缓存 / 主干三处版本一致，且有旧版本。"""
+    """5 一致可回滚：release / 缓存 / 本地主干 / 远端主干一致，且有旧版本。"""
     idir = Path(idir or install_dir())
     cdir = Path(cdir or cache_dir())
     trunk = Path(trunk or trunk_dir(repo))
@@ -350,9 +355,14 @@ def crit_consistent(idir=None, cdir=None, trunk=None, repo=None):
                   if cdir.is_dir() else [])
     cache_latest = cache_vers[-1] if cache_vers else None
     trunk_head = _git(["rev-parse", "HEAD"], trunk)
+    remote_head = _remote_main_head(trunk)
     evidence += [ev(["cat", str(idir / "install-state.json")]),
                  ev(["ls", str(cdir)], note="Codex 实际加载的缓存版本"),
                  ev(["git", "-C", str(trunk), "log", "--oneline", "-1"], cwd=trunk)]
+    if remote_head:
+        evidence.append(ev(
+            ["git", "-C", str(trunk), "rev-parse", "--verify",
+             "refs/remotes/origin/main"], cwd=trunk, note="远端权威主干"))
 
     if not installed_v:
         shortfall.append("读不到安装版本")
@@ -370,14 +380,28 @@ def crit_consistent(idir=None, cdir=None, trunk=None, repo=None):
                              % (trunk_head[:8], installed_c[:8]))
         elif ok is None:
             shortfall.append("无法判断主干是否包含已发布提交")
+    if installed_c:
+        if not remote_head:
+            shortfall.append("找不到远端权威主干 refs/remotes/origin/main，"
+                             "无法证明已发布提交 %s 已进公共主干" % installed_c[:8])
+        else:
+            ok_remote = _git_ok(
+                ["merge-base", "--is-ancestor", installed_c, remote_head], trunk)
+            if ok_remote is False:
+                shortfall.append("远端权威主干 %s 不含已发布提交 %s"
+                                 "（只在本地主干可见，不能算发布一致）"
+                                 % (remote_head[:8], installed_c[:8]))
+            elif ok_remote is None:
+                shortfall.append("无法判断远端权威主干是否包含已发布提交")
     if previous:
         prev_name = Path(str(previous).rstrip("/")).name
         if prev_name and not (idir / "releases" / prev_name).is_dir():
             shortfall.append("上一个版本目录不在，回滚没有落点：%s" % previous)
 
     status = "pass" if not shortfall else "fail"
-    detail = "安装 %s / 缓存 %s / 主干 %s" % (installed_v, cache_latest,
-                                              trunk_head[:8] or "?")
+    detail = "安装 %s / 缓存 %s / 本地主干 %s / 远端主干 %s" % (
+        installed_v, cache_latest, trunk_head[:8] or "?",
+        remote_head[:8] or "缺失")
     return _result("consistent", "5 一致可回滚", status, evidence, detail, shortfall)
 
 
@@ -456,6 +480,44 @@ def negative_controls():
         r = crit_consistent(ci, tmp / "cache-v", tmp / "nodir")
         out.append(("5 一致可回滚(缓存落后)", r["status"] == "fail",
                     "缓存 0.0.8 vs 安装 0.0.9 -> %s" % r["status"]))
+
+        # 5b 已发布提交只在本地主干，不在远端权威主干：必须红。
+        # 这是 L-0005 的真实失效形态：本地 main 有 release 提交，origin/main 没有。
+        lineage_repo = tmp / "lineage-repo"
+        lineage_repo.mkdir()
+
+        def lineage_git(*args):
+            p = subprocess.run(["git", "-C", str(lineage_repo), *args],
+                               capture_output=True, text=True)
+            if p.returncode != 0:
+                raise RuntimeError("git %s: %s" % (" ".join(args), p.stderr.strip()))
+            return p.stdout.strip()
+
+        lineage_git("init", "-q", "-b", "main")
+        lineage_git("config", "user.email", "eval@example.com")
+        lineage_git("config", "user.name", "eval")
+        (lineage_repo / "app.txt").write_text("base\n", encoding="utf-8")
+        lineage_git("add", "app.txt")
+        lineage_git("commit", "-q", "-m", "base")
+        lineage_git("update-ref", "refs/remotes/origin/main", "HEAD")
+        (lineage_repo / "app.txt").write_text("release\n", encoding="utf-8")
+        lineage_git("commit", "-q", "-am", "release")
+        local_release = lineage_git("rev-parse", "HEAD")
+
+        li = tmp / "install-lineage"
+        (li / "releases" / "0.0.10").mkdir(parents=True)
+        (li / "releases" / "0.0.9").mkdir()
+        (li / "install-state.json").write_text(
+            json.dumps({"version": "0.0.10", "source_commit": local_release,
+                        "previous_source": str(li / "releases" / "0.0.9")}),
+            encoding="utf-8")
+        (tmp / "cache-lineage" / "0.0.10").mkdir(parents=True)
+        r = crit_consistent(li, tmp / "cache-lineage", lineage_repo)
+        went_red = (r["status"] == "fail" and
+                    any("远端权威主干" in s for s in r["shortfall"]))
+        out.append(("5 一致可回滚(发布提交未进远端主干)", went_red,
+                    "本地 HEAD %s 不在 refs/remotes/origin/main -> %s"
+                    % (local_release[:8], r["status"])))
     return out
 
 
