@@ -2430,6 +2430,10 @@ def test_panel_contract():
     tool_names = {tool["name"] for tool in central_mcp.TOOLS}
     called = set(re.findall(r'callTool\("([^"]+)"', script))
     assert called <= tool_names, f"面板调了不存在的工具：{sorted(called - tool_names)}"
+    assert "route_preview" in called, "输入落点预览没有调用 route_preview，删了功能门禁也会绿"
+    assert re.search(
+        r'callTool\("route_preview",\s*\{[^}]*\bcwd\s*:\s*currentCwd\(\)', script
+    ), "route_preview 没有传当前 cwd，跨项目预览会判不清"
 
     switch_keys = set(re.findall(r'data-key="([^"]+)"', html))
     unknown = sorted(switch_keys - set(control_state.DEFAULTS))
@@ -2437,6 +2441,7 @@ def test_panel_contract():
 
     # 首屏必须能回答「当前绑定哪个项目」：面板元素、控制层字段、真实名字三边都在。
     assert "projectLine" in dom_ids, "面板首屏缺少绑定项目那一行"
+    assert "intakeRoute" in dom_ids, "面板首屏缺少输入落点预览那一行"
     payload = central_mcp._status_payload(fast=True)
     project = payload.get("project")
     assert isinstance(project, dict), "控制层没有把绑定项目吐给面板"
