@@ -1,6 +1,10 @@
 # 产品主线（自动综合，勿手改）
 
+<<<<<<< HEAD
 > 生成时间 2026-11-19 04:34:35　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+=======
+> 生成时间 2026-11-19 04:44:40　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+>>>>>>> codex/guard-release-version-20261119
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -54,11 +58,23 @@
 - [已落盘] @ 7db4f0c9 临时 gate worktree 加 sidecar 归属标记与随机路径；无标记/外部标记/新标记/在用会话均不回收，过期且无人占用的归属树仍走 all 判活后回收；官方门禁与落盘 ancestry 均已核验
 - [已落盘] @ 5575426665 codex/tmp-owner-cleanup-20261118 验证门禁通过，已落盘 main @ 5575426665；改动 12 个文件：install.sh（+14/-0）、ops/guards/hyapi_burner.py（+206/-0）、ops/guards/hyapi_deadpool_reap.py（+428/-0）、ops/guards/hyapi_freewatch.py（+172/-0）、ops/guards/hyapi_secrets.py（+182/-0），另有 7 个文件｜12 files changed, 1497 insertions(+), 4 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0077、A-0078、A-0079、A-0080
 - [在途] @ ec369b7dc9 launchd 版本化代码与测试诊断已落盘 origin/main（ec369b7d）。真机 freshness 仍为 1：本机 5 条 launchd 入口仍指旧路径，当前安装版本缺新 guard 文件；真正的现场修复需要执行 install.sh 5.7 或 repoint_launchd.py --install，会改 plist 并 reload 后台服务，未获明确授权前不执行，L-0007 保持 open。
+<<<<<<< HEAD
 - [已落盘] @ 5653e04e8d codex/panel-windshield-20261119 验证门禁通过，已落盘 main @ 5653e04e8d；改动 5 个文件：ops/central_mcp.py（+53/-1）、ops/kgctl.py（+108/-1）、ops/panel_render_check.py（+24/-1）、ops/test-project-router.py（+52/-0）、plugin/ui/panel.html（+35/-1）｜5 files changed, 272 insertions(+), 4 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 730b15607b codex/guard-release-version-20261119 验证门禁通过，已落盘 main @ 730b15607b；改动 2 个文件：ops/selftest.py（+15/-2）、plugin/.codex-plugin/plugin.json（+1/-1）｜2 files changed, 16 insertions(+), 3 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0084
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
+=======
+- [已落盘] @ d5e7c7af launchd guard 文件发布链已代码层闭环：插件版本提升到 0.6.0-preview.103，安装测试新增 registry 登记的 guard 脚本与依赖完整性断言，避免不可变版本目录缺文件导致 5.7 改指失败。提交 d68a3fce 已随 d5e7c7af 落盘 origin/main。本机 install/reload/plist 改指仍未执行，真机 freshness 继续按红灯处理，L-0007 不 close。
+- [在途] 本轮只读刷新确认：freshness 真机 exit 1、5 条 stale；repoint --check 显示 5 条因当前安装版本 0.6.0-preview.102 缺 guard 文件而 FAIL；repoint --dry-run 显示三条 HyAPI 任务还会因 secrets.env 未迁移 fail-closed；5 个 job 当前均 not running。真实 HOME 安装/reload/plist 改指未执行。
+
+## 关键验收证据（核对用，不替代 mainline.json）
+
+- `A-0074` [P1] codex/state-root-freshness-20261118 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0006` [P1] codex/release-lineage-gate-20261118 门禁预跑（未落盘）
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+>>>>>>> codex/guard-release-version-20261119
 - `A-0007` [P1] codex/truth-sync-union-20261118 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0008` [P1] codex/truth-restore-union-20261118 门禁预跑（未落盘）
@@ -77,12 +93,17 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0082` [P1] codex/tmp-owner-cleanup-20261118 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+<<<<<<< HEAD
 - `A-0083` [P1] codex/panel-windshield-20261119 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0084` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0085` [P1] codex/guard-release-version-20261119 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+=======
+- `A-0084` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+>>>>>>> codex/guard-release-version-20261119
 
 ## 还差什么
 
@@ -113,14 +134,24 @@
 - `A-0078` [P1] codex/tmp-owner-cleanup-20261118 落盘验收
 - `A-0081` [P1] codex/tmp-owner-cleanup-20261118 门禁预跑（未落盘）
 - `A-0082` [P1] codex/tmp-owner-cleanup-20261118 落盘验收
+<<<<<<< HEAD
 - `A-0083` [P1] codex/panel-windshield-20261119 落盘验收
 - `A-0084` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
 - `A-0085` [P1] codex/guard-release-version-20261119 落盘验收
+=======
+- `A-0084` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
+>>>>>>> codex/guard-release-version-20261119
 
 ## 进度概览
 
 - 累计关闭问题：9 条
+<<<<<<< HEAD
 - 累计落盘：18 条
 - 未决问题：1 条
 - 已验收：21 条
+=======
+- 累计落盘：17 条
+- 未决问题：1 条
+- 已验收：19 条
+>>>>>>> codex/guard-release-version-20261119
 
