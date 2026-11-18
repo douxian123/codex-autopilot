@@ -112,6 +112,7 @@ import acceptance_criteria_compiler  # noqa: E402
 import exec_overlap  # noqa: E402
 import exec_lifecycle  # noqa: E402
 import wake_resume  # noqa: E402
+import daemon_liveness  # noqa: E402
 import live_guard  # noqa: E402
 import workspace_guard  # noqa: E402
 
@@ -5374,6 +5375,24 @@ def wait_for_job_gone(uid: int, timeout: float = 30.0) -> bool:
     return _job_pid(uid) is None
 
 
+def verify_job_running(timeout: float = 20.0) -> tuple[bool, dict]:
+    """bootstrap 之后回读 launchd，确认 job 真的拿到了 pid。
+
+    只看 `launchctl bootstrap` 的退出码不够：进程可能在 RunAtLoad 后立刻崩掉，
+    控制面板却会把 `daemon_enabled` 写成 true，重新制造「开关绿、进程无」。
+    判据复用面板/CLI 共用的 daemon_liveness，不在这里另写一套 launchctl 正则。
+    """
+    deadline = time.monotonic() + timeout
+    last = {"status": "unknown", "pid": None}
+    while True:
+        last = daemon_liveness.daemon_liveness()
+        if last.get("status") == "running" and last.get("pid") is not None:
+            return True, last
+        if time.monotonic() >= deadline:
+            return False, last
+        time.sleep(1.0)
+
+
 def install(interval_min: int, maintenance_only=None) -> int:
     if sys.platform != "darwin":
         log("install 只支持 macOS（launchd）。其它平台请用 `--loop` 自己托管。")
@@ -5406,10 +5425,16 @@ def install(interval_min: int, maintenance_only=None) -> int:
     if rc != 0:
         log("× launchctl bootstrap 失败；请检查上面的 plist 和 python 路径")
         return 1
+    live, state = verify_job_running()
+    if not live:
+        log("× launchd 已加载 job，但回读不到运行中的守护进程"
+            f"（状态={state.get('status')}）；不把常驻开关写成已开启。"
+            f" 日志：{LOG}")
+        return 1
     mode = ("维护模式"
             if "--maintenance-only" in (plist_data.get("ProgramArguments") or [])
             else "完整自动挡")
-    log(f"已启用 {PLIST_LABEL}（每 {interval_min} 分钟一轮，{mode}，"
+    log(f"已启用 {PLIST_LABEL}（pid={state.get('pid')}，每 {interval_min} 分钟一轮，{mode}，"
         f"nice={os.environ.get('KG_DAEMON_NICE', '10')}）")
     return 0
 

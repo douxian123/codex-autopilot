@@ -1282,6 +1282,10 @@ def test_installer():
     assert "--install" in _install_src and "NO_DAEMON_REPOINT" in _install_src, \
         "install.sh 缺少「装完把守护改指新版本」这一步"
     assert "daemon.plist" in _install_src, "install.sh 没有检查本机是否已装守护"
+    assert "--install-daemon" in _install_src, \
+        "install.sh 缺少显式首次安装守护入口"
+    assert "按约定不替你启用常驻" in _install_src, \
+        "install.sh 缺少「默认不替用户启用常驻」的明确出口"
     assert "install-resource-hooks.py" in _install_src, \
         "install.sh 缺少「安装时主动刷新资源准入 hook」这一步"
     assert "资源准入 hook 安装失败" in _install_src, \
@@ -1318,6 +1322,8 @@ def test_installer():
         upgraded = run(command, env=env, check=False)
         if upgraded.returncode:
             raise AssertionError(f"版本化安装失败:\n{upgraded.stdout}\n{upgraded.stderr}")
+        assert "本机没有守护 plist；按约定不替你启用常驻。" in upgraded.stdout, \
+            f"没有 plist 时安装没说清默认不启用常驻:\n{upgraded.stdout}"
         data = _json.loads(market.read_text(encoding="utf-8"))
         entry = next(p for p in data["plugins"] if p["name"] == "codex-autopilot")
         other = next(p for p in data["plugins"] if p["name"] == "other-plugin")
@@ -1937,6 +1943,8 @@ def test_daemon_plist_repoints_on_upgrade():
         with mock.patch.object(central_daemon, "launchctl",
                               side_effect=lambda *a, **k: calls.append(a) or 0), \
              mock.patch.object(central_daemon, "wait_for_job_gone", return_value=True), \
+             mock.patch.object(central_daemon, "verify_job_running",
+                               return_value=(True, {"status": "running", "pid": 4242})), \
              mock.patch.object(central_daemon, "log"):
             rc = central_daemon.install(15)
         assert rc == 0, "改指新版本的 install 失败"
@@ -1951,6 +1959,18 @@ def test_daemon_plist_repoints_on_upgrade():
         bootstrap_i = next((i for i, c in enumerate(joined) if "bootstrap" in c), None)
         assert enable_i is not None and bootstrap_i is not None and enable_i < bootstrap_i, \
             f"被 launchd 禁用的 label 必须先 enable 再 bootstrap：{calls}"
+
+        # 阴性对照：bootstrap 即使返回 0，回读不到运行中 pid 也必须失败。
+        # 否则又会回到「安装命令成功、开关写开、实际没有进程」的静默失效。
+        logs = []
+        with mock.patch.object(central_daemon, "launchctl", return_value=0), \
+             mock.patch.object(central_daemon, "wait_for_job_gone", return_value=True), \
+             mock.patch.object(central_daemon, "verify_job_running",
+                               return_value=(False, {"status": "not_installed", "pid": None})), \
+             mock.patch.object(central_daemon, "log", side_effect=logs.append):
+            rc = central_daemon.install(15)
+        assert rc == 1, "回读不到守护进程却报安装成功"
+        assert any("回读不到运行中的守护进程" in line for line in logs), logs
     finally:
         central_daemon.PLIST_PATH = real_plist
         import shutil
@@ -2027,6 +2047,8 @@ def test_daemon_install_preserves_maintenance_mode():
              mock.patch.object(central_daemon, "launchctl",
                               side_effect=lambda *a, **k: calls.append(a) or 0), \
              mock.patch.object(central_daemon, "wait_for_job_gone", return_value=True), \
+             mock.patch.object(central_daemon, "verify_job_running",
+                               return_value=(True, {"status": "running", "pid": 4242})), \
              mock.patch.object(central_daemon, "log"):
             assert central_daemon.plist_maintenance_only() is True
             assert central_daemon.install(15) == 0
@@ -2048,6 +2070,98 @@ def test_daemon_install_preserves_maintenance_mode():
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
     print("selftest ok: 已装维护模式在重装后仍是维护模式，显式开关才能改变它。")
+
+
+def test_installer_first_install_daemon_is_explicit():
+    """守护首次安装必须显式授权，且回读 launchd 运行后才报成功。
+
+    L-0004 的真实故障：`install.sh` 只在 plist 已存在时改指守护。plist 被清掉后
+    每次安装都成功、launchd 里没有 job，control.json 却仍显示常驻开启。这里用
+    假 launchctl 端到端跑安装器：默认不写 plist，只有 --install-daemon 才写，
+    并且 bootstrap 后回读不到 pid 时 install 不能返回 0。
+    """
+    import json as _json
+    import shutil
+
+    installed_version = _installed_version()
+    with tempfile.TemporaryDirectory(prefix="autopilot-daemon-first-install-") as tmp:
+        root = Path(tmp)
+        source = root / "source"
+        shutil.copytree(OPS.parent, source, ignore=shutil.ignore_patterns(".git"))
+        run(["git", "init", "-q", "-b", "main", str(source)])
+        run(["git", "-C", str(source), "config", "user.email", "selftest@example.invalid"])
+        run(["git", "-C", str(source), "config", "user.name", "Autopilot Selftest"])
+        run(["git", "-C", str(source), "add", "."])
+        run(["git", "-C", str(source), "commit", "-qm", "fixture"])
+        trunk = root / "source-trunk"
+        run(["git", "-C", str(source), "worktree", "add", "-q", "--detach", str(trunk), "main"])
+
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        fake_launchctl = fake_bin / "launchctl"
+        fake_launchctl.write_text(
+            "#!/bin/sh\n"
+            'STATE_FILE="${KG_FAKE_LAUNCHCTL_STATE_FILE:?}"\n'
+            'case "$1" in\n'
+            '  print)\n'
+            '    if [ "$(cat "$STATE_FILE" 2>/dev/null)" = "running" ]; then\n'
+            "      printf 'state = running\\n'\n"
+            "      printf 'pid = 4242\\n'\n"
+            "      printf 'KG_REPO => %s\\n' \"${KG_FAKE_PROJECT:-/tmp/fixture}\"\n"
+            "      exit 0\n"
+            "    fi\n"
+            "    exit 1\n"
+            "    ;;\n"
+            '  bootout) printf "gone\\n" > "$STATE_FILE" ;;\n'
+            '  bootstrap) printf "running\\n" > "$STATE_FILE" ;;\n'
+            "esac\n"
+            "exit 0\n",
+            encoding="utf-8")
+        fake_launchctl.chmod(0o755)
+
+        def install_env(home, state_file):
+            home.mkdir(parents=True)
+            state_file.write_text("gone\n", encoding="utf-8")
+            env = os.environ.copy()
+            env["HOME"] = str(home)
+            env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+            env["KG_DAEMON_LABEL"] = "com.codex-autopilot.fixture.daemon"
+            env["KG_FAKE_LAUNCHCTL_STATE_FILE"] = str(state_file)
+            env["KG_FAKE_PROJECT"] = str(source)
+            return env
+
+        plist_name = "com.codex-autopilot.fixture.daemon.plist"
+        install = source / "install.sh"
+        base = ["bash", str(install), "--trunk", str(trunk),
+                "--no-seed", "--no-marketplace", "--no-companion"]
+
+        home_default = root / "home-default"
+        default_env = install_env(home_default, root / "launchctl-default")
+        default = run(base + [str(source)], env=default_env, check=False)
+        assert default.returncode == 0, \
+            f"默认安装失败:\n{default.stdout}\n{default.stderr}"
+        assert "按约定不替你启用常驻" in default.stdout, default.stdout
+        assert not (home_default / "Library" / "LaunchAgents" / plist_name).exists(), \
+            "默认安装擅自写了守护 plist"
+
+        home_explicit = root / "home-explicit"
+        explicit_state = root / "launchctl-explicit"
+        explicit_env = install_env(home_explicit, explicit_state)
+        explicit = run(base + ["--install-daemon", str(source)],
+                       env=explicit_env, check=False)
+        assert explicit.returncode == 0, \
+            f"显式首次安装失败:\n{explicit.stdout}\n{explicit.stderr}"
+        assert "首次安装" in explicit.stdout, explicit.stdout
+        plist = home_explicit / "Library" / "LaunchAgents" / plist_name
+        assert plist.is_file(), "显式 --install-daemon 没有写 plist"
+        assert explicit_state.read_text(encoding="utf-8").strip() == "running", \
+            "安装器没有回读到运行中的 launchd job"
+        meta = _json.loads(
+            (home_explicit / "plugins" / "codex-autopilot" / "releases"
+             / installed_version / ".codex-autopilot-source.json").read_text(encoding="utf-8"))
+        assert meta["dirty"] is False, f"首次安装混入了未提交改动：{meta}"
+
+    print("selftest ok: 首次安装守护必须显式 --install-daemon，且回读 launchd 后才报成功。")
 
 
 def test_daemon_control_action():
@@ -7394,6 +7508,7 @@ if __name__ == "__main__":
     test_installer()
     test_installer_requires_clean_source()
     test_installer_shell_portability()
+    test_installer_first_install_daemon_is_explicit()
     test_daemon_project_binding()
     test_daemon_plist_repoints_on_upgrade()
     test_daemon_maintenance_mode_is_zero_touch()
