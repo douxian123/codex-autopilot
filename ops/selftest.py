@@ -7218,6 +7218,10 @@ def test_daemon_liveness_shared_judge():
     assert st_other["matches_repo"] is False
     msg = daemon_liveness.liveness_problem(st_other, True)
     assert msg and "别的账本" in msg, msg
+    headline, detail = daemon_liveness.liveness_need_action(st_other, True)
+    assert headline and "绑到了别的项目" in headline, headline
+    assert detail and "别的账本" in detail and "/tmp/proj-b" in detail, detail
+    assert "/tmp/proj-b" not in headline, "首屏结论不该塞工程路径"
 
     # 3) not_installed：launchctl 非零返回
     gone = lambda argv: (113, "")
@@ -7229,6 +7233,10 @@ def test_daemon_liveness_shared_judge():
     # 开关显示开却没有 job -> 必须报，且给出装回命令
     msg = daemon_liveness.liveness_problem(st_gone, True)
     assert msg and "central_daemon.py --install" in msg, msg
+    headline, detail = daemon_liveness.liveness_need_action(st_gone, True)
+    assert headline and "常驻没接上" in headline, headline
+    assert detail and "central_daemon.py --install" in detail, detail
+    assert "central_daemon.py --install" not in headline, "首屏结论不该塞修复命令"
     line = daemon_liveness.liveness_line(st_gone, True)
     assert "未运行" in line and "没有这个 job" in line, line
 
