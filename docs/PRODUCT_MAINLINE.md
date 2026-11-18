@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-18 11:16:52　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-18 11:46:07　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -53,6 +53,8 @@
 - [已落盘] @ a8d2a698ad codex/truth-restore-land-record-20261118 验证门禁通过，已落盘 main @ a8d2a698ad；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ d367c509e8 codex/jsonl-truth-no-overwrite-20261118 验证门禁通过，已落盘 main @ d367c509e8；改动 3 个文件：ops/kgctl.py（+52/-9）、ops/selftest.py（+1/-0）、ops/test-mirror-truth-jsonl-union.py（+106/-0）｜3 files changed, 159 insertions(+), 9 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 5caaabb7 已修复 JSONL 真相镜像覆盖：_mirror_truth_into_trunk 对 ops/truth 与 ops/tasks 下的 JSONL 做行级并集，同 id 不同 ts 按时间排序保留最新记录；新增 test-mirror-truth-jsonl-union 门禁并登记 selftest。提交 5caaabb7 已合入 origin/main，land 的全量 selftest/panel-logic/panel-render 门禁通过，P-0084/A-0073 已记录落盘验收。状态根解析陈旧导致的相邻问题继续由 L-0003 跟踪。
+- [已落盘] @ 138a8b7662 codex/state-root-freshness-20261118 验证门禁通过，已落盘 main @ 138a8b7662；改动 3 个文件：ops/selftest.py（+1/-0）、ops/state_root.py（+42/-1）、ops/test-state-root-freshness.py（+139/-0）｜3 files changed, 182 insertions(+), 1 deletion(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ 1358b850 已修复默认状态根选择：resolve_state_root 保留 KG_REPO 最高优先级；无显式覆盖时按可用 ops/central.config.json 优先、同条件按 HEAD commit 时间取最新，配置损坏按不可用处理，避免停在旧分支的共享检出压过活的主干。新增 test-state-root-freshness 门禁并在旧逻辑上复现 3 条失败，修复后 4 条全绿；提交 1358b850 已随 codex/state-root-freshness-20261118 落盘 origin/main，全量 selftest、panel-logic、panel-render 均通过，P-0086/A-0074 已记录验收。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
@@ -72,15 +74,16 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0073` [P1] codex/jsonl-truth-no-overwrite-20261118 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0074` [P1] codex/state-root-freshness-20261118 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
 
 **bug（1 待处理）**
 - `L-0005` 【发布一致性·真短项】product_eval 判据5(修掉跨库比对后)暴露：已发布的 0.6.0-preview.56 的 source_commit=001
 
-**gate（4 待处理）**
+**gate（3 待处理）**
 - `L-0001` 磁盘曾达 99%（可用 1.6GB）。/tmp 有 228 个 autopilot 临时目录约 3.87GB，其中 kg-gate-* 由 kgctl gate
-- `L-0003` 状态根解析把「停在旧分支的共享检出」当权威状态根：resolve_state_root 的候选顺序是 (main, trunk, current_worktre
 - `L-0007` 【launchd 陈旧项·非 Stop 复发链】freshness 门禁真机实测 4 条 stale：ai.danta.codex-proxy-watchdog
 - `L-0008` 【既存·门禁环境】在部署目录 ~/plugins/codex-autopilot/releases/0.6.0-preview.82 里直接跑 ops/self
 
@@ -98,11 +101,12 @@
 - `A-0071` [P1] 补记 codex/daemon-first-install-20261118 落盘验收（原 A-0006 被覆盖）
 - `A-0072` [P1] codex/truth-restore-land-record-20261118 落盘验收
 - `A-0073` [P1] codex/jsonl-truth-no-overwrite-20261118 落盘验收
+- `A-0074` [P1] codex/state-root-freshness-20261118 落盘验收
 
 ## 进度概览
 
-- 累计关闭问题：4 条
-- 累计落盘：6 条
-- 未决问题：5 条
-- 已验收：8 条
+- 累计关闭问题：5 条
+- 累计落盘：8 条
+- 未决问题：4 条
+- 已验收：9 条
 
