@@ -34,15 +34,26 @@ WRAPPER = """<!doctype html><meta charset="utf-8">
 <iframe id="f" src="panel.html__QUERY__"></iframe>
 <script>
 var payload = __PAYLOAD__;
+var routePayload = __ROUTE_PAYLOAD__;
 window.addEventListener("message", function(ev){
   var msg = ev.data;
   if (!msg || msg.jsonrpc !== "2.0" || !msg.method) return;
   var name = (msg.params && msg.params.name) || "";
-  var out = (name === "autopilot_status") ? payload : {ok: true, __text__: ""};
+  var out = (name === "autopilot_status") ? payload
+    : (name === "route_preview") ? routePayload
+    : {ok: true, __text__: ""};
   ev.source.postMessage({jsonrpc: "2.0", id: msg.id,
     result: {isError: false, structuredContent: out,
              content: [{type: "text", text: ""}]}}, "*");
 });
+setTimeout(function(){
+  var d = document.getElementById("f").contentDocument;
+  var input = d ? d.getElementById("intakeText") : null;
+  if (input) {
+    input.value = "knowledge-graph 的面板归属测试";
+    input.dispatchEvent(new Event("input", {bubbles: true}));
+  }
+}, 800);
 setTimeout(function(){
   var d = document.getElementById("f").contentDocument;
   var out = {};
@@ -75,6 +86,7 @@ setTimeout(function(){
 FIRST_SCREEN_IDS = [
     "stateLabel", "statusTime", "projectLine", "focusStatus", "focusDoing",
     "focusStep", "hierProject", "hierRoad", "hierWork", "sysLine",
+    "intakeRoute",
 ]
 ADV_SCREEN_IDS = FIRST_SCREEN_IDS + [
     "pmBriefingBox", "acceptBox", "pmBriefingFoldOpen",
@@ -160,12 +172,23 @@ def main(argv):
         return 1
     (workdir / "panel.html").write_text(html, encoding="utf-8")
 
-    def build_wrapper(name, state, query="", ids=None, open_fold=False):
+    def build_wrapper(name, state, query="", ids=None, open_fold=False,
+                      route_payload=None):
+        if route_payload is None:
+            route_name = (state.get("project") or {}).get("name") or "当前绑定项目"
+            route_payload = {
+                "decision": "resolved",
+                "project": route_name,
+                "root": (state.get("project") or {}).get("path"),
+                "reasons": ["原话点名了项目：knowledge-graph"],
+                "__text__": "将落到：" + str(route_name),
+            }
         path = workdir / name
         path.write_text(
             WRAPPER.replace("__QUERY__", query)
                    .replace("__OPEN_FOLD__", "true" if open_fold else "false")
                    .replace("__IDS__", json.dumps(ids or FIRST_SCREEN_IDS))
+                   .replace("__ROUTE_PAYLOAD__", json.dumps(route_payload, ensure_ascii=False))
                    .replace("__PAYLOAD__", json.dumps(state, ensure_ascii=False)),
             encoding="utf-8")
         return path
@@ -240,6 +263,8 @@ def main(argv):
     checks = [
         ("首屏显示绑定项目名", project.get("name")),
         ("首屏显示绑定项目路径", project.get("path")),
+        ("输入落点预览显示将落到项目",
+         "将落到：" + str(project.get("name") or "")),
         ("首屏显示总状态文案", payload.get("state_label")),
         # 状态管家的结论必须真的上屏：这句以前只写进日志，用户看不到，
         # 于是「harness 健康吗」在面板上永远是个盲区。
@@ -308,6 +333,40 @@ def main(argv):
             print(f"  PASS  {label}")
         else:
             print(f"  FAIL  {label}（期望文本：{expected!r}）")
+            fails += 1
+
+    # 落点预览有三种真实返回，不能只锁住 resolved。这里直接给 route_preview
+    # 注入真实文案，再在 iframe 里看 intakeRoute 的实际渲染结果。
+    route_name = str(project.get("name") or "当前绑定项目")
+    route_cases = [
+        ("输入落点预览显示判不清落点",
+         {"decision": "ambiguous", "project": None,
+          "reasons": ["多个项目都可能命中"],
+          "__text__": "判不清落点；提交会进全局待路由箱，请在原话里点名项目"},
+         "判不清落点；提交会进全局待路由箱，请在原话里点名项目"),
+        ("输入落点预览显示默认落点",
+         {"decision": "none", "project": route_name,
+          "root": project.get("path"),
+          "reasons": ["只找到一个可落项目：默认落账"],
+          "__text__": "默认落到当前绑定项目：" + route_name +
+                      "；如不是，请在原话里点名项目"},
+         "默认落到当前绑定项目：" + route_name +
+         "；如不是，请在原话里点名项目"),
+    ]
+    for case_label, case_payload, expected_text in route_cases:
+        case_wrapper = build_wrapper(
+            "panel-route-" + str(case_payload["decision"]) + ".html",
+            payload, route_payload=case_payload)
+        case_snapshot, _, _ = render_snapshot(case_wrapper, case_label)
+        if not case_snapshot:
+            print(f"  FAIL  {case_label}（没有渲染出快照）")
+            fails += 1
+            continue
+        got_text = str(case_snapshot.get("intakeRoute") or "").strip()
+        if got_text == expected_text:
+            print(f"  PASS  {case_label}")
+        else:
+            print(f"  FAIL  {case_label}（期望：{expected_text!r}；实际：{got_text!r}）")
             fails += 1
 
     # 高级区不能靠改真实 payload 上屏，否则会把 PM 简报/截图塞进首屏。

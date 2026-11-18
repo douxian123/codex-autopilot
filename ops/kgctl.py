@@ -1263,6 +1263,112 @@ def cmd_inbox(args):
     return "ok", route, target_root
 
 
+def cmd_route_preview(args):
+    """只读预演一条输入会落到哪个项目；不写账本，也不补登记注册表。
+
+    这里刻意不复用 `_route_record()` 里的 `ensure_registered` / `_register_from_cwd`：
+    面板输入时每敲一个字都会预演，预览若偷偷写注册表，就把只读动作变成了写操作。
+    真正提交时 `cmd_inbox()` 仍走原来的登记逻辑；预览在内存里补上同一个 cwd 候选，
+    提交前后的判定来源保持一致，但磁盘上的注册表一个字都不动。
+    """
+    if not args:
+        print("用法：kgctl route-preview \"用户原话\"")
+        return 0
+    text = " ".join(args)
+    files = [f for f in os.environ.get("KG_INBOX_FILES", "").split(":") if f]
+    hint = os.environ.get("KG_INBOX_PROJECT") or ""
+    cwd_hint = os.environ.get("KG_INBOX_CWD") or ""
+    registry = project_router.load_registry()
+
+    # 提交路径会把 cwd 指向的状态根自动登记后再匹配。预览不能写注册表，
+    # 但必须在内存里放入同一个候选，否则会显示「判不清」而提交却落进该项目。
+    def add_implicit_row(root, name):
+        nonlocal registry
+        root = root.resolve()
+        row_id = project_router.identity(str(root))
+
+        def same(row):
+            try:
+                same_path = Path(str(row.get("root") or "")).expanduser().resolve() == root
+            except (OSError, ValueError):
+                same_path = False
+            return same_path or (bool(row_id) and row.get("identity") == row_id)
+
+        existing = next((row for row in registry if same(row)), None)
+        if existing:
+            return existing
+        row = {"name": str(name), "root": str(root),
+               "aliases": [], "clues": [], "identity": row_id}
+        registry = list(registry) + [row]
+        return row
+
+    # `_route_record()` 先 ensure_registered(REPO)，再从 cwd 登记。预览按同样顺序
+    # 在内存里补候选：少一个都会让「预演说判不清、提交却落进某个项目」。
+    add_implicit_row(REPO, REPO.name)
+    def implicit_root_from_cwd():
+        if not cwd_hint:
+            return None
+        try:
+            base = Path(cwd_hint).expanduser()
+        except (OSError, ValueError):
+            return None
+        if not base.is_dir():
+            return None
+        for cand in _state_root_candidates(base):
+            try:
+                if looks_like_state_root(cand):
+                    return cand.resolve()
+            except OSError:
+                continue
+        return None
+
+    implicit_root = implicit_root_from_cwd()
+    if implicit_root:
+        add_implicit_row(implicit_root, implicit_root.name)
+
+    if hint:
+        detail = []
+        pinned = project_router.resolve_hint(hint, registry, detail=detail)
+        if pinned:
+            route = {"decision": "resolved", "project": pinned["name"],
+                     "root": pinned["root"], "score": 1000,
+                     "reasons": ["调用方明确指定了「%s」" % hint], "candidates": []}
+        else:
+            route = {"decision": "ambiguous", "project": None, "root": None,
+                     "score": 0, "candidates": [],
+                     "reasons": detail or [
+                         "调用方指定了「%s」，但注册表里没有这个项目" % hint]}
+    else:
+        route = project_router.match(text, files, registry, cwd=cwd_hint or None)
+        if route["decision"] == "none" and (cwd_hint or len(registry) > 1):
+            route = dict(route)
+            route["decision"] = "ambiguous"
+            route["reasons"] = [
+                (f"调用方给的 cwd「{cwd_hint}」不在任何已注册项目里" if cwd_hint
+                 else "有多个已注册项目，但这条猜不出属于哪个")]
+        elif route["decision"] == "none" and REPO:
+            # cmd_inbox 的最终落点是 `route["root"] or REPO`。预览必须说出这个
+            # 兜底，不能一边显示「判不清」，一边提交时悄悄写进绑定项目。
+            route = dict(route)
+            route["decision"] = "none"
+            # 真实提交在 route.root 为空时用 target_root.name；这里必须同一口径。
+            route["project"] = REPO.name
+            route["root"] = str(REPO)
+            route["reasons"] = [
+                "没有其它线索，默认按当前绑定项目落账；如不是，请在原话里点名项目"]
+    reasons = route.get("reasons") or []
+    print(json.dumps({
+        "decision": route.get("decision"),
+        "project": route.get("project"),
+        "root": route.get("root"),
+        "reasons": reasons,
+        "candidates": [r.get("name") for r in (route.get("candidates") or [])
+                       if r.get("name")],
+        "error": route.get("error"),
+    }, ensure_ascii=False))
+    return 0
+
+
 def _inbox_path(root) -> Path:
     """某个状态根对应的输入账本。路由到别的项目时不能再写死模块级 INBOX。"""
     return Path(root) / "ops" / "tasks" / "inbox.jsonl"
@@ -5705,7 +5811,8 @@ def cmd_doctor(args):
     return 1 if problems else 0
 
 
-CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route, "suggest": cmd_suggest,
+CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route,
+        "route-preview": cmd_route_preview, "suggest": cmd_suggest,
         "projects": cmd_projects,
         "matrix": cmd_matrix, "queue": cmd_queue, "gate": cmd_gate, "converge": cmd_converge,
         "replan": cmd_replan,
