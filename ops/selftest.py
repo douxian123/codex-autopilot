@@ -300,6 +300,10 @@ def main():
         # 这条同时锁住 retire 必须追加状态行、不许删历史物理行。
         run([sys.executable, str(OPS / "test-truth-dedupe.py")],
             cwd=str(OPS.parent), check=True)
+        # 常驻自追踪每拍都会综合产品主线。正文没变时不许重写生成时间，
+        # 否则共享主干会被同一份「刚更新」的假进展反复弄脏。
+        run([sys.executable, str(OPS / "test-selftrack-mainline.py")],
+            cwd=str(OPS.parent), check=True)
         # 约束必须真的能兜底：标了 enforceable=gate 的约束此前从没被执行过 ——
         # 落盘门禁只读 central.config.json，而 CLI/面板却渲染成「有门禁」，是实打实
         # 的假绿灯（2026-11-17 实测，knowledge-graph 的 C-0001 连命令都没写）。
