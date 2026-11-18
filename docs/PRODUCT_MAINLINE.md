@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-18 09:43:34　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-18 11:16:52　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -47,7 +47,12 @@
 
 - [已落盘] @ d36087b804 首屏三问与 PM/验收管家闭环已落盘：首屏只回答要不要我、是不是在干对的事、替我做成了什么；PM 简报、人工验收复核截图与补图按钮进入折叠区；补图不替人收口。落盘 commit 3a950f4e，真相记录 d36087b8。
 - [在途] 补 --install-daemon 显式首次安装与 launchd 回读判活；默认不替用户启用常驻，回读不到 pid 不报成功。
-- [在途] 确认修复已在 origin/main：snapshot_prune.py 使用 typing.Optional/List/Dict/Tuple，不再依赖 Python 3.10 联合类型语法；系统 Python 3.9.6 编译与快照清理门禁均通过，且 test-snapshot-clone-prune.py 已把系统解释器编译写成回归门禁。
+- [在途] 确认修复已在 origin/main：snapshot_prune.py 使用 typing.Optional/List/Dict/Tuple，不再依赖 Python 3.10 联合类型语法；系统 Python 3.9.6 真导入与快照清理门禁均通过，并补上旧 Path | None 语法的阴性对照，证明门禁能抓回原故障。
+- [已落盘] @ 9a04e0850c codex/py39-snapshot-prune-20261118 验证门禁通过，已落盘 main @ 9a04e0850c；改动 1 个文件：ops/test-snapshot-clone-prune.py（+36/-1）｜1 file changed, 36 insertions(+), 1 deletion(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ b6e94f44f1 补记原 P-0079（被本轮真相镜像覆盖）：codex/daemon-first-install-20261118 验证门禁通过，已落盘 main @ b6e94f44f1；改动 3 个文件：install.sh（+24/-5）、ops/central_daemon.py（+26/-1）、ops/selftest.py（+115/-0）｜3 files changed, 165 insertions(+), 6 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ a8d2a698ad codex/truth-restore-land-record-20261118 验证门禁通过，已落盘 main @ a8d2a698ad；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ d367c509e8 codex/jsonl-truth-no-overwrite-20261118 验证门禁通过，已落盘 main @ d367c509e8；改动 3 个文件：ops/kgctl.py（+52/-9）、ops/selftest.py（+1/-0）、ops/test-mirror-truth-jsonl-union.py（+106/-0）｜3 files changed, 159 insertions(+), 9 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ 5caaabb7 已修复 JSONL 真相镜像覆盖：_mirror_truth_into_trunk 对 ops/truth 与 ops/tasks 下的 JSONL 做行级并集，同 id 不同 ts 按时间排序保留最新记录；新增 test-mirror-truth-jsonl-union 门禁并登记 selftest。提交 5caaabb7 已合入 origin/main，land 的全量 selftest/panel-logic/panel-render 门禁通过，P-0084/A-0073 已记录落盘验收。状态根解析陈旧导致的相邻问题继续由 L-0003 跟踪。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
@@ -59,15 +64,22 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0005` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0006` [P1] codex/py39-snapshot-prune-20261118 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0071` [P1] 补记 codex/daemon-first-install-20261118 落盘验收（原 A-0006 被覆盖）
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0072` [P1] codex/truth-restore-land-record-20261118 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0073` [P1] codex/jsonl-truth-no-overwrite-20261118 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
 
 **bug（1 待处理）**
 - `L-0005` 【发布一致性·真短项】product_eval 判据5(修掉跨库比对后)暴露：已发布的 0.6.0-preview.56 的 source_commit=001
 
-**gate（5 待处理）**
+**gate（4 待处理）**
 - `L-0001` 磁盘曾达 99%（可用 1.6GB）。/tmp 有 228 个 autopilot 临时目录约 3.87GB，其中 kg-gate-* 由 kgctl gate
-- `L-0002` 落盘门禁被过期真相卡死：kgctl land 在 _mirror_truth_into_trunk 时把状态根(/Users/danta/.newmax/wor
 - `L-0003` 状态根解析把「停在旧分支的共享检出」当权威状态根：resolve_state_root 的候选顺序是 (main, trunk, current_worktre
 - `L-0007` 【launchd 陈旧项·非 Stop 复发链】freshness 门禁真机实测 4 条 stale：ai.danta.codex-proxy-watchdog
 - `L-0008` 【既存·门禁环境】在部署目录 ~/plugins/codex-autopilot/releases/0.6.0-preview.82 里直接跑 ops/self
@@ -82,11 +94,15 @@
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0005` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
+- `A-0006` [P1] codex/py39-snapshot-prune-20261118 落盘验收
+- `A-0071` [P1] 补记 codex/daemon-first-install-20261118 落盘验收（原 A-0006 被覆盖）
+- `A-0072` [P1] codex/truth-restore-land-record-20261118 落盘验收
+- `A-0073` [P1] codex/jsonl-truth-no-overwrite-20261118 落盘验收
 
 ## 进度概览
 
-- 累计关闭问题：3 条
-- 累计落盘：1 条
-- 未决问题：6 条
-- 已验收：4 条
+- 累计关闭问题：4 条
+- 累计落盘：6 条
+- 未决问题：5 条
+- 已验收：8 条
 
