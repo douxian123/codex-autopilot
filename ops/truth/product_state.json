@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-18",
+ "updated": "2026-11-19",
  "modules": [
   {
    "area": "唯一入口",
@@ -161,6 +161,18 @@
     "ops/selftest.py",
     "ops/panel_render_check.py",
     "ops/test-project-router.py"
+   ],
+   "updated": "2026-11-19"
+  },
+  {
+   "area": "常驻自追踪",
+   "behavior": "kgctl tick 每拍调用 truthctl synthesize --if-changed：比较时忽略生成时间，主线正文和台账事实没变就保留原文件与原生成时间；真相变化后立即刷新。守护 tick pass 继续调用 kgctl tick，不新增重复 pass。回归门禁锁住无变化不写、有变化刷新和整条接线。",
+   "why": "自动挡每拍都会综合产品主线；生成时间随拍刷新会把“什么都没发生”伪装成新进展，并让共享主干反复合并同一份视图。常驻自追踪必须只在真相内容变化时落盘。",
+   "files": [
+    "ops/truthctl.py",
+    "ops/kgctl.py",
+    "ops/test-selftrack-mainline.py",
+    "ops/selftest.py"
    ],
    "updated": "2026-11-19"
   }

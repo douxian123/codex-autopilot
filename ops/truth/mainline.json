@@ -47,7 +47,7 @@
     {
       "step": "常驻自追踪",
       "expected": "没有对话时也持续同步项目主线、决策、进展与卡点",
-      "status": "next"
+      "status": "done"
     }
   ]
 }
