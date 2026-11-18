@@ -583,6 +583,15 @@ def main(argv):
             print(f"  FAIL  健康条应有 7 个管家 + 1 层全局健康，实得 {len(rows)} 行")
         else:
             print("  PASS  健康条行数：7 个管家 + 1 层全局健康")
+        # 路线/效能检测是状态管家内部的只读能力，不是第八个运行时角色。
+        # 曾经的风险是「加一个管家行」让首屏越来越像组织架构图，这里反向锁住。
+        route_key_rows = [r for r in rows
+                          if str(r.get("key") or "").startswith("route_health")]
+        if route_key_rows:
+            fails += 1
+            print(f"  FAIL  路线与效能不应新增管家行：{route_key_rows}")
+        else:
+            print("  PASS  路线与效能不新增管家行")
         # accept 是这一轮新增的验收管家：它管的是「先自己验完，再来找你」这个顺序。
         # 少一条断言，就等于这个管家断了也没人知道。
         for key in ("context", "route", "merge", "tune", "exec", "pm", "accept", "health"):
@@ -603,6 +612,33 @@ def main(argv):
         bout2 = run_once(blank)
         fails += has("健康条取不到时不冒充正常", bout2["stewardBar"],
                      "取不到", "没在跑")
+        # 路线判据异常时必须进状态管家那一行，且只说复核，不说自动纠偏。
+        # 只看 route_health payload 不够：用户真正看到的是 stewardBar。
+        route_unknown = dict(payload)
+        route_unknown["harness_tune"] = {"status": "ok", "count": 0, "items": []}
+        route_unknown["harness_health"] = {"status": "ok", "level": "ok",
+                                           "headline": "上下文健康：正常（测试夹具）"}
+        route_unknown["route_health"] = {
+            "status": "ok", "level": "unknown",
+            "headline": "路线与效能判据取不到：scope 外改动数取不到",
+            "unknown": ["scope 外改动数取不到"], "reasons": [], "action": "none",
+        }
+        route_unknown["stewards"] = central_mcp._steward_health(route_unknown)
+        rout_out = run_once(route_unknown)
+        fails += has("路线判据不足时状态管家明说取不到", rout_out["stewardBar"],
+                     "路线与效能判据取不到")
+        fails += has("路线提示只进状态管家", rout_out["stewardBar"], "状态管家")
+        route_attention = dict(route_unknown)
+        route_attention["route_health"] = {
+            "status": "ok", "level": "attention",
+            "headline": "实际工作已经偏离 mandate 声明的范围",
+            "unknown": [], "reasons": ["实际工作已经偏离 mandate 声明的范围"],
+            "action": "propose_review",
+        }
+        route_attention["stewards"] = central_mcp._steward_health(route_attention)
+        ratt_out = run_once(route_attention)
+        fails += has("路线异常时提示复核", ratt_out["stewardBar"],
+                     "路线与效能需复核（只提复核，不自动纠偏）")
         # 内部空值不得泄漏到读者面。实测缺陷（2026-11-17）：守护没跑时合并管家那行
         # 直接印出「可合 None · 冲突 None」。None/True/False 这类 Python 字面量
         # 一旦上屏就是没交付——这是本项目硬规则（内部读数不上读者面）。
