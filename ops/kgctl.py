@@ -4270,6 +4270,28 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     # 直接 add 会把别的窗口已经落盘的整段章节删掉（实测一次删 232 + 75 行）。
     for rel in APPEND_ONLY_MARKDOWN:
         _reconcile_append_only_with_head(wt, rel)
+    # JSONL 同理。land 在落盘前会先把状态根账本镜像进 trunk；如果状态根是旧
+    # 检出，直接 git add 会把 main 已关闭的 L-0002/L-0003 整文件覆盖回 open。
+    # 镜像入口已经做过行级并集，但 tick/intake/land 都会走这个提交入口，必须
+    # 在暂存前再做一次，保证任何入口都不会丢已落盘记录。
+    for rel in truth_pending_status(wt):
+        path = _porcelain_body(rel).strip('"')
+        if not (path.startswith(("ops/truth/", "ops/tasks/"))
+                and path.endswith(".jsonl")):
+            continue
+        head = proc_run(["git", "-C", str(wt), "show", f"HEAD:{path}"],
+                        capture_output=True, text=True, errors="replace")
+        if head.returncode != 0:
+            continue
+        target = wt / path
+        try:
+            work_text = target.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        merged = _union_jsonl_text(head.stdout, work_text)
+        if merged != work_text:
+            target.write_text(merged, encoding="utf-8")
+            print(f"  JSONL 台账 {path} 已与 HEAD 并集对齐（防旧状态根覆盖）")
     add_failures = []
     for rel in TRUTH_PATHS:
         if not (wt / rel).exists():
