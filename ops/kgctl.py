@@ -43,6 +43,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import subprocess
@@ -87,6 +88,7 @@ MAIN = os.environ.get("KG_MAIN", "main")
 # 旧实现取「git 主工作树」当账本家，而 truthctl 取「调用所在 worktree」，于是
 # 同一个项目能同时存在两份互不相认的账本。现在两个脚本共用同一个解析器。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gate_owner  # noqa: E402
 from plugin_binding import apply_plugin_env, binding_health, binding_line  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, looks_like_state_root, resolve_state_root  # noqa: E402
@@ -1839,13 +1841,21 @@ def cmd_gate(args):
         wt = Path(wt_path)
         print(f"用分支已有的工作树：{wt}")
     else:
-        tmp = Path(tempfile.gettempdir()) / f"kg-gate-{slugify(branch, 24)}-{os.getpid()}"
-        proc_run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
-                       capture_output=True, text=True)
+        # 随机后缀代替「同 pid 同名覆盖」：旧实现先 `worktree remove --force`
+        # 一个同路径对象，重启后 pid 复用就可能帮别人清现场。现在每次建树都是
+        # 新路径，崩溃残留靠 sidecar 标记交给带判活守卫的回收器处理。
+        tmp = (Path(tempfile.gettempdir())
+               / f"kg-gate-{slugify(branch, 24)}-{os.getpid()}-{secrets.token_hex(4)}")
         add = proc_run(["git", "-C", str(SHARED), "worktree", "add", "--detach", str(tmp), branch],
                              capture_output=True, text=True, errors="replace")
         if add.returncode != 0:
             sys.exit(f"× 建门禁工作树失败：{(add.stdout or '') + (add.stderr or '')}".strip()[:400])
+        try:
+            gate_owner.write_marker(tmp, branch)
+        except Exception as exc:
+            proc_run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
+                     capture_output=True, text=True)
+            sys.exit(f"× 写门禁工作树归属标记失败：{type(exc).__name__}: {exc}")
         wt = tmp
         print(f"门禁工作树（临时）：{wt}")
     try:
@@ -1875,8 +1885,10 @@ def cmd_gate(args):
         return 0 if ok else 1
     finally:
         if tmp is not None and not keep:
-            proc_run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
-                           capture_output=True, text=True)
+            cleanup = proc_run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
+                               capture_output=True, text=True)
+            if cleanup.returncode == 0:
+                gate_owner.remove_marker(tmp)
 
 
 def cmd_clash(args):
