@@ -659,6 +659,20 @@ fi
 #   全部手工维护、全部不在任何仓、全部不会被 install 刷新。它们的源文件现在
 #   随版本目录一起发布（ops/guards/），改指由 ops/guards/repoint_launchd.py
 #   按 registry.json 统一执行：幂等、改前备份、逐条打印、只碰自己登记的 label。
+#
+#   HyAPI 三条任务的密钥不能进版本库：先把旧脚本里的 token 补进本地
+#   ~/.codex-proxy/secrets.env（0600、只补缺失、不回显），再让 repoint 改指。
+#   顺序反了会得到「路径新鲜但任务立刻 SystemExit」的假绿。
+if [ -f "$DEST/ops/guards/hyapi_secrets.py" ]; then
+  echo
+  echo "迁移 HyAPI 本地密钥（只写 ~/.codex-proxy/secrets.env，不回显）…"
+  if ! "$PY" "$DEST/ops/guards/hyapi_secrets.py" --migrate; then
+    echo "× 本地密钥迁移失败；不继续改指 launchd。" >&2
+    echo "  避免 plist 指向新脚本但任务因缺密钥立刻退出。" >&2
+    exit 1
+  fi
+fi
+
 if [ -f "$DEST/ops/guards/repoint_launchd.py" ]; then
   echo
   echo "定时任务改指当前版本（watchdog / 快照 / hooks / 3000 巡检 / 日志轮转）…"

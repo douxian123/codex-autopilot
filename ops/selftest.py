@@ -210,6 +210,10 @@ def main():
         # 要么是登记过的薄转发。单测用假 HOME 造现场，不碰真实 launchd。
         run([sys.executable, str(OPS / "test-launchd-entry-freshness.py")],
             cwd=str(OPS.parent), check=True)
+        # 版本化 HyAPI 入口后，密钥不能进仓库：缺本地密钥时 repoint 必须
+        # fail closed，绝不把 plist 改成「路径新鲜但立刻 SystemExit」。
+        run([sys.executable, str(OPS / "test-launchd-repoint-secrets.py")],
+            cwd=str(OPS.parent), check=True)
         # 改指 managed 任务时必须保留常驻参数：2026-10-27 真实事故是
         # `--loop --interval 15 --max-land 3` 被抹成只剩脚本路径，launchd
         # 直接 exec 一个 .py，守护进程静默停摆，而改指脚本照样打印「✓」。
@@ -3964,7 +3968,7 @@ def test_auto_exec():
         daemon_q = load_daemon(repo_q, trunk_q, home_q, throttle_cmd)
         daemon_q.EXEC_CHANNEL_RETRY_SECONDS = 3600
         blocked_q, workers_q = {}, {}
-        daemon_q.dispatch_exec(False, blocked_q, workers_q)
+        initial_results_q, workers_q = daemon_q.dispatch_exec(False, blocked_q, workers_q)
         results_q = []
         for _ in range(100):
             results_q, workers_q = daemon_q.dispatch_exec(False, blocked_q, workers_q)
@@ -3972,7 +3976,10 @@ def test_auto_exec():
                 break
             _time.sleep(0.1)
         if not results_q or results_q[-1].get("outcome") != "channel_unavailable":
-            raise AssertionError(f"429 没被记成可恢复通道失败: {results_q}, blocked={blocked_q}")
+            raise AssertionError(
+                f"429 没被记成可恢复通道失败: {results_q}, blocked={blocked_q}, "
+                f"initial={initial_results_q}, workers={workers_q}, "
+                f"count={throttle_count.read_text().strip() if throttle_count.exists() else 'missing'}")
         if int(throttle_count.read_text().strip()) != 1:
             raise AssertionError("429 在收口线程内被重复重试，阻塞了其他 worker")
         if blocked_q.get("L-0001", {}).get("reason") != "channel_unavailable":
@@ -4451,11 +4458,13 @@ def test_parallel_exec_slots():
                 release.touch()
                 deadline = _time.time() + 15
                 landed = []
+                all_results = []
                 while _time.time() < deadline and len(landed) < slots:
                     results, workers = central_daemon.dispatch_exec(False, blocked, workers)
+                    all_results.extend(results)
                     landed.extend(r for r in results if r.get("outcome") == "landed")
                     _time.sleep(0.1)
-                assert len(landed) == slots, (slots, landed, blocked, workers)
+                assert len(landed) == slots, (slots, landed, all_results, blocked, workers)
                 assert not workers["exec_jobs"], workers
 
             finally:
