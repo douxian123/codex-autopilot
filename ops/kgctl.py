@@ -5566,7 +5566,9 @@ def cmd_tick(args):
     _stage(2, "refresh project status")
     _truth("snapshot")
     _stage(3, "synthesize product mainline")
-    _truth("synthesize")
+    # 常驻自追踪每拍都会到这里。内容没变时不重写生成时间，避免共享主干被
+    # 「看起来更新了、实际什么都没发生」的假进展反复弄脏。
+    _truth("synthesize", "--if-changed")
 
     if os.environ.get("KG_TICK_LIGHT") == "1":
         rows = []

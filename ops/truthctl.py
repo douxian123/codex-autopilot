@@ -34,6 +34,7 @@ truthctl 管「这个项目现在到底是什么状态」。
   truthctl accept --id <A-id> --status verified [--note "..."]  收敛一条验收项（人工拍板/机器复核）
   truthctl goal <summary|list|create|update|link|close>  跨项目长期目标（显式账本）
   truthctl synthesize          把决策/进展/问题/验收综合成 docs/PRODUCT_MAINLINE.md
+  truthctl synthesize --if-changed  常驻自追踪用：内容无变化时不重写生成时间
 
 add 的环境变量：
   KG_TRUTH_DETAIL KG_TRUTH_STATUS KG_TRUTH_LANE KG_TRUTH_FILES
@@ -1227,7 +1228,12 @@ def cmd_synthesize(args):
 
     mainline.json 是人拍板的方向，不改；这份是 Agent 从台账里综合出来的现状。
     人只读这一页，就知道产品现在是什么样、最近在推什么、还差什么。
+
+    `--if-changed` 给守护每拍调用：生成视图正文不变时保留原文件和原生成时间，
+    避免常驻自追踪把同一份主线反复写成「刚更新」并制造无意义的 git 脏改动。
     """
+    if_changed = '--if-changed' in args
+    args = [a for a in args if a != '--if-changed']
     ml = _read_json(TRUTH / 'mainline.json')
     dec = [r for r in _latest_by_id(_read(TRUTH / 'decisions.jsonl')).values()
            if r.get('status') == 'active']
@@ -1245,8 +1251,11 @@ def cmd_synthesize(args):
     landed = [r for r in prg if r.get('landed')]
     verified = [r for r in acc if r.get('status') == 'verified']
 
+    # 生成时间必须位于正文之外：守护逐拍 synthesize 时，只有真相内容真的变化
+    # 才应该刷新它。把时间混在正文里做 diff 会让「什么都没发生」也像新进展。
+    generated_at = time.strftime('%Y-%m-%d %H:%M:%S')
     L = ['# 产品主线（自动综合，勿手改）', '',
-         '> 生成时间 %s　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合' % time.strftime('%Y-%m-%d %H:%M:%S'),
+         '@GEN_TIME@',
          '> 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。', '']
     if ml:
         L += ['## %s' % ml.get('product', '产品'), '',
@@ -1372,10 +1381,28 @@ def cmd_synthesize(args):
           '- 未决问题：%d 条' % len(open_led),
           '- 已验收：%d 条' % len(verified), '']
 
+    L[2] = '> 生成时间 %s　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合' % generated_at
+    text = '\n'.join(L) + '\n'
     PRODUCT_MAINLINE.parent.mkdir(parents=True, exist_ok=True)
-    PRODUCT_MAINLINE.write_text('\n'.join(L) + '\n')
-    print('\n'.join(L))
-    print('\n已写出 %s' % PRODUCT_MAINLINE.relative_to(REPO), file=sys.stderr)
+    wrote = True
+    if if_changed and PRODUCT_MAINLINE.exists():
+        old = PRODUCT_MAINLINE.read_text(encoding='utf-8')
+        marker = '> 生成时间 '
+        def without_stamp(value):
+            return '\n'.join(
+                line for line in value.splitlines()
+                if not line.startswith(marker)
+            )
+        if without_stamp(old) == without_stamp(text):
+            wrote = False
+    if wrote:
+        PRODUCT_MAINLINE.write_text(text, encoding='utf-8')
+    if wrote:
+        print('\n'.join(L))
+        print('\n已写出 %s' % PRODUCT_MAINLINE.relative_to(REPO), file=sys.stderr)
+    else:
+        print('产品主线内容未变化，保留原生成时间：%s'
+              % PRODUCT_MAINLINE.relative_to(REPO))
 
 
 def cmd_snapshot(args):
