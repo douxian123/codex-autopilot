@@ -143,6 +143,7 @@ def main():
             "test-runtime-truthctl-selection.py",
             "test-state-root-freshness.py",
             "test-mirror-truth-jsonl-union.py",
+            "test-selftest-release-dir.py",
             "test-gate-registration.py",
             "test-acceptance-criteria.py",
             "test-worker-lifecycle.py",
@@ -1276,6 +1277,7 @@ def test_project_auto_exec_default_is_off():
 def test_installer():
     """版本化安装只切 marketplace 指针，不覆盖旧插件；回滚只还原自动挡入口。"""
     import json as _json
+    import shutil
 
     install = OPS.parent / "install.sh"
     # 源码级锁：装完必须尝试把守护改指新版本。少了这一段，用户「装了新版」
@@ -1296,6 +1298,25 @@ def test_installer():
     release_path = f"./plugins/codex-autopilot/releases/{installed_version}"
     with tempfile.TemporaryDirectory(prefix="autopilot-install-test-") as tmp:
         home = Path(tmp) / "home"
+        # 安装器同时检查两处 git：
+        #   1) REPO（安装脚本所在目录）可追到 source_commit；
+        #   2) PROJECT（状态根）必须是 git 仓库根。
+        # 发版目录本身不是 git 仓，若继续拿 OPS.parent 当 PROJECT，test_installer
+        # 在 release 目录里必然红。这里构建一个临时 git 源仓 + detached worktree，
+        # 忠实模拟真实安装布局，而不是放宽安装器的生产校验。
+        source = Path(tmp) / "source"
+        shutil.copytree(OPS.parent, source,
+                        ignore=shutil.ignore_patterns(".git", ".build"))
+        source_install = source / "install.sh"
+        run(["git", "init", "-q", "-b", "main", str(source)])
+        run(["git", "-C", str(source), "config", "user.email",
+             "selftest@example.invalid"])
+        run(["git", "-C", str(source), "config", "user.name", "Autopilot Selftest"])
+        run(["git", "-C", str(source), "add", "."])
+        run(["git", "-C", str(source), "commit", "-qm", "fixture"])
+        trunk = Path(tmp) / "source-trunk"
+        run(["git", "-C", str(source), "worktree", "add", "-q", "--detach",
+             str(trunk), "main"])
         release_dir = home / "plugins" / "codex-autopilot" / "releases" / installed_version
         old_plugin = home / "plugins" / "codex-autopilot"
         old_plugin.mkdir(parents=True)
@@ -1320,7 +1341,8 @@ def test_installer():
         env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
         # --no-companion：菜单栏 .app 的编译单独测（test_companion_contract），
         # 不让一次安装测试既跑安装又跑 Swift 编译。
-        command = ["bash", str(install), "--no-seed", "--no-companion", str(OPS.parent)]
+        command = ["bash", str(source_install), "--trunk", str(trunk),
+                   "--no-seed", "--no-companion", str(source)]
         upgraded = run(command, env=env, check=False)
         if upgraded.returncode:
             raise AssertionError(f"版本化安装失败:\n{upgraded.stdout}\n{upgraded.stderr}")
@@ -1360,7 +1382,6 @@ def test_installer():
 
         # 故障回归：版本目录被手工移除后，用户会用同一版本重装恢复。
         # 这时 marketplace 已指向当前版本，不能把回滚指针也覆盖成当前版本。
-        import shutil
         shutil.rmtree(release)
         reinstalled = run(command, env=env, check=False)
         if reinstalled.returncode:
@@ -1374,7 +1395,8 @@ def test_installer():
         assert state["previous_source"] == "./plugins/codex-autopilot", \
             "同版本恢复安装把回滚指针覆盖成了当前版本"
 
-        rolled_back = run(["bash", str(install), "--rollback"], env=env, check=False)
+        rolled_back = run(["bash", str(source_install), "--rollback"],
+                          env=env, check=False)
         if rolled_back.returncode:
             raise AssertionError(f"回滚失败:\n{rolled_back.stdout}\n{rolled_back.stderr}")
         restored = _json.loads(market.read_text(encoding="utf-8"))
