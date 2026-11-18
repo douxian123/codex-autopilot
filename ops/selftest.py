@@ -141,6 +141,7 @@ def main():
             "test-repoint-interval.py",
             "test-snapshot-clone-prune.py",
             "test-runtime-truthctl-selection.py",
+            "test-state-root-freshness.py",
             "test-mirror-truth-jsonl-union.py",
             "test-gate-registration.py",
             "test-acceptance-criteria.py",
