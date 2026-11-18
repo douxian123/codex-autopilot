@@ -210,6 +210,10 @@ def main():
         # 要么是登记过的薄转发。单测用假 HOME 造现场，不碰真实 launchd。
         run([sys.executable, str(OPS / "test-launchd-entry-freshness.py")],
             cwd=str(OPS.parent), check=True)
+        # 版本化 HyAPI 入口后，密钥不能进仓库：缺本地密钥时 repoint 必须
+        # fail closed，绝不把 plist 改成「路径新鲜但立刻 SystemExit」。
+        run([sys.executable, str(OPS / "test-launchd-repoint-secrets.py")],
+            cwd=str(OPS.parent), check=True)
         # 改指 managed 任务时必须保留常驻参数：2026-10-27 真实事故是
         # `--loop --interval 15 --max-land 3` 被抹成只剩脚本路径，launchd
         # 直接 exec 一个 .py，守护进程静默停摆，而改指脚本照样打印「✓」。

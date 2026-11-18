@@ -203,6 +203,11 @@ def main():
     check("install.sh 会打包 ops/guards", 'cp -R "$REPO/ops/guards" "$STAGE/ops/"' in install_sh)
     check("install.sh 会统一改指定时任务",
           'repoint_launchd.py" --install' in install_sh)
+    migrate_at = install_sh.find("hyapi_secrets.py\" --migrate")
+    repoint_at = install_sh.find("repoint_launchd.py\" --install")
+    check("install.sh 先迁移本地密钥、后改指 launchd",
+          migrate_at >= 0 and repoint_at > migrate_at,
+          f"migrate_at={migrate_at}, repoint_at={repoint_at}")
 
     if failures:
         print("\n失败项：")
