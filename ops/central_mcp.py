@@ -634,6 +634,24 @@ TOOLS = [
         },
     },
     {
+        "name": "route_preview",
+        "description": "只读预演当前这句话会落到哪个项目：不改账本、不注册项目。判不清就明说，默认落点也明说，不猜。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "用户原话，别重写、别归类"},
+                "files": {"type": "array", "items": {"type": "string"},
+                          "description": "相关文件路径（可选，帮助判断落点）"},
+                "cwd": {"type": "string",
+                        "description": "当前会话所在目录（可选；调用方知道时带上）"},
+                "project": {"type": "string",
+                            "description": "明确指定的项目名或状态根（可选）"},
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "sync_control_plane",
         "description": "自动挡主循环：路由 inbox 到固定泳道 -> 刷新项目真相 -> 刷新控制看板 -> 落盘真相层 -> 给出下一步。用户一次抛了多条需求后调用。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
@@ -2797,7 +2815,7 @@ def call_tool(name, args):
         "dashboard", "autopilot_status", "render_autopilot_panel",
         "autopilot_settings_read", "codex_native_threads", "codex_native_probe",
         "harness_tune_list", "constraint_candidates_list",
-        "acceptance_criteria_list",
+        "acceptance_criteria_list", "route_preview",
     }
     control_tools = {
         "autopilot_control", "autopilot_run_once",
@@ -3090,6 +3108,40 @@ def call_tool(name, args):
             0 if res.get("status") != "error" else 2)
     if name == "suggest_branch":
         return kgctl("suggest")
+    if name == "route_preview":
+        text = (args.get("text") or "").strip()
+        if not text:
+            return "route_preview 需要 text", 2
+        files = args.get("files") or []
+        env = {"KG_INBOX_FILES": ":".join(files) if files else None,
+               "KG_INBOX_CWD": (args.get("cwd") or "").strip() or None,
+               "KG_INBOX_PROJECT": (args.get("project") or "").strip() or None}
+        raw, code = kgctl("route-preview", text, extra_env=env)
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return {"decision": "unknown", "project": None,
+                    "__text__": "落点取不到；不会假装正常", "detail": raw}, 2
+        decision = data.get("decision")
+        project = data.get("project")
+        reasons = [str(r) for r in (data.get("reasons") or []) if r]
+        if decision == "resolved" and project:
+            message = "将落到：" + str(project)
+        elif decision == "ambiguous":
+            message = "判不清落点；提交会进全局待路由箱，请在原话里点名项目"
+        elif decision == "none":
+            if project:
+                message = ("默认落到当前绑定项目：" + str(project) +
+                           "；如不是，请在原话里点名项目")
+            else:
+                message = "落点判不清：没有可用线索；请点名项目"
+        else:
+            message = "落点取不到；不会假装正常"
+        result = dict(data)
+        result["__text__"] = message
+        if reasons:
+            result["reasons"] = reasons
+        return result, (0 if code == 0 else 2)
     if name == "intake_request":
         guard = control_state.mutation_guard()
         if guard:
