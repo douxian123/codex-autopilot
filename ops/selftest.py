@@ -113,6 +113,9 @@ def main():
             "test-reap-worktree-lock.py",
             "test-reap-live-session-guard.py",
             "test-reap-weak-signal-mode.py",
+            # kg-gate 崩溃残留只能凭自动挡 sidecar 认领；无标记/外部标记/宽限期内
+            # 一律不碰，过宽限期仍要走 worktree guard 的 all 判活。L-0001。
+            "test-gate-owner-reap.py",
             "test-reap-creation-grace.py",
             "test-reap-stripped-only.py",
             "test-reap-backend-orphans.py",
