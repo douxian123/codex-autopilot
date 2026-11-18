@@ -142,6 +142,13 @@
     "ops/selftest.py"
    ],
    "updated": "2026-11-18"
+  },
+  {
+   "area": "快照清理兼容",
+   "behavior": "snapshot_prune.py 使用 typing.Optional/List/Dict/Tuple，守护脚本固定用 /usr/bin/python3 3.9.6 执行；test-snapshot-clone-prune.py 每次门禁用 /usr/bin/python3 -m py_compile 回编译，旧版 Path | None 语法回归会直接红灯。",
+   "why": "",
+   "files": [],
+   "updated": "2026-11-18"
   }
  ]
 }
