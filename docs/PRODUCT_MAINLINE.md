@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-18 13:59:27　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-18 14:33:14　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -45,8 +45,6 @@
 
 ## 最近在推进
 
-- [已落盘] @ d367c509e8 codex/jsonl-truth-no-overwrite-20261118 验证门禁通过，已落盘 main @ d367c509e8；改动 3 个文件：ops/kgctl.py（+52/-9）、ops/selftest.py（+1/-0）、ops/test-mirror-truth-jsonl-union.py（+106/-0）｜3 files changed, 159 insertions(+), 9 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [已落盘] @ 5caaabb7 已修复 JSONL 真相镜像覆盖：_mirror_truth_into_trunk 对 ops/truth 与 ops/tasks 下的 JSONL 做行级并集，同 id 不同 ts 按时间排序保留最新记录；新增 test-mirror-truth-jsonl-union 门禁并登记 selftest。提交 5caaabb7 已合入 origin/main，land 的全量 selftest/panel-logic/panel-render 门禁通过，P-0084/A-0073 已记录落盘验收。状态根解析陈旧导致的相邻问题继续由 L-0003 跟踪。
 - [已落盘] @ 138a8b7662 codex/state-root-freshness-20261118 验证门禁通过，已落盘 main @ 138a8b7662；改动 3 个文件：ops/selftest.py（+1/-0）、ops/state_root.py（+42/-1）、ops/test-state-root-freshness.py（+139/-0）｜3 files changed, 182 insertions(+), 1 deletion(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 1358b850 已修复默认状态根选择：resolve_state_root 保留 KG_REPO 最高优先级；无显式覆盖时按可用 ops/central.config.json 优先、同条件按 HEAD commit 时间取最新，配置损坏按不可用处理，避免停在旧分支的共享检出压过活的主干。新增 test-state-root-freshness 门禁并在旧逻辑上复现 3 条失败，修复后 4 条全绿；提交 1358b850 已随 codex/state-root-freshness-20261118 落盘 origin/main，全量 selftest、panel-logic、panel-render 均通过，P-0086/A-0074 已记录验收。
 - [已落盘] @ 8cedc648 发布一致性判据5已补远端主干lineage门禁：install-state.source_commit 必须同时是本地主干和 refs/remotes/origin/main 的祖先；新增阴性对照证明只在本地HEAD可见必须红，正常发布不误红。门禁 exit 0，落盘 commit 8cedc648。
@@ -55,13 +53,11 @@
 - [已落盘] @ 3660e786ef codex/truth-restore-union-20261118 验证门禁通过，已落盘 main @ 3660e786ef；改动 4 个文件：docs/PRODUCT_MAINLINE.md（+30/-16）、ops/truth/acceptance.jsonl（+8/-2）、ops/truth/ledger.jsonl（+4/-0）、ops/truth/progress.jsonl（+10/-0）｜4 files changed, 52 insertions(+), 18 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0008
 - [已落盘] @ 99cb2c660e codex/gate-selftest-release-dir-20261118 验证门禁通过，已落盘 main @ 99cb2c660e；改动 2 个文件：ops/selftest.py（+25/-3）、ops/test-selftest-release-dir.py（+65/-0）｜2 files changed, 90 insertions(+), 3 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0009
 - [已落盘] @ 97c1374e 已修复 release 目录总闸恒红：test_installer 自建临时 git 源仓与 detached worktree，不再把非 git 发版目录当状态根；新增 test-selftest-release-dir.py 锁住无 .git 副本可跑，并反向确认安装器仍拒绝非 git 状态根。提交 2ac41afc 已随 97c1374e 落盘 origin/main，门禁 selftest/panel-logic/panel-render 均 exit 0。
+- [已落盘] @ fc4ec4c22d codex/tmp-owner-cleanup-20261118 验证门禁通过，已落盘 main @ fc4ec4c22d；改动 5 个文件：ops/disk_reap.py（+31/-1）、ops/gate_owner.py（+73/-0）、ops/kgctl.py（+17/-5）、ops/selftest.py（+3/-0）、ops/test-gate-owner-reap.py（+216/-0）｜5 files changed, 340 insertions(+), 6 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0077
+- [已落盘] @ 7db4f0c9 临时 gate worktree 加 sidecar 归属标记与随机路径；无标记/外部标记/新标记/在用会话均不回收，过期且无人占用的归属树仍走 all 判活后回收；官方门禁与落盘 ancestry 均已核验
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0005` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0071` [P1] 补记 codex/daemon-first-install-20261118 落盘验收（原 A-0006 被覆盖）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0072` [P1] codex/truth-restore-land-record-20261118 落盘验收
@@ -82,11 +78,14 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0076` [P1] codex/gate-selftest-release-dir-20261118 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0077` [P1] codex/tmp-owner-cleanup-20261118 门禁预跑（未落盘）
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0078` [P1] codex/tmp-owner-cleanup-20261118 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
 
-**gate（2 待处理）**
-- `L-0001` 磁盘曾达 99%（可用 1.6GB）。/tmp 有 228 个 autopilot 临时目录约 3.87GB，其中 kg-gate-* 由 kgctl gate
+**gate（1 待处理）**
 - `L-0007` 【launchd 陈旧项·非 Stop 复发链】freshness 门禁真机实测 4 条 stale：ai.danta.codex-proxy-watchdog
 
 ## 需要你验收
@@ -109,11 +108,13 @@
 - `A-0075` [P1] codex/truth-restore-union-20261118 落盘验收
 - `A-0009` [P1] codex/gate-selftest-release-dir-20261118 门禁预跑（未落盘）
 - `A-0076` [P1] codex/gate-selftest-release-dir-20261118 落盘验收
+- `A-0077` [P1] codex/tmp-owner-cleanup-20261118 门禁预跑（未落盘）
+- `A-0078` [P1] codex/tmp-owner-cleanup-20261118 落盘验收
 
 ## 进度概览
 
-- 累计关闭问题：8 条
-- 累计落盘：13 条
-- 未决问题：2 条
-- 已验收：14 条
+- 累计关闭问题：9 条
+- 累计落盘：15 条
+- 未决问题：1 条
+- 已验收：16 条
 
