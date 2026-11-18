@@ -3446,9 +3446,26 @@ def _mirror_truth_into_trunk(wt: Path) -> None:
 
     自包含安装下，账本在项目目录的 `ops/truth` 里，而主干工作树是从 `main` 检出的；
     若 `ops/truth` 没进过版本库，trunk 里连目录都不存在，写进展台账会直接崩。这里只做
-    文件级拷贝（加法），让主干工作树拥有同一份账本，后续 `sync_trunk_truth` 才能把它
+    加法镜像：真账本 JSONL 按行并集，不允许状态根的旧副本整文件覆盖 trunk 上已经
+    落盘的记录（2026-11-18 实测：状态根的 P-0080 覆盖掉 main 的 P-0079，A-0006
+    验收记录也被覆盖）；其它真相文件仍按文件级拷贝，后续 `sync_trunk_truth` 才能把它
     作为真相层提交，与代码一起推回 `main`。
     """
+    def mirror_file(src: Path, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        rel = target.relative_to(wt).as_posix()
+        if (rel.startswith(("ops/truth/", "ops/tasks/"))
+                and rel.endswith(".jsonl") and target.exists()):
+            try:
+                current = target.read_text(encoding="utf-8")
+                incoming = src.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                shutil.copy2(src, target)
+                return
+            target.write_text(_union_jsonl_text(current, incoming), encoding="utf-8")
+            return
+        shutil.copy2(src, target)
+
     for rel in TRUTH_PATHS:
         src, dst = REPO / rel, wt / rel
         if not src.exists():
@@ -3462,11 +3479,9 @@ def _mirror_truth_into_trunk(wt: Path) -> None:
                 if not item.is_file():
                     continue
                 target = dst / item.relative_to(src)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, target)
+                mirror_file(item, target)
         elif src.is_file():
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+            mirror_file(src, dst)
 
 
 def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
@@ -4315,12 +4330,40 @@ def _stage_blob(wt: Path, stage: int, rel: str) -> str:
 
 
 def _union_jsonl_text(a: str, b: str) -> str:
-    seen, lines = set(), []
+    """JSONL 行级并集：同 id 的不同版本都保留，较新 ts 排在最后。
+
+    truthctl 的 `_latest_by_id` 按出现顺序取最后一条作为当前状态；如果并集把状态根
+    的旧副本追加在 main 新记录之后，旧记录会反过来变成「当前」。所以这里只在同一
+    id 的记录槽内按 ts 升序重排，不同 id 的首现顺序仍按输入顺序保留。
+    """
+    seen = set()
+    entries = []
     for text in (a, b):
         for line in text.splitlines():
-            if line and line not in seen:
-                seen.add(line)
-                lines.append(line)
+            if not line or line in seen:
+                continue
+            seen.add(line)
+            rid, ts = None, ""
+            try:
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    if row.get("id") is not None:
+                        rid = str(row["id"])
+                    ts = str(row.get("ts") or row.get("closed") or "")
+            except (ValueError, TypeError):
+                pass
+            entries.append({"line": line, "id": rid, "ts": ts})
+
+    by_id = {}
+    for entry in entries:
+        if entry["id"] is not None:
+            by_id.setdefault(entry["id"], []).append(entry)
+    for rid, group in by_id.items():
+        positions = [i for i, entry in enumerate(entries) if entry["id"] == rid]
+        for pos, newest_last in zip(positions, sorted(group, key=lambda e: e["ts"])):
+            entries[pos] = newest_last
+
+    lines = [entry["line"] for entry in entries]
     return "\n".join(lines) + ("\n" if lines else "")
 
 
