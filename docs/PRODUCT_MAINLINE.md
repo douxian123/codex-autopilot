@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-18 12:52:28　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-18 13:14:56　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -48,8 +48,6 @@
 - [已落盘] @ d36087b804 首屏三问与 PM/验收管家闭环已落盘：首屏只回答要不要我、是不是在干对的事、替我做成了什么；PM 简报、人工验收复核截图与补图按钮进入折叠区；补图不替人收口。落盘 commit 3a950f4e，真相记录 d36087b8。
 - [在途] 补 --install-daemon 显式首次安装与 launchd 回读判活；默认不替用户启用常驻，回读不到 pid 不报成功。
 - [在途] 确认修复已在 origin/main：snapshot_prune.py 使用 typing.Optional/List/Dict/Tuple，不再依赖 Python 3.10 联合类型语法；系统 Python 3.9.6 真导入与快照清理门禁均通过，并补上旧 Path | None 语法的阴性对照，证明门禁能抓回原故障。
-- [已落盘] @ 8cedc648a6 codex/release-lineage-gate-20261118 验证门禁通过，已落盘 main @ 8cedc648a6；改动 2 个文件：ops/product_eval.py（+65/-3）、ops/selftest.py（+24/-4）｜2 files changed, 89 insertions(+), 7 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0006
-- [已落盘] @ 8cedc648 发布一致性判据5已补远端主干lineage门禁：install-state.source_commit 必须同时是本地主干和 refs/remotes/origin/main 的祖先；新增阴性对照证明只在本地HEAD可见必须红，正常发布不误红。门禁 exit 0，落盘 commit 8cedc648。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
@@ -63,10 +61,13 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0006` [P1] codex/release-lineage-gate-20261118 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0007` [P1] codex/release-lineage-gate-20261118 落盘验收
+- `A-0007` [P1] codex/truth-sync-union-20261118 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
+
+**bug（1 待处理）**
+- `L-0005` 【发布一致性·真短项】product_eval 判据5(修掉跨库比对后)暴露：已发布的 0.6.0-preview.56 的 source_commit=001
 
 **gate（5 待处理）**
 - `L-0001` 磁盘曾达 99%（可用 1.6GB）。/tmp 有 228 个 autopilot 临时目录约 3.87GB，其中 kg-gate-* 由 kgctl gate
@@ -89,12 +90,12 @@
 - `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0005` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0006` [P1] codex/release-lineage-gate-20261118 门禁预跑（未落盘）
-- `A-0007` [P1] codex/release-lineage-gate-20261118 落盘验收
+- `A-0007` [P1] codex/truth-sync-union-20261118 门禁预跑（未落盘）
 
 ## 进度概览
 
-- 累计关闭问题：4 条
-- 累计落盘：3 条
-- 未决问题：6 条
+- 累计关闭问题：3 条
+- 累计落盘：1 条
+- 未决问题：7 条
 - 已验收：6 条
 
