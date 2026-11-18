@@ -35,6 +35,25 @@ const payload = JSON.parse(fs.readFileSync(process.argv[3], "utf8"));
 // ---- 最小 DOM：只实现面板脚本真正用到的那几个 API ----
 const NOOP = function () {};
 const els = new Map();
+function escapeAttr(v) {
+  return String(v).replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function tagOf(n) {
+  const m = String((n && n.id) || "").match(/^<([a-zA-Z0-9]+)>/);
+  return m ? m[1] : "div";
+}
+function serializeEl(n) {
+  if (!n) return "";
+  const attrs = [];
+  if (n.className) attrs.push('class="' + escapeAttr(n.className) + '"');
+  if (n.title) attrs.push('title="' + escapeAttr(n.title) + '"');
+  if (n["aria-label"]) attrs.push('aria-label="' + escapeAttr(n["aria-label"]) + '"');
+  if (n["data-key"]) attrs.push('data-key="' + escapeAttr(n["data-key"]) + '"');
+  const kids = (n.children || []).map(serializeEl).join("");
+  const body = kids || ((n.children || []).length ? "" : escapeAttr(n.textContent || ""));
+  return "<" + tagOf(n) + (attrs.length ? " " + attrs.join(" ") : "") + ">" + body + "</" + tagOf(n) + ">";
+}
 function makeEl(id) {
   const base = {
     id: id || "",
@@ -63,7 +82,11 @@ function makeEl(id) {
   var _html = "";
   Object.defineProperty(base, "innerHTML", {
     get: function () { return _html; },
-    set: function (v) { _html = v; base.textContent = ""; },
+    set: function (v) {
+      _html = v;
+      base.children = [];
+      base.textContent = "";
+    },
   });
   return new Proxy(base, {
     get(t, p) {
@@ -212,6 +235,7 @@ console.log(JSON.stringify({
   recentHtml: document.getElementById("recentBox").innerHTML,
   routeText: read("routeBox"),
   stewardBar: read("stewardBar"),
+  stewardHtml: serializeEl(document.getElementById("stewardBar")),
   autonomyLine: read("autonomyLine"),
   autonomyAudit: read("autonomyAudit"),
   pmBriefingBox: read("pmBriefingBox") + " " + document.getElementById("pmBriefingBox").innerHTML,
@@ -557,11 +581,16 @@ def main(argv):
             print(f"  FAIL  验收标准不算按钮调用不对：{dismiss_calls}")
 
         # 管家健康条：七个管家 + 一层全局项目健康必须在一个地方可读，四态语义不能混。
-        # 这是用户「万法归一入口 + 背后许多管家」设想的落地面——面板此前没有任何
-        # 一处能一眼看出「哪个管家断了」。unknown 必须如实说「取不到」，绝不用绿点
-        # 冒充正常；off（用户自己关的）也不能被当成故障报警。
+        # 新版首屏只展示四态摘要 + 短名状态条，完整解释下沉到 title / aria-label。
+        # 门禁必须同时检查这两个出口：短名可见保证一眼能扫，完整解释可访问保证
+        # 信息没有被压缩吞掉；只查其中一个都会让「更轻」变成「丢信息」。
         stew = payload.get("stewards") or {}
         rows = stew.get("rows") or []
+        counts = stew.get("counts") or {}
+        states = {"ok": "正常", "attention": "需关注", "off": "已关闭", "unknown": "取不到"}
+        short_names = {"context": "上下文", "route": "路由", "merge": "合并",
+                       "tune": "状态", "exec": "实现", "pm": "项目",
+                       "accept": "验收", "health": "全局健康"}
         fails += has("管家健康条上屏", out["stewardBar"], "管家")
         # 精确键集合：七个管家必须齐全；健康层单独校验，既不是第八个管家，也不得缺失。
         expected_keys = {"context", "route", "merge", "tune", "exec", "pm", "accept"}
@@ -592,7 +621,7 @@ def main(argv):
             print(f"  FAIL  路线与效能不应新增管家行：{route_key_rows}")
         else:
             print("  PASS  路线与效能不新增管家行")
-        # accept 是这一轮新增的验收管家：它管的是「先自己验完，再来找你」这个顺序。
+        # accept 是新增的验收管家：它管的是「先自己验完，再来找你」这个顺序。
         # 少一条断言，就等于这个管家断了也没人知道。
         for key in ("context", "route", "merge", "tune", "exec", "pm", "accept", "health"):
             got = [r for r in rows if r.get("key") == key]
@@ -601,19 +630,79 @@ def main(argv):
                 print(f"  FAIL  管家健康条缺 {key}")
             else:
                 print(f"  PASS  管家健康条含 {key}")
-        # 每个管家的 label 都要真的渲染到页面上（不是只存在于 payload）。
+        # 四态是语义，不是装饰：未授权的新状态必须在聚合层就被发现。
+        bad_states = sorted({r.get("state") for r in rows} - set(states))
+        if bad_states:
+            fails += 1
+            print(f"  FAIL  管家健康条出现未知状态：{bad_states}")
+        else:
+            print("  PASS  管家健康条只使用四种约定状态")
+        # 摘要计数是首屏真正读到的全局结论，逐项检查，不能因为现场恰好只有一种状态就跳过。
+        summary_needles = []
+        for key in ("attention", "unknown", "off", "ok"):
+            if isinstance(counts.get(key), int):
+                summary_needles.append(f"{counts[key]} {states[key]}")
+        if (summary_needles and set(counts) <= set(states)
+                and sum(counts.values()) == len(rows)):
+            fails += has("健康摘要逐项显示四态计数", out["stewardBar"], *summary_needles)
+        else:
+            fails += 1
+            print(f"  FAIL  健康摘要计数与 8 行状态不一致：{counts}")
+        steward_html = str(out.get("stewardHtml") or "")
+        # 每个管家都要同时留下两样东西：短名上屏可扫，完整解释在 title / aria-label 可取。
         for r in rows:
-            fail = has(f"健康条渲染：{r.get('key')}", out["stewardBar"], r.get("label"))
-            if fail:
-                fails += fail
+            key = r.get("key")
+            state = r.get("state") or "unknown"
+            short = short_names.get(key, str(r.get("label") or "").split("：")[0])
+            fails += has(f"健康条短名上屏：{key}", out["stewardBar"], short)
+            full = str(r.get("label") or "") + "（" + states.get(state, state) + "）"
+            rendered_attrs = [f'data-key="{key}"', f"s-{state}"]
+            for attr in ("title", 'aria-label'):
+                rendered_attrs.append(f'{attr}="{full}"')
+            missing = [needle for needle in rendered_attrs if needle not in steward_html]
+            if missing:
+                fails += 1
+                print(f"  FAIL  健康条完整解释/状态不可访问：{key} 缺 {missing}")
+            else:
+                print(f"  PASS  健康条短名与完整解释都在：{key}")
+        # 状态语义用确定性夹具锁住：unknown/off/attention/ok 四态各有明确文案与颜色类，
+        # 防止现场恰好没有某一态时，那一态的实现腐化而无人发现。
+        semantic_rows = [
+            {"key": "context", "state": "attention", "label": "上下文管家：1 条候选等你确认"},
+            {"key": "route", "state": "unknown", "label": "路由管家：守护没在跑，收口状态取不到"},
+            {"key": "merge", "state": "off", "label": "合并管家：自动合入已关"},
+            {"key": "exec", "state": "ok", "label": "实现管家：已开，会按槽位自动派活"},
+        ]
+        semantic_counts = {"attention": 1, "unknown": 1, "off": 1, "ok": 1}
+        sem_out = run_once(dict(payload, stewards={"rows": semantic_rows, "counts": semantic_counts}))
+        sem_html = str(sem_out.get("stewardHtml") or "")
+        fails += has("四态摘要各自如实显示", sem_out["stewardBar"],
+                     "1 需关注", "1 取不到", "1 已关闭", "1 正常")
+        for r in semantic_rows:
+            full = r["label"] + "（" + states[r["state"]] + "）"
+            missing = [needle for needle in (
+                f'data-key="{r["key"]}"', f"s-{r['state']}",
+                f'title="{full}"', f'aria-label="{full}"',
+            ) if needle not in sem_html]
+            if missing:
+                fails += 1
+                print(f"  FAIL  状态语义夹具渲染错误：{r['key']} 缺 {missing}")
+            else:
+                print(f"  PASS  状态语义夹具渲染正确：{r['key']}/{r['state']}")
         # unknown 态不得伪装正常：空 payload 下必须出现「取不到 / 没在跑」这类词。
+        # 新 UI 把它们放在短名的 title/aria-label 里，检查必须同时覆盖文本和 HTML。
         blank = dict(payload)
         blank["stewards"] = central_mcp._steward_health({})
         bout2 = run_once(blank)
-        fails += has("健康条取不到时不冒充正常", bout2["stewardBar"],
-                     "取不到", "没在跑")
+        blank_view = str(bout2["stewardBar"]) + " " + str(bout2.get("stewardHtml") or "")
+        fails += has("健康条取不到时不冒充正常", blank_view, "取不到", "没在跑")
+        if "s-ok" in str(bout2.get("stewardHtml") or ""):
+            fails += 1
+            print("  FAIL  空状态下仍出现正常绿点")
+        else:
+            print("  PASS  空状态下不出现正常绿点")
         # 路线判据异常时必须进状态管家那一行，且只说复核，不说自动纠偏。
-        # 只看 route_health payload 不够：用户真正看到的是 stewardBar。
+        # 新 UI 的完整解释在 title/aria-label，检查必须同时覆盖文本和 HTML。
         route_unknown = dict(payload)
         route_unknown["harness_tune"] = {"status": "ok", "count": 0, "items": []}
         route_unknown["harness_health"] = {"status": "ok", "level": "ok",
@@ -625,9 +714,16 @@ def main(argv):
         }
         route_unknown["stewards"] = central_mcp._steward_health(route_unknown)
         rout_out = run_once(route_unknown)
-        fails += has("路线判据不足时状态管家明说取不到", rout_out["stewardBar"],
+        route_unknown_view = (str(rout_out["stewardBar"]) + " "
+                              + str(rout_out.get("stewardHtml") or ""))
+        fails += has("路线判据不足时状态管家明说取不到", route_unknown_view,
                      "路线与效能判据取不到")
-        fails += has("路线提示只进状态管家", rout_out["stewardBar"], "状态管家")
+        fails += has("路线提示只进状态管家", route_unknown_view, "状态管家")
+        if 'data-key="tune"' not in str(rout_out.get("stewardHtml") or ""):
+            fails += 1
+            print("  FAIL  路线提示没有落在状态管家节点上")
+        else:
+            print("  PASS  路线提示落在状态管家节点上")
         route_attention = dict(route_unknown)
         route_attention["route_health"] = {
             "status": "ok", "level": "attention",
@@ -637,13 +733,15 @@ def main(argv):
         }
         route_attention["stewards"] = central_mcp._steward_health(route_attention)
         ratt_out = run_once(route_attention)
-        fails += has("路线异常时提示复核", ratt_out["stewardBar"],
+        route_attention_view = (str(ratt_out["stewardBar"]) + " "
+                                + str(ratt_out.get("stewardHtml") or ""))
+        fails += has("路线异常时提示复核", route_attention_view,
                      "路线与效能需复核（只提复核，不自动纠偏）")
         # 内部空值不得泄漏到读者面。实测缺陷（2026-11-17）：守护没跑时合并管家那行
         # 直接印出「可合 None · 冲突 None」。None/True/False 这类 Python 字面量
         # 一旦上屏就是没交付——这是本项目硬规则（内部读数不上读者面）。
         for bad in ("None", "True", "False"):
-            if bad in str(out["stewardBar"]) or bad in str(bout2["stewardBar"]):
+            if bad in blank_view or bad in str(out["stewardBar"]) or bad in steward_html:
                 fails += 1
                 print(f"  FAIL  健康条泄漏内部字面量 {bad}")
             else:
