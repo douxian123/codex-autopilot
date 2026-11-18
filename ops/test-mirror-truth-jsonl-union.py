@@ -9,10 +9,13 @@ land 记录，本轮 A-0006 验收记录又覆盖了上一轮 A-0006。两次都
   2. 状态根新增 JSONL 行必须补进 trunk；
   3. 同 id 不同 ts 的两个版本都保留，且较新 ts 排在最后；
   4. 非 JSONL 真相文件仍按整文件镜像，不改变既有行为。
+  5. sync_trunk_truth 暂存前也必须与 HEAD 的 JSONL 并集，否则 land 前
+     的旧状态根仍会把已 done 的台账整文件覆盖回 open。
 """
 
 import importlib.util
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -35,6 +38,14 @@ def load_kgctl(state_root: Path):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def git(repo: Path, *args: str) -> str:
+    p = subprocess.run(["git", "-C", str(repo), *args],
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        raise AssertionError(f"git {' '.join(args)}: {p.stderr.strip()}")
+    return p.stdout
 
 
 def main() -> int:
@@ -94,6 +105,53 @@ def main() -> int:
         check("非 JSONL 真相文件仍按整文件镜像",
               '"area":"state"' in product and '"area":"trunk"' not in product,
               repr(product))
+
+    with tempfile.TemporaryDirectory(prefix="truth-sync-union-") as raw:
+        base = Path(raw)
+        state, trunk = base / "state", base / "state-trunk"
+        state.mkdir()
+        for rel in ("ops/truth", "ops/tasks", "ops/context", "docs"):
+            (state / rel).mkdir(parents=True)
+        (state / "ops" / "central.config.json").write_text(
+            '{"build":{"cmd":"","cwd":"."}}\n', encoding="utf-8")
+
+        old_open = ('{"id":"L-0002","ts":"2026-11-17 05:41:22",'
+                    '"status":"open"}\n')
+        done = ('{"id":"L-0002","ts":"2026-11-18 11:16:14",'
+                '"status":"done"}\n')
+        (state / "ops/truth/ledger.jsonl").write_text(old_open + done, encoding="utf-8")
+        (state / "ops/truth/progress.jsonl").write_text("", encoding="utf-8")
+
+        git(state, "init", "-q", "-b", "main")
+        git(state, "config", "user.email", "union@example.invalid")
+        git(state, "config", "user.name", "Union Gate")
+        git(state, "add", ".")
+        git(state, "commit", "-q", "-m", "init")
+        git(state, "worktree", "add", "-q", "--detach", str(trunk), "main")
+
+        # 旧状态根带来的陈旧副本：只有 open，没有 HEAD 上已落盘的 done。
+        (trunk / "ops/truth/ledger.jsonl").write_text(old_open, encoding="utf-8")
+        kg = load_kgctl(state)
+        ok = kg.sync_trunk_truth(trunk, "sync stale ledger")
+        # 并集后如果已经与 HEAD 一致，sync 返回 False（没有新提交）是正确结果；
+        # 这里只要求它不许把 HEAD 的 done 从工作区抹掉。
+        check("sync_trunk_truth 未因陈旧台账失败", ok in (True, False), repr(ok))
+
+        work_ledger = (trunk / "ops/truth/ledger.jsonl").read_text(encoding="utf-8")
+        check("sync 后工作区 done 记录不被 open 覆盖",
+              old_open.strip() in work_ledger and done.strip() in work_ledger,
+              repr(work_ledger))
+        check("工作区较新 ts 的 done 排在最后",
+              work_ledger.index(done.strip()) > work_ledger.index(old_open.strip()),
+              repr(work_ledger))
+
+        committed = git(trunk, "show", "HEAD:ops/truth/ledger.jsonl")
+        check("sync 前 HEAD 的 done 记录不被 open 覆盖",
+              old_open.strip() in committed and done.strip() in committed,
+              repr(committed))
+        check("sync 后较新 ts 的 done 排在最后",
+              committed.index(done.strip()) > committed.index(old_open.strip()),
+              repr(committed))
 
     if failures:
         print(f"\nmirror truth jsonl union: FAIL ({len(failures)})")
