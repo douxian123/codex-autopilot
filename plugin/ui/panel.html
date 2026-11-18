@@ -355,6 +355,7 @@
   .intake textarea:focus{outline:2px solid var(--brand-500);outline-offset:1px}
   .intake-actions{display:flex;align-items:center;gap:10px;margin-top:8px}
   .intake-actions .btn{border-radius:8px}
+  .intake-route{font-size:11.5px;line-height:1.45;color:var(--ink-3);margin-top:6px;min-height:16px;overflow-wrap:anywhere}
   .nativeline{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
   .projline{margin-top:8px;overflow-wrap:anywhere}
   .nativeline #nativeState{font-size:12.5px;color:var(--ink-2);line-height:1.5}
@@ -481,6 +482,7 @@
   <section class="intake">
     <label for="intakeText">把问题交给自动挡</label>
     <textarea id="intakeText" placeholder="说说你发现的问题或想完成的事"></textarea>
+    <div class="intake-route" id="intakeRoute" role="status" aria-live="polite">写一句话后显示它会落到哪个项目</div>
     <div class="intake-actions">
       <button class="btn primary" id="intakeSubmit">提交任务</button>
       <span class="intake-state" id="intakeState" role="status" aria-live="polite"></span>
@@ -734,6 +736,10 @@
       if (res && res.content && res.content[0]) t = res.content[0].text || "";
       return {__text__: t};
     });
+  }
+
+  function currentCwd(){
+    return (state && state.project && state.project.path) || undefined;
   }
 
   function loadStatus(fast){
@@ -2033,8 +2039,10 @@
     var button = el("intakeSubmit");
     button.disabled = true;
     el("intakeState").textContent = "正在加入自动挡任务…";
-    callTool("intake_request", {text:text, kind:"unknown"}).then(function(result){
+    callTool("intake_request", {text:text, kind:"unknown", cwd:currentCwd()}).then(function(result){
       field.value = "";
+      el("intakeRoute").textContent = "写一句话后显示它会落到哪个项目";
+      el("intakeRoute").title = "";
       el("intakeState").textContent = result.__text__ || "已加入任务并开始归类";
       return loadStatus(false);
     }).catch(function(error){
@@ -2048,6 +2056,32 @@
       event.preventDefault();
       el("intakeSubmit").click();
     }
+  });
+  el("intakeText").addEventListener("input", function(){
+    var field = this;
+    var route = el("intakeRoute");
+    clearTimeout(field._routeTimer);
+    var text = field.value.trim();
+    if (!text) {
+      route.textContent = "写一句话后显示它会落到哪个项目";
+      route.title = "";
+      return;
+    }
+    route.textContent = "正在判断落点…";
+    field._routeTimer = setTimeout(function(){
+      var wanted = field.value.trim();
+      callTool("route_preview", {text:wanted, cwd:currentCwd()})
+        .then(function(result){
+          if (field.value.trim() !== wanted) return;
+          route.textContent = result.__text__ || "落点取不到；不会假装正常";
+          route.title = (result.reasons || []).join("\n");
+        })
+        .catch(function(error){
+          if (field.value.trim() !== wanted) return;
+          route.textContent = "落点取不到；不会假装正常";
+          route.title = (error && error.message) || String(error);
+        });
+    }, 250);
   });
 
   Array.prototype.forEach.call(document.querySelectorAll(".sw"), function(sw){
