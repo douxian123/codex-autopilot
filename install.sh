@@ -274,6 +274,13 @@ cp "$REPO"/ops/*.py "$STAGE/ops/"
 # 运行时可能带非 .py 的配套文件（模板/示例配置）。一并复制，避免安装后缺文件。
 cp "$REPO"/ops/*.md "$STAGE/ops/" 2>/dev/null || true
 cp "$REPO"/ops/*.json "$STAGE/ops/" 2>/dev/null || true
+# 七管家职责契约是安装件自检的运行时资产；源码根有而版本目录缺会让
+# test-steward-contract.py 在安装件里恒红。只复制这份契约，不把项目生成的
+# docs 视图塞进不可变发布目录。
+if [ -f "$REPO/docs/steward_contract.json" ]; then
+  mkdir -p "$STAGE/docs"
+  cp "$REPO/docs/steward_contract.json" "$STAGE/docs/steward_contract.json"
+fi
 # 本机 launchd 定时任务的源文件（看门狗 / 快照 / hooks 看门狗 / 3000 巡检 /
 # 日志轮转）。它们以前散落在 ~/.codex-guard/ 这类「没有版本、没人升级」的位置，
 # install 永远写不到，于是发版之后它们还在跑几周前的代码。搬进版本目录后，
