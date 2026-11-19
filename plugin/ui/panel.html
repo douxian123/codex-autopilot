@@ -1916,10 +1916,13 @@
     (cc.items || []).forEach(function(x){
       var scope = (x.scope && x.scope.length) ? x.scope.join("、") : "全局";
       var sig = (x.signals && x.signals.length) ? x.signals.join("、") : "规范措辞";
+      var src = x.source === "context_learning"
+        ? "自学习：同一诉求出现 " + (x.mentions || 0) + " 次 / 跨 " + (x.threads || 0) + " 个会话；"
+        : "命中信号：" + sig + "；";
       items.push({tag:"待你确认", cls:"warn",
         text:(x.id||"") + " · " + (x.text||x.title||""),
         act:"constraint", id:x.id,
-        why:"命中信号：" + sig + "；适用范围：" + scope +
+        why:src + "适用范围：" + scope +
           "。点「算」会把它收进项目规范，之后落盘门禁与执行者都按它办事；点「不算」这条不再出现，什么都不生效。"});
     });
     // 验收管家提出的验收标准候选：先把“怎么算完成”编译成可判定标准，但确认前

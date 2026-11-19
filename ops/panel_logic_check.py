@@ -542,6 +542,18 @@ def main(argv):
         fails += has("候选写明命中信号", cout["blockedList"], "以后都")
         fails += has("候选写明不算就什么都不生效", cout["blockedList"],
                      "不算", "什么都不生效")
+        lout_payload = dict(cand)
+        lout_payload["constraint_candidates"] = {"status": "ok", "count": 1, "items": [{
+            "id": "CC-9002", "text": "面板不要展示和节点无关的信息",
+            "title": "面板不要展示和节点无关的信息", "kind": "expectation",
+            "source": "context_learning", "mentions": 5, "threads": 3,
+            "scope": ["plugin/ui/panel.html"], "signals": ["context_learning"],
+        }]}
+        lout = run_once(lout_payload)
+        fails += has("自学习候选上屏", lout["blockedList"], "CC-9002",
+                     "面板不要展示和节点无关的信息")
+        fails += has("自学习候选写清重复证据", lout["blockedList"],
+                     "出现 5 次 / 跨 3 个会话")
 
         # 验收标准候选是「先确认什么算成，再进入验收台账」的前半截。
         # 必须真点一次确认/不算：只检查文案挡不住按钮接错工具，也挡不住

@@ -5624,6 +5624,13 @@ def loop(interval_min: int, max_land: int, dry: bool,
                 constraint_candidates.daemon_hook(dry=dry, log_fn=log)
             except Exception as exc:
                 log(f"[constraint] 提名跳过（fail-open）：{exc!r}")
+            # 上下文管家自学习（fail-open）：跨会话找反复出现的共性诉求，只出候选。
+            # 不自动追问、不写生效约束；人确认后才进现有 constraint 候选闸。
+            try:
+                import context_learning
+                context_learning.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[context-learning] 学习跳过（fail-open）：{exc!r}")
             # 验收管家（fail-open）：把已路由的「怎么算完成」原话提名成验收标准候选。
             # 这里只提名、绝不登记验收项：promote 必须人显式确认，且不得伪造证据。
             # 顺序放在上下文候选之后，两个候选来源彼此独立；异常一律吞掉。

@@ -182,6 +182,15 @@ def _constraint_candidates_summary():
         rows = constraint_candidates.pending()
     except Exception as exc:
         return {"status": "unknown", "reason": f"读不到约束候选（{exc!r}）", "items": []}
+    learning = {"status": "unknown", "themes": []}
+    try:
+        import context_learning
+        observed = context_learning.observe()
+        learning = {"status": observed.get("status"),
+                    "themes": observed.get("themes") or [],
+                    "reason": observed.get("reason")}
+    except Exception as exc:
+        learning = {"status": "unknown", "reason": f"读不到重复主题（{exc!r}）", "themes": []}
     items = [{
         "id": r.get("id"),
         "text": r.get("text"),
@@ -189,8 +198,13 @@ def _constraint_candidates_summary():
         "kind": r.get("kind"),
         "scope": r.get("scope") or [],
         "signals": r.get("signals") or [],
+        "source": r.get("source") or "intake",
+        "mentions": r.get("mentions"),
+        "threads": r.get("threads"),
+        "priority": r.get("priority"),
+        "evidence": (r.get("evidence") or [])[:2],
     } for r in rows]
-    return {"status": "ok", "count": len(items), "items": items}
+    return {"status": "ok", "count": len(items), "items": items, "learning": learning}
 
 
 def _acceptance_criteria_summary():
@@ -502,6 +516,7 @@ def _steward_health(payload):
     daemon = payload.get("daemon") or {}
     tune = payload.get("harness_tune") or {}
     cand = payload.get("constraint_candidates") or {}
+    learning = cand.get("learning") or {}
     acc_criteria = payload.get("acceptance_criteria") or {}
     harness_health = payload.get("harness_health") or {}
     route_health = payload.get("route_health") or {}
@@ -523,8 +538,10 @@ def _steward_health(payload):
         rows.append({"key": "context", "state": "unknown",
                      "label": "上下文管家：约束台账读不到"})
     elif pending_c:
-        rows.append({"key": "context", "state": "attention",
-                     "label": "上下文管家：%s 条候选等你确认 · 已生效 %s 条" % (pending_c, active)})
+        label = "上下文管家：%s 条候选等你确认 · 已生效 %s 条" % (pending_c, active)
+        if learning.get("status") == "ok" and learning.get("themes"):
+            label += " · 发现 %s 个重复主题" % len(learning["themes"])
+        rows.append({"key": "context", "state": "attention", "label": label})
     else:
         rows.append({"key": "context", "state": "ok",
                      "label": "上下文管家：已生效 %s 条约束，无待确认" % active})

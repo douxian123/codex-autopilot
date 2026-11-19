@@ -356,6 +356,11 @@ def main():
         # 过的同句不再弹回）。
         run([sys.executable, str(OPS / "test-constraint-candidates.py")],
             cwd=str(OPS.parent), check=True)
+        # 上下文管家自学习：跨会话重复诉求只能出候选，用户确认前不改
+        # constraints.jsonl；确认后带 source=context_learning 进统一约束闸；
+        # 否掉的同主题不再复发；源目录读不到时如实报 unknown。
+        run([sys.executable, str(OPS / "test-context-learning.py")],
+            cwd=str(OPS.parent), check=True)
         # 验收管家：模糊预期必须先变成「怎么算完成」的候选，确认前不写验收台账；
         # 人点头后登记 A-id，但仍不伪造 evidence，机器项要真门禁、人工项先自验。
         run([sys.executable, str(OPS / "test-acceptance-criteria.py")],
