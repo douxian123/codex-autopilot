@@ -299,8 +299,45 @@ def _autopilot_source_commit():
     return None
 
 
-def _runtime_freshness_summary(binding=None, source_commit=_RUNTIME_FRESHNESS_UNSET):
-    """状态管家内部判据：源码、已装版本、运行代码是否同一代。只读。"""
+def _daemon_freshness_summary():
+    """只读采集 daemon 代际：plist 指向、共享存活判据绑定、daemon 源码 commit。"""
+    result = {"installed": None, "script": None, "live": None,
+              "source_commit": None, "repo_matches": None,
+              "bound_repo": None, "target_repo": None}
+    try:
+        import central_daemon
+        installed = central_daemon.PLIST_PATH.is_file()
+        result["installed"] = installed
+        result["script"] = central_daemon.plist_script_path()
+        if installed and result["script"]:
+            script = Path(result["script"])
+            metadata = script.parent.parent / ".codex-autopilot-source.json"
+            try:
+                import json
+                result["source_commit"] = str(
+                    json.loads(metadata.read_text(encoding="utf-8")).get("commit") or "").strip() or None
+            except (OSError, ValueError):
+                result["source_commit"] = None
+    except Exception:
+        return {k: None for k in result}
+
+    try:
+        import daemon_liveness
+        target = os.environ.get("KG_REPO") or _fallback_repo()
+        state = daemon_liveness.daemon_liveness(str(target))
+        result["live"] = state.get("live")
+        result["repo_matches"] = state.get("matches_repo")
+        result["bound_repo"] = state.get("bound_repo")
+        result["target_repo"] = state.get("repo")
+    except Exception:
+        result["live"] = None
+        result["repo_matches"] = None
+    return result
+
+
+def _runtime_freshness_summary(binding=None, source_commit=_RUNTIME_FRESHNESS_UNSET,
+                               daemon=_RUNTIME_FRESHNESS_UNSET):
+    """状态管家内部判据：源码、已装版本、运行代码、daemon 是否同一代。只读。"""
     try:
         import plugin_binding
         import runtime_freshness
@@ -310,8 +347,11 @@ def _runtime_freshness_summary(binding=None, source_commit=_RUNTIME_FRESHNESS_UN
                 "unknown": ["检测器不可用"], "reasons": [], "action": "none"}
     if source_commit is _RUNTIME_FRESHNESS_UNSET:
         source_commit = _autopilot_source_commit()
+    if daemon is _RUNTIME_FRESHNESS_UNSET:
+        daemon = _daemon_freshness_summary()
     return runtime_freshness.evaluate(
-        binding or plugin_binding.install_consistency(), source_commit=source_commit)
+        binding or plugin_binding.install_consistency(),
+        source_commit=source_commit, daemon=daemon)
 
 
 def _project_health_summary(payload):
