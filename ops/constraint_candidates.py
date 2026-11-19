@@ -186,7 +186,49 @@ def propose() -> dict:
                         if r.get("status") == "proposed"]}
 
 
-def promote(cid: str, kind=None, scope=None, enforceable=None, cmd=None, cwd=None) -> dict:
+def propose_learned(key, statement, scope=None, evidence=None, priority="normal",
+                    mentions=0, threads=0, sample="") -> dict:
+    """上下文管家自学习提名：把反复出现的共性诉求送进同一张候选闸。
+
+    它与 `propose()` 的区别只在来源和证据形态：这里不是「一句话命中规范词」，
+    而是「同主题跨会话反复出现」。候选卡结构保持一致，因此面板、promote、
+    dismiss 三处都不需要第二套机制。候选仍未写进 `constraints.jsonl`。
+    """
+    text = " ".join(str(statement or "").split())
+    if not text:
+        return {"status": "error", "reason": "学习候选没有可确认的语句"}
+    topic = " ".join(str(key or "").split()) or text_hash(text)
+    h = "learned:" + text_hash(topic + "\n" + text)
+    path = candidates_path()
+    live = latest_by_id(path)
+    for row in live.values():
+        if row.get("source_hash") == h and row.get("status") == "proposed":
+            return {"status": "ok", "created": [], "id": row.get("id")}
+    rows = read_rows(path)
+    row = {
+        "id": _next_id(rows), "ts": _now(), "type": "constraint_candidate",
+        "status": "proposed", "text": text, "title": text[:80],
+        # 学习候选是共性规范建议，kind 统一走 expectation；原话证据仍保留在卡里。
+        "kind": "expectation",
+        "scope": suggested_scope(scope),
+        "signals": ["context_learning", "跨会话重复"],
+        "source": "context_learning",
+        "source_hash": h,
+        "source_topic": topic,
+        "source_sample": " ".join(str(sample or "").split())[:240],
+        "evidence": evidence or [],
+        "priority": priority,
+        "mentions": int(mentions or 0),
+        "threads": int(threads or 0),
+        # 候选不参与门禁；确认后由人决定 enforceable，绝不自动标 gate。
+        "enforceable": "none",
+    }
+    _append(path, row)
+    return {"status": "ok", "created": [row], "id": row["id"]}
+
+
+def promote(cid: str, kind=None, scope=None, enforceable=None, cmd=None, cwd=None,
+            env_extra=None) -> dict:
     """人点头后，把候选卡升成真正生效的约束（走 truthctl，不另造第二套真相）。"""
     path = candidates_path()
     row = latest_by_id(path).get(cid)
@@ -201,6 +243,7 @@ def promote(cid: str, kind=None, scope=None, enforceable=None, cmd=None, cwd=Non
     enforceable = (enforceable or "none").strip()
     env = {
         "KG_CONSTRAINT_KIND": kind,
+        "KG_TRUTH_SOURCE_HASH": str(row.get("source_hash") or "") or None,
         "KG_CONSTRAINT_SCOPE": scope or None,
         "KG_CONSTRAINT_ENFORCEABLE": enforceable,
         "KG_CONSTRAINT_CMD": cmd or None,
@@ -210,7 +253,8 @@ def promote(cid: str, kind=None, scope=None, enforceable=None, cmd=None, cwd=Non
     proc = subprocess.run(
         [sys.executable, str(OPS / "truthctl.py"), "constraints", "add", row["text"]],
         capture_output=True, text=True,
-        env={**os.environ, **{k: v for k, v in env.items() if v}})
+        env={**os.environ, **{k: v for k, v in env.items() if v},
+             **{k: str(v) for k, v in (env_extra or {}).items() if v}})
     if proc.returncode != 0:
         return {"status": "error",
                 "reason": (proc.stderr or proc.stdout or "").strip()[-300:]}
