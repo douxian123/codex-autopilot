@@ -1,6 +1,97 @@
 {
  "tasks": [
   {
+   "slug": "disk-production-admission-20261112",
+   "branch": "codex/disk-production-admission-20261112",
+   "resolve_branch": "codex/resolve-disk-production-admission-20261112",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-disk-production-admission-20261112",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "34296b378968b3164b732eecebcaee65a75c28df",
+   "source_commits": [],
+   "created": "2026-11-17 19:44:30",
+   "updated": "2026-11-19 10:07:02",
+   "conflict_files": [
+    "ops/disk_reap.py",
+    "ops/selftest.py",
+    "ops/test-reap-zstd-path.py"
+   ],
+   "unresolved_files": [
+    "ops/disk_reap.py",
+    "ops/selftest.py",
+    "ops/test-reap-zstd-path.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "abandoned",
+   "reason": "源分支提交 patch-id 已在 main，净贡献为零；回收自动生成的冲突容器"
+  },
+  {
+   "slug": "pm-truth-closure-20261118",
+   "branch": "codex/pm-truth-closure-20261118",
+   "resolve_branch": "codex/resolve-pm-truth-closure-20261118",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-pm-truth-closure-20261118",
+   "base_main": "d22efa139c572ab227ef06e16f16be70064765cc",
+   "source_head": "784dd43fcdc777f65d8af58a9cf2f8f54e43256b",
+   "source_commits": [
+    "74fa5ba28594a1db850db091408b70ac9b8fb598",
+    "784dd43fcdc777f65d8af58a9cf2f8f54e43256b"
+   ],
+   "created": "2026-11-18 03:10:31",
+   "updated": "2026-11-19 10:07:01",
+   "conflict_files": [
+    "ops/panel_logic_check.py"
+   ],
+   "unresolved_files": [
+    "ops/panel_logic_check.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "abandoned",
+   "reason": "源分支相对自身基线无文件级改动，面板门禁内容已由后续提交覆盖；回收自动生成的冲突容器"
+  },
+  {
+   "slug": "truth-close-pm-truth-closure-20261118",
+   "branch": "codex/truth-close-pm-truth-closure-20261118",
+   "resolve_branch": "codex/resolve-truth-close-pm-truth-closure-20261118",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-truth-close-pm-truth-closure-20261118",
+   "base_main": "0fd2177bea6a39fa0f26822a6064529b44ee2a30",
+   "source_head": "c8b9f37b322a7cf772b4974c6ed1ce60ff8e4602",
+   "source_commits": [
+    "c8b9f37b322a7cf772b4974c6ed1ce60ff8e4602"
+   ],
+   "created": "2026-11-18 03:43:28",
+   "updated": "2026-11-19 10:07:00",
+   "conflict_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "unresolved_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "abandoned",
+   "reason": "源分支相对自身基线无文件级改动，真相主线已由后续合成覆盖；回收自动生成的冲突容器"
+  },
+  {
+   "slug": "truth-dedupe-pm-closure-20261118",
+   "branch": "codex/truth-dedupe-pm-closure-20261118",
+   "resolve_branch": "codex/resolve-truth-dedupe-pm-closure-20261118",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-truth-dedupe-pm-closure-20261118",
+   "base_main": "9ff339b92f9079018131ef26cee0f3a867f187d7",
+   "source_head": "cbef1c0e1346908225e71686655a337b988248a6",
+   "source_commits": [
+    "cbef1c0e1346908225e71686655a337b988248a6"
+   ],
+   "created": "2026-11-18 04:22:23",
+   "updated": "2026-11-19 10:06:59",
+   "conflict_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "unresolved_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "abandoned",
+   "reason": "源分支相对自身基线无文件级改动，真相主线已由后续合成覆盖；回收自动生成的冲突容器"
+  },
+  {
    "slug": "acceptance-criteria-compiler-20261118",
    "branch": "codex/acceptance-criteria-compiler-20261118",
    "resolve_branch": "codex/resolve-acceptance-criteria-compiler-20261118",
@@ -27,70 +118,6 @@
    "gate_output": "→ codex/resolve-acceptance-criteria-compiler-20261118: 4 提交、落后 0、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n已有 land 在进行（/Users/danta/.newmax/workspace/codex-autopilot/.git/kgctl-land.lock）"
   },
   {
-   "slug": "truth-dedupe-pm-closure-20261118",
-   "branch": "codex/truth-dedupe-pm-closure-20261118",
-   "resolve_branch": "codex/resolve-truth-dedupe-pm-closure-20261118",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-truth-dedupe-pm-closure-20261118",
-   "base_main": "9ff339b92f9079018131ef26cee0f3a867f187d7",
-   "source_head": "cbef1c0e1346908225e71686655a337b988248a6",
-   "source_commits": [
-    "cbef1c0e1346908225e71686655a337b988248a6"
-   ],
-   "created": "2026-11-18 04:22:23",
-   "updated": "2026-11-18 04:22:23",
-   "conflict_files": [
-    "docs/PRODUCT_MAINLINE.md"
-   ],
-   "unresolved_files": [
-    "docs/PRODUCT_MAINLINE.md"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
-  },
-  {
-   "slug": "truth-close-pm-truth-closure-20261118",
-   "branch": "codex/truth-close-pm-truth-closure-20261118",
-   "resolve_branch": "codex/resolve-truth-close-pm-truth-closure-20261118",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-truth-close-pm-truth-closure-20261118",
-   "base_main": "0fd2177bea6a39fa0f26822a6064529b44ee2a30",
-   "source_head": "c8b9f37b322a7cf772b4974c6ed1ce60ff8e4602",
-   "source_commits": [
-    "c8b9f37b322a7cf772b4974c6ed1ce60ff8e4602"
-   ],
-   "created": "2026-11-18 03:43:28",
-   "updated": "2026-11-18 03:43:28",
-   "conflict_files": [
-    "docs/PRODUCT_MAINLINE.md"
-   ],
-   "unresolved_files": [
-    "docs/PRODUCT_MAINLINE.md"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
-  },
-  {
-   "slug": "pm-truth-closure-20261118",
-   "branch": "codex/pm-truth-closure-20261118",
-   "resolve_branch": "codex/resolve-pm-truth-closure-20261118",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-pm-truth-closure-20261118",
-   "base_main": "d22efa139c572ab227ef06e16f16be70064765cc",
-   "source_head": "784dd43fcdc777f65d8af58a9cf2f8f54e43256b",
-   "source_commits": [
-    "74fa5ba28594a1db850db091408b70ac9b8fb598",
-    "784dd43fcdc777f65d8af58a9cf2f8f54e43256b"
-   ],
-   "created": "2026-11-18 03:10:31",
-   "updated": "2026-11-18 03:10:31",
-   "conflict_files": [
-    "ops/panel_logic_check.py"
-   ],
-   "unresolved_files": [
-    "ops/panel_logic_check.py"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
-  },
-  {
    "slug": "daemon-liveness-20261110",
    "branch": "codex/daemon-liveness-20261110",
    "resolve_branch": "codex/resolve-daemon-liveness-20261110",
@@ -111,29 +138,6 @@
     "ops/central_mcp.py",
     "ops/kgctl.py",
     "ops/selftest.py"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
-  },
-  {
-   "slug": "disk-production-admission-20261112",
-   "branch": "codex/disk-production-admission-20261112",
-   "resolve_branch": "codex/resolve-disk-production-admission-20261112",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-disk-production-admission-20261112",
-   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
-   "source_head": "34296b378968b3164b732eecebcaee65a75c28df",
-   "source_commits": [],
-   "created": "2026-11-17 19:44:30",
-   "updated": "2026-11-17 19:44:30",
-   "conflict_files": [
-    "ops/disk_reap.py",
-    "ops/selftest.py",
-    "ops/test-reap-zstd-path.py"
-   ],
-   "unresolved_files": [
-    "ops/disk_reap.py",
-    "ops/selftest.py",
-    "ops/test-reap-zstd-path.py"
    ],
    "auto_resolved_jsonl": [],
    "status": "needs_agent"
@@ -345,5 +349,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-18 07:00:50"
+ "updated": "2026-11-19 10:07:02"
 }
