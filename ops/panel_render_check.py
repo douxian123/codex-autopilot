@@ -95,7 +95,7 @@ setTimeout(function(){
 """
 
 FIRST_SCREEN_IDS = [
-    "stateLabel", "statusTime", "projectLine", "focusStatus", "focusDoing",
+    "entryMap", "stateLabel", "statusTime", "projectLine", "focusStatus", "focusDoing",
     "focusStep", "hierProject", "hierRoad", "hierWork", "sysLine",
     "intakeRoute", "needText", "systemDetail",
 ]
@@ -350,6 +350,10 @@ def main(argv):
     # 面板层级：Codex 原生输入框是常用入口；面板输入框只在高级区兜底。
     # 系统判据默认折叠，但不能因为降噪把可观测性删掉。
     layer_checks = [
+        ("首屏明示主入口、执行入口与兜底入口",
+         all(word in str(snapshot.get("entryMap") or "")
+             for word in ("主入口", "当前 Codex 输入框", "万法归一",
+                          "执行入口", "后台任务窗口", "兜底入口", "高级区输入框"))),
         ("面板输入框收进高级区", str(snapshot.get("intakeInAdvanced")) == "1"),
         ("默认首屏看不到面板输入框", str(snapshot.get("intakeVisible")) == "0"),
         ("系统判据详情默认折叠", str(snapshot.get("systemEvidenceOpen")) == "0"),

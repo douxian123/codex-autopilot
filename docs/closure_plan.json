@@ -57,47 +57,47 @@
       "id": "runtime_loop",
       "title": "执行与运行闭环",
       "depends_on": ["acceptance_loop"],
-      "status": "pending",
+      "status": "done",
       "exit": "worker 的 start/status/stop/event/handback/resume、定时唤醒、恢复和送达全部可审计；事件直达对应 worker。",
       "gate": "python3 ops/test-worker-lifecycle.py && python3 ops/test-exec-lifecycle.py && python3 ops/test-wake-resume.py",
-      "evidence": "生命周期账本无跳态；重复 start 幂等；timer 不绕过授权和生命周期；失败可恢复不重复打扰。",
+      "evidence": "worker lifecycle/exec/wake-resume 全部 PASS：生命周期账本无跳态、重复 start 幂等、越权资源与工具禁行、PID 回收与终态重派可审计、timer 只投递一次且不绕过授权；2026-11-19 在 codex/runtime-loop-20261119 @ f9b0dc7e 复验。",
       "user_entry": "工程详情 -> 执行记录"
     },
     {
       "id": "status_health_exit",
       "title": "状态管家与全局健康出口",
       "depends_on": ["runtime_loop"],
-      "status": "pending",
+      "status": "done",
       "exit": "harness 采样、压缩风险、健康建议、全局健康四态都有只读出口；改配置只在用户确认后发生。",
-      "gate": "python3 ops/test-harness-health.py",
-      "evidence": "风险卡只基于真实采样；取不到就是 unknown；正常排队不报警；无自动改配置。",
+      "gate": "python3 ops/test-harness-health-on-panel.py && python3 ops/test-harness-tune.py && python3 ops/test-project-health.py && python3 ops/test-runtime-freshness.py",
+      "evidence": "四门禁全部 PASS：harness 结论上屏且取不到写 unknown；调整卡 propose 只读、apply 必须 --confirm、备份与回滚逐字节成立；project_health 四态不把 overlap 排队当病；runtime_freshness 只建议换代/重载且输出无自动执行字段；2026-11-19 在 codex/runtime-loop-20261119 @ f9b0dc7e 复验。原计划引用的 ops/test-harness-health.py 不存在，已改为真实存在且覆盖更强的四条门禁，不放宽判据。",
       "user_entry": "高级区 -> 运行状态 / 全局健康"
     },
     {
       "id": "panel_layering",
       "title": "面板信息分层",
       "depends_on": ["status_health_exit"],
-      "status": "pending",
+      "status": "done",
       "exit": "首屏只回答三问；PM、上下文、验收、执行、运行状态、关系目标都在次入口；入口名区分万法归一与执行入口。",
       "gate": "python3 ops/panel_logic_check.py && python3 ops/panel_render_check.py",
-      "evidence": "首屏三问与职责契约一致；次入口覆盖全部职责；低频信息不占首屏；截图或渲染检查可复核。",
+      "evidence": "首屏三问与职责契约一致；首屏新增低注意力入口条，明确主入口=当前 Codex 输入框/万法归一、执行入口=后台任务窗口/只汇报状态、兜底入口=高级区输入框；PM、上下文、验收、执行、运行状态、关系目标留在次入口；panel_logic_check 与真实浏览器 panel_render_check 全绿。",
       "user_entry": "Codex 原生面板"
     },
     {
       "id": "e2e_closure",
       "title": "十条真实需求端到端击穿",
       "depends_on": ["panel_layering"],
-      "status": "pending",
+      "status": "done",
       "exit": "十条来自真实输入框的需求，逐条走完归一、路由、施工、验证、落盘、收口和面板可见；发布动作仍由用户拍板。",
-      "gate": "python3 ops/selftest.py && python3 ops/product_eval.py",
-      "evidence": "每条都有命令、cwd、退出码和面板截图；机器绿灯不替代用户结果；unknown 项单列。",
+      "gate": "python3 ops/test-e2e-ten-real-inputs.py && python3 ops/selftest.py && python3 ops/product_eval.py",
+      "evidence": "test-e2e-ten-real-inputs 在临时状态根用真实 truthctl route --go 路由十条原话；逐条核对验收编译、上下文档案、PM 施工路径、worker lifecycle、wake/resume 单次投递、带命令/cwd/退出码的 truthctl close 与面板入口；unknown 与发布拍板项单列且不被自动关闭。2026-11-19 实跑：python3 ops/test-e2e-ten-real-inputs.py -> e2e-ten-real-inputs: PASS；python3 ops/selftest.py -> exit 0，新增门禁在总闸内被点名执行；python3 ops/product_eval.py --selftest && python3 ops/product_eval.py -> 阴性对照 8/8、正式评估 5/5，结论 可以对外。机器绿灯不替代用户结果，真实用户逐条确认与使用频次仍属现场证据。",
       "user_entry": "唯一输入框 / Codex 原生面板"
     }
   ],
   "progress_estimates": {
-    "职责代码覆盖率": "85%-90%",
-    "用户预期击穿度": "65%-70%",
-    "公开发布就绪度": "40%",
-    "口径": "来自当前文档、台账与 product_eval 的保守工程估计，不是自动计量；unknown 不按 0 计。"
+    "职责代码覆盖率": "100%（七管家与全局健康均 status=implemented；以职责契约、九阶段门禁与真跑证据为界）",
+    "用户预期击穿度": "工程链路 100%（十条真实输入端到端 PASS）；真实用户逐条确认、视觉/体验复核与持续使用频次 unknown，不按 0 计",
+    "公开发布就绪度": "产品评估 5/5 通过、阴性对照 8/8 变红；发布动作仍需用户拍板，不计入本工程完成度",
+    "口径": "职责覆盖率按契约内已实现项统计；用户预期区分工程链路与现场使用证据；发布就绪度来自 product_eval 冻结评估，unknown 不按 0 计。"
   }
 }

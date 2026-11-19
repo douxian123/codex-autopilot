@@ -198,6 +198,10 @@ if (followCancelButton) {
 const read = function (id) { return document.getElementById(id).textContent; };
 console.log(JSON.stringify({
   ok: true,
+  entryMap: (function () {
+    var m = html.match(/<div[^>]*id="entryMap"[^>]*>([\s\S]*?)<\/div>/);
+    return m ? m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() : "";
+  })(),
   captureToolName: (toolCalls.find(function (c) {
     return c.name === "capture_acceptance_screenshot";
   }) || {}).name || "",
@@ -394,6 +398,9 @@ def main(argv):
         fails = 0
         if not quiet:
             print("Codex 自动挡 面板首屏逻辑检查")
+        fails += has("首屏区分主入口、执行入口与兜底入口", out["entryMap"],
+                     "主入口", "当前 Codex 输入框", "万法归一",
+                     "执行入口", "后台任务窗口", "兜底入口", "高级区输入框")
         fails += has("首屏显示绑定项目（名字+路径）", out["projectLine"],
                      project.get("name"), project.get("path"))
         fails += has("绑定项目路径进了 title（悬停可看全）", out["projectTitle"], project.get("path"))

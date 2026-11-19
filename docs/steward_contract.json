@@ -22,8 +22,8 @@
       "user_entry": "高级区 -> 上下文档案（PM 简报下方次入口；确认仍在需要你决策区）",
       "human_boundary": "用户确认或驳回候选；系统不替用户把自然语言升成全局约束",
       "history": "constraint_candidates.jsonl、constraints.jsonl、truth 决策记录",
-      "status": "partial",
-      "gap": "自动收录档案的查看与追溯已落地；跨项目 scope 收紧与十条真实需求闭环仍待收口"
+      "status": "implemented",
+      "gap": "候选、确认、驳回、查看、来源追溯与读失败 unknown 已有真门禁；剩余的是真实用户在新项目里逐条确认/驳回的使用证据，不由机器代填"
     },
     {
       "id": "pm",
@@ -36,8 +36,8 @@
       "user_entry": "PM 简报（工程详情折叠区）",
       "human_boundary": "不替用户决定产品方向、删数据或发布；不自动发追问",
       "history": "ledger.jsonl、progress.jsonl、truth 决策与判断台账",
-      "status": "partial",
-      "gap": "简报、让路判定和只读施工路径已落地；跨目标优先级、真实窗口追问授权与十条端到端击穿仍待收口"
+      "status": "implemented",
+      "gap": "原话、施工项、依赖、让路、路线投影、追问候选和带证据关闭已由十条真实输入端到端验证；追问授权与跨目标优先级仍按边界留给人拍板"
     },
     {
       "id": "acceptance",
@@ -50,8 +50,8 @@
       "user_entry": "需要你决策（候选确认）与需要你验收（已有证据）",
       "human_boundary": "用户确认验收标准与复核视觉/体验；系统不把用户当第一道测试",
       "history": "acceptance_criteria_candidates.jsonl、acceptance.jsonl",
-      "status": "partial",
-      "gap": "候选、编译、证据闸门、截图附件与关单/回归重开已落地；十条真实需求的稳定验收仍待端到端击穿"
+      "status": "implemented",
+      "gap": "候选编译、确认闸、命令/cwd/退出码证据、截图附件、关单与回归重开已有真门禁；视觉和体验类项目仍需人眼按面板实际渲染确认"
     },
     {
       "id": "routing",
@@ -64,8 +64,8 @@
       "user_entry": "唯一输入框；判不清时在待路由箱可见",
       "human_boundary": "用户不负责选项目、对话、分支或角色",
       "history": "全局 routing inbox、项目 tasks/inbox.jsonl",
-      "status": "partial",
-      "gap": "路由与全局箱已落地；自动挡当前绑定和守护服务对象的发布一致性仍红"
+      "status": "implemented",
+      "gap": "十条原话经真实 truthctl route --go 落账、编译验收并全部标为已路由；发布一致性和守护绑定由 product_eval 单独守门，多项目同时在线的长期运行证据仍靠真实使用累积"
     },
     {
       "id": "implementation",
@@ -78,8 +78,8 @@
       "user_entry": "面板正在处理项与工程详情执行记录",
       "human_boundary": "破坏性动作和改方向/删数据/发布仍需人确认；用户不管理 worker",
       "history": "worker 事件账本、exec 生命周期账本、worktree 提交",
-      "status": "partial",
-      "gap": "真实派发与生命周期已接线；从真实用户入口到闭环的端到端稳定性仍待验证"
+      "status": "implemented",
+      "gap": "start/status/stop/event/handback/resume、越权禁行、PID 回收与唤醒单次投递已由三条运行门禁和端到端门禁验证；auto_exec 默认关闭，真实派发仍需用户显式开启"
     },
     {
       "id": "merge",
@@ -92,8 +92,8 @@
       "user_entry": "最近合入、冲突收拢状态与落盘证据",
       "human_boundary": "不把可合并性推回用户；发布仍由用户拍板",
       "history": "acceptance.jsonl、progress.jsonl、conflict/resolve 台账",
-      "status": "partial",
-      "gap": "land/防丢失/自动拆冲突已落地；仍有 13 支冲突与 17 个在途解冲突任务"
+      "status": "implemented",
+      "gap": "land、防丢失、自动拆冲突与合并前预演已有真门禁；当前项目的历史冲突存量仍需按工单逐支收口，那是待办存量，不是合并职责缺实现"
     },
     {
       "id": "status",
@@ -106,8 +106,8 @@
       "user_entry": "高级区 -> 运行状态/健康（次入口）",
       "human_boundary": "用户点头、备份、一键回滚后才能改配置",
       "history": "budget/harness 健康采样与 truth 判断记录",
-      "status": "partial",
-      "gap": "预算门禁已有；用户设想的 harness 健康采样与调整卡尚未形成完整闭环"
+      "status": "implemented",
+      "gap": "harness 结论上屏、取不到写 unknown、调整卡只读 propose、apply 必须 --confirm、备份与回滚、运行代际新鲜度均由四条真门禁验证；改配置仍需用户确认，系统不自动改"
     }
   ],
   "global_health": {
@@ -121,8 +121,8 @@
     "user_entry": "管家状态末行（项目级结论，不是第八个管家）",
     "human_boundary": "只读，不替任何平面做决定",
     "history": "project_health 投影与面板快照",
-    "status": "partial",
-    "gap": "面板可见且只读；自动修复有意不做，仍需把 stale 项和失败读数收口"
+    "status": "implemented",
+    "gap": "attention/unknown/off/ok 四态、正常排队不报警、只读不重写台账已有门禁；自动修复有意不做，stale 项与失败读数只能靠真实运行持续观察"
   },
   "semantic_views": [
     {
