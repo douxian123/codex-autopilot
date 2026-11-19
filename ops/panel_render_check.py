@@ -445,6 +445,13 @@ def main(argv):
                 "note": "只生成候选，不会自动追问；你点头才会发消息。",
                 "missing": [],
             },
+            "closure": {
+                "status": "ok",
+                "paths": [{
+                    "work_item": {"id": "L-0030", "title": "施工路径上屏",
+                                  "status": "doing", "occupancy": "known"},
+                }],
+            },
         },
         # 授权账本是 autopilot_status 的顶层状态，不属于 pm_briefing 子对象。
         "authorized_followups": {
@@ -527,6 +534,9 @@ def main(argv):
             ("PM 简报上屏：追问授权摘要与可撤销授权",
              "追问授权" in pm_box and "1 条待发" in pm_box
              and "撤销授权" in pm_box),
+            ("PM 简报上屏：施工路径只读投影",
+             "施工路径" in pm_box and "L-0030" in pm_box
+             and "施工路径上屏" in pm_box),
             ("上下文档案折叠区实际展开",
              str(adv_snapshot.get("contextArchiveFoldOpen")) == "1"),
             ("上下文档案上屏：四类状态与来源证据",

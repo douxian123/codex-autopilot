@@ -1112,6 +1112,7 @@
     var ac = pb.acceptance_criteria || {};
     var hold = pb.overlap_holds || {};
     var follow = pb.follow_up_candidates || {};
+    var closure = pb.closure || {};
     var auth = authSummary || {};
     var authCounts = auth.counts || {};
     var approvedByTicket = {};
@@ -1123,6 +1124,17 @@
       + pmCount(exp.active_count) + " 条";
     if (exp.mainline_stage) expText += " · 主线阶段：" + exp.mainline_stage;
     pmRow(list, "预期", expText);
+    var closurePaths = closure.paths || [];
+    pmRow(list, "施工路径", pmCount(closure.status === "unknown" ? null : closurePaths.length)
+      + " 条 · " + (closure.status === "unknown"
+        ? "施工路径取不到，不把不知道当成 0 条。"
+        : "原话到施工、依赖、路线、追问、关闭只做只读投影"));
+    closurePaths.slice(0, 2).forEach(function(r){
+      var w = r.work_item || {};
+      pmRow(list, w.id || "施工", (w.title || "未命名施工项")
+        + " · " + (w.status || "unknown")
+        + " · 文件占地" + (w.occupancy === "unknown" ? "取不到" : "已声明"));
+    });
     (exp.pending || []).slice(0, 2).forEach(function(r){
       pmRow(list, "待确认", r.text || r.id || "（无文案）");
     });
