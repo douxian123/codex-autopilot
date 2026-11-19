@@ -258,6 +258,10 @@ def main():
         # observe 模式不能触碰账本，且 route-health pass 不能被静默升成破坏性动作。
         run([sys.executable, str(OPS / "test-route-health-pass.py")],
             cwd=str(OPS.parent), check=True)
+        # 路线复核状态机：异常发现后要能自动复测，恢复要清除，判据不足要保留；
+        # 全程只追加只读事件，不能长出杀 worker / 改配置 / 写工单的动作。
+        run([sys.executable, str(OPS / "test-route-review.py")],
+            cwd=str(OPS.parent), check=True)
         # 关系层：跨项目长期目标必须有稳定对象。显式来源、空账本与取不到的区别、
         # 损坏账本 fail-closed、只读投影不派活，都由这条门禁锁住。
         run([sys.executable, str(OPS / "test-relationship-ledger.py")],
@@ -1916,9 +1920,21 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     assert "if ctx.get(\"route_health\") is not None:" in daemon_text \
         and "state[\"route_health\"] = ctx[\"route_health\"]" in daemon_text, \
         "daemon 运行态缺少最近一次路线与效能摘要，或会抹掉上一拍摘要"
+    route_review = root / "ops" / "route_review.py"
+    assert route_review.is_file(), "发布树缺少 ops/route_review.py"
+    review_text = route_review.read_text(encoding="utf-8")
+    assert "route_reviews.jsonl" in review_text, \
+        "路线复核状态机缺少 append-only 账本"
+    assert "unknown" in review_text and "不冒充恢复" in review_text, \
+        "路线复核状态机缺少判据不足的诚实边界"
+    assert "route_review.sync" in daemon_text, \
+        "daemon 每拍巡检没有接路线复核状态机"
+    assert "route_review.current" in (root / "ops" / "central_mcp.py").read_text(
+        encoding="utf-8"), "面板数据层没有读取路线复核状态"
     architecture = (root / "docs" / "ARCHITECTURE_STEWARDS.md").read_text(encoding="utf-8")
     for needle in ("为什么这不是人类岗位分工", "execute / control / evaluate",
-                   "「最优」只能是可证伪的闭环", "不是「自动把路线调回最优」"):
+                   "「最优」只能是可证伪的闭环", "不是「自动把路线调回最优」",
+                   "异常发现 → 自动复测 → 恢复或持续待复核"):
         assert needle in architecture, f"架构文档缺少约束：{needle}"
     print(f"selftest ok: 发布包包含 PM 简报、验收标准候选与截图通道，版本 {version}。")
 

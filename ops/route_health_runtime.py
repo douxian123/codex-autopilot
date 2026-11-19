@@ -223,7 +223,7 @@ def summarize_many(exec_payloads, state=None, runtime=None, now=None):
     reasons = [reason for r in results for reason in r.get("reasons") or []]
     unknowns = [item for r in results for item in r.get("unknown") or []]
     checked = [r.get("checked_at") for r in results if r.get("checked_at")]
-    return _sanitize({
+    summary = _sanitize({
         "level": chosen.get("level") or "unknown",
         "headline": chosen.get("headline") or "路线与效能结论取不到",
         "unknown": unknowns,
@@ -231,6 +231,34 @@ def summarize_many(exec_payloads, state=None, runtime=None, now=None):
         "action": "propose_review" if attention else "none",
         "checked_at": max(checked) if checked else now.isoformat(),
     })
+    owners = []
+    issue_keys = []
+    observed_owners = []
+    owner_levels = {}
+    for payload, result in zip(payloads, results):
+        owner = str((payload.get("exec_now") or {}).get("id") or "")
+        owner = owner or str(result.get("headline") or "路线异常")
+        observed_owners.append(owner)
+        owner_levels[owner] = str(result.get("level") or "unknown")
+        if result.get("level") != "attention":
+            continue
+        owners.append(owner)
+        key = issue_signature(result, owner)
+        if key:
+            issue_keys.append(key)
+    if attention:
+        summary["issue_owner"] = ",".join(owners)
+        summary["issue_keys"] = issue_keys
+        summary["observed_owners"] = observed_owners
+        summary["owner_levels"] = owner_levels
+    elif payloads:
+        # 即使全局 ok，也要告诉复核状态机哪些对象真的复测过：判据 unknown 的
+        # 对象不能被同拍其他对象的 ok 误标成恢复。
+        summary["observed_owners"] = observed_owners
+        summary["owner_levels"] = owner_levels
+    elif not payloads:
+        summary["issue_owner"] = ""
+    return summary
 
 
 def ledger_path(runtime):
@@ -263,6 +291,17 @@ def signature(summary, exec_id=None):
         _signature_text(summary.get("reasons") or []),
         str(exec_id or ""),
     ])
+
+
+def issue_signature(summary, exec_id=None):
+    """同一路线问题的稳定键：只看异常原因和 worker，不受 ok/attention 变化影响。"""
+    reasons = [str(reason) for reason in (summary or {}).get("reasons") or []
+               if str(reason) != route_health.HEALTHY_REASON]
+    if not reasons:
+        return ""
+    owner = str(exec_id or "")
+    # 分钟数、改动数继续增长但问题没变时，必须是同一个问题键。
+    return "|".join([owner, _signature_text(reasons)])
 
 
 def append_if_changed(runtime, summary, prior=None, exec_id=None, now=None):
