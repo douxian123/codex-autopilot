@@ -153,6 +153,8 @@ def main():
             "test-exec-lifecycle.py",
             "test-wake-resume.py",
             "test-authorized-followup.py",
+            "test-steward-contract.py",
+            "test-closure-plan.py",
         )
         for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)

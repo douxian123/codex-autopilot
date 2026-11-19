@@ -1,0 +1,103 @@
+{
+  "version": "2026-11-19",
+  "goal": "把 Codex 自动挡的全部管家职责推到可发布、可开源使用、可稳定迭代的击穿状态；不含发布动作本身。",
+  "ordering_rule": "先写职责事实，再修发布地基，再补上下文/PM/验收闭环，最后做面板和十条真实需求端到端验收。每一阶段必须有真门禁和证据，不以代码存在当作完成。",
+  "stages": [
+    {
+      "id": "steward_contract",
+      "title": "职责契约总表",
+      "depends_on": [],
+      "status": "in_progress",
+      "exit": "七管家与全局健康的触发、输入、输出、门禁、用户入口、人工边界、历史事件齐全，机器可读且反向门禁能拦住职责漂移。",
+      "gate": "python3 ops/test-steward-contract.py",
+      "evidence": "职责契约正向完整；删除/新增管家、unknown 伪装、次入口删除等反向用例全部变红。",
+      "user_entry": "工程详情 -> 职责契约（后续接入）"
+    },
+    {
+      "id": "release_foundation",
+      "title": "发布地基一致性",
+      "depends_on": ["steward_contract"],
+      "status": "pending",
+      "exit": "装得上、跑得起来、服务对象对、有效、一致可回滚五条判据全绿，且阴性对照全部仍能变红。",
+      "gate": "python3 ops/product_eval.py --selftest && python3 ops/product_eval.py",
+      "evidence": "release_ready=true；安装版本、运行版本、缓存版本、本地主干与远端主干 lineage 一致；守护绑定目标项目。",
+      "user_entry": "面板首屏 -> 运行状态"
+    },
+    {
+      "id": "context_archive",
+      "title": "上下文档案可查看可确认",
+      "depends_on": ["release_foundation"],
+      "status": "pending",
+      "exit": "自动收录的上下文有档案、有来源、有用户确认入口；判不清和读取失败显示为 unknown。",
+      "gate": "python3 ops/test-context-archive.py",
+      "evidence": "候选、确认、驳回、查看四条路径有台账与面板入口；读取失败不等于 0。",
+      "user_entry": "PM 简报 -> 上下文档案"
+    },
+    {
+      "id": "pm_loop",
+      "title": "PM 施工闭环",
+      "depends_on": ["context_archive"],
+      "status": "pending",
+      "exit": "从入口原话到施工项、依赖、让路队列、路线更新、追问候选与关闭都有确定路径，且文件占地未知时如实保留 unknown。",
+      "gate": "python3 ops/test-pm-closure-loop.py",
+      "evidence": "至少十条真实输入能生成施工路径并回写主线；不自动发追问，不替人拍板。",
+      "user_entry": "PM 简报"
+    },
+    {
+      "id": "acceptance_loop",
+      "title": "验收闭环",
+      "depends_on": ["pm_loop"],
+      "status": "pending",
+      "exit": "验收候选先确认，机器项先跑真证据，人工项带证据才进入需要你验收；截图只是复核附件。",
+      "gate": "python3 ops/test-acceptance-criteria.py && python3 ops/product_eval.py",
+      "evidence": "候选确认、机器门禁、人工复核、关闭与回归重开五条路径全部可追溯。",
+      "user_entry": "需要你决策 / 需要你验收"
+    },
+    {
+      "id": "runtime_loop",
+      "title": "执行与运行闭环",
+      "depends_on": ["acceptance_loop"],
+      "status": "pending",
+      "exit": "worker 的 start/status/stop/event/handback/resume、定时唤醒、恢复和送达全部可审计；事件直达对应 worker。",
+      "gate": "python3 ops/test-worker-lifecycle.py && python3 ops/test-exec-lifecycle.py && python3 ops/test-wake-resume.py",
+      "evidence": "生命周期账本无跳态；重复 start 幂等；timer 不绕过授权和生命周期；失败可恢复不重复打扰。",
+      "user_entry": "工程详情 -> 执行记录"
+    },
+    {
+      "id": "status_health_exit",
+      "title": "状态管家与全局健康出口",
+      "depends_on": ["runtime_loop"],
+      "status": "pending",
+      "exit": "harness 采样、压缩风险、健康建议、全局健康四态都有只读出口；改配置只在用户确认后发生。",
+      "gate": "python3 ops/test-harness-health.py",
+      "evidence": "风险卡只基于真实采样；取不到就是 unknown；正常排队不报警；无自动改配置。",
+      "user_entry": "高级区 -> 运行状态 / 全局健康"
+    },
+    {
+      "id": "panel_layering",
+      "title": "面板信息分层",
+      "depends_on": ["status_health_exit"],
+      "status": "pending",
+      "exit": "首屏只回答三问；PM、上下文、验收、执行、运行状态、关系目标都在次入口；入口名区分万法归一与执行入口。",
+      "gate": "python3 ops/panel_logic_check.py && python3 ops/panel_render_check.py",
+      "evidence": "首屏三问与职责契约一致；次入口覆盖全部职责；低频信息不占首屏；截图或渲染检查可复核。",
+      "user_entry": "Codex 原生面板"
+    },
+    {
+      "id": "e2e_closure",
+      "title": "十条真实需求端到端击穿",
+      "depends_on": ["panel_layering"],
+      "status": "pending",
+      "exit": "十条来自真实输入框的需求，逐条走完归一、路由、施工、验证、落盘、收口和面板可见；发布动作仍由用户拍板。",
+      "gate": "python3 ops/selftest.py && python3 ops/product_eval.py",
+      "evidence": "每条都有命令、cwd、退出码和面板截图；机器绿灯不替代用户结果；unknown 项单列。",
+      "user_entry": "唯一输入框 / Codex 原生面板"
+    }
+  ],
+  "progress_estimates": {
+    "职责代码覆盖率": "80%-85%",
+    "用户预期击穿度": "60%-65%",
+    "公开发布就绪度": "40%",
+    "口径": "来自当前文档、台账与 product_eval 的保守工程估计，不是自动计量；unknown 不按 0 计。"
+  }
+}
