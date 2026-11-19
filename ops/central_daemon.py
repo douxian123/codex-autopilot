@@ -113,6 +113,7 @@ import acceptance_criteria_compiler  # noqa: E402
 import exec_overlap  # noqa: E402
 import exec_lifecycle  # noqa: E402
 import route_health_runtime  # noqa: E402
+import route_review  # noqa: E402
 import wake_resume  # noqa: E402
 import authorized_followup  # noqa: E402
 import daemon_liveness  # noqa: E402
@@ -4804,8 +4805,23 @@ def _pass_route_health(ctx: dict) -> dict:
         RUNTIME, summary, prior=prior, exec_id=",".join(exec_ids))
     record = dict(summary)
     record["signature"] = written.get("signature")
-    ctx["route_health"] = record
+    # 复核状态机只追加「发现异常 → 复测仍异常/恢复」；它不改 worker、路线或配置。
+    # 状态签名变化才通知用户，问题键用来合并同一问题的分钟数增长。
     level = str(summary.get("level") or "unknown")
+    owner = str(summary.get("issue_owner") or ",".join(exec_ids))
+    issue_keys = [str(x) for x in (summary.get("issue_keys") or []) if str(x).strip()]
+    issue_key = ""
+    if level == "attention":
+        if not issue_keys:
+            issue_key = route_health_runtime.issue_signature(summary, owner)
+    review = route_review.sync(
+        summary, written.get("signature"), issue_keys=issue_keys,
+        issue_key=issue_key,
+        observed_owners=summary.get("observed_owners"),
+        owner_levels=summary.get("owner_levels"),
+        root=RUNTIME)
+    record["review"] = review
+    ctx["route_health"] = record
     if written.get("written") and level == "attention":
         notify("自动挡：路线与效能需复核",
                f"{summary.get('headline') or '发现路线偏离或低效空转'}"

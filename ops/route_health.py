@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 
 DEFAULT_STALL_MINUTES = 45
 DEFAULT_RETRY_LIMIT = 3
+HEALTHY_REASON = "判据齐全，没有发现路线偏离或低效空转"
 
 
 def _num(value, default=0):
@@ -28,7 +29,7 @@ def _num(value, default=0):
 
 def _state(reasons, hard):
     if not reasons:
-        return "ok", ["判据齐全，没有发现路线偏离或低效空转"]
+        return "ok", [HEALTHY_REASON]
     if hard:
         return "attention", reasons
     return "ok", reasons
