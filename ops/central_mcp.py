@@ -246,7 +246,14 @@ def _route_health_summary(payload, state=None):
         return {"status": "ok", "level": "unknown",
                 "headline": "路线与效能判据取不到：检测器不可用（%s）" % exc,
                 "unknown": ["检测器不可用"], "reasons": [], "action": "none"}
-    return route_health_runtime.summarize(payload, state=state, runtime=RUNTIME)
+    summary = route_health_runtime.summarize(payload, state=state, runtime=RUNTIME)
+    try:
+        import route_review
+        summary["review"] = route_review.current(RUNTIME)
+    except Exception as exc:
+        summary["review"] = {"status": "error", "level": "unknown", "count": None,
+                             "items": [], "headline": "路线复核状态取不到（%s）" % exc}
+    return summary
 
 
 def _project_health_summary(payload):
@@ -397,6 +404,8 @@ def _steward_health(payload):
     acc_criteria = payload.get("acceptance_criteria") or {}
     harness_health = payload.get("harness_health") or {}
     route_health = payload.get("route_health") or {}
+    route_review = route_health.get("review") or {}
+    route_review_count = route_review.get("count")
     project_health = payload.get("project_health") or {}
     queue = payload.get("queue") or {}
     counters = payload.get("counters") or {}
@@ -461,6 +470,14 @@ def _steward_health(payload):
         rows.append({"key": "tune", "state": "unknown",
                      "label": "状态管家：%s" % (route_health.get("headline")
                                               or "路线与效能判据取不到")})
+    elif route_review.get("status") == "error":
+        rows.append({"key": "tune", "state": "unknown",
+                     "label": "状态管家：%s" % (route_review.get("headline")
+                                              or "路线复核状态取不到")})
+    elif route_review_count:
+        rows.append({"key": "tune", "state": "attention",
+                     "label": "状态管家：%s 项路线与效能待复核（只提复核，不自动纠偏）"
+                              % route_review_count})
     elif tune.get("count"):
         rows.append({"key": "tune", "state": "attention",
                      "label": "状态管家：%s 张调整卡等你点头（config 未动）" % tune.get("count")})
