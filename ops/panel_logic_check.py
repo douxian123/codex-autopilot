@@ -643,6 +643,7 @@ def main(argv):
             # 上一次 land 因此在 trunk 上假红。逐项清空后才是确定性的空态夹具。
             "harness_tune": {"status": "ok", "count": 0, "items": []},
             "constraint_candidates": {"status": "ok", "count": 0, "items": []},
+            "acceptance_criteria": {"status": "ok", "count": 0, "items": []},
         })
         beout = run_once(bempty)
         fails += has("没有卡点时给出空态说明",
