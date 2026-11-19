@@ -207,6 +207,22 @@ def _constraint_candidates_summary():
     return {"status": "ok", "count": len(items), "items": items, "learning": learning}
 
 
+def _context_archive_summary():
+    """上下文管家：只读档案投影，回答自动收了什么、来源是什么、现在停在哪。"""
+    try:
+        import context_archive
+        return context_archive.collect()
+    except Exception as exc:
+        return {
+            "status": "unknown",
+            "reason": f"上下文档案模块不可用（{exc!r}）",
+            "counts": {},
+            "items": [],
+            "unknown": [f"上下文档案模块不可用（{exc!r}）"],
+            "note": "取不到不等于 0 条。",
+        }
+
+
 def _acceptance_criteria_summary():
     """验收管家：待用户点头的「可判定验收标准候选」（只读）。
 
@@ -1210,6 +1226,11 @@ TOOLS = [
     {
         "name": "constraint_candidates_list",
         "description": "上下文管家：列出待你点头的「约束候选」。这些候选由守护扫已路由的入口原话自动提出（命中「绝不/必须/不许/以后都/记住」等规范性措辞），附上你的原话与命中信号。候选**不参与落盘门禁**，不点头就什么都不生效。用户问“上下文管家收了我哪些说法 / 有没有待确认的约束”时用它。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "context_archive",
+        "description": "上下文管家：只读查看自动收录档案，区分待确认、已确认、已驳回和生效约束，保留来源、重复次数、会话数与用户原话。这里不提供第二个审批入口：要确认或驳回仍走 constraint_candidate_promote / constraint_candidate_dismiss。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
@@ -2475,6 +2496,7 @@ def _status_payload(fast=True):
             "autonomy": _autonomy_summary({}),
             "pm_briefing": _pm_briefing_summary({"blocked": {}}),
             "authorized_followups": _authorized_followup_summary(),
+            "context_archive": _context_archive_summary(),
             "relationship_goals": _relationship_goals_summary(),
             "outcome_score": _outcome_score_summary(),
         }
@@ -2704,6 +2726,7 @@ def _status_payload(fast=True):
         "outcome_score": _outcome_score_summary(),
         "harness_tune": _harness_tune_summary(),
         "constraint_candidates": _constraint_candidates_summary(),
+        "context_archive": _context_archive_summary(),
         "acceptance_criteria": _acceptance_criteria_summary(),
         "autonomy": _autonomy_summary(st),
         "mainline": _mainline_summary(),
@@ -2939,7 +2962,7 @@ def call_tool(name, args):
         "suggest_branch", "resolve_list", "resolve_plan", "generate_context",
         "dashboard", "autopilot_status", "render_autopilot_panel",
         "autopilot_settings_read", "codex_native_threads", "codex_native_probe",
-        "harness_tune_list", "constraint_candidates_list",
+        "harness_tune_list", "constraint_candidates_list", "context_archive",
         "acceptance_criteria_list", "route_preview",
         "followup_list",
     }
@@ -3184,6 +3207,10 @@ def call_tool(name, args):
             res = harness_tune.rollback(rid)
         return json.dumps(res, ensure_ascii=False, indent=1), (
             0 if res.get("status") != "error" else 2)
+    if name == "context_archive":
+        import context_archive
+        data = context_archive.collect()
+        return context_archive.human(data), (0 if data.get("status") == "ok" else 1)
     if name in ("constraint_candidates_list", "constraint_candidate_promote",
                 "constraint_candidate_dismiss"):
         import constraint_candidates
