@@ -6,17 +6,17 @@
 <title>Codex 自动挡</title>
 <style>
   :root{
-    /* 主题：优先读宿主（Codex）注入的 CSS 变量，取不到才回落到自带浅色。
-       面板因此和 Codex 同底色、同字色、同描边、同圆角，不再是一块风格
-       独立的外挂网页；在普通浏览器里也有一套完整的兜底。 */
-    --bg:var(--color-background-secondary,#F3F4F8);
-    --surface:var(--color-background-primary,#FFFFFF);
-    --surface-2:var(--color-background-secondary,#F8F9FC);
-    --surface-3:var(--color-background-tertiary,#EDEFF5);
-    --ink:var(--color-text-primary,#111420);
+    /* 主题：先读 @openai/apps-sdk-ui / Codex 宿主注入的官方语义 token，
+       再读旧宿主变量，最后才是独立浏览器里的兜底色。这样插件在宿主里
+       跟原生容器同一套底色、字色和描边，离开宿主也不会变成一块黑底外挂。 */
+    --bg:var(--color-surface-secondary,var(--color-background-secondary,#F3F4F8));
+    --surface:var(--color-surface,var(--color-background-primary,#FFFFFF));
+    --surface-2:var(--color-surface-secondary,var(--color-background-secondary,#F8F9FC));
+    --surface-3:var(--color-surface-tertiary,var(--color-background-tertiary,#EDEFF5));
+    --ink:var(--color-text,var(--color-text-primary,#111420));
     --ink-2:var(--color-text-secondary,#4C5464);
     --ink-3:var(--color-text-tertiary,#737B8C);
-    --line:var(--color-border-primary,#E6E9F0);
+    --line:var(--color-border,var(--color-border-primary,#E6E9F0));
     --line-2:var(--color-border-subtle,#EEF1F6);
 
     /* brand · OpenAI 绿 */
@@ -34,14 +34,14 @@
 
     /* semantic · 同样优先宿主语义色 */
     --ok:var(--color-text-success,#0E7A57);
-    --ok-soft:var(--color-background-success,#E7F4EE);
-    --ok-line:var(--color-border-success,#CDE8DD);
+    --ok-soft:var(--color-background-success-surface,var(--color-background-success,#E7F4EE));
+    --ok-line:var(--color-border-success-surface,var(--color-border-success,#CDE8DD));
     --warn:var(--color-text-warning,#8F5F0B);
-    --warn-soft:var(--color-background-warning,#FAF2E1);
-    --warn-line:var(--color-border-warning,#EFDDBB);
+    --warn-soft:var(--color-background-warning-surface,var(--color-background-warning,#FAF2E1));
+    --warn-line:var(--color-border-warning-surface,var(--color-border-warning,#EFDDBB));
     --err:var(--color-text-danger,#B93A31);
-    --err-soft:var(--color-background-danger,#FAEBE9);
-    --err-line:var(--color-border-danger,#F0D1CD);
+    --err-soft:var(--color-background-danger-surface,var(--color-background-danger,#FAEBE9));
+    --err-line:var(--color-border-danger-surface,var(--color-border-danger,#F0D1CD));
     --neutral:var(--color-text-secondary,#69707E);
     --neutral-soft:var(--surface-3);
     --neutral-line:var(--line);

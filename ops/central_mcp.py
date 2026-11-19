@@ -1962,6 +1962,43 @@ def _auto_section_name():
     return "%s · %s" % (base, project) if project else base
 
 
+_THREAD_TITLE_RE = re.compile(r"[^0-9A-Za-z\u4e00-\u9fff]+")
+
+
+def _compact_project_label(item, cwd=""):
+    """从账本/路径取一个短项目名，供原生对话标题使用。"""
+    raw = str(item.get("project") or item.get("project_root") or cwd or "").strip()
+    if not raw:
+        return "global"
+    name = Path(raw).name
+    parts = [p for p in _THREAD_TITLE_RE.split(name.lower()) if p]
+    if len(parts) > 1:
+        short = "".join(p[0] for p in parts)
+    else:
+        short = name
+    short = _THREAD_TITLE_RE.sub("", short).lower()[:12]
+    return short or "global"
+
+
+def _native_thread_prompt(item, prompt, cwd=""):
+    """把原生子对话的首句做成可扫读的标题，同时保留完整任务正文。
+
+    Codex 侧栏标题来自首条 user message；当前 app-server 契约没有独立的
+    thread/rename，所以把约定格式放在首行是唯一不写宿主库的落地方式。
+    """
+    body = str(prompt or "").strip()
+    if body.startswith("[AP]"):
+        return body
+    project = _compact_project_label(item, cwd)
+    lane = str(item.get("lane") or "route").strip().lower()
+    lane = _THREAD_TITLE_RE.sub("", lane)[:12] or "route"
+    ledger_id = str(item.get("id") or "").strip()[:24] or "L-0000"
+    # 没有账本题名时不用正文首句冒充标题：正文可能只是一句补充说明。
+    title = str(item.get("title") or item.get("detail") or "自动挡任务").strip()
+    title = " ".join(title.split())[:56] or "自动挡任务"
+    return "[AP][%s][%s] %s · %s\n\n%s" % (project, lane, ledger_id, title, body)
+
+
 def _append_native_route(ledger_id, result, status):
     """Persist host linkage metadata without creating a second task ledger."""
     path = _native_routes_path()
@@ -2986,14 +3023,16 @@ def call_tool(name, args):
             result, error = codex_native.start_thread(cwd, args.get("section_id"))
         elif name == "codex_native_dispatch_task":
             ledger_id = (args.get("ledger_id") or "").strip()
-            if not _ledger_item(ledger_id):
+            item = _ledger_item(ledger_id)
+            if not item:
                 return {
                     "code": "AUTOPILOT_LEDGER_ITEM_NOT_DISPATCHABLE",
                     "message": "只能给自动挡台账中仍未收口的问题派活。",
                 }, 2
+            cwd = (args.get("cwd") or "").strip()
             result, error = codex_native.dispatch_task(
-                (args.get("cwd") or "").strip(),
-                args.get("prompt"),
+                cwd,
+                _native_thread_prompt(item, args.get("prompt"), cwd),
                 args.get("section_id"),
                 auto_section=_auto_section_name(),
             )
