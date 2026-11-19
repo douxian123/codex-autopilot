@@ -96,6 +96,17 @@ def main():
             "context-learning-test 可以借鉴这个面板设计，但当前项目是别的产品",
             "这是别的项目，不要落进 context-learning-test 账本",
         ], "/tmp/other-project-discussion-docs")
+        # 同一会话跨 rollout 重发同一句原话，只算一次提及。
+        session(sessions / "a-rollout-2.jsonl", "thread-a", [texts[0]], str(repo))
+        # harness / goal / delegation / 心跳的注入不是人的诉求，哪怕长得像用户消息。
+        session(sessions / "noise.jsonl", "thread-noise", [
+            '<external_goal_objective>闭环修好这个问题，提交到 main 才算证据</external_goal_objective>',
+            '<codex_internal_context source="user_goal">面板必须降噪并遵循用户注意力机制</codex_internal_context>',
+            '<hook_prompt hook_run_id="hook-1">万法归一入口应该把问题路由调度出去</hook_prompt>',
+            '<heartbeat>thoughloom-29：I-xxxx 闭环进度检查</heartbeat>',
+            'System message from the application, not from the user: 面板不要有噪音',
+            '你是项目「thoughloom-29」的「司令台」，面板必须遵循注意力机制',
+        ], str(repo))
 
         env = {"KG_REPO": str(repo), "KG_SESSION_ROOTS": str(sessions)}
         learning = load("context_learning_t", "context_learning.py", env)
@@ -109,6 +120,9 @@ def main():
               learning._content_belongs(sessions / "docs.jsonl", identity), identity)
         check("显式别的项目不归本项目",
               not learning._content_belongs(sessions / "other-docs.jsonl", identity), identity)
+        check("系统注入与委派正文不算用户原话",
+              not list(learning._iter_user_texts(
+                  learning._iter_jsonl_raw_lines(sessions / "noise.jsonl"))), identity)
 
         obs = learning.observe()
         check("历史会话可读", obs.get("status") == "ok", obs)
@@ -123,6 +137,9 @@ def main():
                                        for x in row.get("evidence") or []), row)
         check("文档型讨论窗的主题证据可学习", any(x.get("thread") == "thread-g"
                                           for x in row.get("evidence") or []), row)
+        check("跨 rollout 的同一句原话不重复计数", row.get("mentions") == 5, row)
+        check("系统注入不进主题证据", all(x.get("thread") != "thread-noise"
+                                    for x in row.get("evidence") or []), row)
 
         low = learning.observe(min_threads=5, min_mentions=3)
         check("阈值未达不提名", "themes" in low and not low.get("themes"), low)
