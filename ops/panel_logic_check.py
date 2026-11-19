@@ -914,6 +914,21 @@ def main(argv):
         fails += has("源码已装不同代时如实提示", fresh_view,
                      "已装版本落后于主干源码")
         fails += has("运行态提示写清不会自动重启", fresh_view, "不会自动重启")
+        daemon_fresh = dict(freshness)
+        daemon_fresh["runtime_freshness"] = {
+            "status": "ok", "level": "attention",
+            "headline": "运行代码尚未跟上已装版本，源码改动需要受控换代后才会现场生效",
+            "unknown": [],
+            "reasons": ["daemon 正在服务别的账本；需受控重载，不会自动改绑定"],
+            "action": "recommend_stable_reload",
+        }
+        daemon_fresh["stewards"] = central_mcp._steward_health(daemon_fresh)
+        daemon_out = run_once(daemon_fresh)
+        daemon_view = (str(daemon_out["stewardBar"]) + " "
+                       + str(daemon_out.get("stewardHtml") or ""))
+        fails += has("daemon 绑定/代际不一致时如实提示", daemon_view,
+                     "运行代码尚未跟上已装版本")
+        fails += has("daemon 提示写清不会自动重启", daemon_view, "不会自动重启")
         if 'data-key="tune"' not in str(fresh_out.get("stewardHtml") or ""):
             fails += 1
             print("  FAIL  运行态提示没有落在状态管家节点上")
