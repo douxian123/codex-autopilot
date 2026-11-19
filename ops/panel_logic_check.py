@@ -210,6 +210,7 @@ console.log(JSON.stringify({
   hierarchyWork: read("hierWork"),
   sysLine: read("sysLine"),
   folderBox: read("folderBox"),
+  folderSerialized: serializeEl(document.getElementById("folderBox")),
   stateLabel: read("stateLabel"),
   subtitle: read("subtitle"),
   q1State: read("q1State"),
@@ -413,6 +414,16 @@ def main(argv):
                 fails += has("项目文件夹列出工作项", out["folderBox"],
                              folder_items[0].get("title") or folder_items[0].get("detail"),
                              "进行中" if folder.get("doing_items") else "待处理")
+                item_id = str(folder_items[0].get("id") or "")
+                item_source = str(folder_items[0].get("source_thread_id") or "")
+                if item_id:
+                    fails += lacks("项目文件夹正文不露工作项 ID", out["folderBox"], item_id)
+                    fails += has("项目文件夹 ID 保留在 title", out["folderSerialized"],
+                                 "工作项 " + item_id)
+                if item_source:
+                    fails += lacks("项目文件夹正文不露来源对话 ID", out["folderBox"], item_source)
+                    fails += has("项目文件夹来源对话保留在 title", out["folderSerialized"],
+                                 "来源对话 " + item_source)
         fails += has("首屏显示总状态文案", out["stateLabel"], payload.get("state_label"))
         if payload.get("enabled"):
             # 有待人工验收项时，首屏状态会叠加「等你验收」（见下方 review 分支），
@@ -468,6 +479,16 @@ def main(argv):
         review_out = run_once(review)
         fails += has("人工验收升级为明确状态", review_out["stateLabel"], "需要你验收")
         fails += has("人工验收在提示条里明确出现", review_out["needText"], "需要你验收")
+        fails += has("有验收时第一问摘要明确要你验收", review_out["q1State"], "要你验收")
+        decision = dict(payload)
+        decision.update({
+            "state": "blocked",
+            "state_label": "需要你拍板",
+            "need_action": "需要你拍板：分支路径冲突",
+            "human_acceptance": [],
+        })
+        decision_out = run_once(decision)
+        fails += has("有决策时第一问摘要明确要你拍板", decision_out["q1State"], "要你拍板")
         # 只列复核步骤、不给出口，是验收项长期挂着的直接原因；每条必须带
         # 「点它会怎样 / 不点会怎样」和一个真的能收口的按钮。
         fails += has("验收项带可点的收口动作", review_out["acceptBox"], "我确认通过")
@@ -500,7 +521,7 @@ def main(argv):
         fails += has("守护绑定路径仍可从 title 取到", dout["needTitle"], daemon_bound)
         fails += has("守护绑定路径仍可从 aria-label 取到", dout["needAria"], daemon_bound)
         fails += has("守护详情进入折叠区", dout["needEvidence"], daemon_bound, daemon_current)
-        fails += has("守护异常时第一问摘要不再写不用你", dout["q1State"], "需关注")
+        fails += has("守护异常时第一问摘要给出等轮次", dout["q1State"], "等自己的轮次")
         if "不用你" in str(dout["q1State"]):
             fails += 1
             print("  FAIL  守护异常与“不用你”摘要自相矛盾")
@@ -518,6 +539,10 @@ def main(argv):
         })
         clean_out = run_once(clean)
         fails += has("无需处理时第一问摘要写不用你", clean_out["q1State"], "不用你")
+        say = dict(clean)
+        say["need_action"] = "有新需求还不知道归到哪个项目，需要你说一句"
+        say_out = run_once(say)
+        fails += has("第一问摘要明确要说一句", say_out["q1State"], "要说一句")
         if clean_out.get("needEvidenceHidden") is True:
             print("  PASS  无详情时工程详情折叠区不占空间")
         else:
@@ -854,19 +879,23 @@ def main(argv):
             else:
                 print(f"  PASS  健康条不泄漏 {bad}")
 
-        # 自治分级：这一拍跑过哪些工序、多少条是明确授权、多少条只在观察，
+        # 授权情况：这一拍跑过哪些工序、多少条是明确授权、多少条只在观察，
         # 必须原样上屏。取不到时不许显示成「0 条在观察」——那是把未知冒充正常。
         au = payload.get("autonomy") or {}
-        fails += has("自治分级摘要上屏", out["autonomyLine"], au.get("label"))
+        fails += has("授权情况摘要上屏", out["autonomyLine"], au.get("label"))
         blank["autonomy"] = central_mcp._autonomy_summary({})
         bout3 = run_once(blank)
-        fails += has("自治分级取不到时如实说明", bout3["autonomyLine"], "取不到")
+        fails += has("授权情况标签用人话", str(blank["autonomy"].get("label") or ""),
+                     "授权情况")
+        fails += lacks("授权情况不再露出旧内部词", str(blank["autonomy"].get("label") or ""),
+                       "自治分级")
+        fails += has("授权情况取不到时如实说明", bout3["autonomyLine"], "取不到")
         if "0 条" in str(bout3["autonomyLine"]):
             fails += 1
-            print("  FAIL  自治分级把取不到显示成 0 条")
+            print("  FAIL  授权情况把取不到显示成 0 条")
         else:
-            print("  PASS  自治分级不把取不到显示成 0 条")
-        fails += has("逐条授权来源取不到时如实说明", bout3["autonomyAudit"],
+            print("  PASS  授权情况不把取不到显示成 0 条")
+        fails += has("逐条授权情况取不到时如实说明", bout3["autonomyAudit"],
                      "逐条授权来源", "取不到")
         # 逐条审计必须来自 last_passes，不让面板自己重算第二套真相；
         # 首屏只留摘要，明细放工程详情折叠区，避免把内部读数糊到读者面。
@@ -886,9 +915,9 @@ def main(argv):
         audit = dict(payload)
         audit["autonomy"] = audit_summary
         aout = run_once(audit)
-        fails += has("逐条授权来源上屏", aout["autonomyAudit"],
+        fails += has("逐条授权情况上屏", aout["autonomyAudit"],
                      "逐条授权来源", "exec", "明确授权", "破坏性")
-        fails += has("逐条授权来源不丢观察项", aout["autonomyAudit"],
+        fails += has("逐条授权情况不丢观察项", aout["autonomyAudit"],
                      "route", "观察", "系统推断", "可逆", "待转正")
 
         # PM 简报：预期、让路、追问候选必须来自控制层聚合，面板只照抄。
