@@ -1405,7 +1405,8 @@ def test_installer():
                 assert (release / rel).is_file(), (
                     f"发布版本缺少 launchd 登记脚本 {rel}（{_label}）")
         for required in ("ops/guards/repoint_launchd.py",
-                         "ops/guards/hyapi_secrets.py"):
+                         "ops/guards/hyapi_secrets.py",
+                         "docs/steward_contract.json"):
             assert (release / required).is_file(), f"发布版本缺少 {required}"
         resource_hook = home / ".codex" / "hooks" / "resource-admission.py"
         assert resource_hook.is_file(), "安装后没有落地资源准入 hook"
