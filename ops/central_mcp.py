@@ -48,6 +48,7 @@ SERVER_VERSION = _server_version()
 from plugin_binding import apply_plugin_env  # noqa: E402
 
 import control_state  # noqa: E402
+from request_context import RequestContextError, resolve_project  # noqa: E402
 
 try:
     import exec_status  # noqa: E402
@@ -97,11 +98,27 @@ def truthctl(*args, extra_env=None):
     return _run([str(TRUTHCTL), *args], extra_env)
 
 
+def _request_env(args):
+    """Resolve per-call project context without guessing across projects."""
+    args = args or {}
+    if not args.get("project") and not args.get("cwd"):
+        return {}
+    try:
+        repo = resolve_project(project=args.get("project"), cwd=args.get("cwd"),
+                               bound=os.environ.get("KG_REPO"))
+    except RequestContextError as exc:
+        raise exc
+    return {"KG_REPO": str(repo)}
+
+
 TOOLS = [
     {
         "name": "project_status",
         "description": "一屏看清项目到哪了：状态根、主干、待路由输入、分支可合并/冲突数、共享检出脏度。用户问“现在到哪了 / 还有什么没做”时先用它。",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "inputSchema": {"type": "object", "properties": {
+            "project": {"type": "string", "description": "当前项目状态根绝对路径"},
+            "cwd": {"type": "string", "description": "当前 Codex 工作目录"},
+        }, "additionalProperties": False},
     },
     {
         "name": "capture_request",
@@ -114,6 +131,8 @@ TOOLS = [
                           "description": "相关文件路径（可选，帮助路由到既有泳道）"},
                 "kind": {"type": "string", "enum": ["visual", "ux", "bug", "arch", "gate", "unknown"],
                          "description": "粗分类，拿不准就用 unknown"},
+                "project": {"type": "string", "description": "当前项目状态根绝对路径；跨项目发言时优先传入"},
+                "cwd": {"type": "string", "description": "当前 Codex 工作目录；未传 project 时用于归属判定"},
             },
             "required": ["text"],
             "additionalProperties": False,
@@ -246,6 +265,8 @@ TOOLS = [
                           "description": "相关文件路径（可选，帮助路由到既有泳道）"},
                 "kind": {"type": "string", "enum": ["visual", "ux", "bug", "arch", "gate", "unknown"],
                          "description": "粗分类，拿不准就用 unknown"},
+                "project": {"type": "string", "description": "当前项目状态根绝对路径；跨项目发言时优先传入"},
+                "cwd": {"type": "string", "description": "当前 Codex 工作目录；未传 project 时用于归属判定"},
             },
             "required": ["text"],
             "additionalProperties": False,
@@ -1043,7 +1064,11 @@ def _settings_update(set_values):
 def call_tool(name, args):
     args = args or {}
     if name == "project_status":
-        return kgctl("status")
+        try:
+            env = _request_env(args)
+        except RequestContextError as exc:
+            return str(exc), 2
+        return kgctl("status", extra_env=env)
     if name == "capture_request":
         text = (args.get("text") or "").strip()
         if not text:
@@ -1051,6 +1076,10 @@ def call_tool(name, args):
         files = args.get("files") or []
         env = {"KG_INBOX_FILES": ":".join(files) if files else None,
                "KG_INBOX_KIND": args.get("kind") or "unknown"}
+        try:
+            env.update(_request_env(args))
+        except RequestContextError as exc:
+            return str(exc), 2
         return kgctl("inbox", text, extra_env=env)
     if name == "sync_control_plane":
         return kgctl("tick")
@@ -1113,6 +1142,10 @@ def call_tool(name, args):
         files = args.get("files") or []
         env = {"KG_INBOX_FILES": ":".join(files) if files else None,
                "KG_INBOX_KIND": args.get("kind") or "unknown"}
+        try:
+            env.update(_request_env(args))
+        except RequestContextError as exc:
+            return str(exc), 2
         return kgctl("intake", text, extra_env=env)
     if name == "convergence_plan":
         argv = ["converge"]
