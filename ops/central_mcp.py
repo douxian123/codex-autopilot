@@ -98,10 +98,13 @@ def truthctl(*args, extra_env=None):
     return _run([str(TRUTHCTL), *args], extra_env)
 
 
-def _request_env(args):
+def _request_env(args, *, required=False):
     """Resolve per-call project context without guessing across projects."""
     args = args or {}
     if not args.get("project") and not args.get("cwd"):
+        if required:
+            raise RequestContextError(
+                "当前入口缺少项目归属；请传入 project 或 cwd，未写入任何项目账本")
         return {}
     try:
         repo = resolve_project(project=args.get("project"), cwd=args.get("cwd"),
@@ -1077,7 +1080,7 @@ def call_tool(name, args):
         env = {"KG_INBOX_FILES": ":".join(files) if files else None,
                "KG_INBOX_KIND": args.get("kind") or "unknown"}
         try:
-            env.update(_request_env(args))
+            env.update(_request_env(args, required=True))
         except RequestContextError as exc:
             return str(exc), 2
         return kgctl("inbox", text, extra_env=env)
@@ -1143,7 +1146,7 @@ def call_tool(name, args):
         env = {"KG_INBOX_FILES": ":".join(files) if files else None,
                "KG_INBOX_KIND": args.get("kind") or "unknown"}
         try:
-            env.update(_request_env(args))
+            env.update(_request_env(args, required=True))
         except RequestContextError as exc:
             return str(exc), 2
         return kgctl("intake", text, extra_env=env)
