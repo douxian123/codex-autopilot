@@ -459,6 +459,10 @@
     <div class="sysline" id="sysLine">正在读取常驻与调度…</div>
     <div class="stewards" id="stewardBar" aria-label="管家状态与全局健康"></div>
     <div class="sysline" id="autonomyLine" hidden></div>
+    <details class="card fold engineering-detail" id="systemEvidenceFold">
+      <summary>系统为什么这么判断</summary>
+      <div class="foldbody"><div class="sysline" id="systemDetail">正在读取运行指标…</div></div>
+    </details>
   </section>
 
   <section class="q" id="q3">
@@ -480,16 +484,6 @@
       <button class="sw" id="masterToggle" aria-label="启用或关闭 Codex 自动挡" aria-pressed="true"></button>
     </div>
     <div class="d projline" id="projectLine">绑定项目：读取中…</div>
-  </section>
-
-  <section class="intake">
-    <label for="intakeText">把问题交给自动挡</label>
-    <textarea id="intakeText" placeholder="说说你发现的问题或想完成的事"></textarea>
-    <div class="intake-route" id="intakeRoute" role="status" aria-live="polite">写一句话后显示它会落到哪个项目</div>
-    <div class="intake-actions">
-      <button class="btn primary" id="intakeSubmit">提交任务</button>
-      <span class="intake-state" id="intakeState" role="status" aria-live="polite"></span>
-    </div>
   </section>
 
   <section class="card" id="folderCard">
@@ -606,6 +600,21 @@
   </details>
 
   <div id="advanced">
+    <details class="card fold">
+      <summary>把问题交给自动挡</summary>
+      <div class="foldbody">
+        <section class="intake">
+          <label for="intakeText">写给自动挡的一句话</label>
+          <textarea id="intakeText" placeholder="说说你发现的问题或想完成的事"></textarea>
+          <div class="intake-route" id="intakeRoute" role="status" aria-live="polite">写一句话后显示它会落到哪个项目</div>
+          <div class="intake-actions">
+            <button class="btn primary" id="intakeSubmit">提交任务</button>
+            <span class="intake-state" id="intakeState" role="status" aria-live="polite"></span>
+          </div>
+        </section>
+      </div>
+    </details>
+
     <details class="card fold" open>
       <summary>自动动作</summary>
       <div class="foldbody">
@@ -927,8 +936,12 @@
   // 不重复正文，也不在健康时制造噪音。
   function renderThreeQuestions(s, human, doing, stuckN){
     var need = human.length + stuckN;
-    setText("q1State", human.length ? (human.length + " 项等你") : (stuckN ? (stuckN + " 个卡点") : "不用你"));
-    var q1 = el("q1"); if (q1) q1.className = "q" + (need ? " has-need" : "");
+    var action = String(s.need_action || "");
+    var actionQuiet = /不需要|无需|不用你/.test(action);
+    var needAttention = need > 0 || (!actionQuiet && !!action);
+    setText("q1State", human.length ? (human.length + " 项等你")
+      : (stuckN ? (stuckN + " 个卡点") : (needAttention ? "需关注" : "不用你")));
+    var q1 = el("q1"); if (q1) q1.className = "q" + (needAttention ? " has-need" : "");
 
     var d = s.daemon || {};
     var busy = doing.length + (s.exec_now ? 1 : 0);
@@ -940,16 +953,27 @@
     var bits = [];
     bits.push(d.live ? ("常驻运行中" + (d.pid ? " #" + d.pid : "")) : "常驻未运行");
     if (d.last_cycle) bits.push("上一轮 " + fmtTime(d.last_cycle));
-    bits.push("可落盘 " + (q.clean == null ? 0 : q.clean) + " / 冲突 " + (q.conflict == null ? 0 : q.conflict));
+    var cleanText = q.clean == null ? "取不到" : q.clean;
+    var conflictText = q.conflict == null ? "取不到" : q.conflict;
+    bits.push("可落盘 " + cleanText + " / 冲突 " + conflictText);
     if (!s.enabled) bits.push("自动动作已关闭");
     else if (s.paused) bits.push("已暂停推进");
     var hh = s.harness_health || {};
-    if (hh.status === "ok") bits.push(hh.headline || "上下文健康：正常");
-    else bits.push("上下文健康：" + (hh.reason || "取不到"));
+    var healthText = hh.status === "ok"
+      ? (hh.headline || "上下文健康：正常")
+      : ("上下文健康：" + (hh.reason || "取不到"));
+    bits.push(healthText);
     var sl = el("sysLine");
     if (sl) {
-      sl.textContent = bits.join(" · ");
-      sl.title = (hh.reasons && hh.reasons.length) ? hh.reasons.join("；") : "";
+      // 首屏只留用户结论：系统现在是否值得信任、要不要行动。
+      // 队列/守护/逐条原因属于工程证据，放进折叠区，不占首屏注意力。
+      sl.textContent = healthText;
+      sl.title = bits.join("；");
+    }
+    var detail = el("systemDetail");
+    if (detail) {
+      detail.textContent = bits.join(" · ");
+      detail.title = (hh.reasons && hh.reasons.length) ? hh.reasons.join("；") : bits.join("；");
     }
     // 自治分级：只在这一轮真跑过工序时出现，说明哪些已明确授权、多少还在观察、
     // 多少等你转正。取不到就明确说取不到，不印「0 条」假装正常。
@@ -1723,14 +1747,24 @@
     var box = el("recentBox"); if (!box) return; box.innerHTML = "";
     var note = el("recentNote");
     list = list || [];
-    if (note) note.textContent = list.length ? (list.length + " 项") : "";
+    if (note) note.textContent = list.length ? ("最近 " + Math.min(list.length, 3) + " 项") : "";
     if (!list.length){
       box.innerHTML = '<div class="empty">还没有收口记录。走完一次「修复 → 验证 → 关闭台账」后会出现在这里。</div>';
       return;
     }
+    function humanText(raw){
+      var s = String(raw || "").trim();
+      var closed = s.match(/^[A-Z]+-\d+\s+已收口：\s*(.*)$/);
+      if (closed) return "已收口：" + (closed[1] || "一项工作");
+      if (/已合入$/.test(s)) return "代码已合入";
+      return s;
+    }
     var ul = document.createElement("ul"); ul.className = "list";
-    list.slice(0,5).forEach(function(text){
+    list.slice(0,3).forEach(function(raw){
       var li = document.createElement("li");
+      var text = humanText(raw);
+      li.setAttribute("title", String(raw || ""));
+      li.setAttribute("aria-label", "收口详情：" + String(raw || ""));
       var g = document.createElement("span"); g.className = "grow"; g.textContent = text;
       li.appendChild(g); ul.appendChild(li);
     });
