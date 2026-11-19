@@ -1,0 +1,164 @@
+{
+  "version": "2026-11-19",
+  "principle": "七管家加一层全局健康；预期、判断、决策是语义视图，不新增管家。",
+  "lifecycle_fields": [
+    "trigger",
+    "input",
+    "output",
+    "machine_gate",
+    "user_entry",
+    "human_boundary",
+    "history"
+  ],
+  "roles": [
+    {
+      "id": "context",
+      "name": "上下文管家",
+      "plane": "project_truth",
+      "trigger": "任意入口出现预期、返修、决策、禁忌或上下文线索",
+      "input": "唯一入口原话、项目账本、已确认约束、来源线程",
+      "output": "候选约束、按 scope 调取的上下文、自动收录档案",
+      "machine_gate": "候选未经显式确认不得写进生效约束；档案读取失败标 unknown",
+      "user_entry": "PM 简报 -> 上下文档案（次入口，可查看与确认自动收录内容）",
+      "human_boundary": "用户确认或驳回候选；系统不替用户把自然语言升成全局约束",
+      "history": "constraint_candidates.jsonl、constraints.jsonl、truth 决策记录",
+      "status": "partial",
+      "gap": "候选与生效边界已落地；自动收录档案的用户确认与查看入口仍需收口"
+    },
+    {
+      "id": "pm",
+      "name": "项目经理管家",
+      "plane": "project_truth",
+      "trigger": "工作项进入规划、文件占地重复、需要排期或追问候选",
+      "input": "已路由工作项、主线、约束、验收候选、在途 worktree 与文件声明",
+      "output": "施工项、依赖与让路队列、路线简报、追问候选",
+      "machine_gate": "文件占地命中即 overlap_hold；没有文件声明时保持 unknown，不假装不重叠",
+      "user_entry": "PM 简报（工程详情折叠区）",
+      "human_boundary": "不替用户决定产品方向、删数据或发布；不自动发追问",
+      "history": "ledger.jsonl、progress.jsonl、truth 决策与判断台账",
+      "status": "partial",
+      "gap": "简报与让路判定已落地；跨目标优先级、施工路径和追问闭环尚未全链路产品化"
+    },
+    {
+      "id": "acceptance",
+      "name": "验收管家",
+      "plane": "project_truth",
+      "trigger": "原话出现可验收信号，或工作项进入自验/人工复核阶段",
+      "input": "已路由原话、项目 verify 配置、文件线索、真实命令输出",
+      "output": "验收标准候选、机器/人工验收计划、自验证据、人工复核提醒",
+      "machine_gate": "没有命令、cwd、退出码的证据不得进入 needs_human；候选不得直接写验收项",
+      "user_entry": "需要你决策（候选确认）与需要你验收（已有证据）",
+      "human_boundary": "用户确认验收标准与复核视觉/体验；系统不把用户当第一道测试",
+      "history": "acceptance_criteria_candidates.jsonl、acceptance.jsonl",
+      "status": "partial",
+      "gap": "候选、编译、证据闸门已落地；从自然语言到十条真实验收的稳定性仍待击穿"
+    },
+    {
+      "id": "routing",
+      "name": "路由管家",
+      "plane": "execution",
+      "trigger": "唯一入口收到混合输入或到期唤醒写回 inbox",
+      "input": "入口上下文、项目注册表、cwd、显式 project",
+      "output": "项目与泳道归属、全局待路由箱记录",
+      "machine_gate": "判不清必须进全局待路由箱，不得猜进项目账本",
+      "user_entry": "唯一输入框；判不清时在待路由箱可见",
+      "human_boundary": "用户不负责选项目、对话、分支或角色",
+      "history": "全局 routing inbox、项目 tasks/inbox.jsonl",
+      "status": "partial",
+      "gap": "路由与全局箱已落地；自动挡当前绑定和守护服务对象的发布一致性仍红"
+    },
+    {
+      "id": "implementation",
+      "name": "实现管家",
+      "plane": "execution",
+      "trigger": "工作项获准执行且通过授权、资源与并发准入",
+      "input": "工单、验收计划、隔离 worktree、有限资源和工具白名单",
+      "output": "代码改动、测试、提交与执行状态",
+      "machine_gate": "inferred + destructive 禁行；共享 checkout 不写；worker 生命周期不可跳态",
+      "user_entry": "面板正在处理项与工程详情执行记录",
+      "human_boundary": "破坏性动作和改方向/删数据/发布仍需人确认；用户不管理 worker",
+      "history": "worker 事件账本、exec 生命周期账本、worktree 提交",
+      "status": "partial",
+      "gap": "真实派发与生命周期已接线；从真实用户入口到闭环的端到端稳定性仍待验证"
+    },
+    {
+      "id": "merge",
+      "name": "合并管家",
+      "plane": "execution",
+      "trigger": "分支通过验证并申请落盘，或出现冲突/重复/差少量提交",
+      "input": "分支、门禁、真相与验收台账、冲突拓扑",
+      "output": "安全落盘、逐支收口、冲突任务或归档记录",
+      "machine_gate": "合并前预演与真实验证；JSONL 行级并集；不得绕过门禁或覆盖同 ID 历史",
+      "user_entry": "最近合入、冲突收拢状态与落盘证据",
+      "human_boundary": "不把可合并性推回用户；发布仍由用户拍板",
+      "history": "acceptance.jsonl、progress.jsonl、conflict/resolve 台账",
+      "status": "partial",
+      "gap": "land/防丢失/自动拆冲突已落地；仍有 13 支冲突与 17 个在途解冲突任务"
+    },
+    {
+      "id": "status",
+      "name": "状态管家",
+      "plane": "execution",
+      "trigger": "harness 配置或会话指标出现可判定风险",
+      "input": "只读配置采样、压缩次数、输入中位、工具输出分布、用量",
+      "output": "正向调整建议与风险卡",
+      "machine_gate": "只读；工作中不改写配置；不能证明至少不变差就不提负向调整",
+      "user_entry": "高级区 -> 运行状态/健康（次入口）",
+      "human_boundary": "用户点头、备份、一键回滚后才能改配置",
+      "history": "budget/harness 健康采样与 truth 判断记录",
+      "status": "partial",
+      "gap": "预算门禁已有；用户设想的 harness 健康采样与调整卡尚未形成完整闭环"
+    }
+  ],
+  "global_health": {
+    "id": "global_health",
+    "name": "全局健康",
+    "kind": "layer",
+    "trigger": "任一层已有事实变化或读取失败",
+    "input": "真相层、执行层、验收层投影，不新建分数台账",
+    "output": "attention/unknown/off/ok 四态结论",
+    "machine_gate": "取不到写 unknown；正常排队不报警；不能重写台账或触发动作",
+    "user_entry": "管家状态末行（项目级结论，不是第八个管家）",
+    "human_boundary": "只读，不替任何平面做决定",
+    "history": "project_health 投影与面板快照",
+    "status": "partial",
+    "gap": "面板可见且只读；自动修复有意不做，仍需把 stale 项和失败读数收口"
+  },
+  "semantic_views": [
+    {
+      "name": "预期",
+      "composed_of": ["context", "pm", "acceptance"],
+      "meaning": "把用户想要什么变成可施工、可验收的候选"
+    },
+    {
+      "name": "判断",
+      "composed_of": ["routing", "status", "pm", "global_health"],
+      "meaning": "产生候选判断，不拥有新增写权限"
+    },
+    {
+      "name": "决策",
+      "composed_of": ["human"],
+      "meaning": "人的拍板与候选确认；只发生在明确边界内"
+    }
+  ],
+  "human_decision_types": [
+    "product_direction",
+    "delete_data",
+    "release"
+  ],
+  "unknown_policy": "取不到、没有、判不清必须分开写；unknown 不得写成 0、无或正常",
+  "first_screen_questions": [
+    "要不要我处理",
+    "是不是在干对的事",
+    "替我做成了什么"
+  ],
+  "secondary_entries": [
+    "PM 简报",
+    "上下文档案",
+    "验收标准候选",
+    "验收台账",
+    "执行记录",
+    "运行状态",
+    "关系目标"
+  ]
+}
