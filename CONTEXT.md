@@ -554,6 +554,16 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 
 ---
 
+### 12.14 原生 Codex 面板设计契约落盘（2026-11-19）
+
+- 原生感以 `@openai/apps-sdk-ui` 为唯一直接复用源；桌面包 `app.asar` 只做局部视觉校准，不当源码抄。面板 UI 继续走 `ui://autopilot/panel-v2.html`，注册 `global` 与 `thread` 两个官方 entrypoint。
+- 原生子对话首行采用 `[AP][<project>][<lane>] <ledger_id> · <title>` 标题契约，完整正文另起一段保留；当前 app-server 没有独立 rename，Codex 侧栏标题取自首条 user message，所以首行是唯一不写宿主库的落地方式。台账没有题名时固定写入 `自动挡任务`，不让正文首句冒充标题。
+- 「永久置顶」与「侧栏默认展开」仍是宿主能力目标；当前工具面没有可用 API，不声称已实现。已落地的是 section 分组、官方 entrypoint 和首行标题命名。
+- 面板主题按「官方语义 token → 旧宿主变量 → 兜底色」接入，success/warning/danger 的软背景与描边优先使用官方 surface token。机器门禁锁住顺序；改动前后真实渲染截图结构、颜色、间距一致，只有状态更新时间不同。
+- 机器门禁：`python3 ops/panel_logic_check.py` exit 0；`python3 ops/panel_render_check.py` exit 0 并生成改动后截图；`python3 ops/selftest.py` exit 0，含新增线程标题契约与行为级派活断言。
+
+---
+
 ## 十三、下一步（谁该做什么）
 
 **用户（只有这几件，别的不用管）**：

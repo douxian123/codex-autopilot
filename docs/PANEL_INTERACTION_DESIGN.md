@@ -121,6 +121,24 @@
 
 验收记录路径：`/Users/danta/Documents/Codex/2026-11-19/new-chat/work/codex-ui-audit`；关键参考文件是 `pkg-extract/package/README.md`、`pkg-extract/package/dist/es/styles/variables-semantic.css` 和 `pkg-extract/package/dist/es/styles/variables-components.css`。真实 Codex/ChatGPT 宿主内渲染截图尚未完成，不能把这一节说成已经完成原生视觉验收。
 
+### Codex 原生线程拓扑与宿主能力边界（2026-11-19 落盘）
+
+入口仍是用户原来的 Codex 输入框；`render_autopilot_panel` 注册 `_meta.ui.resourceUri = ui://autopilot/panel-v2.html`，并同时提供 `global` 与 `thread` 两个 entrypoint。面板不另造输入框，也不把自身伪装成独立应用。
+
+派活到原生 Codex 时，目标拓扑是「🤖 Codex Autopilot 项目区 / section」下置顶「万法归一」总调度窗，子对话按统一格式显示在总调度窗下。当前 app-server 契约只有 `thread/start`、`thread/section/move`、`turn/start`，没有独立 `thread/rename`；Codex 侧栏标题又取自首条 user message，因此子对话首行就是标题契约：
+
+```text
+[AP][<project>][<lane>] <ledger_id> · <title>
+
+<original body>
+```
+
+标题的项目、泳道、台账 ID 和简述都做短化与非法字符清理；原始任务正文必须完整保留。已有 `[AP]` 前缀时不重复添加；台账没有题名时固定显示 `自动挡任务`，不让正文首句冒充标题。派活自动归入按项目分桶的 section，同名 section 复用；section API 失败不拦派活，但要如实记录未归组。
+
+这里的「永久置顶」和「侧栏默认展开」是宿主能力目标，不是插件能伪造的状态。当前工具面没有可用的 pin/default-expand API，所以不声称已实现；可落地且已落地的是 section 分组、官方 entrypoint 和首行标题命名。
+
+主题 token 已按「官方 Apps SDK UI 语义 token → 旧宿主变量 → 独立浏览器兜底色」的顺序接入：底色、表面、文字、边框以及 success/warning/danger 的软背景与描边都优先消费 `var(--color-*)` 语义变量。机器门禁锁住这个顺序，避免后续把原生感退化成另写一套色板。改动前后的真实渲染截图分别是 `docs/panel-first-screen-before-native-contract.png` 与 `docs/panel-first-screen.png`；两者结构、颜色和间距一致，只有状态更新时间不同，说明本轮映射没有造成负向视觉变化。
+
 ## 相对当前截图的变化
 
 当前截图已经有三问骨架，但首屏仍混入了太多工程内部读数：守护绑定错项目的大段路径提示、七个管家逐行状态、原始健康说明、长列表最近收口、工程详情里的命令与 ID。优化方向不是再加卡片，而是把首屏压缩成「一条结论 + 三个字段 + 一个闭环数字」，其余全部下沉。具体保留、下沉、删除如下：

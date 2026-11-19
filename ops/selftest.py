@@ -2562,6 +2562,34 @@ def test_panel_contract():
     script = "\n".join(re.findall(r"<script>([\s\S]*?)</script>", html))
     assert script.strip(), "面板里没有脚本，等于没接上控制层"
 
+    # 原生感必须来自官方 Apps SDK UI 语义 token，不是另写一套色板。
+    # 顺序是硬契约：官方 token -> 旧宿主变量 -> 独立浏览器兜底色。
+    root_css = html.split("<style>", 1)[1].split("</style>", 1)[0]
+    root_css = root_css.split(":root{", 1)[1].split("}", 1)[0]
+    required_tokens = (
+        ("--bg", "--color-surface-secondary", "--color-background-secondary"),
+        ("--surface", "--color-surface", "--color-background-primary"),
+        ("--surface-2", "--color-surface-secondary", "--color-background-secondary"),
+        ("--surface-3", "--color-surface-tertiary", "--color-background-tertiary"),
+        ("--ink", "--color-text", "--color-text-primary"),
+        ("--line", "--color-border", "--color-border-primary"),
+    )
+    for local, official, legacy in required_tokens:
+        match = re.search(re.escape(local) + r"\s*:\s*var\(([^;]+);", root_css)
+        assert match, f"面板主题缺少 {local} 的 token 映射"
+        chain = match.group(1)
+        assert chain.find(official) < chain.find(legacy) < chain.find("#"), (
+            f"{local} 没有按 官方 token -> 旧宿主变量 -> 兜底色 排序：{chain}")
+    for semantic in ("success", "warning", "danger"):
+        assert re.search(
+            r"var\(--color-background-%s-surface,var\(--color-background-%s,"
+            % (semantic, semantic), root_css), (
+                f"{semantic} 软背景没有优先使用官方 surface token")
+        assert re.search(
+            r"var\(--color-border-%s-surface,var\(--color-border-%s,"
+            % (semantic, semantic), root_css), (
+                f"{semantic} 描边没有优先使用官方 surface token")
+
     dom_ids = set(re.findall(r'id="([^"]+)"', html))
     used_ids = set(re.findall(r'\bel\("([^"]+)"\)', script))
     created_ids = set(re.findall(r'\.id\s*=\s*"([^"]+)"', script))
@@ -2579,6 +2607,15 @@ def test_panel_contract():
     assert re.search(
         r'callTool\("route_preview",\s*\{[^}]*\bcwd\s*:\s*currentCwd\(\)', script
     ), "route_preview 没有传当前 cwd，跨项目预览会判不清"
+
+    # 宿主能力边界：面板走官方 entrypoint，不伪造置顶或侧栏默认展开。
+    render_tool = next(
+        (t for t in central_mcp.TOOLS if t["name"] == "render_autopilot_panel"), None)
+    assert render_tool is not None, "面板没有注册入口工具"
+    assert render_tool["_meta"]["ui"]["resourceUri"] == "ui://autopilot/panel-v2.html"
+    entrypoints = render_tool["_meta"]["openai/ui"]["entrypoints"]
+    assert {e.get("type") for e in entrypoints} == {"global", "thread"}, (
+        f"面板入口应同时支持全局与会话：{entrypoints}")
 
     switch_keys = set(re.findall(r'data-key="([^"]+)"', html))
     unknown = sorted(switch_keys - set(control_state.DEFAULTS))
@@ -3032,6 +3069,74 @@ def test_native_section_grouping():
             os.environ.pop("FAKE_FAIL_SECTIONS", None)
 
     print("selftest ok: 派活自动归入项目窗口集合、同名复用不重复建、集合失败不拦派活。")
+
+
+def test_native_thread_title_contract():
+    """原生子对话首行即侧栏标题：项目、泳道、台账 ID、简述按顺序可扫读。
+
+    当前 app-server 只有 thread/start、thread/section/move、turn/start，
+    没有独立 rename；Codex 侧栏标题取首条 user message。所以派活首行就是
+    标题契约，完整任务正文必须仍然保留，不能把首行当正文全部替换。
+    """
+    import inspect
+    from unittest import mock
+
+    sys.path.insert(0, str(OPS))
+    import central_mcp
+
+    item = {
+        "id": "L-0001",
+        "lane": "bug",
+        "project": "knowledge-graph",
+        "title": "修复移动端首屏溢出",
+    }
+    prompt = central_mcp._native_thread_prompt(item, "请实现并验证这个任务", "/tmp")
+    assert prompt.startswith("[AP][kg][bug] L-0001 · 修复移动端首屏溢出\n\n"), prompt
+    assert prompt.endswith("请实现并验证这个任务"), prompt
+
+    unsafe = central_mcp._native_thread_prompt(
+        {"id": "L-0002", "lane": "arch / gate", "title": "边界"},
+        "正文", "/Users/danta/Documents/Codex/codex-autopilot")
+    assert unsafe.startswith("[AP][ca][archgate] L-0002 · 边界\n\n"), unsafe
+
+    fallback = central_mcp._native_thread_prompt({}, "正文", "")
+    assert fallback.startswith("[AP][global][route] L-0000 · 自动挡任务\n\n"), fallback
+
+    already = "[AP][kg][ux] L-0003 · 不要重复加前缀\n\n正文"
+    assert central_mcp._native_thread_prompt(item, already, "/tmp") == already
+
+    # 函数写对了还不够：真正的派活入口必须接它，否则侧栏标题仍是乱的。
+    call_source = inspect.getsource(central_mcp.call_tool)
+    assert "_native_thread_prompt(item" in call_source, \
+        "codex_native_dispatch_task 没有接线程标题契约"
+
+    # 源码文本断言只能证明“写了”，这里再跑一次真实入口，锁住实际传参。
+    dispatch_result = {"thread_id": "thr-1", "turn_id": "turn-1"}
+    with mock.patch.object(central_mcp.control_state, "mutation_guard",
+                           return_value=None), \
+         mock.patch.object(central_mcp, "_ledger_item", return_value=item), \
+         mock.patch.object(central_mcp.codex_native, "dispatch_task",
+                           return_value=(dispatch_result, None)) as dispatch, \
+         mock.patch.object(central_mcp, "_append_native_route") as append_route, \
+         mock.patch.object(central_mcp.control_state, "append_event"):
+        result, code = central_mcp.call_tool("codex_native_dispatch_task", {
+            "ledger_id": "L-0001",
+            "cwd": "/tmp/demo",
+            "prompt": "请实现并验证这个任务",
+            "section_id": "sec-1",
+        })
+    assert code == 0 and result == dispatch_result, (result, code)
+    args, kwargs = dispatch.call_args
+    assert args[0] == "/tmp/demo", args
+    assert args[1].startswith("[AP][kg][bug] L-0001 · 修复移动端首屏溢出\n\n"), args[1]
+    assert args[1].endswith("请实现并验证这个任务"), args[1]
+    assert args[2] == "sec-1", args
+    assert kwargs.get("auto_section"), kwargs
+    append_route.assert_called_once()
+    assert append_route.call_args.args[0] == "L-0001", append_route.call_args
+    assert append_route.call_args.kwargs.get("status") == "dispatched", \
+        append_route.call_args
+    print("selftest ok: 原生子对话首行标题按项目/泳道/ID/简述命名，正文仍完整。")
 
 
 def test_native_call_budget():
@@ -7745,6 +7850,7 @@ if __name__ == "__main__":
     test_codex_native_bridge()
     test_native_socket_lstat()
     test_native_section_grouping()
+    test_native_thread_title_contract()
     test_native_call_budget()
     test_real_codex_app_server()
     test_verify_and_truth()
