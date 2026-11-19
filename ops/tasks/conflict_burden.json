@@ -1,5 +1,5 @@
 {
- "main": "e66dcfcf45316f873a9aa6caac972effb91b5820",
+ "main": "874c4a9ba438db402a555c2c3be10bc2c69db7e4",
  "branches": [
   "codex/autopilot-close-gate-20261026",
   "codex/autopilot-exec-recover-min-20261020",
@@ -22,9 +22,9 @@
   "codex/autopilot-parallel-runtime-fix-20261019": 1,
   "codex/autopilot-resolve-stderr": 2,
   "codex/autopilot-truth-sync-failclosed": 2,
-  "codex/daemon-liveness-20261110": 4,
+  "codex/daemon-liveness-20261110": 3,
   "codex/disk-production-admission-20261112": 3,
-  "codex/eval-loop-judge-20261110": 8,
+  "codex/eval-loop-judge-20261110": 7,
   "codex/guard-release-version-20261119": 1,
   "codex/reap-branch-preserve-20261111": 2,
   "codex/resource-admission-verify-narrowing-20261115": 3,
