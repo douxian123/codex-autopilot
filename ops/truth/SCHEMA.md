@@ -23,8 +23,6 @@ ops/truth/
   ledger.jsonl       # 问题台账：bug / 视觉 / 体验 / 架构问题（追加式，带状态与泳道）
   progress.jsonl     # 进展台账：每条泳道最近干了什么、是否落盘（追加式）
   acceptance.jsonl   # 验收台账：实现模块 / 验收项 / 状态 / 证据 / 人工复核步骤（追加式）
-  constraint_candidates.jsonl # 上下文管家候选卡（追加式，确认前不生效）
-  context_patterns.jsonl     # 上下文管家发现的重复主题与证据（追加式，只提案）
 
 生成物：
   docs/PRODUCT_MAINLINE.md  # 由 truthctl synthesize 从以上台账综合出的产品主线
@@ -57,14 +55,6 @@ ops/truth/
 ### progress.jsonl
 
 额外字段：`summary`、`commit`（落盘后的 sha）、`landed`（bool）。
-
-### constraint_candidates.jsonl / context_patterns.jsonl
-
-两者都只保存提案与原话证据，不参与落盘门禁。`context_patterns.jsonl` 记录主题、
-提及次数、跨会话数、原话样本和建议优先级；达到阈值后经 `propose_learned()`
-转成 `constraint_candidates.jsonl` 的候选卡。候选带 `source=context_learning`、
-`mentions`、`threads`、`evidence`，必须经人显式 `promote` 才写 `constraints.jsonl`；
-`dismiss` 过的同主题不再复提。学习结果写错不能靠「下次覆盖」修，状态变化只追加新行。
 
 ### judgments.jsonl
 
