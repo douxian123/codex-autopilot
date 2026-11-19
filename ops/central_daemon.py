@@ -97,6 +97,7 @@ def _live_ops() -> Path:
 
 import central_config  # noqa: E402
 import control_state  # noqa: E402
+import codex_native  # noqa: E402
 import pass_registry  # noqa: E402
 from pass_registry import (
     AUTH_EXPLICIT,
@@ -112,6 +113,7 @@ import acceptance_criteria_compiler  # noqa: E402
 import exec_overlap  # noqa: E402
 import exec_lifecycle  # noqa: E402
 import wake_resume  # noqa: E402
+import authorized_followup  # noqa: E402
 import daemon_liveness  # noqa: E402
 import live_guard  # noqa: E402
 import workspace_guard  # noqa: E402
@@ -4520,6 +4522,7 @@ def _new_cycle_ctx(dry: bool, max_land: int, deadline) -> dict:
         "deadline": deadline,
         "passes": [],
         "wake": {},
+        "followup": {},
         "route_rc": 0,
         "route_out": "",
         "exec_cfg": {},
@@ -4587,6 +4590,102 @@ def _pass_wake(ctx: dict) -> dict:
             failures.append({"id": rid, "error": result.get("last_error", "")})
     ctx["wake"] = {"fired": fired, "failures": failures}
     return {"fired": len(fired), "failed": len(failures)}
+
+
+def _followup_ledger_rows(root: Path | None = None) -> list[dict]:
+    """追问资格校验用的问题台账快照；读不到返回空列表，不把 unknown 当成通过。"""
+    repo = Path(root) if root else _state_repo()
+    if not repo:
+        return []
+    path = repo / "ops" / "truth" / "ledger.jsonl"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    rows = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _followup_native_bindings(root: Path | None = None) -> dict[str, dict]:
+    """每个工作项最近一次原生窗口绑定。绑定台账可缺失，那是「0 条绑定」。"""
+    repo = Path(root) if root else _state_repo()
+    if not repo:
+        return {}
+    path = repo / "ops" / "truth" / "native_routes.jsonl"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    latest = {}
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        ledger_id = (row or {}).get("ledger_id") if isinstance(row, dict) else None
+        if ledger_id:
+            latest[str(ledger_id)] = row
+    return latest
+
+
+def _followup_is_eligible(spec: dict, root: Path | None = None) -> bool:
+    """发送前再确认工作项还活着，且 thread 绑定仍是用户点头的那一个。
+
+    授权发生在面板点击时；从点击到守护下一拍之间，工作项可能收口、窗口可能重绑。
+    这里重新读真相层，避免把过期授权投递到新窗口或一个已完成的任务里。
+    """
+    ticket_id = str(spec.get("ticket_id") or "")
+    thread_id = str(spec.get("thread_id") or "")
+    if not ticket_id or not thread_id:
+        return False
+    item = latest_ledger_by_id(_followup_ledger_rows(root)).get(ticket_id)
+    if not item or item.get("status") not in ("open", "doing", "todo", "wip", "blocked"):
+        return False
+    binding = _followup_native_bindings(root).get(ticket_id) or {}
+    bound = binding.get("thread_id") or item.get("thread_id")
+    return str(bound or "") == thread_id
+
+
+def _pass_followup(ctx: dict) -> dict:
+    """投递逐项授权且发送前仍合格的进度追问；无授权时不碰宿主。"""
+    if ctx["dry"]:
+        return {"dry": True}
+    root = _state_repo()
+    if not root:
+        return {"skipped": "没有状态根，不发送任何追问"}
+    pending = authorized_followup.pending(root)
+    if not pending:
+        return {"approved": 0}
+    by_id = {row["request_id"]: row for row in pending}
+
+    def sender(request_id: str, prompt: str):
+        spec = by_id.get(request_id) or {}
+        thread_id = str(spec.get("thread_id") or "")
+        if not thread_id:
+            raise RuntimeError("授权记录缺少 thread 绑定")
+        result, error = codex_native.follow_up(thread_id, prompt)
+        if error:
+            raise RuntimeError(str(error))
+        return result
+
+    result = authorized_followup.deliver_approved(
+        sender,
+        is_eligible=lambda spec: _followup_is_eligible(spec, root),
+        root=root,
+    )
+    ctx["followup"] = result
+    return result
 
 
 def _pass_route(ctx: dict) -> dict:
@@ -4898,6 +4997,10 @@ def _build_cycle_registry(ctx: dict):
     reg = Registry(log=log,
                    over_budget=lambda step: _over_budget(ctx["deadline"], step))
     reg.register(Pass("wake", lambda: _pass_wake(ctx), title="到期唤醒写回唯一入口",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("followup", lambda: _pass_followup(ctx),
+                      title="投递已逐项授权的进度追问",
                       level=MODE_AUTO, authorization=AUTH_EXPLICIT,
                       effect=EFFECT_REVERSIBLE))
     reg.register(Pass("route", lambda: _pass_route(ctx), title="路由新收需求",

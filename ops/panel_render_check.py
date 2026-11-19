@@ -436,10 +436,21 @@ def main(argv):
             "follow_up_candidates": {
                 "status": "ok", "items": [{
                     "id": "L-0021", "idle_minutes": 90, "thread_id": "thread-abc",
+                    "suggested_prompt": "继续处理 L-0021：回报当前卡点。",
                 }],
                 "note": "只生成候选，不会自动追问；你点头才会发消息。",
                 "missing": [],
             },
+        },
+        # 授权账本是 autopilot_status 的顶层状态，不属于 pm_briefing 子对象。
+        "authorized_followups": {
+            "status": "ok", "items": [{
+                "request_id": "FU-abcdef12", "ticket_id": "L-0021",
+                "thread_id": "thread-abc", "state": "approved",
+                "prompt": "继续处理 L-0021：回报当前卡点。",
+            }],
+            "counts": {"approved": 1, "sent": 0, "cancelled": 0, "failed": 0},
+            "note": "只有你逐项点头的候选才会进入自动追问；可随时撤销未发送项。",
         },
         "relationship_goals": {
             "status": "ok", "level": "attention", "count": 1,
@@ -493,6 +504,9 @@ def main(argv):
              and "需要人看" in pm_box),
             ("PM 简报上屏：让路与追问候选",
              "L-0021" in pm_box and "thread-abc" in pm_box),
+            ("PM 简报上屏：追问授权摘要与可撤销授权",
+             "追问授权" in pm_box and "1 条待发" in pm_box
+             and "撤销授权" in pm_box),
             ("关系层上屏：跨项目目标与需要人的原因",
              "跨项目目标" in rel_box and "G-9001" in rel_box
              and "等用户判断要不要改产品方向" in rel_box),

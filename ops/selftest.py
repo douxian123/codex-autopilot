@@ -152,6 +152,7 @@ def main():
             "test-worker-lifecycle.py",
             "test-exec-lifecycle.py",
             "test-wake-resume.py",
+            "test-authorized-followup.py",
         )
         for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)
@@ -1830,6 +1831,16 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     assert "不会自动追问" in pm_text, "PM 简报必须明示候选不是动作"
     assert "acceptance_criteria" in pm_text, "PM 简报缺少验收标准候选契约"
 
+    followup = root / "ops" / "authorized_followup.py"
+    assert followup.is_file(), "发布树缺少 ops/authorized_followup.py"
+    followup_text = followup.read_text(encoding="utf-8")
+    assert "authorization != \"explicit\"" in followup_text, \
+        "追问授权必须拒绝 inferred/隐式授权"
+    assert "effect != \"reversible\"" in followup_text, \
+        "追问授权必须拒绝破坏性副作用"
+    assert "STATE_CANCELLED" in followup_text and "mark_failed" in followup_text, \
+        "追问授权缺少撤销/失败留账"
+
     acceptance = root / "ops" / "acceptance_criteria.py"
     assert acceptance.is_file(), "发布树缺少 ops/acceptance_criteria.py"
     acceptance_text = acceptance.read_text(encoding="utf-8")
@@ -1846,6 +1857,10 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     assert "补一张复核截图" in panel_text, "面板缺少补图按钮"
     assert "{id:a.id, confirm:true}" in panel_text, \
         "面板补图按钮没有显式带 confirm=true"
+    assert "followup_authorize" in panel_text and "followup_cancel" in panel_text, \
+        "面板缺少追问授权/撤销工具"
+    assert "confirm: true" in panel_text, \
+        "面板授权追问按钮没有显式带 confirm=true"
 
     mcp = (root / "ops" / "central_mcp.py").read_text(encoding="utf-8")
     assert '"screenshots"' in mcp, "MCP 工具契约缺少 screenshots"
@@ -1856,10 +1871,20 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     for tool in ("acceptance_criteria_list", "acceptance_criteria_promote",
                  "acceptance_criteria_dismiss"):
         assert f'"name": "{tool}"' in mcp, f"MCP 未注册 {tool}"
+    for tool in ("followup_authorize", "followup_cancel", "followup_list"):
+        assert f'"name": "{tool}"' in mcp, f"MCP 未注册 {tool}"
+    assert "FOLLOWUP_CONFIRM_REQUIRED" in mcp, \
+        "MCP 追问授权缺少 confirm=true 闸门"
     assert '"name": "capture_acceptance_screenshot"' in mcp, \
         "MCP 未注册 capture_acceptance_screenshot"
     assert "SCREENSHOT_CONFIRM_REQUIRED" in mcp, \
         "MCP 补图工具缺少显式确认闸门"
+
+    daemon_text = (root / "ops" / "central_daemon.py").read_text(encoding="utf-8")
+    assert 'Pass("followup"' in daemon_text, \
+        "daemon pass registry 缺少 followup 投递工序"
+    assert "_followup_is_eligible" in daemon_text, \
+        "followup pass 发送前缺少工作项与 thread 资格复核"
 
     truthctl = (root / "ops" / "truthctl.py").read_text(encoding="utf-8")
     assert "_split_screenshots" in truthctl and "_merge_screenshots" in truthctl, \

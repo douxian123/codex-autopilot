@@ -184,6 +184,16 @@ var acDismissButton = findButton(document.getElementById("blockedList"), "不算
 if (acDismissButton) {
   acDismissButton._clickHandlers.slice().forEach(function (fn) { fn(); });
 }
+// PM 追问授权也必须真点按钮：候选按钮要带 confirm=true，
+// 撤销按钮要带 request_id + reason；只看文案挡不住按钮没接线。
+var followAuthorizeButton = findButton(document.getElementById("pmBriefingBox"), "授权追问");
+if (followAuthorizeButton) {
+  followAuthorizeButton._clickHandlers.slice().forEach(function (fn) { fn(); });
+}
+var followCancelButton = findButton(document.getElementById("pmBriefingBox"), "撤销授权");
+if (followCancelButton) {
+  followCancelButton._clickHandlers.slice().forEach(function (fn) { fn(); });
+}
 
 const read = function (id) { return document.getElementById(id).textContent; };
 console.log(JSON.stringify({
@@ -202,6 +212,12 @@ console.log(JSON.stringify({
   }).map(function (c) { return c.arguments || {}; }),
   acceptanceDismissCalls: toolCalls.filter(function (c) {
     return c.name === "acceptance_criteria_dismiss";
+  }).map(function (c) { return c.arguments || {}; }),
+  followupAuthorizeCalls: toolCalls.filter(function (c) {
+    return c.name === "followup_authorize";
+  }).map(function (c) { return c.arguments || {}; }),
+  followupCancelCalls: toolCalls.filter(function (c) {
+    return c.name === "followup_cancel";
   }).map(function (c) { return c.arguments || {}; }),
   projectLine: read("projectLine"),
   projectTitle: document.getElementById("projectLine").title,
@@ -923,10 +939,21 @@ def main(argv):
             "follow_up_candidates": {
                 "status": "ok", "items": [{
                     "id": "L-0021", "idle_minutes": 90, "thread_id": "thread-abc",
+                    "suggested_prompt": "继续处理 L-0021：回报当前卡点。",
                 }],
                 "note": "只生成候选，不会自动追问；你点头才会发消息。",
                 "missing": [],
             },
+        }
+        # 授权账本是顶层状态，不属于 PM 简报子对象；面板按这个契约读取。
+        pm_payload["authorized_followups"] = {
+            "status": "ok", "items": [{
+                "request_id": "FU-abcdef12", "ticket_id": "L-0021",
+                "thread_id": "thread-abc", "state": "approved",
+                "prompt": "继续处理 L-0021：回报当前卡点。",
+            }],
+            "counts": {"approved": 1, "sent": 0, "cancelled": 0, "failed": 0},
+            "note": "只有你逐项点头的候选才会进入自动追问；可随时撤销未发送项。",
         }
         pm_out = run_once(pm_payload)
         fails += has("PM 简报上屏：待确认预期", pm_out["pmBriefingBox"],
@@ -937,6 +964,28 @@ def main(argv):
                      "L-0021", "L-0020", "ops/truthctl.py")
         fails += has("PM 简报上屏：追问候选", pm_out["pmBriefingBox"],
                      "90 分钟", "thread-abc", "不会自动追问")
+        fails += has("PM 简报上屏：追问授权摘要", pm_out["pmBriefingBox"],
+                     "追问授权", "1 条待发")
+        authorize_calls = pm_out.get("followupAuthorizeCalls") or []
+        if len(authorize_calls) != 1 or authorize_calls[0].get("confirm") is not True \
+           or authorize_calls[0].get("ticket_id") != "L-0021" \
+           or authorize_calls[0].get("thread_id") != "thread-abc" \
+           or authorize_calls[0].get("prompt") != "继续处理 L-0021：回报当前卡点。" \
+           or not authorize_calls[0].get("reason"):
+            fails += 1
+            print("  FAIL  授权追问按钮必须显式带 confirm 与完整授权参数")
+        else:
+            print("  PASS  授权追问按钮显式带 confirm 与完整授权参数")
+        cancel_calls = pm_out.get("followupCancelCalls") or []
+        if len(cancel_calls) != 1 or cancel_calls[0].get("request_id") != "FU-abcdef12" \
+           or not cancel_calls[0].get("reason"):
+            fails += 1
+            print("  FAIL  撤销授权按钮必须带 request_id 与 reason")
+        else:
+            print("  PASS  撤销授权按钮带 request_id 与 reason")
+        auth_missing = run_once(dict(pm_payload, authorized_followups=None))
+        fails += has("追问授权账本缺失时如实说取不到", auth_missing["pmBriefingBox"],
+                     "追问授权账本取不到")
         pm_missing = run_once(dict(payload, pm_briefing=None))
         fails += has("PM 简报缺失时如实说取不到",
                      pm_missing["pmBriefingBox"], "取不到")
