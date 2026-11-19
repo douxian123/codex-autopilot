@@ -60,11 +60,14 @@ setTimeout(function(){
   if (__OPEN_FOLD__) {
     var pmFold = d.getElementById("pmBriefingFold");
     if (pmFold) pmFold.open = true;
+    var contextFold = d.getElementById("contextArchiveFold");
+    if (contextFold) contextFold.open = true;
   }
   __IDS__.forEach(function(id){
-    var domId = (id === "pmBriefingFoldOpen") ? "pmBriefingFold" : id;
+    var domId = (id === "pmBriefingFoldOpen") ? "pmBriefingFold"
+      : (id === "contextArchiveFoldOpen") ? "contextArchiveFold" : id;
     var n = d.getElementById(domId);
-    if (id === "pmBriefingFoldOpen") {
+    if (id === "pmBriefingFoldOpen" || id === "contextArchiveFoldOpen") {
       out[id] = n ? ((n.open || n.hasAttribute("open")) ? "1" : "0") : "";
     } else {
       out[id] = n ? n.textContent.trim() : "";
@@ -92,12 +95,13 @@ setTimeout(function(){
 """
 
 FIRST_SCREEN_IDS = [
-    "stateLabel", "statusTime", "projectLine", "focusStatus", "focusDoing",
+    "entryMap", "stateLabel", "statusTime", "projectLine", "focusStatus", "focusDoing",
     "focusStep", "hierProject", "hierRoad", "hierWork", "sysLine",
     "intakeRoute", "needText", "systemDetail",
 ]
 ADV_SCREEN_IDS = FIRST_SCREEN_IDS + [
     "pmBriefingBox", "acceptBox", "pmBriefingFoldOpen",
+    "contextArchiveBox", "contextArchiveFoldOpen",
     "relationshipGoalsBox", "outcomeScoreBox",
 ]
 
@@ -346,6 +350,10 @@ def main(argv):
     # 面板层级：Codex 原生输入框是常用入口；面板输入框只在高级区兜底。
     # 系统判据默认折叠，但不能因为降噪把可观测性删掉。
     layer_checks = [
+        ("首屏明示主入口、执行入口与兜底入口",
+         all(word in str(snapshot.get("entryMap") or "")
+             for word in ("主入口", "当前 Codex 输入框", "万法归一",
+                          "执行入口", "后台任务窗口", "兜底入口", "高级区输入框"))),
         ("面板输入框收进高级区", str(snapshot.get("intakeInAdvanced")) == "1"),
         ("默认首屏看不到面板输入框", str(snapshot.get("intakeVisible")) == "0"),
         ("系统判据详情默认折叠", str(snapshot.get("systemEvidenceOpen")) == "0"),
@@ -441,6 +449,13 @@ def main(argv):
                 "note": "只生成候选，不会自动追问；你点头才会发消息。",
                 "missing": [],
             },
+            "closure": {
+                "status": "ok",
+                "paths": [{
+                    "work_item": {"id": "L-0030", "title": "施工路径上屏",
+                                  "status": "doing", "occupancy": "known"},
+                }],
+            },
         },
         # 授权账本是 autopilot_status 的顶层状态，不属于 pm_briefing 子对象。
         "authorized_followups": {
@@ -451,6 +466,21 @@ def main(argv):
             }],
             "counts": {"approved": 1, "sent": 0, "cancelled": 0, "failed": 0},
             "note": "只有你逐项点头的候选才会进入自动追问；可随时撤销未发送项。",
+        },
+        "context_archive": {
+            "status": "ok", "counts": {"proposed": 1, "promoted": 1,
+                                       "dismissed": 1, "active": 1},
+            "items": [{
+                "id": "CC-9001", "status": "proposed", "text": "以后不要做破坏性修改",
+                "source": "intake", "signals": ["以后", "不要"],
+                "evidence": [{"thread": "thread-ca", "text": "以后不要做破坏性修改"}],
+            }, {
+                "id": "CC-9002", "status": "promoted", "text": "面板只展示值得关注的信息",
+                "source": "context_learning", "mentions": 5, "threads": 3,
+                "constraint_id": "C-9002",
+            }],
+            "unknown": [],
+            "note": "自动收录只生成候选，不自动生效；待确认项在「需要你决策」区逐条点「算 / 不算」。",
         },
         "relationship_goals": {
             "status": "ok", "level": "attention", "count": 1,
@@ -491,6 +521,7 @@ def main(argv):
     else:
         print("Codex 自动挡 高级区渲染检查")
         pm_box = str(adv_snapshot.get("pmBriefingBox") or "")
+        ca_box = str(adv_snapshot.get("contextArchiveBox") or "")
         accept_box = str(adv_snapshot.get("acceptBox") or "")
         rel_box = str(adv_snapshot.get("relationshipGoalsBox") or "")
         outcome_box = str(adv_snapshot.get("outcomeScoreBox") or "")
@@ -507,6 +538,18 @@ def main(argv):
             ("PM 简报上屏：追问授权摘要与可撤销授权",
              "追问授权" in pm_box and "1 条待发" in pm_box
              and "撤销授权" in pm_box),
+            ("PM 简报上屏：施工路径只读投影",
+             "施工路径" in pm_box and "L-0030" in pm_box
+             and "施工路径上屏" in pm_box),
+            ("上下文档案折叠区实际展开",
+             str(adv_snapshot.get("contextArchiveFoldOpen")) == "1"),
+            ("上下文档案上屏：四类状态与来源证据",
+             "待确认 1" in ca_box and "已确认 1" in ca_box
+             and "已驳回 1" in ca_box and "生效 1" in ca_box
+             and "thread-ca" in ca_box
+             and "自学习：同一诉求出现 5 次 / 跨 3 个会话" in ca_box),
+            ("上下文档案说明唯一确认入口",
+             "需要你决策" in ca_box and "不自动生效" in ca_box),
             ("关系层上屏：跨项目目标与需要人的原因",
              "跨项目目标" in rel_box and "G-9001" in rel_box
              and "等用户判断要不要改产品方向" in rel_box),

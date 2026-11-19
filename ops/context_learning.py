@@ -21,6 +21,7 @@ import os
 import re
 import subprocess
 import time
+from functools import lru_cache
 from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
@@ -28,6 +29,8 @@ REPO = OPS.parent
 
 DEFAULT_MIN_THREADS = 2
 DEFAULT_MIN_MENTIONS = 3
+DEFAULT_MAX_USER_MESSAGES = 200
+_OBSERVE_CACHE = {}
 
 # 主题定义保持产品可读，不用 LLM 自由发挥。每个主题是一组语义接近的表达，
 # 命中后保留用户原话作为证据；归纳语句只是给人确认的提案，不直接生效。
@@ -89,6 +92,13 @@ def _text_hash(text: str) -> str:
     return hashlib.sha256(" ".join((text or "").split()).encode("utf-8")).hexdigest()[:16]
 
 
+def _iter_jsonl_lines(path: Path):
+    """逐行读会话文件：不把整文件解码成字符串列表，也不一次性 splitlines。"""
+    with path.open("rb") as fh:
+        for raw in fh:
+            yield raw.decode("utf-8", errors="replace").strip()
+
+
 def _read_jsonl(path: Path) -> list:
     if not path.exists():
         return []
@@ -148,11 +158,64 @@ def _normalized_remote(value: str) -> str:
     return text.rstrip("/").removesuffix(".git").lower()
 
 
+@lru_cache(maxsize=64)
+def _git_worktrees(repo: str) -> tuple:
+    """当前项目的全部 worktree:会话开在哪个隔离目录都能认回来。"""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", repo, "worktree", "list", "--porcelain"],
+            capture_output=True, text=True, timeout=5)
+        if proc.returncode != 0:
+            return ()
+        return tuple(
+            str(Path(line.strip()[len("worktree "):]).expanduser().resolve())
+            for line in proc.stdout.splitlines()
+            if line.startswith("worktree ")
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ()
+
+
+@lru_cache(maxsize=4096)
+def _remote_for_path(value: str) -> str:
+    """取路径所在 Git 仓库的 origin，取不到返回空串，不猜项目归属。"""
+    try:
+        top = _git_toplevel_fast(value)
+        if not top:
+            return ""
+        proc = subprocess.run(
+            ["git", "-C", top, "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=5)
+        if proc.returncode != 0:
+            return ""
+        return _normalized_remote(proc.stdout)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _git_toplevel_fast(value: str) -> str:
+    """先用目录结构判断是不是 Git 仓库，避免给每个文档目录都起 git 子进程。"""
+    try:
+        raw = Path(value).expanduser().resolve()
+        if not raw.exists():
+            return ""
+        base = raw if raw.is_dir() else raw.parent
+        for candidate in (base, *base.parents):
+            if (candidate / ".git").exists():
+                return str(candidate)
+    except OSError:
+        return ""
+    return ""
+
+
 def _project_identity() -> dict:
     """项目身份：用稳定 remote 与注册路径识别同一项目的所有 worktree。"""
     repo = _state_root().resolve()
     identity = {"names": {repo.name}, "paths": [str(repo)], "remotes": set(),
-                "project_key": _project_key()}
+                "project_key": _project_key(), "other_paths": []}
+    for path in _git_worktrees(str(repo)):
+        if path not in identity["paths"]:
+            identity["paths"].append(path)
     try:
         proc = subprocess.run(["git", "-C", str(repo), "remote", "get-url", "origin"],
                               capture_output=True, text=True, timeout=5)
@@ -172,6 +235,10 @@ def _project_identity() -> dict:
         row_remote = _normalized_remote(str(row.get("remote") or row.get("git_remote") or ""))
         belongs = (identity["project_key"] in {str(row.get("id") or ""), str(row.get("name") or "")}
                    or bool(row_remote and row_remote in identity["remotes"]))
+        if not belongs and row.get("path"):
+            other = str(Path(str(row["path"])).resolve())
+            if other not in identity["other_paths"]:
+                identity["other_paths"].append(other)
         if not belongs:
             continue
         for key in ("id", "name"):
@@ -198,88 +265,233 @@ def _session_roots() -> list:
     return out
 
 
-def _session_belongs(meta: dict, identity: dict, path: Path = None) -> bool:
-    """判不准归属就跳过，绝不把别的窗口内容塞进这个项目账本。"""
+def _session_belongs(meta: dict, identity: dict, path: Path = None,
+                     probe_remote: bool = True) -> bool:
+    """路径能判就先判；只有路径判不准时才探测 Git remote。"""
     candidates = [str(meta.get("cwd") or "")]
     candidates.extend(str(Path(str(x)).resolve())
                       for x in (meta.get("runtime_workspace_roots") or []))
     if path is not None:
         candidates.append(str(path))
+    resolved_values = []
     for value in candidates:
         if not value:
             continue
-        low = value.lower()
-        if any(name.lower() in low for name in identity["names"] if len(name) >= 4):
+        resolved = str(Path(value).expanduser().resolve())
+        parts = {part.lower() for part in Path(resolved).parts}
+        if any(str(name).lower() in parts
+               for name in identity["names"] if len(str(name)) >= 4):
             return True
         for base in identity["paths"]:
-            if len(base) > 4 and (value == base or value.startswith(base + "/")):
+            if len(base) > 4 and (resolved == base or resolved.startswith(base + "/")):
                 return True
+        for base in identity.get("other_paths") or []:
+            if len(base) > 4 and (resolved == base or resolved.startswith(base + "/")):
+                return False
+        resolved_values.append(resolved)
+    if not probe_remote:
+        return False
+    # 已知路径先判完；只剩陌生路径才做 git remote 探测，避免每会话两三次子进程。
+    for resolved in resolved_values:
+        remote = _remote_for_path(resolved)
+        if remote and identity["remotes"]:
+            if remote in identity["remotes"]:
+                return True
+            # 明确是另一个 Git 仓库，就不再用目录名猜归属。
+            continue
     return False
+
+
+def _normalize_alias(value: str) -> str:
+    text = re.sub(r"\s+", "", str(value or "")).lower()
+    return text.replace("挡", "档").replace("-", "").replace("_", "")
+
+
+def _alias_terms(identity: dict) -> set:
+    """能在原话里稳定指向本项目的词，不收「自动挡」这种泛称。"""
+    terms = set()
+    values = set(identity.get("names") or set())
+    if identity.get("project_key"):
+        values.add(str(identity["project_key"]))
+    for value in values:
+        alias = _normalize_alias(value)
+        if len(alias) >= 6:
+            terms.add(alias)
+    for remote in identity.get("remotes") or set():
+        alias = _normalize_alias(remote)
+        if len(alias) >= 8:
+            terms.add(alias)
+    return terms
+
+
+def _iter_jsonl_raw_lines(path: Path):
+    """流式读 JSONL 原始行；只解码候选行，避免整段历史会话进内存。"""
+    try:
+        with path.open("rb") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if line:
+                    yield line
+    except OSError:
+        return
+
+
+def _decode_line(line):
+    text = line.decode("utf-8", "replace") if isinstance(line, bytes) else str(line)
+    try:
+        row = json.loads(text)
+    except ValueError:
+        return None
+    return row if isinstance(row, dict) else None
+
+
+def _iter_user_texts(lines, max_messages=None):
+    """从原始行里取真实用户原话；max_messages 只限制非噪声原话条数。"""
+    count = 0
+    for line in lines:
+        if isinstance(line, bytes):
+            if b'"role": "user"' not in line and b'"role":"user"' not in line:
+                continue
+        elif '"role": "user"' not in str(line) and '"role":"user"' not in str(line):
+            continue
+        row = _decode_line(line)
+        if row is None:
+            continue
+        payload = row.get("payload") or {}
+        if payload.get("type") != "message" or payload.get("role") != "user":
+            continue
+        for part in payload.get("content") or []:
+            if not isinstance(part, dict) or part.get("type") != "input_text":
+                continue
+            text = " ".join(str(part.get("text") or "").split())
+            if not text or _noise(text):
+                continue
+            yield text
+            count += 1
+            if max_messages is not None and count >= max_messages:
+                return
+
+
+def _content_belongs_texts(texts, identity: dict) -> bool:
+    """只认真实用户原话里明确的项目名；前 3 条足够判定归属。"""
+    aliases = _alias_terms(identity)
+    if not aliases:
+        return False
+    negative_phrases = ("当前项目是别的", "当前项目不是", "这是别的项目",
+                        "别的项目", "其他项目", "其它项目")
+    seen_user_messages = 0
+    for text in texts:
+        seen_user_messages += 1
+        normalized = _normalize_alias(text)
+        named = any(alias in normalized for alias in aliases)
+        if named and any(phrase in text for phrase in negative_phrases):
+            return False
+        if named:
+            return True
+        if seen_user_messages >= 3:
+            return False
+    return False
+
+
+def _content_belongs_lines(lines, identity: dict) -> bool:
+    return _content_belongs_texts(_iter_user_texts(lines, max_messages=3), identity)
+
+
+def _content_belongs(path: Path, identity: dict) -> bool:
+    return _content_belongs_lines(_iter_jsonl_raw_lines(path), identity)
 
 
 def _noise(text: str) -> bool:
     """只统计人说的话；委派正文、系统注入和 harness 噪声不算需求。"""
-    head = text[:200]
-    return (head.startswith("# AGENTS.md instructions")
-            or head.startswith("Files mentioned by the user")
-            or text.startswith("你是 ") or text.startswith("【任务】")
-            or "<in-app-browser-context" in text
-            or text.startswith("<turn_aborted>")
-            or text == "继续" or text.startswith("ECC_AGENT_OK:"))
+    stripped = " ".join(str(text or "").split())
+    if not stripped:
+        return True
+    markers = (
+        "# AGENTS.md instructions",
+        "Files mentioned by the user",
+        "<in-app-browser-context",
+        "<codex_internal_context",
+        "<external_goal_objective",
+        "<user_goal>",
+        "<goal>",
+        "<hook_prompt",
+        "<heartbeat>",
+        "<automation_id>",
+        "System message from the application",
+        "User set the goal",
+        "User set goal status",
+        "active thread goal objective",
+        "<!-- LIVE-RULES",
+        "<turn_aborted>",
+        "ECC_AGENT_OK:",
+        "【任务】",
+    )
+    if any(marker in stripped for marker in markers):
+        return True
+    head = stripped[:240]
+    return (head.startswith("你是项目")
+            or head.startswith("你是 ")
+            or stripped == "继续")
+
+
+def _meta_from_lines(lines) -> dict:
+    for line in lines:
+        if isinstance(line, bytes):
+            marker_ok = (b'"type":"session_meta"' in line
+                         or b'"type": "session_meta"' in line)
+        else:
+            marker_ok = ('"type":"session_meta"' in line
+                         or '"type": "session_meta"' in line)
+        if not marker_ok:
+            continue
+        row = _decode_line(line)
+        if row is None:
+            continue
+        if row.get("type") == "session_meta":
+            return row.get("payload") or {}
+    return {}
 
 
 def _meta_by_file(path: Path) -> dict:
-    try:
-        with path.open("r", encoding="utf-8", errors="replace") as fh:
-            for line in fh:
-                if '"type":"session_meta"' not in line and '"type": "session_meta"' not in line:
-                    continue
-                row = json.loads(line)
-                if row.get("type") == "session_meta":
-                    return row.get("payload") or {}
-    except (OSError, ValueError):
-        pass
-    return {}
+    return _meta_from_lines(_iter_jsonl_raw_lines(path))
 
 
 def _iter_session_messages() -> dict:  # type: ignore[no-redef]
     """按会话聚合命中主题的用户原话；只统计 user message。"""
     identity = _project_identity()
+    aliases = _alias_terms(identity)
+    cache_key = (str(_state_root().resolve()),
+                 tuple(sorted(str(Path(x).resolve()) for x in _session_roots())))
+    cached = _OBSERVE_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
     by_theme = {t["key"]: {} for t in THEMES}
     scanned = 0
+    seen_hashes = set()
     for root in _session_roots():
         for path in root.rglob("*.jsonl"):
             scanned += 1
-            meta = _meta_by_file(path)
-            if not _session_belongs(meta, identity, path):
+            meta = _meta_from_lines(_iter_jsonl_raw_lines(path))
+            belongs = _session_belongs(meta, identity, path)
+            if not belongs and aliases and _content_belongs(path, identity):
+                belongs = True
+            if not belongs:
                 continue
             session_id = str(meta.get("id") or path.stem)
-            try:
-                with path.open("r", encoding="utf-8", errors="replace") as fh:
-                    for line in fh:
-                        line = line.strip()
-                        if not line or '"role": "user"' not in line and '"role":"user"' not in line:
-                            continue
-                        try:
-                            row = json.loads(line)
-                        except ValueError:
-                            continue
-                        payload = row.get("payload") or {}
-                        if payload.get("type") != "message" or payload.get("role") != "user":
-                            continue
-                        for part in payload.get("content") or []:
-                            if not isinstance(part, dict) or part.get("type") != "input_text":
-                                continue
-                            text = " ".join(str(part.get("text") or "").split())
-                            if not text or _noise(text):
-                                continue
-                            for theme in THEMES:
-                                if re.search(theme["pattern"], text, re.IGNORECASE):
-                                    bucket = by_theme[theme["key"]].setdefault(session_id, [])
-                                    bucket.append(text)
-            except OSError:
-                continue
-    return {"themes": by_theme, "scanned_sessions": scanned}
+            for text in _iter_user_texts(_iter_jsonl_raw_lines(path),
+                                         max_messages=DEFAULT_MAX_USER_MESSAGES):
+                text_hash = _text_hash(text)
+                for theme in THEMES:
+                    if not re.search(theme["pattern"], text, re.IGNORECASE):
+                        continue
+                    dedup_key = (session_id, theme["key"], text_hash)
+                    if dedup_key in seen_hashes:
+                        continue
+                    seen_hashes.add(dedup_key)
+                    by_theme[theme["key"]].setdefault(session_id, []).append(text)
+    result = {"themes": by_theme, "scanned_sessions": scanned}
+    _OBSERVE_CACHE[cache_key] = result
+    return result
 
 
 def _inbox_signals() -> dict:

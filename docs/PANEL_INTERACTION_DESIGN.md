@@ -99,6 +99,46 @@
 - 字号不做 viewport 缩放，长文本换行；窄窗口保持单列，不让文字盖住相邻内容。
 - 计数、命令、路径、ID 一律进折叠区；首屏出现它们就是在消耗用户注意力。
 
+### 原生感的技术落点（2026-11-19 调研）
+
+这里的「原生感」不是复制 Codex 桌面包里的构建产物，而是遵守官方插件 UI 的设计系统，并用宿主包只校准密度和状态感。
+
+唯一直接复用源定为 `@openai/apps-sdk-ui`。当前核对版本是 `0.2.2`，MIT 许可；它提供机器可读的 CSS token、Tailwind 4 集成和基于 Radix 的 React 组件，目标就是让插件 UI 贴近 ChatGPT/Codex 的原生容器。面板实现必须锁定 React 18 或 19，并按官方顺序引入样式：
+
+```css
+@import "tailwindcss";
+@import "@openai/apps-sdk-ui/css";
+@source "../node_modules/@openai/apps-sdk-ui";
+```
+
+样式分三层：`variables-primitive.css` 提供原始色阶和透明度，`variables-semantic.css` 提供语义变量，`variables-components.css` 提供组件局部变量。面板代码优先消费语义变量和组件变量，不硬编码六位色值；已有组件优先使用 `Button`、`Badge`、`Alert`、`Avatar`、`Input`、`Textarea`、`Select`、`Switch`、`Tooltip`、`Popover`、`Menu`、`Markdown`、`CodeBlock`、`Icon`，不再手写同类视觉原件。
+
+`/Applications/ChatGPT.app/Contents/Resources/app.asar` 只作为只读校准样本。它是 Vite/React 构建后的 chunk，没有 source map、`.tsx` 或独立 design spec；`--d-stream-accent`、`--theme-accent-text`、`--input-font-size:16px`、`--select-control-font-size:14px`、`--alpha-08`、`light-dark(...)` 这类变量只能用来核对深浅色、密度、边框和状态感，不能整包复用，也不能据此声称拿到了原生组件源码。`~/.codex/App.main.tsx` 是 ThoughLoom 前端，旧版本 autopilot 的 `ui/panel.html` 是本插件面板，二者都不是 OpenAI 原生组件库。
+
+协议层走 MCP Apps：工具通过 `_meta.ui.resourceUri` 关联 UI，iframe 内用 `ui/*` JSON-RPC 与宿主通信。数据读取和渲染拆成 data tool 与 render tool；面板只消费投影后的事实，不直接改配置、派活或替用户收口。官方 [Figma 组件库](https://www.figma.com/community/file/1625636989296445101) 只作版式参考，不替代代码里的 token 契约。
+
+官方 UI 要求里与本项目最相关的约束：继承系统字体，不自定义字体；文本、图标、分割线使用系统色，品牌色只出现在 logo、badge 或主按钮；inline card 最多两个主操作；不做深层导航和嵌套滚动；carousel 保持 3 到 8 项；fullscreen 必须与宿主 composer 共存；PiP 只用于持续活动场景并随会话结束关闭。对 autopilot 来说，首屏阅读顺序仍是「结果标题 → 一个判断 → 最多两个动作 → 折叠的证据/状态」，内部计数、轮次、来源数量不进前台。
+
+验收记录路径：`/Users/danta/Documents/Codex/2026-11-19/new-chat/work/codex-ui-audit`；关键参考文件是 `pkg-extract/package/README.md`、`pkg-extract/package/dist/es/styles/variables-semantic.css` 和 `pkg-extract/package/dist/es/styles/variables-components.css`。真实 Codex/ChatGPT 宿主内渲染截图尚未完成，不能把这一节说成已经完成原生视觉验收。
+
+### Codex 原生线程拓扑与宿主能力边界（2026-11-19 落盘）
+
+入口仍是用户原来的 Codex 输入框；`render_autopilot_panel` 注册 `_meta.ui.resourceUri = ui://autopilot/panel-v2.html`，并同时提供 `global` 与 `thread` 两个 entrypoint。面板不另造输入框，也不把自身伪装成独立应用。
+
+派活到原生 Codex 时，目标拓扑是「🤖 Codex Autopilot 项目区 / section」下置顶「万法归一」总调度窗，子对话按统一格式显示在总调度窗下。当前 app-server 契约只有 `thread/start`、`thread/section/move`、`turn/start`，没有独立 `thread/rename`；Codex 侧栏标题又取自首条 user message，因此子对话首行就是标题契约：
+
+```text
+[AP][<project>][<lane>] <ledger_id> · <title>
+
+<original body>
+```
+
+标题的项目、泳道、台账 ID 和简述都做短化与非法字符清理；原始任务正文必须完整保留。已有 `[AP]` 前缀时不重复添加；台账没有题名时固定显示 `自动挡任务`，不让正文首句冒充标题。派活自动归入按项目分桶的 section，同名 section 复用；section API 失败不拦派活，但要如实记录未归组。
+
+这里的「永久置顶」和「侧栏默认展开」是宿主能力目标，不是插件能伪造的状态。当前工具面没有可用的 pin/default-expand API，所以不声称已实现；可落地且已落地的是 section 分组、官方 entrypoint 和首行标题命名。
+
+主题 token 已按「官方 Apps SDK UI 语义 token → 旧宿主变量 → 独立浏览器兜底色」的顺序接入：底色、表面、文字、边框以及 success/warning/danger 的软背景与描边都优先消费 `var(--color-*)` 语义变量。机器门禁锁住这个顺序，避免后续把原生感退化成另写一套色板。改动前后的真实渲染截图分别是 `docs/panel-first-screen-before-native-contract.png` 与 `docs/panel-first-screen.png`；两者结构、颜色和间距一致，只有状态更新时间不同，说明本轮映射没有造成负向视觉变化。
+
 ## 相对当前截图的变化
 
 当前截图已经有三问骨架，但首屏仍混入了太多工程内部读数：守护绑定错项目的大段路径提示、七个管家逐行状态、原始健康说明、长列表最近收口、工程详情里的命令与 ID。优化方向不是再加卡片，而是把首屏压缩成「一条结论 + 三个字段 + 一个闭环数字」，其余全部下沉。具体保留、下沉、删除如下：

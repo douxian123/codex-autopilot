@@ -112,6 +112,8 @@ import constraints as constraints_mod  # noqa: E402
 import acceptance_criteria_compiler  # noqa: E402
 import exec_overlap  # noqa: E402
 import exec_lifecycle  # noqa: E402
+import route_health_runtime  # noqa: E402
+import route_review  # noqa: E402
 import wake_resume  # noqa: E402
 import authorized_followup  # noqa: E402
 import daemon_liveness  # noqa: E402
@@ -4770,6 +4772,68 @@ def _pass_checkpoint(ctx: dict) -> dict:
     return {"ok": True}
 
 
+def _route_health_exec_payloads(ctx: dict) -> list[dict]:
+    """把本拍仍在跑的实现槽位投影成巡检判据；不探测、不重派、不改 worker。"""
+    payloads = []
+    for rid, job in ((ctx.get("exec_workers") or {}).get("exec_jobs") or {}).items():
+        if not isinstance(job, dict) or job.get("partial") or job.get("recover"):
+            continue
+        if not _worker_alive(job.get("pid")):
+            continue
+        worktree = str(job.get("worktree") or "")
+        if not worktree or not Path(worktree).is_dir():
+            continue
+        payloads.append({"exec_now": {"id": rid, "worktree": worktree}})
+    return payloads
+
+
+def _pass_route_health(ctx: dict) -> dict:
+    """每拍只读检查路线与效用比：状态签名变化才留账/提示，不自动纠偏。"""
+    prior = route_health_runtime.last_summary(RUNTIME)
+    payloads = _route_health_exec_payloads(ctx)
+    route_state = {
+        "exec_workers": ctx.get("exec_workers") or {},
+        # 面板投影会丢掉 exec_blocked.ts；巡检必须读 daemon 原始记录，
+        # 否则「已经卡了多久」永远取不到，只能诚实报 unknown。
+        "exec_blocked": ctx.get("exec_blocked") or {},
+    }
+    summary = route_health_runtime.summarize_many(
+        payloads, state=route_state, runtime=RUNTIME)
+    exec_ids = sorted(
+        str(p.get("exec_now", {}).get("id") or "") for p in payloads)
+    written = route_health_runtime.append_if_changed(
+        RUNTIME, summary, prior=prior, exec_id=",".join(exec_ids))
+    record = dict(summary)
+    record["signature"] = written.get("signature")
+    # 复核状态机只追加「发现异常 → 复测仍异常/恢复」；它不改 worker、路线或配置。
+    # 状态签名变化才通知用户，问题键用来合并同一问题的分钟数增长。
+    level = str(summary.get("level") or "unknown")
+    owner = str(summary.get("issue_owner") or ",".join(exec_ids))
+    issue_keys = [str(x) for x in (summary.get("issue_keys") or []) if str(x).strip()]
+    issue_key = ""
+    if level == "attention":
+        if not issue_keys:
+            issue_key = route_health_runtime.issue_signature(summary, owner)
+    review = route_review.sync(
+        summary, written.get("signature"), issue_keys=issue_keys,
+        issue_key=issue_key,
+        observed_owners=summary.get("observed_owners"),
+        owner_levels=summary.get("owner_levels"),
+        root=RUNTIME)
+    record["review"] = review
+    ctx["route_health"] = record
+    if written.get("written") and level == "attention":
+        notify("自动挡：路线与效能需复核",
+               f"{summary.get('headline') or '发现路线偏离或低效空转'}"
+               "（只提复核；不会自动停 worker、改路线或改配置）")
+    elif written.get("written") and prior.get("level") == "attention":
+        notify("自动挡：路线与效能已恢复",
+               "上一轮的路线/效能复核信号已消失；判据与留账见 route_health.jsonl")
+    log(f"[route-health] level={level} action={summary.get('action')} "
+        f"headline={summary.get('headline')} written={written.get('written')}")
+    return record
+
+
 def _pass_tick(ctx: dict) -> dict:
     """刷新真相层。
 
@@ -4986,7 +5050,7 @@ def _build_cycle_registry(ctx: dict):
     注册顺序 = 执行顺序（见文件头注释）。
 
     pass_registry 现在默认 `observe`：**没写 level 的 pass 只会观察，不执行副作用**。
-    下面这十一条是既有自动挡工序，逐条显式转正 —— 每条都声明 `level=auto` 加
+    下面这十二条是既有自动挡工序，逐条显式转正 —— 每条都声明 `level=auto` 加
     `authorization=explicit`，表示「人已经授权这条工序自动跑」，不是系统自行升权。
     这样新加的 pass 不会因为忘记声明就悄悄执行（fail-closed），而既有行为保持原样。
     `effect` 区分可逆与破坏性：`route/checkpoint/tick/tick-post` 只改控制面与账本
@@ -5014,6 +5078,10 @@ def _build_cycle_registry(ctx: dict):
                       effect=EFFECT_DESTRUCTIVE))
     reg.register(Pass("checkpoint", lambda: _pass_checkpoint(ctx),
                       title="工作槽状态提前落盘",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("route-health", lambda: _pass_route_health(ctx),
+                      title="每拍只读巡检路线与效用比",
                       level=MODE_AUTO, authorization=AUTH_EXPLICIT,
                       effect=EFFECT_REVERSIBLE))
     reg.register(Pass("tick", lambda: _pass_tick(ctx), title="刷新真相层",
@@ -5200,6 +5268,9 @@ def _run_cycle(dry: bool, max_land: int, deadline: float = None,
     # 这一拍跑了哪些 pass、各自什么状态、花了多久：出问题时第一眼要看的东西。
     state["last_passes"] = ctx["passes"]
     state["last_pass_counts"] = counts
+    # pass 被关闭 / observe / 超预算时这一拍没有新摘要，不能把上一拍的巡检结论抹成 None。
+    if ctx.get("route_health") is not None:
+        state["route_health"] = ctx["route_health"]
     save_state(state)
 
     log(f"--- cycle done: landed={len(landed)} failures={len(failures)} "

@@ -132,7 +132,7 @@ running 账本，也不会占并发槽位。未声明 allowlist 时沿用旧请�
 | 路由管家 | 从混合输入判断项目与泳道，把活派出去 | 不能把判不清的输入猜进某个项目 | `ops/project_router.py`、全局 routing inbox |
 | 实现管家 | 按相关上下文实现，跑验证，提交到隔离 worktree | 不能在共享 checkout 上改别人文件 | `ops/central_daemon.py` 的派发与 `exec_status` |
 | 合并管家 | 合并前自检、防丢失防覆盖、拆冲突、自动 land | 不能绕过门禁或把合并决策推回用户 | `ops/kgctl.py` 的 gate / land / resolve / port / supersede |
-| 状态管家 | 监控 harness 压缩线、峰值 input、用量；按工作项 mandate、scope、blocked、retry 和 progress 做路线与效用复核，提出正向调整卡与复核提示 | 不能在工作进程忙时改配置，不能做负向调优；不能杀 worker、改路线或自动纠偏；不能把判据缺失说成路线正常，也不能声称证明了全局最优 | `ops/budget_gate.py`、`ops/harness_tune.py`、`ops/route_health.py` |
+| 状态管家 | 监控 harness 压缩线、峰值 input、用量；按工作项 mandate、scope、blocked、retry 和 progress 做路线与效用复核；核对主干源码/已装版本/运行代码是否同一代，提出正向调整卡、复核提示与受控换代提示 | 不能在工作进程忙时改配置，不能做负向调优；不能杀 worker、改路线、自动纠偏或自动重启；不能把判据缺失说成路线正常，也不能声称证明了全局最优 | `ops/budget_gate.py`、`ops/harness_tune.py`、`ops/route_health.py`、`ops/runtime_freshness.py` |
 | 全局健康（层） | 聚合主线新鲜度、约束沉淀、无证据完成项、执行卡点、验收积压 | 不能重写台账、不能触发动作、不能把取不到说成正常，也不判定全局最优 | `ops/project_health.py`、`autopilot_status.project_health` |
 
 ## PM 管家：重复施工项与最优路线
@@ -158,6 +158,10 @@ PM 视角新增一层只读简报：把待确认预期、验收标准候选、�
 - 正常重试和 `overlap_hold` 排队不抬告警，避免把健康调度做成狼来了。
 
 `autopilot_status.route_health` 只暴露这份只读结论。面板把它并进状态管家原有那一行，异常时写「路线与效能需复核（只提复核，不自动纠偏）」，判据不足时写「取不到」。它不新增第八个管家行、不新增卡片、不生成动作。反向门禁锁住四件事：缺判据必须 `unknown`，三类异常能抬 `attention`，输出不含杀进程/改配置/写台账字段，状态管家键集合仍是七个。
+
+运行态新鲜度是同一管家里的另一条只读判据。源码进了 `main` 只证明代码在仓库里，不等于本机已装版本和当前 Codex 进程已经吃到。判据比对主干源码 commit、`install-state.json` 的已装 commit、运行插件源码元数据，以及 launchd plist 指向、daemon 源码 commit 和 daemon 当前绑定的项目：不一致时写「已装版本落后于主干源码」或「运行代码尚未跟上已装版本」，只提示受控换代/重载；daemon 服务别的账本时也只提示，不自动改绑定；信息不全写 `unknown`。它绝不自动重启、换代、改配置或派工单，也不新增第八个管家行。
+
+复核状态机 `ops/route_review.py` 把这条判断补成闭环：**异常发现 → 自动复测 → 恢复或持续待复核**。daemon 的 `route-health` pass 每拍把同一问题键（worker + 归一化后的异常原因，分钟数/改动数增长不算新问题）交给它：首次写 `needs_review`，下一拍仍在写 `still_attention` 后就不再刷账；判据齐全且复测 ok 写 `cleared`；判据取不到写 `unknown`，绝不冒充恢复。多 worker 时逐个对象核对，另一个对象的 ok 不能替判据缺失的对象宣布恢复。账本 `route_reviews.jsonl` 落在 daemon runtime 根，不写进任何项目账本，避免一个窗口正在讨论别的项目就把本机巡检状态落错账。复核事件只有 `action=none`，不杀 worker、不改路线、不改配置、不派工单。
 
 ## 验收管家：先自验，再打扰用户
 
@@ -223,7 +227,8 @@ PM 视角新增一层只读简报：把待确认预期、验收标准候选、�
 
 - 「管家」是责任视图，不是人类岗位表，也不是七个互相交接的 Agent。运行时按 execute / control / evaluate 三类动作复用 Codex session、worktree、skill、MCP 与 daemon；新关注点优先写成事实、权限、状态机和门禁，只有确实需要开放判断的部分才交给模型。
 - 路线与效用健康只检查当前可核对的事实：mandate 范围、无关卡点时长、重试世代和有效推进。它不证明开放工程里的全局最优；判据不足写 `unknown`，不写「正常」或 0。
-- 路线异常目前只上屏为状态管家的 `attention` 与复核提示。`propose_review` 还没有接成可授权纠偏工单，也没有自动复测闭环；因此当前能力是「发现并提示复核」，不是「自动把路线调回最优」。
+- 路线与效能现在由 `ops/route_health_runtime.py` 共用同一份判据和现场组装：MCP 查询面板时即时计算，daemon 在 `route-health` pass 每拍只读巡检；异常写 `RUNTIME/route_health.jsonl`（append-only）与 `state.json` 摘要，只有状态签名变化才留账和通知，卡点分钟数的连续增长不算新状态。
+- 路线异常是状态管家的 `attention` 与复核提示，已有「异常发现 → 自动复测 → 恢复或持续待复核」的只读闭环；当前能力仍不是「自动把路线调回最优」。`propose_review` 没有接成可授权纠偏工单；不会杀 worker、改 worker 路线、改配置或派工单。判据不足保留旧复核项，不冒充恢复。
 - 验收标准编译是确定性的：只把项目 verify 配置和文件线索翻译成 `cmd + cwd + exit 0`，再为视觉/交互项补人工复核；它不替产品做审美判断。推不出条件时留 `unknown`，不是绿色通过。
 - PM 管家的预期打磨已上屏为简报，但候选升成生效约束仍需人确认；这是有意的，避免一句自然语言直接进机器门禁全局污染。
 - 验收标准编译器只按项目配置和文件线索产出工单自证计划；推不出时保持 `unknown`，且不替代候选确认、人工验收或真跑门禁的证据。

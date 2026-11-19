@@ -33,6 +33,19 @@ def _installed_version() -> str:
     raise AssertionError(f"找不到插件清单：{candidates[0]}")
 
 
+def _make_state_root(path: Path) -> None:
+    """把 release 副本补成合法的 `--no-seed` 状态根夹具。
+
+    release 目录按设计不带 ops/tasks 和 ops/truth；安装器的生产校验必须拒绝
+    空壳目录。测试若要模拟“已经初始化的项目”，就得自己放可提交的账本占位；
+    Git 不跟踪空目录，所以这里写文件而不是只 mkdir。
+    """
+    (path / "ops" / "tasks").mkdir(parents=True, exist_ok=True)
+    (path / "ops" / "truth").mkdir(parents=True, exist_ok=True)
+    (path / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+    (path / "ops" / "truth" / "ledger.jsonl").write_text("", encoding="utf-8")
+
+
 def run(cmd, cwd=None, env=None, check=True):
     p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
     if check and p.returncode != 0:
@@ -154,7 +167,10 @@ def main():
             "test-wake-resume.py",
             "test-authorized-followup.py",
             "test-steward-contract.py",
+            "test-runtime-freshness.py",
             "test-closure-plan.py",
+            "test-context-archive.py",
+            "test-e2e-ten-real-inputs.py",
         )
         for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)
@@ -254,6 +270,14 @@ def main():
         # 但只能提复核。取不到必须 unknown；正常重试和 overlap 排队不能误报。
         run([sys.executable, str(OPS / "test-route-health.py")],
             cwd=str(OPS.parent), check=True)
+        # daemon 每拍巡检：必须共用同一份运行时判据、只提复核、状态变化才留账，
+        # observe 模式不能触碰账本，且 route-health pass 不能被静默升成破坏性动作。
+        run([sys.executable, str(OPS / "test-route-health-pass.py")],
+            cwd=str(OPS.parent), check=True)
+        # 路线复核状态机：异常发现后要能自动复测，恢复要清除，判据不足要保留；
+        # 全程只追加只读事件，不能长出杀 worker / 改配置 / 写工单的动作。
+        run([sys.executable, str(OPS / "test-route-review.py")],
+            cwd=str(OPS.parent), check=True)
         # 关系层：跨项目长期目标必须有稳定对象。显式来源、空账本与取不到的区别、
         # 损坏账本 fail-closed、只读投影不派活，都由这条门禁锁住。
         run([sys.executable, str(OPS / "test-relationship-ledger.py")],
@@ -265,6 +289,10 @@ def main():
         # PM 简报：预期打磨、施工让路、进度追问候选必须来自已有台账，
         # 取不到说 unknown；尤其不许把「只生成候选」做成自动发消息。
         run([sys.executable, str(OPS / "test-pm-briefing.py")],
+            cwd=str(OPS.parent), check=True)
+        # PM 施工闭环：十条真实输入必须能从原话走到施工项、依赖、路线投影、
+        # 追问候选和关闭证据；没有文件声明时保留 unknown，模块只读不派活。
+        run([sys.executable, str(OPS / "test-pm-closure-loop.py")],
             cwd=str(OPS.parent), check=True)
         # 归属判定：「万法归一」入口后面那一层。最容易腐化的形态不是「判错」而是
         # 「判不清时悄悄猜」——插件 .mcp.json 写死一个 KG_REPO，于是用户在 A 项目
@@ -367,6 +395,10 @@ def main():
         # 验收管家：模糊预期必须先变成「怎么算完成」的候选，确认前不写验收台账；
         # 人点头后登记 A-id，但仍不伪造 evidence，机器项要真门禁、人工项先自验。
         run([sys.executable, str(OPS / "test-acceptance-criteria.py")],
+            cwd=str(OPS.parent), check=True)
+        # 关单必须有命令/cwd/退出码或已落 commit，回归必须重新打开：
+        # 自由文本不能把台账刷成 done，也不能把原证据抹掉。
+        run([sys.executable, str(OPS / "test-acceptance-close-reopen.py")],
             cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
@@ -1330,6 +1362,7 @@ def test_installer():
         source = Path(tmp) / "source"
         shutil.copytree(OPS.parent, source,
                         ignore=shutil.ignore_patterns(".git", ".build"))
+        _make_state_root(source)
         source_install = source / "install.sh"
         run(["git", "init", "-q", "-b", "main", str(source)])
         run(["git", "-C", str(source), "config", "user.email",
@@ -1390,7 +1423,10 @@ def test_installer():
                 assert (release / rel).is_file(), (
                     f"发布版本缺少 launchd 登记脚本 {rel}（{_label}）")
         for required in ("ops/guards/repoint_launchd.py",
-                         "ops/guards/hyapi_secrets.py"):
+                         "ops/guards/hyapi_secrets.py",
+                         "docs/steward_contract.json",
+                         "docs/closure_plan.json",
+                         "docs/ARCHITECTURE_STEWARDS.md"):
             assert (release / required).is_file(), f"发布版本缺少 {required}"
         resource_hook = home / ".codex" / "hooks" / "resource-admission.py"
         assert resource_hook.is_file(), "安装后没有落地资源准入 hook"
@@ -1457,6 +1493,7 @@ def test_installer_requires_clean_source():
         root = Path(tmp)
         source = root / "source"
         shutil.copytree(OPS.parent, source, ignore=shutil.ignore_patterns(".git"))
+        _make_state_root(source)
         source_install = source / "install.sh"
         run(["git", "init", "-q", "-b", "main", str(source)])
         run(["git", "-C", str(source), "config", "user.email", "selftest@example.invalid"])
@@ -1511,6 +1548,7 @@ def test_installer_shell_portability():
     路径下才暴露。
     """
     import re
+    import shutil
 
     installed_version = _installed_version()
     pattern = re.compile(rb"\$[A-Za-z_][A-Za-z0-9_]*")
@@ -1528,6 +1566,16 @@ def test_installer_shell_portability():
 
     install = OPS.parent / "install.sh"
     with tempfile.TemporaryDirectory(prefix="autopilot-install-bash32-") as tmp:
+        source = Path(tmp) / "source"
+        shutil.copytree(OPS.parent, source,
+                        ignore=shutil.ignore_patterns(".git", ".build"))
+        _make_state_root(source)
+        run(["git", "init", "-q", "-b", "main", str(source)])
+        run(["git", "-C", str(source), "config", "user.email",
+             "selftest@example.invalid"])
+        run(["git", "-C", str(source), "config", "user.name", "Autopilot Selftest"])
+        run(["git", "-C", str(source), "add", "."])
+        run(["git", "-C", str(source), "commit", "-qm", "fixture"])
         home = Path(tmp) / "home"
         home.mkdir(parents=True)
         # 用一个立刻失败的 swiftc 桩，只为让 Companion 分支走「编译失败降级」，
@@ -1538,23 +1586,24 @@ def test_installer_shell_portability():
         stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         stub.chmod(0o755)
         trunk = Path(tmp) / "project-trunk"
-        run(["git", "-C", str(OPS.parent), "worktree", "add", "-q", "--detach",
+        run(["git", "-C", str(source), "worktree", "add", "-q", "--detach",
              str(trunk), "HEAD"])
 
         env = os.environ.copy()
         env["HOME"] = str(home)
         env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
         env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
-        result = run(["bash", str(install), "--trunk", str(trunk), "--no-seed",
-                      "--no-marketplace", str(OPS.parent)], env=env, check=False)
+        result = run(["bash", str(source / "install.sh"), "--trunk", str(trunk),
+                      "--no-seed", "--no-marketplace", str(source)],
+                     env=env, check=False)
         combined = result.stdout + result.stderr
         assert "unbound variable" not in combined, f"bash 3.2 变量解析崩了:\n{combined}"
         assert result.returncode == 0, f"完整安装路径没跑完:\n{combined}"
         assert (home / "plugins" / "codex-autopilot" / "releases" / installed_version
                 / "ops" / "central_mcp.py").is_file()
         # 同一份安装不带 Companion 时也必须照样成功。
-        result2 = run(["bash", str(install), "--trunk", str(trunk), "--no-seed",
-                       "--no-marketplace", "--no-companion", str(OPS.parent)],
+        result2 = run(["bash", str(source / "install.sh"), "--trunk", str(trunk),
+                       "--no-seed", "--no-marketplace", "--no-companion", str(source)],
                       env=env, check=False)
         # 版本目录已存在，第二次会因「拒绝覆盖」退出；只要不是崩在变量解析上就说明路径健康。
         assert "unbound variable" not in (result2.stdout + result2.stderr)
@@ -1833,6 +1882,12 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     assert "不会自动追问" in pm_text, "PM 简报必须明示候选不是动作"
     assert "acceptance_criteria" in pm_text, "PM 简报缺少验收标准候选契约"
 
+    archive = root / "ops" / "context_archive.py"
+    assert archive.is_file(), "发布树缺少 ops/context_archive.py"
+    archive_text = archive.read_text(encoding="utf-8")
+    assert "取不到就明确说取不到" in archive_text, "上下文档案缺少 unknown 边界"
+    assert "不把不知道当成 0 条" in archive_text, "上下文档案会把取不到伪装成空"
+
     followup = root / "ops" / "authorized_followup.py"
     assert followup.is_file(), "发布树缺少 ops/authorized_followup.py"
     followup_text = followup.read_text(encoding="utf-8")
@@ -1850,9 +1905,17 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
         "验收标准候选缺少显式确认与不伪造证据约束"
     assert "routed" in acceptance_text, "验收标准候选没有沿用已路由入口闸门"
 
-    panel_text = (root / "plugin" / "ui" / "panel.html").read_text(encoding="utf-8")
+    # 源码树把插件放在 plugin/ui/；不可变发布树的插件内容直接位于发布根。
+    # 这条契约要同时守住两种真实布局，不能只在源码 checkout 里绿。
+    panel = root / "plugin" / "ui" / "panel.html"
+    if not panel.is_file():
+        panel = root / "ui" / "panel.html"
+    assert panel.is_file(), "发布树缺少 ui/panel.html"
+    panel_text = panel.read_text(encoding="utf-8")
     assert "pmBriefingBox" in panel_text, "面板缺少 PM 简报容器"
     assert "renderPmBriefing" in panel_text, "面板未接 PM 简报渲染"
+    assert "contextArchiveFold" in panel_text, "面板缺少上下文档案次入口"
+    assert "renderContextArchive" in panel_text, "面板未接上下文档案渲染"
     assert "复核截图" in panel_text, "面板缺少复核截图展示"
     assert "capture_acceptance_screenshot" in panel_text, \
         "面板补图按钮没有接 MCP 工具"
@@ -1867,10 +1930,11 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     mcp = (root / "ops" / "central_mcp.py").read_text(encoding="utf-8")
     assert '"screenshots"' in mcp, "MCP 工具契约缺少 screenshots"
     assert "_pm_briefing_summary" in mcp, "MCP 状态未接 PM 简报"
+    assert "_context_archive_summary" in mcp, "MCP 状态未接上下文档案"
     assert "_acceptance_criteria_summary" in mcp, "MCP 状态未接验收标准候选"
     assert "_route_health_summary" in mcp, "MCP 状态未接路线与效能检测"
     assert '"route_health"' in mcp, "MCP 状态快照缺少 route_health"
-    for tool in ("acceptance_criteria_list", "acceptance_criteria_promote",
+    for tool in ("context_archive", "acceptance_criteria_list", "acceptance_criteria_promote",
                  "acceptance_criteria_dismiss"):
         assert f'"name": "{tool}"' in mcp, f"MCP 未注册 {tool}"
     for tool in ("followup_authorize", "followup_cancel", "followup_list"):
@@ -1900,9 +1964,33 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
         "路线与效能检测缺少只提复核的机器约束"
     assert "不杀 worker" in route_health_text or "不自动纠偏" in route_health_text, \
         "路线与效能检测缺少非破坏性边界"
+    route_runtime = root / "ops" / "route_health_runtime.py"
+    assert route_runtime.is_file(), "发布树缺少 ops/route_health_runtime.py"
+    runtime_text = route_runtime.read_text(encoding="utf-8")
+    assert "def summarize_many" in runtime_text, \
+        "路线与效能运行时缺少多 worker 聚合门禁"
+    assert "def append_if_changed" in runtime_text, \
+        "路线与效能运行时缺少按状态变化去重留账"
+    assert "Pass(\"route-health\"" in daemon_text, \
+        "daemon pass registry 缺少每拍路线与效能巡检"
+    assert "if ctx.get(\"route_health\") is not None:" in daemon_text \
+        and "state[\"route_health\"] = ctx[\"route_health\"]" in daemon_text, \
+        "daemon 运行态缺少最近一次路线与效能摘要，或会抹掉上一拍摘要"
+    route_review = root / "ops" / "route_review.py"
+    assert route_review.is_file(), "发布树缺少 ops/route_review.py"
+    review_text = route_review.read_text(encoding="utf-8")
+    assert "route_reviews.jsonl" in review_text, \
+        "路线复核状态机缺少 append-only 账本"
+    assert "unknown" in review_text and "不冒充恢复" in review_text, \
+        "路线复核状态机缺少判据不足的诚实边界"
+    assert "route_review.sync" in daemon_text, \
+        "daemon 每拍巡检没有接路线复核状态机"
+    assert "route_review.current" in (root / "ops" / "central_mcp.py").read_text(
+        encoding="utf-8"), "面板数据层没有读取路线复核状态"
     architecture = (root / "docs" / "ARCHITECTURE_STEWARDS.md").read_text(encoding="utf-8")
     for needle in ("为什么这不是人类岗位分工", "execute / control / evaluate",
-                   "「最优」只能是可证伪的闭环", "不是「自动把路线调回最优」"):
+                   "「最优」只能是可证伪的闭环", "不是「自动把路线调回最优」",
+                   "异常发现 → 自动复测 → 恢复或持续待复核"):
         assert needle in architecture, f"架构文档缺少约束：{needle}"
     print(f"selftest ok: 发布包包含 PM 简报、验收标准候选与截图通道，版本 {version}。")
 
@@ -2187,6 +2275,7 @@ def test_installer_first_install_daemon_is_explicit():
         root = Path(tmp)
         source = root / "source"
         shutil.copytree(OPS.parent, source, ignore=shutil.ignore_patterns(".git"))
+        _make_state_root(source)
         run(["git", "init", "-q", "-b", "main", str(source)])
         run(["git", "-C", str(source), "config", "user.email", "selftest@example.invalid"])
         run(["git", "-C", str(source), "config", "user.name", "Autopilot Selftest"])
@@ -2485,6 +2574,34 @@ def test_panel_contract():
     script = "\n".join(re.findall(r"<script>([\s\S]*?)</script>", html))
     assert script.strip(), "面板里没有脚本，等于没接上控制层"
 
+    # 原生感必须来自官方 Apps SDK UI 语义 token，不是另写一套色板。
+    # 顺序是硬契约：官方 token -> 旧宿主变量 -> 独立浏览器兜底色。
+    root_css = html.split("<style>", 1)[1].split("</style>", 1)[0]
+    root_css = root_css.split(":root{", 1)[1].split("}", 1)[0]
+    required_tokens = (
+        ("--bg", "--color-surface-secondary", "--color-background-secondary"),
+        ("--surface", "--color-surface", "--color-background-primary"),
+        ("--surface-2", "--color-surface-secondary", "--color-background-secondary"),
+        ("--surface-3", "--color-surface-tertiary", "--color-background-tertiary"),
+        ("--ink", "--color-text", "--color-text-primary"),
+        ("--line", "--color-border", "--color-border-primary"),
+    )
+    for local, official, legacy in required_tokens:
+        match = re.search(re.escape(local) + r"\s*:\s*var\(([^;]+);", root_css)
+        assert match, f"面板主题缺少 {local} 的 token 映射"
+        chain = match.group(1)
+        assert chain.find(official) < chain.find(legacy) < chain.find("#"), (
+            f"{local} 没有按 官方 token -> 旧宿主变量 -> 兜底色 排序：{chain}")
+    for semantic in ("success", "warning", "danger"):
+        assert re.search(
+            r"var\(--color-background-%s-surface,var\(--color-background-%s,"
+            % (semantic, semantic), root_css), (
+                f"{semantic} 软背景没有优先使用官方 surface token")
+        assert re.search(
+            r"var\(--color-border-%s-surface,var\(--color-border-%s,"
+            % (semantic, semantic), root_css), (
+                f"{semantic} 描边没有优先使用官方 surface token")
+
     dom_ids = set(re.findall(r'id="([^"]+)"', html))
     used_ids = set(re.findall(r'\bel\("([^"]+)"\)', script))
     created_ids = set(re.findall(r'\.id\s*=\s*"([^"]+)"', script))
@@ -2502,6 +2619,15 @@ def test_panel_contract():
     assert re.search(
         r'callTool\("route_preview",\s*\{[^}]*\bcwd\s*:\s*currentCwd\(\)', script
     ), "route_preview 没有传当前 cwd，跨项目预览会判不清"
+
+    # 宿主能力边界：面板走官方 entrypoint，不伪造置顶或侧栏默认展开。
+    render_tool = next(
+        (t for t in central_mcp.TOOLS if t["name"] == "render_autopilot_panel"), None)
+    assert render_tool is not None, "面板没有注册入口工具"
+    assert render_tool["_meta"]["ui"]["resourceUri"] == "ui://autopilot/panel-v2.html"
+    entrypoints = render_tool["_meta"]["openai/ui"]["entrypoints"]
+    assert {e.get("type") for e in entrypoints} == {"global", "thread"}, (
+        f"面板入口应同时支持全局与会话：{entrypoints}")
 
     switch_keys = set(re.findall(r'data-key="([^"]+)"', html))
     unknown = sorted(switch_keys - set(control_state.DEFAULTS))
@@ -2955,6 +3081,74 @@ def test_native_section_grouping():
             os.environ.pop("FAKE_FAIL_SECTIONS", None)
 
     print("selftest ok: 派活自动归入项目窗口集合、同名复用不重复建、集合失败不拦派活。")
+
+
+def test_native_thread_title_contract():
+    """原生子对话首行即侧栏标题：项目、泳道、台账 ID、简述按顺序可扫读。
+
+    当前 app-server 只有 thread/start、thread/section/move、turn/start，
+    没有独立 rename；Codex 侧栏标题取首条 user message。所以派活首行就是
+    标题契约，完整任务正文必须仍然保留，不能把首行当正文全部替换。
+    """
+    import inspect
+    from unittest import mock
+
+    sys.path.insert(0, str(OPS))
+    import central_mcp
+
+    item = {
+        "id": "L-0001",
+        "lane": "bug",
+        "project": "knowledge-graph",
+        "title": "修复移动端首屏溢出",
+    }
+    prompt = central_mcp._native_thread_prompt(item, "请实现并验证这个任务", "/tmp")
+    assert prompt.startswith("[AP][kg][bug] L-0001 · 修复移动端首屏溢出\n\n"), prompt
+    assert prompt.endswith("请实现并验证这个任务"), prompt
+
+    unsafe = central_mcp._native_thread_prompt(
+        {"id": "L-0002", "lane": "arch / gate", "title": "边界"},
+        "正文", "/Users/danta/Documents/Codex/codex-autopilot")
+    assert unsafe.startswith("[AP][ca][archgate] L-0002 · 边界\n\n"), unsafe
+
+    fallback = central_mcp._native_thread_prompt({}, "正文", "")
+    assert fallback.startswith("[AP][global][route] L-0000 · 自动挡任务\n\n"), fallback
+
+    already = "[AP][kg][ux] L-0003 · 不要重复加前缀\n\n正文"
+    assert central_mcp._native_thread_prompt(item, already, "/tmp") == already
+
+    # 函数写对了还不够：真正的派活入口必须接它，否则侧栏标题仍是乱的。
+    call_source = inspect.getsource(central_mcp.call_tool)
+    assert "_native_thread_prompt(item" in call_source, \
+        "codex_native_dispatch_task 没有接线程标题契约"
+
+    # 源码文本断言只能证明“写了”，这里再跑一次真实入口，锁住实际传参。
+    dispatch_result = {"thread_id": "thr-1", "turn_id": "turn-1"}
+    with mock.patch.object(central_mcp.control_state, "mutation_guard",
+                           return_value=None), \
+         mock.patch.object(central_mcp, "_ledger_item", return_value=item), \
+         mock.patch.object(central_mcp.codex_native, "dispatch_task",
+                           return_value=(dispatch_result, None)) as dispatch, \
+         mock.patch.object(central_mcp, "_append_native_route") as append_route, \
+         mock.patch.object(central_mcp.control_state, "append_event"):
+        result, code = central_mcp.call_tool("codex_native_dispatch_task", {
+            "ledger_id": "L-0001",
+            "cwd": "/tmp/demo",
+            "prompt": "请实现并验证这个任务",
+            "section_id": "sec-1",
+        })
+    assert code == 0 and result == dispatch_result, (result, code)
+    args, kwargs = dispatch.call_args
+    assert args[0] == "/tmp/demo", args
+    assert args[1].startswith("[AP][kg][bug] L-0001 · 修复移动端首屏溢出\n\n"), args[1]
+    assert args[1].endswith("请实现并验证这个任务"), args[1]
+    assert args[2] == "sec-1", args
+    assert kwargs.get("auto_section"), kwargs
+    append_route.assert_called_once()
+    assert append_route.call_args.args[0] == "L-0001", append_route.call_args
+    assert append_route.call_args.kwargs.get("status") == "dispatched", \
+        append_route.call_args
+    print("selftest ok: 原生子对话首行标题按项目/泳道/ID/简述命名，正文仍完整。")
 
 
 def test_native_call_budget():
@@ -7668,6 +7862,7 @@ if __name__ == "__main__":
     test_codex_native_bridge()
     test_native_socket_lstat()
     test_native_section_grouping()
+    test_native_thread_title_contract()
     test_native_call_budget()
     test_real_codex_app_server()
     test_verify_and_truth()

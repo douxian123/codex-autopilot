@@ -16,7 +16,8 @@
 **Codex 自动挡**是给 Codex 加的一层「工程控制面」：你平时打字的那个 Codex 输入框就是总输入框，零散需求进去，归类、落账、隔离工作区、跑验证、能合的自动合、收口、回写主线，全由它串起来。
 
 - 形态：Codex 插件（原生风格面板） + macOS 菜单栏 Companion（状态锚点，不是第二套产品）
-- 版本：当前运行/候选发布 `0.6.0-preview.59`（2026-11-11 发布，`install-state.json` 与 marketplace 均指向它）；旧版本目录逐版保留，可 `./install.sh --rollback` 回退，阶段：内部可用
+- 版本（2026-11-20 现场核对）：当前运行仍是 `0.6.0-preview.103`（现场 `install-state.json` 未改，常驻守护绑定 `/Users/danta/.newmax/workspace/codex-autopilot`）；`0.6.0-preview.104` 是**已验证候选，尚未安装切换**。旧版本目录逐版保留，可 `./install.sh --rollback` 回退，阶段：内部可用。
+- 候选 `0.6.0-preview.104`（源码提交 `11ef5cc21bcacab946b3970caf375507fe762e30`，已确认是 `origin/main` 祖先）：隔离安装 `install_exit=0`；三项定向门禁 `test-context-learning.py` / `test-constraint-candidates.py` / `test-selftest-release-dir.py` 全退出 0；全量 `ops/selftest.py` 退出 0；真机上下文学习扫描 `status=ok`、扫描 211 个会话，识别 `single_entry_unified_routing`（6 次/5 会话）和 `evidence_first_closure`（10 次/4 会话）两个高优先级主题；对外发布评估五条判据 5/5 通过、阴性对照 8/8。现场 `.103` 未受影响，是否切换到 `.104` 仍属用户拍板。
 - 13 步产品路线：**7 步已完成、6 步进行中、0 步未开始**
 - 验收：机器已自证项持续增加；当前 A-0005/A-0006/A-0007/A-0008 仍需真人/桌面操作
 - 本机实测（2026-10-25）：候选版本 **`0.6.0-preview.23`** 修复跨 worktree / clone 的真相编号复用：同一项目共用持久高水位与文件锁，并合并本地真相根和 `origin/main` 的已占编号；隔离分支先写进展、主干后落盘时不会再撞号。全量 `python3 ops/selftest.py` 退出码 0；真实双 clone 回归验证 `P-0001` / `P-0002` 连续分配。preview.22 的自动收口证据门禁与共享 partial clone 保护保留，旧 `preview.22` 可回滚。
@@ -72,8 +73,9 @@
 - 面板首屏继续去工程黑话：`automation`/`越线` 改成人话健康结论，`判不清归属` 改成「不知道归到哪个项目」，最近收口改成「需求 -> 结果」；工程路径和命令只留可追溯属性与折叠证据。
 - 首屏第一问按动作给短提示：`要你验收`、`要你拍板`、`要说一句`、`等自己的轮次`；项目文件夹工作项 ID 和来源对话 ID 不进正文，只保留在 `title` 供追溯；`自治分级` 改称 `授权情况`。
 - 灵动岛与桌宠不承担路线管理和工程追踪；未来可做入口或轻量状态外观。工程状态需要稳定、可扫描、可验证的主面板。
-- 状态管家内部新增路线与效能只读检测：发现路线偏离 mandate、长时间耗在与验收无关的卡点、同一处重试空转时，只在状态管家原有那一行提示需复核，并写清「只提复核，不自动纠偏」；判据取不到就写取不到，不新增第八个管家行或新卡片。
-- 上下文管家内部新增跨会话自学习：从当前项目绑定的历史会话与唯一入口里统计反复出现的诉求，达到阈值后在同一候选闸里提「是否纳入规范」。候选附提及次数、跨会话数和原话证据；用户确认前不写生效约束、不改门禁、不自动追问；确认后带 `source=context_learning` 进 `constraints.jsonl`，由 `selfcheck()` 逐条检查是否真有机器兜底。判不清会话归属就跳过，不把别的窗口内容塞进当前项目。
+- 状态管家内部新增运行态新鲜度只读判据：比对主干源码、已装版本、运行代码与 daemon 是否同一代，并核对 daemon 当前绑定的项目。源码进 main 不代表本机现场生效；代际不一致或 daemon 服务别的账本时只提示受控换代或重载，信息不全写 `unknown`，绝不自动重启、reload、改绑定、换代、改配置或派工单，也不新增第八个管家行。
+- 状态管家内部新增路线与效能只读检测与复核闭环：发现路线偏离 mandate、长时间耗在与验收无关的卡点、同一处重试空转时，只在状态管家原有那一行提示需复核，并写清「只提复核，不自动纠偏」；daemon 每拍自动复测，恢复后清除、判据取不到保留旧项，不新增第八个管家行或新卡片。
+- 上下文管家内部新增跨会话自学习：从当前项目绑定的历史会话与唯一入口里统计反复出现的诉求，达到阈值后在同一候选闸里提「是否纳入规范」。候选附提及次数、跨会话数和原话证据；用户确认前不写生效约束、不改门禁、不自动追问；确认后带 `source=context_learning` 进 `constraints.jsonl`，由 `selfcheck()` 逐条检查是否真有机器兜底。归属先用 Git worktree / remote 识别同一项目的隔离工作区，文档型讨论窗只认真实用户原话里明确提到的项目名；排除系统注入、委派正文和心跳，判不清就跳过，不把别的窗口内容塞进当前项目。候选闸语义不变；扫描按流式逐行读取并设原话上限，避免历史会话增长拖慢面板。
 
 ### 明确不做
 
@@ -550,6 +552,16 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 - 证据：新增“陈旧空分支不得自动收口、必须重新启动 worker”回归 fixture；
   `python3 -m py_compile ops/central_daemon.py ops/selftest.py` exit 0；
   `python3 ops/selftest.py` exit 0，全量自检通过。
+
+---
+
+### 12.14 原生 Codex 面板设计契约落盘（2026-11-19）
+
+- 原生感以 `@openai/apps-sdk-ui` 为唯一直接复用源；桌面包 `app.asar` 只做局部视觉校准，不当源码抄。面板 UI 继续走 `ui://autopilot/panel-v2.html`，注册 `global` 与 `thread` 两个官方 entrypoint。
+- 原生子对话首行采用 `[AP][<project>][<lane>] <ledger_id> · <title>` 标题契约，完整正文另起一段保留；当前 app-server 没有独立 rename，Codex 侧栏标题取自首条 user message，所以首行是唯一不写宿主库的落地方式。台账没有题名时固定写入 `自动挡任务`，不让正文首句冒充标题。
+- 「永久置顶」与「侧栏默认展开」仍是宿主能力目标；当前工具面没有可用 API，不声称已实现。已落地的是 section 分组、官方 entrypoint 和首行标题命名。
+- 面板主题按「官方语义 token → 旧宿主变量 → 兜底色」接入，success/warning/danger 的软背景与描边优先使用官方 surface token。机器门禁锁住顺序；改动前后真实渲染截图结构、颜色、间距一致，只有状态更新时间不同。
+- 机器门禁：`python3 ops/panel_logic_check.py` exit 0；`python3 ops/panel_render_check.py` exit 0 并生成改动后截图；`python3 ops/selftest.py` exit 0，含新增线程标题契约与行为级派活断言。
 
 ---
 
