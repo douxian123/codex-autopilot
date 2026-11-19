@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-19 23:31:48　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-19 14:52:42　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -54,7 +54,6 @@
 - [在途] 发布 lineage 门禁已落盘；product_eval 判据5 从红转 OK，发布提交需在远端权威主干可见。
 - [在途] release 目录里跑 selftest 的安装器门禁已落盘 origin/main；新版安装目录完整性有回归保护。
 - [在途] progress/acceptance JSONL 按 identity 行级并集已随 5caaabb7 落盘 origin/main；并发 land 不再覆盖同 ID 历史。
-- [已落盘] @ e1e5e5d1 原生 Codex 面板设计契约已落盘并推送：官方 token 优先链、global/thread entrypoint、section 分组、首行线程标题契约与行为级门禁均完成；永久置顶/默认展开明确记为宿主能力目标，未伪造实现。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
@@ -100,8 +99,8 @@
 
 ## 进度概览
 
-- 累计关闭问题：10 条
-- 累计落盘：2 条
+- 累计关闭问题：9 条
+- 累计落盘：1 条
 - 未决问题：2 条
 - 已验收：8 条
 
