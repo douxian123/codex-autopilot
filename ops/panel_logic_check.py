@@ -552,6 +552,14 @@ def main(argv):
         clean.update({
             "need_action": "不需要你做什么，继续照常提需求就行",
             "need_action_detail": "",
+            "blocked": {"failures": [], "resolve": [], "exec": [], "port": []},
+            "error": None,
+            # Q1 优先消费控制层 counts.stuck；现场有 17 条冲突时，只清 blocked
+            # 仍会被计数污染成「17 个卡点」。空态夹具必须把计数也归零。
+            "counts": {"doing": 0, "todo": 0, "review": 0, "stuck": 0},
+            "harness_tune": {"status": "ok", "count": 0, "items": []},
+            "constraint_candidates": {"status": "ok", "count": 0, "items": []},
+            "acceptance_criteria": {"status": "ok", "count": 0, "items": []},
         })
         clean_out = run_once(clean)
         fails += has("无需处理时第一问摘要写不用你", clean_out["q1State"], "不用你")
@@ -643,6 +651,7 @@ def main(argv):
             # 上一次 land 因此在 trunk 上假红。逐项清空后才是确定性的空态夹具。
             "harness_tune": {"status": "ok", "count": 0, "items": []},
             "constraint_candidates": {"status": "ok", "count": 0, "items": []},
+            "acceptance_criteria": {"status": "ok", "count": 0, "items": []},
         })
         beout = run_once(bempty)
         fails += has("没有卡点时给出空态说明",
