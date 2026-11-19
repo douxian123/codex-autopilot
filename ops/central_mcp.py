@@ -416,6 +416,19 @@ def _pm_briefing_summary(runtime=None):
                 "source": "pm_briefing 模块不可用"}
 
 
+def _authorized_followup_summary(root=None):
+    """追问授权账本的只读投影：候选不是动作，只有逐项 explicit 授权才可发送。"""
+    try:
+        import authorized_followup
+        return authorized_followup.summary(
+            Path(root) if root else Path(os.environ.get("KG_REPO") or _fallback_repo()))
+    except Exception as exc:
+        return {"status": "unknown", "items": [],
+                "counts": {"approved": None, "sent": None,
+                           "cancelled": None, "failed": None},
+                "note": "追问授权账本取不到（%s）；不把不知道当成 0。" % exc}
+
+
 def _relationship_goals_summary():
     """关系层只读摘要：跨项目长期目标、需要人的时机，不派活、不替人定优先级。"""
     try:
@@ -1361,6 +1374,41 @@ TOOLS = [
             "required": ["id"],
             "additionalProperties": False,
         },
+    },
+    {
+        "name": "followup_authorize",
+        "description": "PM 管家：逐项授权一条追问候选。候选本身不会自动发消息；只有 confirm=true 才先把 explicit 授权写入 append-only 授权账本，再由后台在发送前重新校验资格后投递一次。重复授权不会重复打扰。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticket_id": {"type": "string", "description": "工作项 id，如 L-0021"},
+                "thread_id": {"type": "string", "description": "真实 Codex 原生窗口 id"},
+                "prompt": {"type": "string", "description": "要发给该窗口的追问答"},
+                "reason": {"type": "string", "description": "为什么现在授权追问；会留在账本里"},
+                "confirm": {"type": "boolean",
+                            "description": "必须为 true：代表用户已经明确同意这条追问"},
+            },
+            "required": ["ticket_id", "thread_id", "prompt", "reason", "confirm"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "followup_cancel",
+        "description": "PM 管家：撤销一条尚未发送的追问授权。已经发出去的消息不能撤回；撤销只追加事件，不覆盖历史。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "request_id": {"type": "string", "description": "授权 id，如 FU-xxxxxxxx"},
+                "reason": {"type": "string", "description": "为什么撤销；必填留痕"},
+            },
+            "required": ["request_id", "reason"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "followup_list",
+        "description": "PM 管家：只读查看追问授权账本摘要，区分 approved/sent/cancelled/failed；取不到就说取不到，不把不知道当成 0。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
 ]
 
@@ -2533,6 +2581,7 @@ def _status_payload(fast=True):
             "stewards": _steward_health({}),
             "autonomy": _autonomy_summary({}),
             "pm_briefing": _pm_briefing_summary({"blocked": {}}),
+            "authorized_followups": _authorized_followup_summary(),
             "relationship_goals": _relationship_goals_summary(),
             "outcome_score": _outcome_score_summary(),
         }
@@ -2751,6 +2800,8 @@ def _status_payload(fast=True):
                 "resolve": list(blocked),
             },
         }),
+        # 追问授权账本与 PM 候选分开：候选只读，授权逐项显式，daemon 再校验后投递。
+        "authorized_followups": _authorized_followup_summary(),
         # 关系层：跨项目长期目标是显式账本，不属于某个项目真相；这里只读摘要，
         # 不把目标自动派给 worker，也不把「需要人」变成自动追问。
         "relationship_goals": _relationship_goals_summary(),
@@ -2994,6 +3045,7 @@ def call_tool(name, args):
         "autopilot_settings_read", "codex_native_threads", "codex_native_probe",
         "harness_tune_list", "constraint_candidates_list",
         "acceptance_criteria_list", "route_preview",
+        "followup_list",
     }
     control_tools = {
         "autopilot_control", "autopilot_run_once",
@@ -3284,6 +3336,38 @@ def call_tool(name, args):
             res = acceptance_criteria.dismiss(cid, args.get("reason") or "")
         return json.dumps(res, ensure_ascii=False, indent=1), (
             0 if res.get("status") != "error" else 2)
+    if name in ("followup_authorize", "followup_cancel", "followup_list"):
+        import authorized_followup as followup
+        root = Path(os.environ.get("KG_REPO") or _fallback_repo())
+        if name == "followup_list":
+            return followup.summary(root), 0
+        if name == "followup_authorize":
+            if not bool(args.get("confirm")):
+                return {"code": "FOLLOWUP_CONFIRM_REQUIRED",
+                        "message": "逐项追问必须由人明确点头：请带 confirm=true；候选本身不会发消息。"}, 2
+            try:
+                res = followup.approve({
+                    "ticket_id": args.get("ticket_id"),
+                    "thread_id": args.get("thread_id"),
+                    "prompt": args.get("prompt"),
+                    "reason": args.get("reason"),
+                    "authorization": "explicit",
+                    "effect": "reversible",
+                    "source": "panel",
+                }, root)
+            except followup.AuthorizationError as exc:
+                return {"code": "FOLLOWUP_AUTHORIZATION_REJECTED", "message": str(exc)}, 2
+            return {"__text__": "已登记这条追问授权；后台发送前还会再校验一次窗口和工作项。",
+                    **res}, 0
+        try:
+            res = followup.cancel(
+                (args.get("request_id") or "").strip(),
+                args.get("reason"),
+                root,
+            )
+        except followup.AuthorizationError as exc:
+            return {"code": "FOLLOWUP_CANCEL_REJECTED", "message": str(exc)}, 2
+        return {"__text__": "已撤销未发送的追问授权；历史授权记录保留。", **res}, 0
     if name == "suggest_branch":
         return kgctl("suggest")
     if name == "route_preview":

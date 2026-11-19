@@ -892,7 +892,7 @@
     renderFolders(s.project_folders || {}, s);
     renderOrientation(s);
     renderAcceptance(humanAcc, s.machine_verified || []);
-    renderPmBriefing(s.pm_briefing);
+    renderPmBriefing(s.pm_briefing, s.authorized_followups);
     renderRelationshipGoals(s.relationship_goals);
     renderOutcomeScore(s.outcome_score);
     renderRecent(s.recent_completed || []);
@@ -1032,8 +1032,8 @@
     box.appendChild(strip);
   }
 
-  // PM 简报：预期磨到哪、谁给谁让路、哪条该追进度。只照抄控制层结论，
-  // 不在面板重算、也不自动发任何追问。取不到就写「取不到」，不拿 0 冒充正常。
+  // PM 简报：预期磨到哪、谁给谁让路、哪条该追进度。候选只照抄控制层结论；
+  // 只有人在这里逐项点头才写授权账本，守护发送前还会再校验。取不到就说取不到。
   function pmCount(value){
     return (value === undefined || value === null) ? "取不到" : String(value);
   }
@@ -1043,7 +1043,7 @@
     var grow = document.createElement("span"); grow.className = "grow"; grow.textContent = text;
     li.appendChild(tag); li.appendChild(grow); list.appendChild(li);
   }
-  function renderPmBriefing(pb){
+  function renderPmBriefing(pb, authSummary){
     var box = el("pmBriefingBox"); if (!box) return; box.innerHTML = "";
     if (!pb){
       box.innerHTML = '<div class="empty">PM 简报取不到；不把不知道当成正常。</div>';
@@ -1053,6 +1053,12 @@
     var ac = pb.acceptance_criteria || {};
     var hold = pb.overlap_holds || {};
     var follow = pb.follow_up_candidates || {};
+    var auth = authSummary || {};
+    var authCounts = auth.counts || {};
+    var approvedByTicket = {};
+    ((auth.status === "ok" && auth.items) || []).forEach(function(a){
+      if (a.state === "approved" && a.ticket_id) approvedByTicket[a.ticket_id] = a;
+    });
     var list = document.createElement("ul"); list.className = "list";
     var expText = "待确认：" + pmCount(exp.pending_count) + " 条 · 已生效："
       + pmCount(exp.active_count) + " 条";
@@ -1079,9 +1085,59 @@
     var followItems = follow.items || [];
     pmRow(list, "追问", pmCount(follow.status === "ok" ? followItems.length : null)
       + " 条候选 · " + (follow.note || "追问候选取不到"));
+    pmRow(list, "追问授权", pmCount(auth.status === "ok" ? authCounts.approved : null)
+      + " 条待发 · " + (auth.note || "追问授权账本取不到"));
     followItems.slice(0, 2).forEach(function(r){
-      pmRow(list, r.id || "候选", "空闲 " + pmCount(r.idle_minutes) + " 分钟 · "
-        + (r.thread_id || "无窗口绑定"));
+      var li = document.createElement("li");
+      var tag = document.createElement("span"); tag.className = "tag"; tag.textContent = r.id || "候选";
+      var grow = document.createElement("span"); grow.className = "grow";
+      grow.textContent = "空闲 " + pmCount(r.idle_minutes) + " 分钟 · "
+        + (r.thread_id || "无窗口绑定");
+      li.appendChild(tag); li.appendChild(grow);
+      if (r.thread_id && follow.status === "ok") {
+        var ring = document.createElement("span"); ring.className = "accbtns";
+        var authorize = document.createElement("button");
+        authorize.className = "btn"; authorize.type = "button"; authorize.textContent = "授权追问";
+        var prompt = r.suggested_prompt
+          || ("继续处理 " + (r.id || "工作项") + "：回报当前卡点和下一步。");
+        authorize.addEventListener("click", function(){
+          authorize.disabled = true;
+          var was = authorize.textContent; authorize.textContent = "正在登记…";
+          callTool("followup_authorize", {
+            ticket_id: r.id, thread_id: r.thread_id, prompt: prompt,
+            reason: "面板：用户明确同意追问", confirm: true,
+          }).then(function(){
+            toast("已登记逐项授权；发送前还会再校验。", "ok");
+            return loadStatus(false);
+          }).catch(function(e){
+            toast("操作没成功：" + (e && e.message || e), "err");
+            authorize.disabled = false; authorize.textContent = was;
+          });
+        });
+        ring.appendChild(authorize);
+        var approved = approvedByTicket[r.id];
+        if (approved) {
+          var cancel = document.createElement("button");
+          cancel.className = "btn ghost"; cancel.type = "button"; cancel.textContent = "撤销授权";
+          cancel.addEventListener("click", function(){
+            cancel.disabled = true;
+            var was = cancel.textContent; cancel.textContent = "正在撤销…";
+            callTool("followup_cancel", {
+              request_id: approved.request_id,
+              reason: "面板：用户撤销未发送的追问",
+            }).then(function(){
+              toast("已撤销未发送的授权；历史记录保留。", "ok");
+              return loadStatus(false);
+            }).catch(function(e){
+              toast("操作没成功：" + (e && e.message || e), "err");
+              cancel.disabled = false; cancel.textContent = was;
+            });
+          });
+          ring.appendChild(cancel);
+        }
+        li.appendChild(ring);
+      }
+      list.appendChild(li);
     });
     box.appendChild(list);
     var missing = (exp.missing || []).concat(follow.missing || []);
