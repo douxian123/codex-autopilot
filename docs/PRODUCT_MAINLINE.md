@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-19 14:52:42　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-19 22:49:12　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -45,33 +45,42 @@
 
 ## 最近在推进
 
-- [已落盘] @ d36087b804 首屏三问与 PM/验收管家闭环已落盘：首屏只回答要不要我、是不是在干对的事、替我做成了什么；PM 简报、人工验收复核截图与补图按钮进入折叠区；补图不替人收口。落盘 commit 3a950f4e，真相记录 d36087b8。
-- [在途] 补 --install-daemon 显式首次安装与 launchd 回读判活；默认不替用户启用常驻，回读不到 pid 不报成功。
-- [在途] 确认修复已在 origin/main：snapshot_prune.py 使用 typing.Optional/List/Dict/Tuple，不再依赖 Python 3.10 联合类型语法；系统 Python 3.9.6 真导入与快照清理门禁均通过，并补上旧 Path | None 语法的阴性对照，证明门禁能抓回原故障。
-- [在途] 临时 gate worktree 归属标记、随机路径与 all 判活已随 7db4f0c9 落盘 origin/main；全量门禁通过。生产磁盘回收仍保留人工动作边界。
-- [在途] 状态根新鲜度与真相 JSONL 行级并集已随 5caaabb7 落盘 origin/main；陈旧台账不再覆盖主线，同 id 不同内容保留较新记录。
-- [在途] resolve_state_root 已按配置新鲜度选择活状态根，显式 KG_REPO 仍最高优先；门禁 EXIT=0。
-- [在途] 发布 lineage 门禁已落盘；product_eval 判据5 从红转 OK，发布提交需在远端权威主干可见。
-- [在途] release 目录里跑 selftest 的安装器门禁已落盘 origin/main；新版安装目录完整性有回归保护。
-- [在途] progress/acceptance JSONL 按 identity 行级并集已随 5caaabb7 落盘 origin/main；并发 land 不再覆盖同 ID 历史。
+- [已落盘] @ 8050286a40 codex/runtime-docs-assets-20261119 验证门禁通过，已落盘 main @ 8050286a40；改动 2 个文件：install.sh（+4/-5）、ops/selftest.py（+2/-1）｜2 files changed, 6 insertions(+), 6 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ b2c3883e5a codex/cross-project-constraint-guard-20261119 验证门禁通过，已落盘 main @ b2c3883e5a；改动 1 个文件：ops/panel_logic_check.py（+9/-0）｜1 file changed, 9 insertions(+)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ 7510e55b4b codex/panel-experience-design-20261119 验证门禁通过，已落盘 main @ 7510e55b4b；改动 1 个文件：docs/PANEL_INTERACTION_DESIGN.md（+22/-0）｜1 file changed, 22 insertions(+)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ c039d327c6 codex/context-archive-20261119 验证门禁通过，已落盘 main @ c039d327c6；改动 9 个文件：docs/closure_plan.json（+6/-6）、docs/steward_contract.json（+2/-2）、ops/central_mcp.py（+28/-1）、ops/context_archive.py（+195/-0）、ops/panel_logic_check.py（+35/-0），另有 4 个文件｜9 files changed, 462 insertions(+), 12 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ 9c8fff1b0b codex/install-clean-source-fixture-20261119 验证门禁通过，已落盘 main @ 9c8fff1b0b；改动 1 个文件：ops/selftest.py（+33/-12）｜1 file changed, 33 insertions(+), 12 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ ffb190ed7a codex/resolve-route-review-20261119 验证门禁通过，已落盘 main @ ffb190ed7a；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ 3455ac06e1 codex/runtime-freshness-20261119b 验证门禁通过，已落盘 main @ 3455ac06e1；改动 9 个文件：CONTEXT.md（+1/-0）、docs/ARCHITECTURE_STEWARDS.md（+3/-1）、docs/steward_contract.json（+4/-4）、ops/central_mcp.py（+87/-2）、ops/panel_logic_check.py（+30/-0），另有 4 个文件｜9 files changed, 326 insertions(+), 10 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ 9c30a1eac6 codex/pm-closure-loop-20261119 验证门禁通过，已落盘 main @ 9c30a1eac6；改动 10 个文件：docs/closure_plan.json（+3/-3）、docs/steward_contract.json（+1/-1）、ops/central_mcp.py（+1/-1）、ops/panel_logic_check.py（+9/-0）、ops/panel_render_check.py（+10/-0），另有 5 个文件｜10 files changed, 498 insertions(+), 6 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ ca6142c8fc codex/native-panel-design-contract-20261119 验证门禁通过，已落盘 main @ ca6142c8fc；改动 6 个文件：CONTEXT.md（+10/-0）、docs/PANEL_INTERACTION_DESIGN.md（+18/-0）、docs/panel-first-screen-before-native-contract.png（+-/--）、ops/central_mcp.py（+42/-3）、ops/selftest.py（+106/-0），另有 1 个文件｜6 files changed, 191 insertions(+), 18 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ e1e5e5d1 原生 Codex 面板设计契约已落盘并推送：官方 token 优先链、global/thread entrypoint、section 分组、首行线程标题契约与行为级门禁均完成；永久置顶/默认展开明确记为宿主能力目标，未伪造实现。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
+- `A-0112` [P1] codex/release-selftest-fixture-20261119 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
+- `A-0113` [P1] codex/route-review-20261119 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
+- `A-0114` [P1] codex/release-docs-fixture-20261119 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0005` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
+- `A-0115` [P1] codex/runtime-docs-assets-20261119 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0006` [P1] codex/release-lineage-gate-20261118 门禁预跑（未落盘）
+- `A-0116` [P1] codex/cross-project-constraint-guard-20261119 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0007` [P1] codex/truth-sync-union-20261118 门禁预跑（未落盘）
+- `A-0117` [P1] codex/panel-experience-design-20261119 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0008` [P1] codex/truth-restore-union-20261118 门禁预跑（未落盘）
+- `A-0118` [P1] codex/context-archive-20261119 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0009` [P1] codex/gate-selftest-release-dir-20261118 门禁预跑（未落盘）
+- `A-0119` [P1] codex/install-clean-source-fixture-20261119 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0120` [P1] codex/resolve-route-review-20261119 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0121` [P1] codex/runtime-freshness-20261119b 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0123` [P1] codex/pm-closure-loop-20261119 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0124` [P1] codex/native-panel-design-contract-20261119 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
@@ -95,12 +104,61 @@
 - `A-0006` [P1] codex/release-lineage-gate-20261118 门禁预跑（未落盘）
 - `A-0007` [P1] codex/truth-sync-union-20261118 门禁预跑（未落盘）
 - `A-0008` [P1] codex/truth-restore-union-20261118 门禁预跑（未落盘）
+- `A-0071` [P1] 补记 codex/daemon-first-install-20261118 落盘验收（原 A-0006 被覆盖）
+- `A-0072` [P1] codex/truth-restore-land-record-20261118 落盘验收
+- `A-0073` [P1] codex/jsonl-truth-no-overwrite-20261118 落盘验收
+- `A-0074` [P1] codex/state-root-freshness-20261118 落盘验收
+- `A-0075` [P1] codex/truth-restore-union-20261118 落盘验收
 - `A-0009` [P1] codex/gate-selftest-release-dir-20261118 门禁预跑（未落盘）
+- `A-0076` [P1] codex/gate-selftest-release-dir-20261118 落盘验收
+- `A-0077` [P1] codex/tmp-owner-cleanup-20261118 门禁预跑（未落盘）
+- `A-0078` [P1] codex/tmp-owner-cleanup-20261118 落盘验收
+- `A-0081` [P1] codex/tmp-owner-cleanup-20261118 门禁预跑（未落盘）
+- `A-0082` [P1] codex/tmp-owner-cleanup-20261118 落盘验收
+- `A-0083` [P1] codex/panel-windshield-20261119 落盘验收
+- `A-0084` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
+- `A-0088` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
+- `A-0085` [P1] codex/guard-release-version-20261119 落盘验收
+- `A-0086` [P1] codex/guard-release-version-20261119 落盘验收
+- `A-0087` [P1] codex/panel-route-contract-20261119 落盘验收
+- `A-0089` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
+- `A-0090` [P1] codex/truth-close-open-ledger-20261119 落盘验收
+- `A-0091` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
+- `A-0092` [P1] codex/guard-release-version-20261119 落盘验收
+- `A-0094` [P1] codex/selftrack-mainline-20261119 落盘验收
+- `A-0095` [P1] codex/panel-interaction-design-20261119 落盘验收
+- `A-0096` [P1] codex/panel-compact-health-20261119 落盘验收
+- `A-0097` [P1] codex/route-health-20261119 落盘验收
+- `A-0098` [P1] codex/panel-attention-funnel-20261119 落盘验收
+- `A-0099` [P1] codex/context-self-learning-20261119 落盘验收
+- `A-0100` [P1] codex/panel-attention-hierarchy-20261119 落盘验收
+- `A-0101` [P1] codex/panel-human-copy-20261119 落盘验收
+- `A-0102` [P1] codex/authorized-followup-20261119 落盘验收
+- `A-0103` [P1] codex/context-self-learning-20261119 落盘验收
+- `A-0104` [P1] codex/panel-attention-final-copy-20261119 落盘验收
+- `A-0105` [P1] codex/preview103-live-release-truth-20261119 落盘验收
+- `A-0107` [P1] codex/authorized-followup-20261119 落盘验收
+- `A-0108` [P1] codex/arch-boundaries-port-20261119 落盘验收
+- `A-0109` [P1] codex/steward-contract-20261119 落盘验收
+- `A-0110` [P1] codex/context-learning-remote-identity-20261119 落盘验收
+- `A-0111` [P1] codex/context-learning-noise-guard-20261119 落盘验收
+- `A-0112` [P1] codex/release-selftest-fixture-20261119 落盘验收
+- `A-0113` [P1] codex/route-review-20261119 落盘验收
+- `A-0114` [P1] codex/release-docs-fixture-20261119 落盘验收
+- `A-0115` [P1] codex/runtime-docs-assets-20261119 落盘验收
+- `A-0116` [P1] codex/cross-project-constraint-guard-20261119 落盘验收
+- `A-0117` [P1] codex/panel-experience-design-20261119 落盘验收
+- `A-0118` [P1] codex/context-archive-20261119 落盘验收
+- `A-0119` [P1] codex/install-clean-source-fixture-20261119 落盘验收
+- `A-0120` [P1] codex/resolve-route-review-20261119 落盘验收
+- `A-0121` [P1] codex/runtime-freshness-20261119b 落盘验收
+- `A-0123` [P1] codex/pm-closure-loop-20261119 落盘验收
+- `A-0124` [P1] codex/native-panel-design-contract-20261119 落盘验收
 
 ## 进度概览
 
-- 累计关闭问题：9 条
-- 累计落盘：1 条
+- 累计关闭问题：10 条
+- 累计落盘：64 条
 - 未决问题：2 条
-- 已验收：8 条
+- 已验收：57 条
 
