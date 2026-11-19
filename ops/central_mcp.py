@@ -678,7 +678,7 @@ def _steward_health(payload):
 
 
 def _autonomy_summary(state):
-    """自治分级摘要：这一拍有多少工序是明确授权执行的、多少还在观察、多少等你转正。
+    """授权情况摘要：这一拍有多少工序是明确授权执行的、多少还在观察、多少等你转正。
 
     判据只读守护写进 `state.json` 的 `last_passes`，不重算注册表、不维护第二套真相。
     取不到时返回 `unknown` 并如实写「取不到」——不能把「没有记录」显示成
@@ -688,7 +688,7 @@ def _autonomy_summary(state):
     if not isinstance(passes, list) or not passes:
         return {
             "status": "unknown",
-            "label": "自治分级：本轮工序记录取不到",
+            "label": "授权情况：本轮记录取不到",
             "explicit": None,
             "observing": None,
             "proposed": None,
@@ -721,7 +721,7 @@ def _autonomy_summary(state):
         bits.append("%d 条出错" % errored)
     return {
         "status": "ok",
-        "label": "自治分级：" + " · ".join(bits),
+        "label": "授权情况：" + " · ".join(bits),
         "explicit": explicit,
         "observing": observing,
         "proposed": proposed,
