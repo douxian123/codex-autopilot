@@ -33,6 +33,19 @@ def _installed_version() -> str:
     raise AssertionError(f"找不到插件清单：{candidates[0]}")
 
 
+def _make_state_root(path: Path) -> None:
+    """把 release 副本补成合法的 `--no-seed` 状态根夹具。
+
+    release 目录按设计不带 ops/tasks 和 ops/truth；安装器的生产校验必须拒绝
+    空壳目录。测试若要模拟“已经初始化的项目”，就得自己放可提交的账本占位；
+    Git 不跟踪空目录，所以这里写文件而不是只 mkdir。
+    """
+    (path / "ops" / "tasks").mkdir(parents=True, exist_ok=True)
+    (path / "ops" / "truth").mkdir(parents=True, exist_ok=True)
+    (path / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+    (path / "ops" / "truth" / "ledger.jsonl").write_text("", encoding="utf-8")
+
+
 def run(cmd, cwd=None, env=None, check=True):
     p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
     if check and p.returncode != 0:
@@ -1338,13 +1351,7 @@ def test_installer():
         source = Path(tmp) / "source"
         shutil.copytree(OPS.parent, source,
                         ignore=shutil.ignore_patterns(".git", ".build"))
-        # release 副本按设计没有 ops/tasks 和 ops/truth；这里的 source 同时
-        # 充当 --no-seed 的状态根，所以要先补成合法的已初始化项目。
-        # Git 不跟踪空目录，必须提交占位文件，detached worktree 才会保留它们。
-        (source / "ops" / "tasks" / "inbox.jsonl").parent.mkdir(parents=True, exist_ok=True)
-        (source / "ops" / "truth" / "ledger.jsonl").parent.mkdir(parents=True, exist_ok=True)
-        (source / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
-        (source / "ops" / "truth" / "ledger.jsonl").write_text("", encoding="utf-8")
+        _make_state_root(source)
         source_install = source / "install.sh"
         run(["git", "init", "-q", "-b", "main", str(source)])
         run(["git", "-C", str(source), "config", "user.email",
@@ -1474,6 +1481,7 @@ def test_installer_requires_clean_source():
         root = Path(tmp)
         source = root / "source"
         shutil.copytree(OPS.parent, source, ignore=shutil.ignore_patterns(".git"))
+        _make_state_root(source)
         source_install = source / "install.sh"
         run(["git", "init", "-q", "-b", "main", str(source)])
         run(["git", "-C", str(source), "config", "user.email", "selftest@example.invalid"])
@@ -1528,6 +1536,7 @@ def test_installer_shell_portability():
     路径下才暴露。
     """
     import re
+    import shutil
 
     installed_version = _installed_version()
     pattern = re.compile(rb"\$[A-Za-z_][A-Za-z0-9_]*")
@@ -1545,6 +1554,16 @@ def test_installer_shell_portability():
 
     install = OPS.parent / "install.sh"
     with tempfile.TemporaryDirectory(prefix="autopilot-install-bash32-") as tmp:
+        source = Path(tmp) / "source"
+        shutil.copytree(OPS.parent, source,
+                        ignore=shutil.ignore_patterns(".git", ".build"))
+        _make_state_root(source)
+        run(["git", "init", "-q", "-b", "main", str(source)])
+        run(["git", "-C", str(source), "config", "user.email",
+             "selftest@example.invalid"])
+        run(["git", "-C", str(source), "config", "user.name", "Autopilot Selftest"])
+        run(["git", "-C", str(source), "add", "."])
+        run(["git", "-C", str(source), "commit", "-qm", "fixture"])
         home = Path(tmp) / "home"
         home.mkdir(parents=True)
         # 用一个立刻失败的 swiftc 桩，只为让 Companion 分支走「编译失败降级」，
@@ -1555,23 +1574,24 @@ def test_installer_shell_portability():
         stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         stub.chmod(0o755)
         trunk = Path(tmp) / "project-trunk"
-        run(["git", "-C", str(OPS.parent), "worktree", "add", "-q", "--detach",
+        run(["git", "-C", str(source), "worktree", "add", "-q", "--detach",
              str(trunk), "HEAD"])
 
         env = os.environ.copy()
         env["HOME"] = str(home)
         env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
         env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
-        result = run(["bash", str(install), "--trunk", str(trunk), "--no-seed",
-                      "--no-marketplace", str(OPS.parent)], env=env, check=False)
+        result = run(["bash", str(source / "install.sh"), "--trunk", str(trunk),
+                      "--no-seed", "--no-marketplace", str(source)],
+                     env=env, check=False)
         combined = result.stdout + result.stderr
         assert "unbound variable" not in combined, f"bash 3.2 变量解析崩了:\n{combined}"
         assert result.returncode == 0, f"完整安装路径没跑完:\n{combined}"
         assert (home / "plugins" / "codex-autopilot" / "releases" / installed_version
                 / "ops" / "central_mcp.py").is_file()
         # 同一份安装不带 Companion 时也必须照样成功。
-        result2 = run(["bash", str(install), "--trunk", str(trunk), "--no-seed",
-                       "--no-marketplace", "--no-companion", str(OPS.parent)],
+        result2 = run(["bash", str(source / "install.sh"), "--trunk", str(trunk),
+                       "--no-seed", "--no-marketplace", "--no-companion", str(source)],
                       env=env, check=False)
         # 版本目录已存在，第二次会因「拒绝覆盖」退出；只要不是崩在变量解析上就说明路径健康。
         assert "unbound variable" not in (result2.stdout + result2.stderr)
@@ -2228,6 +2248,7 @@ def test_installer_first_install_daemon_is_explicit():
         root = Path(tmp)
         source = root / "source"
         shutil.copytree(OPS.parent, source, ignore=shutil.ignore_patterns(".git"))
+        _make_state_root(source)
         run(["git", "init", "-q", "-b", "main", str(source)])
         run(["git", "-C", str(source), "config", "user.email", "selftest@example.invalid"])
         run(["git", "-C", str(source), "config", "user.name", "Autopilot Selftest"])
