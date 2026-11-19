@@ -1,29 +1,6 @@
 {
  "tasks": [
   {
-   "slug": "runtime-freshness-20261119b",
-   "branch": "codex/runtime-freshness-20261119b",
-   "resolve_branch": "codex/resolve-runtime-freshness-20261119b",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-runtime-freshness-20261119b",
-   "base_main": "0236f861a0d09b8b7891ce76b96c53199c6039ce",
-   "source_head": "0919a111ad2b9ff9e1cb322fab272bc0d15ad37f",
-   "source_commits": [
-    "e3a19b93ad2f0036cf1acebcac7c108304a39540",
-    "139e528e64005b4e4654dd0ff0019bed45210191",
-    "0919a111ad2b9ff9e1cb322fab272bc0d15ad37f"
-   ],
-   "created": "2026-11-19 23:03:49",
-   "updated": "2026-11-19 23:03:49",
-   "conflict_files": [
-    "ops/tasks/conflict_burden.json"
-   ],
-   "unresolved_files": [
-    "ops/tasks/conflict_burden.json"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
-  },
-  {
    "slug": "install-architecture-doc-20261119",
    "branch": "codex/install-architecture-doc-20261119",
    "resolve_branch": "codex/resolve-install-architecture-doc-20261119",
@@ -37,7 +14,7 @@
     "a05ac9e229b83f9a44791d3918cb0b241b8bf30e"
    ],
    "created": "2026-11-19 22:23:44",
-   "updated": "2026-11-19 22:23:44",
+   "updated": "2026-11-20 07:54:11",
    "conflict_files": [
     "ops/tasks/conflict_burden.json"
    ],
@@ -45,7 +22,31 @@
     "ops/tasks/conflict_burden.json"
    ],
    "auto_resolved_jsonl": [],
-   "status": "needs_agent"
+   "status": "gate_fail",
+   "gate_output": "× codex/resolve-install-architecture-doc-20261119 与 main 有 1 个冲突文件，拒绝自动 land：\n    ops/tasks/conflict_burden.json\n  这是需要归属裁决的信号（kgctl matrix 的 C 组）。"
+  },
+  {
+   "slug": "runtime-freshness-20261119b",
+   "branch": "codex/runtime-freshness-20261119b",
+   "resolve_branch": "codex/resolve-runtime-freshness-20261119b",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-runtime-freshness-20261119b",
+   "base_main": "0236f861a0d09b8b7891ce76b96c53199c6039ce",
+   "source_head": "0919a111ad2b9ff9e1cb322fab272bc0d15ad37f",
+   "source_commits": [
+    "e3a19b93ad2f0036cf1acebcac7c108304a39540",
+    "139e528e64005b4e4654dd0ff0019bed45210191",
+    "0919a111ad2b9ff9e1cb322fab272bc0d15ad37f"
+   ],
+   "created": "2026-11-19 23:03:49",
+   "updated": "2026-11-20 07:54:03",
+   "conflict_files": [
+    "ops/tasks/conflict_burden.json"
+   ],
+   "unresolved_files": [
+    "ops/tasks/conflict_burden.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "landed"
   },
   {
    "slug": "route-review-20261119",
@@ -505,5 +506,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-19 23:03:50"
+ "updated": "2026-11-20 07:54:11"
 }

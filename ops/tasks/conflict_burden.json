@@ -1,39 +1,37 @@
 {
  "main": "43f83433afb95e3a6d88dda4bbd2971d359bb36e",
  "branches": [
-  "codex/arch-boundaries-port-20261119",
   "codex/autopilot-close-gate-20261026",
   "codex/autopilot-exec-recover-min-20261020",
   "codex/autopilot-health-20261019",
   "codex/autopilot-parallel-runtime-fix-20261019",
   "codex/autopilot-resolve-stderr",
+  "codex/autopilot-routing-context-20261119",
   "codex/autopilot-truth-sync-failclosed",
   "codex/daemon-liveness-20261110",
   "codex/eval-loop-judge-20261110",
   "codex/guard-release-version-20261119",
+  "codex/install-architecture-doc-20261119",
   "codex/reap-branch-preserve-20261111",
   "codex/resource-admission-verify-narrowing-20261115",
-  "codex/snapshot-budget-archive-20261113",
-  "codex/autopilot-routing-context-20261119",
-  "codex/install-architecture-doc-20261119",
-  "codex/runtime-freshness-20261119b"
+  "codex/runtime-freshness-20261119b",
+  "codex/snapshot-budget-archive-20261113"
  ],
  "burden": {
-  "codex/arch-boundaries-port-20261119": 1,
   "codex/autopilot-close-gate-20261026": 2,
   "codex/autopilot-exec-recover-min-20261020": 2,
   "codex/autopilot-health-20261019": 1,
   "codex/autopilot-parallel-runtime-fix-20261019": 1,
   "codex/autopilot-resolve-stderr": 2,
+  "codex/autopilot-routing-context-20261119": 2,
   "codex/autopilot-truth-sync-failclosed": 2,
   "codex/daemon-liveness-20261110": 4,
   "codex/eval-loop-judge-20261110": 7,
   "codex/guard-release-version-20261119": 1,
+  "codex/install-architecture-doc-20261119": 4,
   "codex/reap-branch-preserve-20261111": 2,
   "codex/resource-admission-verify-narrowing-20261115": 3,
-  "codex/snapshot-budget-archive-20261113": 2,
-  "codex/autopilot-routing-context-20261119": 2,
-  "codex/install-architecture-doc-20261119": 4,
-  "codex/runtime-freshness-20261119b": 1
+  "codex/runtime-freshness-20261119b": 1,
+  "codex/snapshot-budget-archive-20261113": 2
  }
 }
