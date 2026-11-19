@@ -1898,6 +1898,10 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
         "路线与效能检测缺少只提复核的机器约束"
     assert "不杀 worker" in route_health_text or "不自动纠偏" in route_health_text, \
         "路线与效能检测缺少非破坏性边界"
+    architecture = (root / "docs" / "ARCHITECTURE_STEWARDS.md").read_text(encoding="utf-8")
+    for needle in ("为什么这不是人类岗位分工", "execute / control / evaluate",
+                   "「最优」只能是可证伪的闭环", "不是「自动把路线调回最优」"):
+        assert needle in architecture, f"架构文档缺少约束：{needle}"
     print(f"selftest ok: 发布包包含 PM 简报、验收标准候选与截图通道，版本 {version}。")
 
 
@@ -3622,6 +3626,10 @@ def test_auto_exec():
         # 可能还在退出过程中。模块级进程缓存若不重置，会把旧 worktree 误当成本
         # fixture 的活进程，跳过派发并直接清掉新分支。
         central_daemon._LIVE_EXEC_CACHE.update(ts=0.0, slugs=frozenset())
+        # ps 扫描仍可能看见上一个 fixture 正在退出的 fake codex（-C L-0001-item），
+        # 让本 fixture 的派发被重复派发保护静默跳过。这里只固定测试里的探针结果；
+        # 生产扫描逻辑和断言都不放宽。
+        central_daemon._live_exec_slugs = lambda *a, **k: frozenset()
         return central_daemon
 
     def dispatch_until_done(daemon, blocked, workers=None, limit=100, pause=0.1):
