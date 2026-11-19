@@ -554,6 +554,9 @@ def main(argv):
             "need_action_detail": "",
             "blocked": {"failures": [], "resolve": [], "exec": [], "port": []},
             "error": None,
+            # Q1 优先消费控制层 counts.stuck；现场有 17 条冲突时，只清 blocked
+            # 仍会被计数污染成「17 个卡点」。空态夹具必须把计数也归零。
+            "counts": {"doing": 0, "todo": 0, "review": 0, "stuck": 0},
             "harness_tune": {"status": "ok", "count": 0, "items": []},
             "constraint_candidates": {"status": "ok", "count": 0, "items": []},
             "acceptance_criteria": {"status": "ok", "count": 0, "items": []},
