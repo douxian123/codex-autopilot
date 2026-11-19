@@ -99,6 +99,28 @@
 - 字号不做 viewport 缩放，长文本换行；窄窗口保持单列，不让文字盖住相邻内容。
 - 计数、命令、路径、ID 一律进折叠区；首屏出现它们就是在消耗用户注意力。
 
+### 原生感的技术落点（2026-11-19 调研）
+
+这里的「原生感」不是复制 Codex 桌面包里的构建产物，而是遵守官方插件 UI 的设计系统，并用宿主包只校准密度和状态感。
+
+唯一直接复用源定为 `@openai/apps-sdk-ui`。当前核对版本是 `0.2.2`，MIT 许可；它提供机器可读的 CSS token、Tailwind 4 集成和基于 Radix 的 React 组件，目标就是让插件 UI 贴近 ChatGPT/Codex 的原生容器。面板实现必须锁定 React 18 或 19，并按官方顺序引入样式：
+
+```css
+@import "tailwindcss";
+@import "@openai/apps-sdk-ui/css";
+@source "../node_modules/@openai/apps-sdk-ui";
+```
+
+样式分三层：`variables-primitive.css` 提供原始色阶和透明度，`variables-semantic.css` 提供语义变量，`variables-components.css` 提供组件局部变量。面板代码优先消费语义变量和组件变量，不硬编码六位色值；已有组件优先使用 `Button`、`Badge`、`Alert`、`Avatar`、`Input`、`Textarea`、`Select`、`Switch`、`Tooltip`、`Popover`、`Menu`、`Markdown`、`CodeBlock`、`Icon`，不再手写同类视觉原件。
+
+`/Applications/ChatGPT.app/Contents/Resources/app.asar` 只作为只读校准样本。它是 Vite/React 构建后的 chunk，没有 source map、`.tsx` 或独立 design spec；`--d-stream-accent`、`--theme-accent-text`、`--input-font-size:16px`、`--select-control-font-size:14px`、`--alpha-08`、`light-dark(...)` 这类变量只能用来核对深浅色、密度、边框和状态感，不能整包复用，也不能据此声称拿到了原生组件源码。`~/.codex/App.main.tsx` 是 ThoughLoom 前端，旧版本 autopilot 的 `ui/panel.html` 是本插件面板，二者都不是 OpenAI 原生组件库。
+
+协议层走 MCP Apps：工具通过 `_meta.ui.resourceUri` 关联 UI，iframe 内用 `ui/*` JSON-RPC 与宿主通信。数据读取和渲染拆成 data tool 与 render tool；面板只消费投影后的事实，不直接改配置、派活或替用户收口。官方 [Figma 组件库](https://www.figma.com/community/file/1625636989296445101) 只作版式参考，不替代代码里的 token 契约。
+
+官方 UI 要求里与本项目最相关的约束：继承系统字体，不自定义字体；文本、图标、分割线使用系统色，品牌色只出现在 logo、badge 或主按钮；inline card 最多两个主操作；不做深层导航和嵌套滚动；carousel 保持 3 到 8 项；fullscreen 必须与宿主 composer 共存；PiP 只用于持续活动场景并随会话结束关闭。对 autopilot 来说，首屏阅读顺序仍是「结果标题 → 一个判断 → 最多两个动作 → 折叠的证据/状态」，内部计数、轮次、来源数量不进前台。
+
+验收记录路径：`/Users/danta/Documents/Codex/2026-11-19/new-chat/work/codex-ui-audit`；关键参考文件是 `pkg-extract/package/README.md`、`pkg-extract/package/dist/es/styles/variables-semantic.css` 和 `pkg-extract/package/dist/es/styles/variables-components.css`。真实 Codex/ChatGPT 宿主内渲染截图尚未完成，不能把这一节说成已经完成原生视觉验收。
+
 ## 相对当前截图的变化
 
 当前截图已经有三问骨架，但首屏仍混入了太多工程内部读数：守护绑定错项目的大段路径提示、七个管家逐行状态、原始健康说明、长列表最近收口、工程详情里的命令与 ID。优化方向不是再加卡片，而是把首屏压缩成「一条结论 + 三个字段 + 一个闭环数字」，其余全部下沉。具体保留、下沉、删除如下：
