@@ -1482,7 +1482,8 @@ def cmd_projects(args):
                 print(f"    线索  {'、'.join(p['clues'])}")
         backlog = project_router.routing_inbox_path()
         if backlog.exists():
-            print(f"  待路由箱 {backlog}（{len(read_jsonl(backlog))} 条）")
+            pending = project_router.pending_routing_records(backlog)
+            print(f"  待路由箱 {backlog}（{len(pending)} 条待复核；原始记录 {len(read_jsonl(backlog))} 条）")
         return
     if sub == "register":
         if len(args) < 3:
@@ -1550,14 +1551,118 @@ def _print_routing_backlog():
         path = project_router.routing_inbox_path()
         if not path.exists():
             return
-        rows = read_jsonl(path)
-        if rows:
-            print(f"\n全局待路由箱 {len(rows)} 条（判不清归属，未写进任何项目账本）：{path}")
-            for r in rows[-5:]:
-                print(f"  - [{r.get('ts','')[-11:]}] {str(r.get('text',''))[:70]}")
+        pending = project_router.pending_routing_records(path)
+        if pending:
+            print(f"\n全局待路由箱 {len(pending)} 条待复核（未写进任何项目账本）：{path}")
+            for item in pending[-5:]:
+                r = item["record"]
+                print(f"  - [{r.get('ts','')[-11:]}] {item['fingerprint']} "
+                      f"{str(r.get('text',''))[:70]}")
     except Exception:
         pass
 
+
+def cmd_route_inbox(args):
+    """复核全局待路由箱：只读列出，或把一条明确指派给某个项目。
+
+    自动路由判不清时进全局箱，绝不猜；但人看过一遍之后，原话里的产品名、日志里的
+    项目路径往往是明确证据。这里给这条证据一个显式出口：默认只读，必须同时给出
+    指纹 + 项目 + `--go` 才写。原始记录不删、不回写，只追加一份复核凭证。
+    """
+    if args and args[0] in ('-h', '--help'):
+        print('用法：kgctl route-inbox '
+              '[--fingerprint <指纹> --project <项目名> [--reason "为什么"]] [--go]')
+        print('  kgctl route-inbox                  # 只读列出待复核项')
+        print('  kgctl route-inbox --fingerprint a1b2 --project knowledge-graph '
+              '--reason "原话点名知识图谱" --go')
+        return 0
+    go = '--go' in args
+    rest = [a for a in args if a != '--go']
+    fingerprint, project_hint, reason = None, None, ''
+    i = 0
+    while i < len(rest):
+        flag = rest[i]
+        if flag in ('--fingerprint', '--project', '--reason') and i + 1 < len(rest):
+            value = rest[i + 1]
+            if flag == '--fingerprint':
+                fingerprint = value
+            elif flag == '--project':
+                project_hint = value
+            else:
+                reason = value
+            i += 2
+            continue
+        sys.exit(f'× 不认识的参数 {flag}')
+
+    path = project_router.routing_inbox_path()
+    pending = project_router.pending_routing_records(path)
+    if not project_hint and not fingerprint:
+        if not pending:
+            print('全局待路由箱为空（没有待复核项）。')
+            return 0
+        print(f'全局待路由箱 {len(pending)} 条待复核：{path}')
+        for item in pending:
+            row = item["record"]
+            text = str(row.get('text') or '')
+            candidates = [c.get('name') for c in (row.get('candidates') or [])
+                          if isinstance(c, dict) and c.get('name')]
+            context = f' 候选：{"、".join(candidates)}' if candidates else ''
+            print(f"  #{item['index']:03d} {item['fingerprint']} "
+                  f"[{row.get('ts','')[-11:]}] {text[:84]}{context}")
+        print('\n指派：kgctl route-inbox --fingerprint <指纹> --project <项目名> '
+              '--reason "证据" --go')
+        return 0
+
+    if not fingerprint or not project_hint:
+        sys.exit('× 指派必须同时给出 --fingerprint 和 --project；'
+                 '先跑 kgctl route-inbox 看指纹')
+    matches = [item for item in pending if item['fingerprint'] == fingerprint]
+    if not matches:
+        sys.exit(f'× 待复核箱里没有指纹 {fingerprint}（可能已指派；'
+                 '先跑 kgctl route-inbox 刷新）')
+    item = matches[0]
+    why = []
+    pinned = project_router.resolve_hint(project_hint, detail=why)
+    if not pinned:
+        sys.exit('× 项目指派有歧义或不存在：' + (why[0] if why else project_hint))
+    target_root = Path(pinned['root'])
+    if not looks_like_state_root(target_root):
+        sys.exit(f'× {target_root} 不像状态根；不写入')
+
+    print(f"待复核 #{item['index']:03d} [{item['record'].get('ts','')}] "
+          f"{str(item['record'].get('text',''))[:100]}")
+    print(f'指派到「{pinned["name"]}」→ {target_root}')
+    print(f'理由：{reason or "人工复核确认归属"}')
+    if not go:
+        print('\n预演：未写任何账本。确认后加 --go。')
+        return 0
+
+    source = item['record']
+    target_row = {k: v for k, v in source.items()
+                  if k not in ('status', 'candidates', 'reasons', 'routed')}
+    target_row.update({
+        'project': pinned['name'],
+        'project_root': str(target_root),
+        'routed': False,
+        'lane': None,
+        'routing_review': {
+            'fingerprint': fingerprint,
+            'reason': reason or '人工复核确认归属',
+            'source': str(path),
+        },
+    })
+    target_inbox = _inbox_path(target_root)
+    target_inbox.parent.mkdir(parents=True, exist_ok=True)
+    with target_inbox.open('a', encoding='utf-8') as fh:
+        fh.write(json.dumps(target_row, ensure_ascii=False) + '\n')
+
+    review_path = project_router.record_routing_review(
+        item['index'], source, pinned['name'], target_root,
+        reason or '人工复核确认归属')
+    print(f'已追加到 {target_inbox}')
+    print(f'复核凭证已追加（原记录不回写、不删除）：{review_path}')
+    print('只追加到目标项目唯一入口；归类由目标项目自己的 tick / route 处理。')
+    return 0
 
 
 def cmd_intake(args):
@@ -5357,14 +5462,16 @@ def cmd_status(args):
     # 一条需求如果既不在项目账本里、也不在面板上，就等于丢了。
     try:
         _backlog_path = project_router.routing_inbox_path()
-        _backlog = read_jsonl(_backlog_path) if _backlog_path.exists() else []
+        _backlog = (project_router.pending_routing_records(_backlog_path)
+                    if _backlog_path.exists() else [])
     except Exception:
         _backlog, _backlog_path = [], None
     if _backlog:
-        print(f"全局待路由箱   {len(_backlog)} 条判不清归属（未写进任何项目账本）：{_backlog_path}")
-        for _r in _backlog[-3:]:
+        print(f"全局待路由箱   {len(_backlog)} 条待复核（未写进任何项目账本）：{_backlog_path}")
+        for _item in _backlog[-3:]:
+            _r = _item["record"]
             print(f"  ├ [{str(_r.get('ts',''))[-11:]}] {str(_r.get('text',''))[:60]}")
-        print("  └ 指派：kgctl projects list 看候选；重发时设 KG_INBOX_PROJECT=<项目名>")
+        print("  └ 指派：kgctl route-inbox 查看指纹；确认后 --fingerprint <指纹> --project <项目名> --go")
     try:
         _registered = project_router.load_registry()
     except Exception:
@@ -5814,7 +5921,8 @@ def cmd_doctor(args):
 
 
 CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route,
-        "route-preview": cmd_route_preview, "suggest": cmd_suggest,
+        "route-preview": cmd_route_preview, "route-inbox": cmd_route_inbox,
+        "suggest": cmd_suggest,
         "projects": cmd_projects,
         "matrix": cmd_matrix, "queue": cmd_queue, "gate": cmd_gate, "converge": cmd_converge,
         "replan": cmd_replan,

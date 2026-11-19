@@ -301,6 +301,11 @@ def main():
         run([sys.executable, str(OPS / "test-project-router.py")],
             cwd=str(OPS.parent), check=True,
             env={**os.environ, "KG_AUTOPILOT_HOME": str(root / "autopilot-home")})
+        # 全局待路由箱的复核出口：自动路由猜不出时进全局箱是对的，但箱里的历史
+        # 记录此前没有可审计的指派路径，重复条目也一直占着面板注意力。这条门禁
+        # 锁住默认只读、显式 --go 才写、原始记录不回写、重复原文只落一次。
+        run([sys.executable, str(OPS / "test-route-inbox.py")],
+            cwd=str(OPS.parent), check=True)
         # 「装的版本」与「跑的版本」是两件事：Codex 升级插件时替换版本目录，却不
         # 重启已经在跑的 MCP 进程。那些进程的 OPS_DIR 指向已删除的目录，每次调用
         # kgctl 都只拿到 can't open file，而宿主只表现为「工具坏了」——不抛异常、

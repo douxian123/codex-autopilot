@@ -2411,9 +2411,11 @@ def _product_state(limit=25):
 
 
 def _answer_needed_count():
-    """判不清归属、还压在全局待路由箱里的投稿条数。
+    """判不清归属、还没人工复核指派的投稿条数。
 
     这些需求没进任何项目账本，只在待路由箱里——面板必须让它们露面，否则等于丢了。
+    已复核并写进目标项目的记录留原始凭证不删，但不再占用用户注意力；同一句诉求
+    反复投递也只算一项。取不到一律回 0，宁可少报一项，也不要虚报。
     取不到一律回 0：宁可少报一项「等你答一句」，也不要因为读不到就把现场说成有事。
     """
     try:
@@ -2421,18 +2423,7 @@ def _answer_needed_count():
         path = project_router.routing_inbox_path()
         if not path.exists():
             return 0
-        n = 0
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except ValueError:
-                continue
-            if not rec.get("routed"):
-                n += 1
-        return n
+        return len(project_router.pending_routing_records(path))
     except Exception:
         return 0
 
