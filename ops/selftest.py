@@ -167,6 +167,7 @@ def main():
             "test-wake-resume.py",
             "test-authorized-followup.py",
             "test-steward-contract.py",
+            "test-runtime-freshness.py",
             "test-closure-plan.py",
             "test-context-archive.py",
         )

@@ -272,6 +272,64 @@ def _route_health_summary(payload, state=None):
     return summary
 
 
+_RUNTIME_FRESHNESS_UNSET = object()
+
+
+def _autopilot_source_repo_path():
+    """Find the plugin source repo when this machine actually has one.
+
+    KG_REPO points at the *target project*, which is not always the autopilot
+    source. Only treat it as source when it visibly contains the plugin
+    manifest and this server, otherwise source-vs-installed comparison stays
+    unavailable instead of guessing.
+    """
+    candidates = (
+        os.environ.get("KG_AUTOPILOT_SOURCE_REPO"),
+        os.environ.get("KG_REPO"),
+    )
+    for raw in candidates:
+        if not raw:
+            continue
+        repo = Path(raw).expanduser()
+        if ((repo / "plugin/.codex-plugin/plugin.json").is_file()
+                and (repo / "ops/central_mcp.py").is_file()):
+            return repo
+    return None
+
+
+def _autopilot_source_commit():
+    """Read the local source main commit without fetching or changing refs."""
+    repo = _autopilot_source_repo_path()
+    if repo is None:
+        return None
+    for ref in ("refs/remotes/origin/main", "HEAD"):
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(repo), "rev-parse", ref],
+                capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        commit = (proc.stdout or "").strip() if proc.returncode == 0 else ""
+        if commit:
+            return commit
+    return None
+
+
+def _runtime_freshness_summary(binding=None, source_commit=_RUNTIME_FRESHNESS_UNSET):
+    """状态管家内部判据：源码、已装版本、运行代码是否同一代。只读。"""
+    try:
+        import plugin_binding
+        import runtime_freshness
+    except Exception as exc:
+        return {"status": "ok", "level": "unknown",
+                "headline": "运行态判据取不到：检测器不可用（%s）" % exc,
+                "unknown": ["检测器不可用"], "reasons": [], "action": "none"}
+    if source_commit is _RUNTIME_FRESHNESS_UNSET:
+        source_commit = _autopilot_source_commit()
+    return runtime_freshness.evaluate(
+        binding or plugin_binding.install_consistency(), source_commit=source_commit)
+
+
 def _project_health_summary(payload):
     """全局健康层：项目真相 / 执行流动 / 验收三层，只读聚合，不造第二套台账。
 
@@ -423,6 +481,7 @@ def _steward_health(payload):
     route_review = route_health.get("review") or {}
     route_review_count = route_review.get("count")
     project_health = payload.get("project_health") or {}
+    runtime_freshness = payload.get("runtime_freshness") or {}
     queue = payload.get("queue") or {}
     counters = payload.get("counters") or {}
     blocked = payload.get("blocked") or {}
@@ -476,12 +535,17 @@ def _steward_health(payload):
                      % (_n(queue.get("clean")), _n(counters.get("landed")),
                         _n(queue.get("conflict")))})
 
-    # 4. 状态管家：待点头的 harness 调整卡 + 上下文健康 + 路线/效能复核。
-    # 路线信号是同一个管家内部的只读检测器；不新增一行，也不生成动作。
+    # 4. 状态管家：待点头的 harness 调整卡 + 上下文健康 + 路线/效能复核 + 运行态新鲜度。
+    # 这些信号都是同一个管家内部的只读检测器；不新增一行，也不生成动作。
     route_level = route_health.get("level")
+    freshness_level = runtime_freshness.get("level")
     if tune.get("status") != "ok":
         rows.append({"key": "tune", "state": "unknown",
                      "label": "状态管家：调整卡读不到"})
+    elif freshness_level == "attention":
+        rows.append({"key": "tune", "state": "attention",
+                     "label": "状态管家：%s（需受控换代或重载，不会自动重启）"
+                     % (runtime_freshness.get("headline") or "运行态需要复核")})
     elif route_level == "unknown":
         rows.append({"key": "tune", "state": "unknown",
                      "label": "状态管家：%s" % (route_health.get("headline")
@@ -503,6 +567,12 @@ def _steward_health(payload):
     elif route_level == "attention":
         rows.append({"key": "tune", "state": "attention",
                      "label": "状态管家：路线与效能需复核（只提复核，不自动纠偏）"})
+    elif freshness_level == "unknown":
+        # 开发检出没有安装锚点只是「判据不足」，不能盖住真正需要人看的路线
+        # attention。放在最后：有可执行结论先报，确实取不到才报取不到。
+        rows.append({"key": "tune", "state": "unknown",
+                     "label": "状态管家：%s" % (runtime_freshness.get("headline")
+                                              or "运行态判据取不到")})
     else:
         rows.append({"key": "tune", "state": "ok",
                      "label": "状态管家：%s" % (harness_health.get("headline") or "当前无待调整项")})
@@ -2481,6 +2551,14 @@ def _status_payload(fast=True):
                 "reasons": [],
                 "action": "none",
             },
+            "runtime_freshness": {
+                "status": "ok",
+                "level": "unknown",
+                "headline": "运行态判据取不到：安装绑定失效",
+                "unknown": ["安装绑定失效"],
+                "reasons": [],
+                "action": "none",
+            },
             "mainline": {},
             "route": {},
             "roadmap": [],
@@ -2753,6 +2831,9 @@ def _status_payload(fast=True):
     }
     # 路线与效能是状态管家的内部只读检测器，不新增管家、不新增卡片。
     payload["route_health"] = _route_health_summary(payload, st)
+    # 源码 / 已装版本 / 运行代码是否同一代，仍是状态管家内部判据。只提示
+    # 受控换代或重载，绝不自动重启、改配置、派工单。
+    payload["runtime_freshness"] = _runtime_freshness_summary(health)
     # 七管家健康条 + 全局项目健康：一眼看出哪个管家断了、项目整体是否还健康。
     # 必须等 payload 构造完再算——判据全来自上面这些字段，不能引用还在构造的自己。
     payload["stewards"] = _steward_health(payload)
@@ -2815,6 +2896,10 @@ def _status_text(payload):
     if rh.get("level") in ("attention", "unknown"):
         lines.append("路线与效能：%s（仅提复核，不自动纠偏）"
                      % (rh.get("headline") or "取不到"))
+    rf = payload.get("runtime_freshness") or {}
+    if rf.get("level") in ("attention", "unknown"):
+        lines.append("运行态新鲜度：%s（只提示受控换代，不自动重启）"
+                     % (rf.get("headline") or "取不到"))
     ps = payload.get("product_state") or {}
     if ps.get("count"):
         lines.append("产品状态：已记录 %s 个模块行为（最后更新 %s）"

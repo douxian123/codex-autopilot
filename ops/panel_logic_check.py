@@ -896,6 +896,36 @@ def main(argv):
                                 + str(ratt_out.get("stewardHtml") or ""))
         fails += has("路线异常时提示复核", route_attention_view,
                      "路线与效能需复核（只提复核，不自动纠偏）")
+
+        # 运行态新鲜度是状态管家内部的只读判据：源码进了 main 不代表现场吃到。
+        # 它必须落在 tune 节点上、写清需受控换代/重载，且绝不暗示自动重启。
+        freshness = dict(route_unknown)
+        freshness["runtime_freshness"] = {
+            "status": "ok", "level": "attention",
+            "headline": "已装版本落后于主干源码，源码改动还没进入运行态",
+            "unknown": [],
+            "reasons": ["需要受控换代或重载后才能现场生效"],
+            "action": "recommend_stable_upgrade",
+        }
+        freshness["stewards"] = central_mcp._steward_health(freshness)
+        fresh_out = run_once(freshness)
+        fresh_view = (str(fresh_out["stewardBar"]) + " "
+                      + str(fresh_out.get("stewardHtml") or ""))
+        fails += has("源码已装不同代时如实提示", fresh_view,
+                     "已装版本落后于主干源码")
+        fails += has("运行态提示写清不会自动重启", fresh_view, "不会自动重启")
+        if 'data-key="tune"' not in str(fresh_out.get("stewardHtml") or ""):
+            fails += 1
+            print("  FAIL  运行态提示没有落在状态管家节点上")
+        else:
+            print("  PASS  运行态提示落在状态管家节点上")
+        fresh_keys = {r.get("key") for r in (freshness["stewards"].get("rows") or [])
+                      if r.get("key") != "health"}
+        if len(fresh_keys) != 7:
+            fails += 1
+            print(f"  FAIL  运行态提示把管家扩成 {len(fresh_keys)} 个")
+        else:
+            print("  PASS  运行态提示没有新增第八个管家")
         # 内部空值不得泄漏到读者面。实测缺陷（2026-11-17）：守护没跑时合并管家那行
         # 直接印出「可合 None · 冲突 None」。None/True/False 这类 Python 字面量
         # 一旦上屏就是没交付——这是本项目硬规则（内部读数不上读者面）。
