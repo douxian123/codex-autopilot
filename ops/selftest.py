@@ -391,6 +391,10 @@ def main():
         # 人点头后登记 A-id，但仍不伪造 evidence，机器项要真门禁、人工项先自验。
         run([sys.executable, str(OPS / "test-acceptance-criteria.py")],
             cwd=str(OPS.parent), check=True)
+        # 关单必须有命令/cwd/退出码或已落 commit，回归必须重新打开：
+        # 自由文本不能把台账刷成 done，也不能把原证据抹掉。
+        run([sys.executable, str(OPS / "test-acceptance-close-reopen.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()

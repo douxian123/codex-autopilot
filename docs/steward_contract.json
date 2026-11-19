@@ -51,7 +51,7 @@
       "human_boundary": "用户确认验收标准与复核视觉/体验；系统不把用户当第一道测试",
       "history": "acceptance_criteria_candidates.jsonl、acceptance.jsonl",
       "status": "partial",
-      "gap": "候选、编译、证据闸门已落地；从自然语言到十条真实验收的稳定性仍待击穿"
+      "gap": "候选、编译、证据闸门、截图附件与关单/回归重开已落地；十条真实需求的稳定验收仍待端到端击穿"
     },
     {
       "id": "routing",
