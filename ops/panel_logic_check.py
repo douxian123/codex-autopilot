@@ -552,6 +552,11 @@ def main(argv):
         clean.update({
             "need_action": "不需要你做什么，继续照常提需求就行",
             "need_action_detail": "",
+            "blocked": {"failures": [], "resolve": [], "exec": [], "port": []},
+            "error": None,
+            "harness_tune": {"status": "ok", "count": 0, "items": []},
+            "constraint_candidates": {"status": "ok", "count": 0, "items": []},
+            "acceptance_criteria": {"status": "ok", "count": 0, "items": []},
         })
         clean_out = run_once(clean)
         fails += has("无需处理时第一问摘要写不用你", clean_out["q1State"], "不用你")
