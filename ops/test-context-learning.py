@@ -53,6 +53,16 @@ def main():
         subprocess.run(["git", "init", "-q", str(repo)], check=True)
         subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
                         "https://example.invalid/test/context-learning.git"], check=True)
+        worktree = root / "agent-worktree"
+        worktree.mkdir()
+        subprocess.run(["git", "init", "-q", str(worktree)], check=True)
+        subprocess.run(["git", "-C", str(worktree), "remote", "add", "origin",
+                        "https://example.invalid/test/context-learning.git"], check=True)
+        other_repo = root / "other-repo"
+        other_repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(other_repo)], check=True)
+        subprocess.run(["git", "-C", str(other_repo), "remote", "add", "origin",
+                        "https://example.invalid/test/other-project.git"], check=True)
         (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
         (repo / "ops" / "truth" / "project_folders.json").write_text(json.dumps({
             "folders": [{
@@ -69,7 +79,8 @@ def main():
         ]
         session(sessions / "a.jsonl", "thread-a", texts[:2], str(repo))
         session(sessions / "b.jsonl", "thread-b", texts[2:], str(repo))
-        session(sessions / "other.jsonl", "thread-c", texts, "/tmp/unrelated-project")
+        session(sessions / "worktree.jsonl", "thread-f", texts[:1], str(worktree))
+        session(sessions / "other.jsonl", "thread-c", texts, str(other_repo))
         session(sessions / "promote-a.jsonl", "thread-d", [
             "所有改动只能做正向优化，绝对不允许破坏性修改或影响用户工作进程",
             "不要做负向修改，要非破坏性地推进",
@@ -77,21 +88,60 @@ def main():
         session(sessions / "promote-b.jsonl", "thread-e", [
             "绝对不允许做破坏性修改，只能做优化",
         ], str(repo))
+        session(sessions / "docs.jsonl", "thread-g", [
+            "context-learning-test 的面板不要出现无关信息，必须遵循用户注意力机制",
+            "万法归一入口应该把不同项目的输入路由到对应项目",
+        ], "/tmp/project-discussion-docs")
+        session(sessions / "other-docs.jsonl", "thread-h", [
+            "context-learning-test 可以借鉴这个面板设计，但当前项目是别的产品",
+            "这是别的项目，不要落进 context-learning-test 账本",
+        ], "/tmp/other-project-discussion-docs")
+        # 同一会话跨 rollout 重发同一句原话，只算一次提及。
+        session(sessions / "a-rollout-2.jsonl", "thread-a", [texts[0]], str(repo))
+        # harness / goal / delegation / 心跳的注入不是人的诉求，哪怕长得像用户消息。
+        session(sessions / "noise.jsonl", "thread-noise", [
+            '<external_goal_objective>闭环修好这个问题，提交到 main 才算证据</external_goal_objective>',
+            '<codex_internal_context source="user_goal">面板必须降噪并遵循用户注意力机制</codex_internal_context>',
+            '<hook_prompt hook_run_id="hook-1">万法归一入口应该把问题路由调度出去</hook_prompt>',
+            '<heartbeat>thoughloom-29：I-xxxx 闭环进度检查</heartbeat>',
+            'System message from the application, not from the user: 面板不要有噪音',
+            '你是项目「thoughloom-29」的「司令台」，面板必须遵循注意力机制',
+        ], str(repo))
 
         env = {"KG_REPO": str(repo), "KG_SESSION_ROOTS": str(sessions)}
         learning = load("context_learning_t", "context_learning.py", env)
+
+        identity = learning._project_identity()
+        check("同 remote 的隔离 worktree 归到本项目",
+              learning._session_belongs({"cwd": str(worktree)}, identity), identity)
+        check("不同 remote 的仓库不归本项目",
+              not learning._session_belongs({"cwd": str(other_repo)}, identity), identity)
+        check("文档型项目讨论归到本项目",
+              learning._content_belongs(sessions / "docs.jsonl", identity), identity)
+        check("显式别的项目不归本项目",
+              not learning._content_belongs(sessions / "other-docs.jsonl", identity), identity)
+        check("系统注入与委派正文不算用户原话",
+              not list(learning._iter_user_texts(
+                  learning._iter_jsonl_raw_lines(sessions / "noise.jsonl"))), identity)
 
         obs = learning.observe()
         check("历史会话可读", obs.get("status") == "ok", obs)
         themes = {t["key"]: t for t in obs.get("themes") or []}
         check("同主题达到阈值才提名", "reader_surface_noise" in themes, themes)
         row = themes.get("reader_surface_noise") or {}
-        check("统计提及次数", row.get("mentions") == 3, row)
-        check("统计跨会话数", row.get("threads") == 2, row)
+        check("统计提及次数", row.get("mentions") == 5, row)
+        check("统计跨会话数", row.get("threads") == 4, row)
         check("别人的项目不进账", all(x.get("thread") != "thread-c"
                                      for x in row.get("evidence") or []), row)
+        check("文档型讨论窗能归到本项目", all(x.get("thread") != "thread-h"
+                                       for x in row.get("evidence") or []), row)
+        check("文档型讨论窗的主题证据可学习", any(x.get("thread") == "thread-g"
+                                          for x in row.get("evidence") or []), row)
+        check("跨 rollout 的同一句原话不重复计数", row.get("mentions") == 5, row)
+        check("系统注入不进主题证据", all(x.get("thread") != "thread-noise"
+                                    for x in row.get("evidence") or []), row)
 
-        low = learning.observe(min_threads=3, min_mentions=3)
+        low = learning.observe(min_threads=5, min_mentions=3)
         check("阈值未达不提名", "themes" in low and not low.get("themes"), low)
 
         proposed = learning.propose()
