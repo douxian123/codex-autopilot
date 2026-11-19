@@ -15,6 +15,7 @@ Codex 宿主的同一条通知把真实状态喂进去，最后把首屏各行�
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -207,9 +208,11 @@ console.log(JSON.stringify({
   hierarchyProject: read("hierProject"),
   hierarchyRoad: read("hierRoad"),
   hierarchyWork: read("hierWork"),
+  sysLine: read("sysLine"),
   folderBox: read("folderBox"),
   stateLabel: read("stateLabel"),
   subtitle: read("subtitle"),
+  q1State: read("q1State"),
   masterState: read("masterState"),
   focusStatus: read("focusStatus"),
   focusDoing: read("focusDoing"),
@@ -222,6 +225,7 @@ console.log(JSON.stringify({
   needAria: document.getElementById("need").getAttribute("aria-label") || "",
   needEvidence: read("needEvidenceBox"),
   needEvidenceHidden: document.getElementById("needEvidenceFold").hidden,
+  systemDetail: read("systemDetail"),
   nativeState: read("nativeState"),
   received: read("cReceived"),
   landned: read("cLanded"),
@@ -230,6 +234,7 @@ console.log(JSON.stringify({
   stDoing: read("stDoing"),
   recentBox: read("recentBox"),
   recentNote: read("recentNote"),
+  recentSerialized: serializeEl(document.getElementById("recentBox")),
   acceptBox: read("acceptBox"),
   blockedList: read("blockedList"),
   blockedHtml: document.getElementById("blockedList").innerHTML,
@@ -310,6 +315,24 @@ def main(argv):
                 return 1
             print(f"  PASS  {label}")
             return 0
+
+        def lacks(label, text, *needles):
+            found = [n for n in needles if str(n) in str(text)]
+            if found:
+                print(f"  FAIL  {label}（{text!r} 里仍有 {found}）")
+                return 1
+            print(f"  PASS  {label}")
+            return 0
+
+        def human_recent(text):
+            """镜像面板的最近收口文案：正文说结果，ID 只留在 title/aria。"""
+            value = str(text or "").strip()
+            closed = re.match(r"^[A-Z]+-\d+\s+已收口：\s*(.*)$", value)
+            if closed:
+                return "已收口：" + (closed.group(1) or "一项工作")
+            if value.endswith("已合入"):
+                return "代码已合入"
+            return value
 
         def hierarchy_work_text(state):
             """镜像面板的工作项优先级，别把现场状态写死成某一种空态。"""
@@ -456,6 +479,12 @@ def main(argv):
         fails += has("守护绑定路径仍可从 title 取到", dout["needTitle"], daemon_bound)
         fails += has("守护绑定路径仍可从 aria-label 取到", dout["needAria"], daemon_bound)
         fails += has("守护详情进入折叠区", dout["needEvidence"], daemon_bound, daemon_current)
+        fails += has("守护异常时第一问摘要不再写不用你", dout["q1State"], "需关注")
+        if "不用你" in str(dout["q1State"]):
+            fails += 1
+            print("  FAIL  守护异常与“不用你”摘要自相矛盾")
+        else:
+            print("  PASS  守护异常与摘要保持一致")
         if dout.get("needEvidenceHidden") is False:
             print("  PASS  有详情时工程详情折叠区可见")
         else:
@@ -467,6 +496,7 @@ def main(argv):
             "need_action_detail": "",
         })
         clean_out = run_once(clean)
+        fails += has("无需处理时第一问摘要写不用你", clean_out["q1State"], "不用你")
         if clean_out.get("needEvidenceHidden") is True:
             print("  PASS  无详情时工程详情折叠区不占空间")
         else:
@@ -945,9 +975,41 @@ def main(argv):
         fails += has("计数：收到反馈", out["received"], counters.get("received"))
         fails += has("计数：已合入", out["landned"], counters.get("landed"))
         fails += has("计数：待你验收", out["stReview"], len(human_acc))
+
+        # 系统状态行只给人一句可信结论；PID、队列、-daemon 绑定等判据仍要能在
+        # 折叠的工程详情里查到，不能因为降噪把可观测性删掉。
+        hh = payload.get("harness_health") or {}
+        health_text = hh.get("headline") or (
+            "上下文健康：" + (hh.get("reason") or "取不到"))
+        q = payload.get("queue") or {}
+        fails += has("系统首屏只显示健康结论", out["sysLine"], health_text)
+        fails += lacks("系统首屏不铺开队列与守护读数", out["sysLine"],
+                       "可落盘 ", "冲突 ", "常驻运行中", "常驻未运行")
+        if q.get("clean") is not None:
+            fails += has("工程详情保留可落盘读数", out["systemDetail"],
+                         "可落盘 " + str(q.get("clean")))
+        if q.get("conflict") is not None:
+            fails += has("工程详情保留冲突读数", out["systemDetail"],
+                         "冲突 " + str(q.get("conflict")))
+
         recent = payload.get("recent_completed") or []
         if recent:
-            fails += has("首屏显示最近完成了什么", out["recentBox"], recent[0])
+            fails += has("首屏显示最近完成了什么", out["recentBox"],
+                         human_recent(recent[0]))
+            fails += lacks("最近收口正文不露原始 ID", out["recentBox"],
+                           *[r for r in recent if re.match(r"^[A-Z]+-\d+", str(r))])
+            if re.match(r"^[A-Z]+-\d+", str(recent[0])):
+                fails += has("最近收口 ID 保留在 title/aria", out["recentSerialized"],
+                             str(recent[0]), "收口详情：" + str(recent[0]))
+            visible_recent = min(len(recent), 3)
+            fails += has("最近收口首屏只报前三条", out["recentNote"],
+                         "最近 " + str(visible_recent) + " 项")
+            got_recent = str(out["recentSerialized"]).count("收口详情：")
+            if got_recent == visible_recent:
+                print("  PASS  最近收口正文最多三条")
+            else:
+                fails += 1
+                print(f"  FAIL  最近收口正文条数错误：期望 {visible_recent}，实得 {got_recent}")
         else:
             fails += has("没有收口记录时给出空态说明", out["recentBox"] or document_empty(out), "还没有收口记录")
 
