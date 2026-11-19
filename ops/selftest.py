@@ -1424,7 +1424,8 @@ def test_installer():
         for required in ("ops/guards/repoint_launchd.py",
                          "ops/guards/hyapi_secrets.py",
                          "docs/steward_contract.json",
-                         "docs/closure_plan.json"):
+                         "docs/closure_plan.json",
+                         "docs/ARCHITECTURE_STEWARDS.md"):
             assert (release / required).is_file(), f"发布版本缺少 {required}"
         resource_hook = home / ".codex" / "hooks" / "resource-admission.py"
         assert resource_hook.is_file(), "安装后没有落地资源准入 hook"
@@ -1903,7 +1904,13 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
         "验收标准候选缺少显式确认与不伪造证据约束"
     assert "routed" in acceptance_text, "验收标准候选没有沿用已路由入口闸门"
 
-    panel_text = (root / "plugin" / "ui" / "panel.html").read_text(encoding="utf-8")
+    # 源码树把插件放在 plugin/ui/；不可变发布树的插件内容直接位于发布根。
+    # 这条契约要同时守住两种真实布局，不能只在源码 checkout 里绿。
+    panel = root / "plugin" / "ui" / "panel.html"
+    if not panel.is_file():
+        panel = root / "ui" / "panel.html"
+    assert panel.is_file(), "发布树缺少 ui/panel.html"
+    panel_text = panel.read_text(encoding="utf-8")
     assert "pmBriefingBox" in panel_text, "面板缺少 PM 简报容器"
     assert "renderPmBriefing" in panel_text, "面板未接 PM 简报渲染"
     assert "contextArchiveFold" in panel_text, "面板缺少上下文档案次入口"
