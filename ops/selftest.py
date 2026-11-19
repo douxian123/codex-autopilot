@@ -113,6 +113,9 @@ def main():
             "test-reap-worktree-lock.py",
             "test-reap-live-session-guard.py",
             "test-reap-weak-signal-mode.py",
+            # kg-gate 崩溃残留只能凭自动挡 sidecar 认领；无标记/外部标记/宽限期内
+            # 一律不碰，过宽限期仍要走 worktree guard 的 all 判活。L-0001。
+            "test-gate-owner-reap.py",
             "test-reap-creation-grace.py",
             "test-reap-stripped-only.py",
             "test-reap-backend-orphans.py",
@@ -141,7 +144,17 @@ def main():
             "test-repoint-interval.py",
             "test-snapshot-clone-prune.py",
             "test-runtime-truthctl-selection.py",
+            "test-state-root-freshness.py",
+            "test-mirror-truth-jsonl-union.py",
+            "test-selftest-release-dir.py",
             "test-gate-registration.py",
+            "test-acceptance-criteria.py",
+            "test-worker-lifecycle.py",
+            "test-exec-lifecycle.py",
+            "test-wake-resume.py",
+            "test-authorized-followup.py",
+            "test-steward-contract.py",
+            "test-closure-plan.py",
         )
         for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)
@@ -200,6 +213,10 @@ def main():
         # 要么是登记过的薄转发。单测用假 HOME 造现场，不碰真实 launchd。
         run([sys.executable, str(OPS / "test-launchd-entry-freshness.py")],
             cwd=str(OPS.parent), check=True)
+        # 版本化 HyAPI 入口后，密钥不能进仓库：缺本地密钥时 repoint 必须
+        # fail closed，绝不把 plist 改成「路径新鲜但立刻 SystemExit」。
+        run([sys.executable, str(OPS / "test-launchd-repoint-secrets.py")],
+            cwd=str(OPS.parent), check=True)
         # 改指 managed 任务时必须保留常驻参数：2026-10-27 真实事故是
         # `--loop --interval 15 --max-land 3` 被抹成只剩脚本路径，launchd
         # 直接 exec 一个 .py，守护进程静默停摆，而改指脚本照样打印「✓」。
@@ -225,9 +242,25 @@ def main():
         # 「需要你验收」，等于让用户当第一道测试——用户明确要求过这个顺序。
         run([sys.executable, str(OPS / "test-acceptance-selfcheck.py")],
             cwd=str(OPS.parent), check=True)
+        # 复核截图必须由人点确认、只追加附件、失败时不写假路径。
+        # 面板按钮和 MCP 工具都靠这条门禁守住边界，不能只做静态文案检查。
+        run([sys.executable, str(OPS / "test-acceptance-screenshot.py")],
+            cwd=str(OPS.parent), check=True)
         # 全局项目健康：只读聚合真相/执行/验收三层，取不到必须 unknown。
         # 这条同时锁住「空台账与文件缺失不同」「overlap 排队不是病」「待自验没人跑是真卡点」。
         run([sys.executable, str(OPS / "test-project-health.py")],
+            cwd=str(OPS.parent), check=True)
+        # 路线与效能健康：状态管家要能发现路线跑偏、无关卡点和重试空转，
+        # 但只能提复核。取不到必须 unknown；正常重试和 overlap 排队不能误报。
+        run([sys.executable, str(OPS / "test-route-health.py")],
+            cwd=str(OPS.parent), check=True)
+        # 关系层：跨项目长期目标必须有稳定对象。显式来源、空账本与取不到的区别、
+        # 损坏账本 fail-closed、只读投影不派活，都由这条门禁锁住。
+        run([sys.executable, str(OPS / "test-relationship-ledger.py")],
+            cwd=str(OPS.parent), check=True)
+        # 结果代理分：只读已有台账，北极星判据缺失不能由其他项替补，
+        # unknown 不算 0 分，机器门禁绿灯不等于用户结果变好。
+        run([sys.executable, str(OPS / "test-outcome-score.py")],
             cwd=str(OPS.parent), check=True)
         # PM 简报：预期打磨、施工让路、进度追问候选必须来自已有台账，
         # 取不到说 unknown；尤其不许把「只生成候选」做成自动发消息。
@@ -268,6 +301,15 @@ def main():
         # 此前只有 judgments.jsonl（判断逻辑），没有 scope 也没有强制回路 ——
         # 写了不会被后续实现自动引用，等于「规范是文字，文字输给顺手」。
         run([sys.executable, str(OPS / "test-constraints-intake.py")],
+            cwd=str(OPS.parent), check=True)
+        # 真相层 append-only 台账的 active 投影不能因为重复落盘长出双份：
+        # 决策/判断/约束同一内容出现两次，会把产品主线和实现 prompt 一起污染。
+        # 这条同时锁住 retire 必须追加状态行、不许删历史物理行。
+        run([sys.executable, str(OPS / "test-truth-dedupe.py")],
+            cwd=str(OPS.parent), check=True)
+        # 常驻自追踪每拍都会综合产品主线。正文没变时不许重写生成时间，
+        # 否则共享主干会被同一份「刚更新」的假进展反复弄脏。
+        run([sys.executable, str(OPS / "test-selftrack-mainline.py")],
             cwd=str(OPS.parent), check=True)
         # 约束必须真的能兜底：标了 enforceable=gate 的约束此前从没被执行过 ——
         # 落盘门禁只读 central.config.json，而 CLI/面板却渲染成「有门禁」，是实打实
@@ -316,6 +358,15 @@ def main():
         # 提名阶段绝不写生效台账、promote 才走 truthctl 真写、按原话去重（dismiss
         # 过的同句不再弹回）。
         run([sys.executable, str(OPS / "test-constraint-candidates.py")],
+            cwd=str(OPS.parent), check=True)
+        # 上下文管家自学习：跨会话重复诉求只能出候选，用户确认前不改
+        # constraints.jsonl；确认后带 source=context_learning 进统一约束闸；
+        # 否掉的同主题不再复发；源目录读不到时如实报 unknown。
+        run([sys.executable, str(OPS / "test-context-learning.py")],
+            cwd=str(OPS.parent), check=True)
+        # 验收管家：模糊预期必须先变成「怎么算完成」的候选，确认前不写验收台账；
+        # 人点头后登记 A-id，但仍不伪造 evidence，机器项要真门禁、人工项先自验。
+        run([sys.executable, str(OPS / "test-acceptance-criteria.py")],
             cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
@@ -1249,6 +1300,7 @@ def test_project_auto_exec_default_is_off():
 def test_installer():
     """版本化安装只切 marketplace 指针，不覆盖旧插件；回滚只还原自动挡入口。"""
     import json as _json
+    import shutil
 
     install = OPS.parent / "install.sh"
     # 源码级锁：装完必须尝试把守护改指新版本。少了这一段，用户「装了新版」
@@ -1257,6 +1309,10 @@ def test_installer():
     assert "--install" in _install_src and "NO_DAEMON_REPOINT" in _install_src, \
         "install.sh 缺少「装完把守护改指新版本」这一步"
     assert "daemon.plist" in _install_src, "install.sh 没有检查本机是否已装守护"
+    assert "--install-daemon" in _install_src, \
+        "install.sh 缺少显式首次安装守护入口"
+    assert "按约定不替你启用常驻" in _install_src, \
+        "install.sh 缺少「默认不替用户启用常驻」的明确出口"
     assert "install-resource-hooks.py" in _install_src, \
         "install.sh 缺少「安装时主动刷新资源准入 hook」这一步"
     assert "资源准入 hook 安装失败" in _install_src, \
@@ -1265,6 +1321,25 @@ def test_installer():
     release_path = f"./plugins/codex-autopilot/releases/{installed_version}"
     with tempfile.TemporaryDirectory(prefix="autopilot-install-test-") as tmp:
         home = Path(tmp) / "home"
+        # 安装器同时检查两处 git：
+        #   1) REPO（安装脚本所在目录）可追到 source_commit；
+        #   2) PROJECT（状态根）必须是 git 仓库根。
+        # 发版目录本身不是 git 仓，若继续拿 OPS.parent 当 PROJECT，test_installer
+        # 在 release 目录里必然红。这里构建一个临时 git 源仓 + detached worktree，
+        # 忠实模拟真实安装布局，而不是放宽安装器的生产校验。
+        source = Path(tmp) / "source"
+        shutil.copytree(OPS.parent, source,
+                        ignore=shutil.ignore_patterns(".git", ".build"))
+        source_install = source / "install.sh"
+        run(["git", "init", "-q", "-b", "main", str(source)])
+        run(["git", "-C", str(source), "config", "user.email",
+             "selftest@example.invalid"])
+        run(["git", "-C", str(source), "config", "user.name", "Autopilot Selftest"])
+        run(["git", "-C", str(source), "add", "."])
+        run(["git", "-C", str(source), "commit", "-qm", "fixture"])
+        trunk = Path(tmp) / "source-trunk"
+        run(["git", "-C", str(source), "worktree", "add", "-q", "--detach",
+             str(trunk), "main"])
         release_dir = home / "plugins" / "codex-autopilot" / "releases" / installed_version
         old_plugin = home / "plugins" / "codex-autopilot"
         old_plugin.mkdir(parents=True)
@@ -1289,10 +1364,13 @@ def test_installer():
         env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
         # --no-companion：菜单栏 .app 的编译单独测（test_companion_contract），
         # 不让一次安装测试既跑安装又跑 Swift 编译。
-        command = ["bash", str(install), "--no-seed", "--no-companion", str(OPS.parent)]
+        command = ["bash", str(source_install), "--trunk", str(trunk),
+                   "--no-seed", "--no-companion", str(source)]
         upgraded = run(command, env=env, check=False)
         if upgraded.returncode:
             raise AssertionError(f"版本化安装失败:\n{upgraded.stdout}\n{upgraded.stderr}")
+        assert "本机没有守护 plist；按约定不替你启用常驻。" in upgraded.stdout, \
+            f"没有 plist 时安装没说清默认不启用常驻:\n{upgraded.stdout}"
         data = _json.loads(market.read_text(encoding="utf-8"))
         entry = next(p for p in data["plugins"] if p["name"] == "codex-autopilot")
         other = next(p for p in data["plugins"] if p["name"] == "other-plugin")
@@ -1301,6 +1379,19 @@ def test_installer():
         assert sentinel.read_text(encoding="utf-8") == "keep\n"
         release = release_dir
         assert (release / "ops" / "central_mcp.py").is_file()
+        # registry 登记的 launchd 脚本和依赖必须随版本目录一起发布。
+        # 少了任何一个，5.7 改指后会变成 missing-script 或任务启动即失败；
+        # 发布门禁必须比本机 freshness 更早发现这件事。
+        guard_registry = _json.loads(
+            (release / "ops" / "guards" / "registry.json").read_text(encoding="utf-8"))
+        for guard_entry in guard_registry.get("entries") or []:
+            _label = guard_entry["label"]
+            for rel in [guard_entry["script"], *(guard_entry.get("siblings") or [])]:
+                assert (release / rel).is_file(), (
+                    f"发布版本缺少 launchd 登记脚本 {rel}（{_label}）")
+        for required in ("ops/guards/repoint_launchd.py",
+                         "ops/guards/hyapi_secrets.py"):
+            assert (release / required).is_file(), f"发布版本缺少 {required}"
         resource_hook = home / ".codex" / "hooks" / "resource-admission.py"
         assert resource_hook.is_file(), "安装后没有落地资源准入 hook"
         installed_hooks = _json.loads(
@@ -1327,7 +1418,6 @@ def test_installer():
 
         # 故障回归：版本目录被手工移除后，用户会用同一版本重装恢复。
         # 这时 marketplace 已指向当前版本，不能把回滚指针也覆盖成当前版本。
-        import shutil
         shutil.rmtree(release)
         reinstalled = run(command, env=env, check=False)
         if reinstalled.returncode:
@@ -1341,7 +1431,8 @@ def test_installer():
         assert state["previous_source"] == "./plugins/codex-autopilot", \
             "同版本恢复安装把回滚指针覆盖成了当前版本"
 
-        rolled_back = run(["bash", str(install), "--rollback"], env=env, check=False)
+        rolled_back = run(["bash", str(source_install), "--rollback"],
+                          env=env, check=False)
         if rolled_back.returncode:
             raise AssertionError(f"回滚失败:\n{rolled_back.stdout}\n{rolled_back.stderr}")
         restored = _json.loads(market.read_text(encoding="utf-8"))
@@ -1695,11 +1786,13 @@ def test_broken_binding_panel_contract():
             assert "普通目录无法闭环" in payload["why"], payload
             for key in ("project", "switches", "queue", "counters", "closure_rate",
                         "human_acceptance", "daemon", "doing_items", "todo_items",
-                        "project_health",
+                        "project_health", "route_health",
                         "machine_verified", "roadmap", "project_folders"):
                 assert key in payload, f"坏绑定状态缺少面板字段：{key}"
             assert payload["counters"]["landed"] is None, "坏绑定的计数不能伪装成 0"
             assert payload["queue"]["clean"] is None, "坏绑定的队列不能伪装成空"
+            assert payload["route_health"]["level"] == "unknown", \
+                "坏绑定时路线与效能不能伪装成正常"
             import central_mcp
             closure_line = central_mcp._closure_rate_line(payload["closure_rate"])
             assert "取不到" in closure_line, closure_line
@@ -1730,28 +1823,88 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     def _version_key(text):
         parts = text.replace("-preview.", ".").split(".")
         return tuple(int(p) if p.isdigit() else 0 for p in parts)
-    assert _version_key(version) >= _version_key("0.6.0-preview.102"), \
-        f"发布清单版本低于 PM 简报首发版：{version}"
+    assert _version_key(version) >= _version_key("0.6.0-preview.103"), \
+        f"发布清单版本低于 launchd guard 版本化版：{version}"
 
     pm = root / "ops" / "pm_briefing.py"
     assert pm.is_file(), "发布树缺少 ops/pm_briefing.py"
     pm_text = pm.read_text(encoding="utf-8")
     assert "follow_up_candidates" in pm_text, "PM 简报缺少追问候选契约"
     assert "不会自动追问" in pm_text, "PM 简报必须明示候选不是动作"
+    assert "acceptance_criteria" in pm_text, "PM 简报缺少验收标准候选契约"
+
+    followup = root / "ops" / "authorized_followup.py"
+    assert followup.is_file(), "发布树缺少 ops/authorized_followup.py"
+    followup_text = followup.read_text(encoding="utf-8")
+    assert "authorization != \"explicit\"" in followup_text, \
+        "追问授权必须拒绝 inferred/隐式授权"
+    assert "effect != \"reversible\"" in followup_text, \
+        "追问授权必须拒绝破坏性副作用"
+    assert "STATE_CANCELLED" in followup_text and "mark_failed" in followup_text, \
+        "追问授权缺少撤销/失败留账"
+
+    acceptance = root / "ops" / "acceptance_criteria.py"
+    assert acceptance.is_file(), "发布树缺少 ops/acceptance_criteria.py"
+    acceptance_text = acceptance.read_text(encoding="utf-8")
+    assert "confirm" in acceptance_text and "不在这里伪造" in acceptance_text, \
+        "验收标准候选缺少显式确认与不伪造证据约束"
+    assert "routed" in acceptance_text, "验收标准候选没有沿用已路由入口闸门"
 
     panel_text = (root / "plugin" / "ui" / "panel.html").read_text(encoding="utf-8")
     assert "pmBriefingBox" in panel_text, "面板缺少 PM 简报容器"
     assert "renderPmBriefing" in panel_text, "面板未接 PM 简报渲染"
     assert "复核截图" in panel_text, "面板缺少复核截图展示"
+    assert "capture_acceptance_screenshot" in panel_text, \
+        "面板补图按钮没有接 MCP 工具"
+    assert "补一张复核截图" in panel_text, "面板缺少补图按钮"
+    assert "{id:a.id, confirm:true}" in panel_text, \
+        "面板补图按钮没有显式带 confirm=true"
+    assert "followup_authorize" in panel_text and "followup_cancel" in panel_text, \
+        "面板缺少追问授权/撤销工具"
+    assert "confirm: true" in panel_text, \
+        "面板授权追问按钮没有显式带 confirm=true"
 
     mcp = (root / "ops" / "central_mcp.py").read_text(encoding="utf-8")
     assert '"screenshots"' in mcp, "MCP 工具契约缺少 screenshots"
     assert "_pm_briefing_summary" in mcp, "MCP 状态未接 PM 简报"
+    assert "_acceptance_criteria_summary" in mcp, "MCP 状态未接验收标准候选"
+    assert "_route_health_summary" in mcp, "MCP 状态未接路线与效能检测"
+    assert '"route_health"' in mcp, "MCP 状态快照缺少 route_health"
+    for tool in ("acceptance_criteria_list", "acceptance_criteria_promote",
+                 "acceptance_criteria_dismiss"):
+        assert f'"name": "{tool}"' in mcp, f"MCP 未注册 {tool}"
+    for tool in ("followup_authorize", "followup_cancel", "followup_list"):
+        assert f'"name": "{tool}"' in mcp, f"MCP 未注册 {tool}"
+    assert "FOLLOWUP_CONFIRM_REQUIRED" in mcp, \
+        "MCP 追问授权缺少 confirm=true 闸门"
+    assert '"name": "capture_acceptance_screenshot"' in mcp, \
+        "MCP 未注册 capture_acceptance_screenshot"
+    assert "SCREENSHOT_CONFIRM_REQUIRED" in mcp, \
+        "MCP 补图工具缺少显式确认闸门"
+
+    daemon_text = (root / "ops" / "central_daemon.py").read_text(encoding="utf-8")
+    assert 'Pass("followup"' in daemon_text, \
+        "daemon pass registry 缺少 followup 投递工序"
+    assert "_followup_is_eligible" in daemon_text, \
+        "followup pass 发送前缺少工作项与 thread 资格复核"
 
     truthctl = (root / "ops" / "truthctl.py").read_text(encoding="utf-8")
     assert "_split_screenshots" in truthctl and "_merge_screenshots" in truthctl, \
         "验收台账未接截图附件"
-    print(f"selftest ok: 发布包包含 PM 简报与验收截图通道，版本 {version}。")
+    assert "KG_TRUTH_SOURCE_HASH" in truthctl, \
+        "验收台账未记原话 hash，候选台账丢失后同一条会复发"
+    route_health = root / "ops" / "route_health.py"
+    assert route_health.is_file(), "发布树缺少 ops/route_health.py"
+    route_health_text = route_health.read_text(encoding="utf-8")
+    assert "propose_review" in route_health_text, \
+        "路线与效能检测缺少只提复核的机器约束"
+    assert "不杀 worker" in route_health_text or "不自动纠偏" in route_health_text, \
+        "路线与效能检测缺少非破坏性边界"
+    architecture = (root / "docs" / "ARCHITECTURE_STEWARDS.md").read_text(encoding="utf-8")
+    for needle in ("为什么这不是人类岗位分工", "execute / control / evaluate",
+                   "「最优」只能是可证伪的闭环", "不是「自动把路线调回最优」"):
+        assert needle in architecture, f"架构文档缺少约束：{needle}"
+    print(f"selftest ok: 发布包包含 PM 简报、验收标准候选与截图通道，版本 {version}。")
 
 
 def test_preview_check_contract():
@@ -1889,6 +2042,8 @@ def test_daemon_plist_repoints_on_upgrade():
         with mock.patch.object(central_daemon, "launchctl",
                               side_effect=lambda *a, **k: calls.append(a) or 0), \
              mock.patch.object(central_daemon, "wait_for_job_gone", return_value=True), \
+             mock.patch.object(central_daemon, "verify_job_running",
+                               return_value=(True, {"status": "running", "pid": 4242})), \
              mock.patch.object(central_daemon, "log"):
             rc = central_daemon.install(15)
         assert rc == 0, "改指新版本的 install 失败"
@@ -1903,6 +2058,18 @@ def test_daemon_plist_repoints_on_upgrade():
         bootstrap_i = next((i for i, c in enumerate(joined) if "bootstrap" in c), None)
         assert enable_i is not None and bootstrap_i is not None and enable_i < bootstrap_i, \
             f"被 launchd 禁用的 label 必须先 enable 再 bootstrap：{calls}"
+
+        # 阴性对照：bootstrap 即使返回 0，回读不到运行中 pid 也必须失败。
+        # 否则又会回到「安装命令成功、开关写开、实际没有进程」的静默失效。
+        logs = []
+        with mock.patch.object(central_daemon, "launchctl", return_value=0), \
+             mock.patch.object(central_daemon, "wait_for_job_gone", return_value=True), \
+             mock.patch.object(central_daemon, "verify_job_running",
+                               return_value=(False, {"status": "not_installed", "pid": None})), \
+             mock.patch.object(central_daemon, "log", side_effect=logs.append):
+            rc = central_daemon.install(15)
+        assert rc == 1, "回读不到守护进程却报安装成功"
+        assert any("回读不到运行中的守护进程" in line for line in logs), logs
     finally:
         central_daemon.PLIST_PATH = real_plist
         import shutil
@@ -1979,6 +2146,8 @@ def test_daemon_install_preserves_maintenance_mode():
              mock.patch.object(central_daemon, "launchctl",
                               side_effect=lambda *a, **k: calls.append(a) or 0), \
              mock.patch.object(central_daemon, "wait_for_job_gone", return_value=True), \
+             mock.patch.object(central_daemon, "verify_job_running",
+                               return_value=(True, {"status": "running", "pid": 4242})), \
              mock.patch.object(central_daemon, "log"):
             assert central_daemon.plist_maintenance_only() is True
             assert central_daemon.install(15) == 0
@@ -2000,6 +2169,98 @@ def test_daemon_install_preserves_maintenance_mode():
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
     print("selftest ok: 已装维护模式在重装后仍是维护模式，显式开关才能改变它。")
+
+
+def test_installer_first_install_daemon_is_explicit():
+    """守护首次安装必须显式授权，且回读 launchd 运行后才报成功。
+
+    L-0004 的真实故障：`install.sh` 只在 plist 已存在时改指守护。plist 被清掉后
+    每次安装都成功、launchd 里没有 job，control.json 却仍显示常驻开启。这里用
+    假 launchctl 端到端跑安装器：默认不写 plist，只有 --install-daemon 才写，
+    并且 bootstrap 后回读不到 pid 时 install 不能返回 0。
+    """
+    import json as _json
+    import shutil
+
+    installed_version = _installed_version()
+    with tempfile.TemporaryDirectory(prefix="autopilot-daemon-first-install-") as tmp:
+        root = Path(tmp)
+        source = root / "source"
+        shutil.copytree(OPS.parent, source, ignore=shutil.ignore_patterns(".git"))
+        run(["git", "init", "-q", "-b", "main", str(source)])
+        run(["git", "-C", str(source), "config", "user.email", "selftest@example.invalid"])
+        run(["git", "-C", str(source), "config", "user.name", "Autopilot Selftest"])
+        run(["git", "-C", str(source), "add", "."])
+        run(["git", "-C", str(source), "commit", "-qm", "fixture"])
+        trunk = root / "source-trunk"
+        run(["git", "-C", str(source), "worktree", "add", "-q", "--detach", str(trunk), "main"])
+
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        fake_launchctl = fake_bin / "launchctl"
+        fake_launchctl.write_text(
+            "#!/bin/sh\n"
+            'STATE_FILE="${KG_FAKE_LAUNCHCTL_STATE_FILE:?}"\n'
+            'case "$1" in\n'
+            '  print)\n'
+            '    if [ "$(cat "$STATE_FILE" 2>/dev/null)" = "running" ]; then\n'
+            "      printf 'state = running\\n'\n"
+            "      printf 'pid = 4242\\n'\n"
+            "      printf 'KG_REPO => %s\\n' \"${KG_FAKE_PROJECT:-/tmp/fixture}\"\n"
+            "      exit 0\n"
+            "    fi\n"
+            "    exit 1\n"
+            "    ;;\n"
+            '  bootout) printf "gone\\n" > "$STATE_FILE" ;;\n'
+            '  bootstrap) printf "running\\n" > "$STATE_FILE" ;;\n'
+            "esac\n"
+            "exit 0\n",
+            encoding="utf-8")
+        fake_launchctl.chmod(0o755)
+
+        def install_env(home, state_file):
+            home.mkdir(parents=True)
+            state_file.write_text("gone\n", encoding="utf-8")
+            env = os.environ.copy()
+            env["HOME"] = str(home)
+            env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+            env["KG_DAEMON_LABEL"] = "com.codex-autopilot.fixture.daemon"
+            env["KG_FAKE_LAUNCHCTL_STATE_FILE"] = str(state_file)
+            env["KG_FAKE_PROJECT"] = str(source)
+            return env
+
+        plist_name = "com.codex-autopilot.fixture.daemon.plist"
+        install = source / "install.sh"
+        base = ["bash", str(install), "--trunk", str(trunk),
+                "--no-seed", "--no-marketplace", "--no-companion"]
+
+        home_default = root / "home-default"
+        default_env = install_env(home_default, root / "launchctl-default")
+        default = run(base + [str(source)], env=default_env, check=False)
+        assert default.returncode == 0, \
+            f"默认安装失败:\n{default.stdout}\n{default.stderr}"
+        assert "按约定不替你启用常驻" in default.stdout, default.stdout
+        assert not (home_default / "Library" / "LaunchAgents" / plist_name).exists(), \
+            "默认安装擅自写了守护 plist"
+
+        home_explicit = root / "home-explicit"
+        explicit_state = root / "launchctl-explicit"
+        explicit_env = install_env(home_explicit, explicit_state)
+        explicit = run(base + ["--install-daemon", str(source)],
+                       env=explicit_env, check=False)
+        assert explicit.returncode == 0, \
+            f"显式首次安装失败:\n{explicit.stdout}\n{explicit.stderr}"
+        assert "首次安装" in explicit.stdout, explicit.stdout
+        plist = home_explicit / "Library" / "LaunchAgents" / plist_name
+        assert plist.is_file(), "显式 --install-daemon 没有写 plist"
+        assert explicit_state.read_text(encoding="utf-8").strip() == "running", \
+            "安装器没有回读到运行中的 launchd job"
+        meta = _json.loads(
+            (home_explicit / "plugins" / "codex-autopilot" / "releases"
+             / installed_version / ".codex-autopilot-source.json").read_text(encoding="utf-8"))
+        assert meta["dirty"] is False, f"首次安装混入了未提交改动：{meta}"
+
+    print("selftest ok: 首次安装守护必须显式 --install-daemon，且回读 launchd 后才报成功。")
 
 
 def test_daemon_control_action():
@@ -2237,6 +2498,10 @@ def test_panel_contract():
     tool_names = {tool["name"] for tool in central_mcp.TOOLS}
     called = set(re.findall(r'callTool\("([^"]+)"', script))
     assert called <= tool_names, f"面板调了不存在的工具：{sorted(called - tool_names)}"
+    assert "route_preview" in called, "输入落点预览没有调用 route_preview，删了功能门禁也会绿"
+    assert re.search(
+        r'callTool\("route_preview",\s*\{[^}]*\bcwd\s*:\s*currentCwd\(\)', script
+    ), "route_preview 没有传当前 cwd，跨项目预览会判不清"
 
     switch_keys = set(re.findall(r'data-key="([^"]+)"', html))
     unknown = sorted(switch_keys - set(control_state.DEFAULTS))
@@ -2244,6 +2509,7 @@ def test_panel_contract():
 
     # 首屏必须能回答「当前绑定哪个项目」：面板元素、控制层字段、真实名字三边都在。
     assert "projectLine" in dom_ids, "面板首屏缺少绑定项目那一行"
+    assert "intakeRoute" in dom_ids, "面板首屏缺少输入落点预览那一行"
     payload = central_mcp._status_payload(fast=True)
     project = payload.get("project")
     assert isinstance(project, dict), "控制层没有把绑定项目吐给面板"
@@ -3362,6 +3628,10 @@ def test_auto_exec():
         # 可能还在退出过程中。模块级进程缓存若不重置，会把旧 worktree 误当成本
         # fixture 的活进程，跳过派发并直接清掉新分支。
         central_daemon._LIVE_EXEC_CACHE.update(ts=0.0, slugs=frozenset())
+        # ps 扫描仍可能看见上一个 fixture 正在退出的 fake codex（-C L-0001-item），
+        # 让本 fixture 的派发被重复派发保护静默跳过。这里只固定测试里的探针结果；
+        # 生产扫描逻辑和断言都不放宽。
+        central_daemon._live_exec_slugs = lambda *a, **k: frozenset()
         return central_daemon
 
     def dispatch_until_done(daemon, blocked, workers=None, limit=100, pause=0.1):
@@ -3775,7 +4045,7 @@ def test_auto_exec():
         daemon_q = load_daemon(repo_q, trunk_q, home_q, throttle_cmd)
         daemon_q.EXEC_CHANNEL_RETRY_SECONDS = 3600
         blocked_q, workers_q = {}, {}
-        daemon_q.dispatch_exec(False, blocked_q, workers_q)
+        initial_results_q, workers_q = daemon_q.dispatch_exec(False, blocked_q, workers_q)
         results_q = []
         for _ in range(100):
             results_q, workers_q = daemon_q.dispatch_exec(False, blocked_q, workers_q)
@@ -3783,7 +4053,10 @@ def test_auto_exec():
                 break
             _time.sleep(0.1)
         if not results_q or results_q[-1].get("outcome") != "channel_unavailable":
-            raise AssertionError(f"429 没被记成可恢复通道失败: {results_q}, blocked={blocked_q}")
+            raise AssertionError(
+                f"429 没被记成可恢复通道失败: {results_q}, blocked={blocked_q}, "
+                f"initial={initial_results_q}, workers={workers_q}, "
+                f"count={throttle_count.read_text().strip() if throttle_count.exists() else 'missing'}")
         if int(throttle_count.read_text().strip()) != 1:
             raise AssertionError("429 在收口线程内被重复重试，阻塞了其他 worker")
         if blocked_q.get("L-0001", {}).get("reason") != "channel_unavailable":
@@ -4262,11 +4535,13 @@ def test_parallel_exec_slots():
                 release.touch()
                 deadline = _time.time() + 15
                 landed = []
+                all_results = []
                 while _time.time() < deadline and len(landed) < slots:
                     results, workers = central_daemon.dispatch_exec(False, blocked, workers)
+                    all_results.extend(results)
                     landed.extend(r for r in results if r.get("outcome") == "landed")
                     _time.sleep(0.1)
-                assert len(landed) == slots, (slots, landed, blocked, workers)
+                assert len(landed) == slots, (slots, landed, all_results, blocked, workers)
                 assert not workers["exec_jobs"], workers
 
             finally:
@@ -6983,6 +7258,11 @@ def test_daemon_liveness_shared_judge():
     assert st_other["matches_repo"] is False
     msg = daemon_liveness.liveness_problem(st_other, True)
     assert msg and "别的账本" in msg, msg
+    headline, detail = daemon_liveness.liveness_need_action(st_other, True)
+    assert headline and "后台现在在服务别的项目" in headline, headline
+    assert "当前项目要等自己的轮次" in headline, headline
+    assert detail and "别的账本" in detail and "/tmp/proj-b" in detail, detail
+    assert "/tmp/proj-b" not in headline, "首屏结论不该塞工程路径"
 
     # 3) not_installed：launchctl 非零返回
     gone = lambda argv: (113, "")
@@ -6994,6 +7274,10 @@ def test_daemon_liveness_shared_judge():
     # 开关显示开却没有 job -> 必须报，且给出装回命令
     msg = daemon_liveness.liveness_problem(st_gone, True)
     assert msg and "central_daemon.py --install" in msg, msg
+    headline, detail = daemon_liveness.liveness_need_action(st_gone, True)
+    assert headline and "常驻没接上" in headline, headline
+    assert detail and "central_daemon.py --install" in detail, detail
+    assert "central_daemon.py --install" not in headline, "首屏结论不该塞修复命令"
     line = daemon_liveness.liveness_line(st_gone, True)
     assert "未运行" in line and "没有这个 job" in line, line
 
@@ -7090,6 +7374,7 @@ def test_product_eval():
         (real_repo / "app.txt").write_text("x\n", encoding="utf-8")
         git(real_repo, "add", "app.txt")
         git(real_repo, "commit", "-q", "-m", "init")
+        git(real_repo, "update-ref", "refs/remotes/origin/main", "HEAD")
         ci = tmp / "install-bound"
         crel = ci / "releases" / "1.2.3"
         crel.mkdir(parents=True)
@@ -7118,17 +7403,35 @@ def test_product_eval():
             encoding="utf-8")
         assert product_eval.crit_effective(proj)["status"] == "fail"
 
-        # 5) 判据 5：三线一致 + 有回滚点才绿。
+        # 5) 判据 5：安装 / 缓存 / 本地主干 / 远端主干一致 + 有回滚点才绿。
         vi = tmp / "install-v"
         (vi / "releases" / "1.2.3").mkdir(parents=True)
         (vi / "releases" / "1.2.2").mkdir(parents=True)
+        (tmp / "cache-v" / "1.2.3").mkdir(parents=True)
+        released_commit = git(real_repo, "rev-parse", "HEAD").stdout.strip()
         (vi / "install-state.json").write_text(_json.dumps(
-            {"version": "1.2.3", "source_commit": git(real_repo, "rev-parse", "HEAD").stdout.strip(),
+            {"version": "1.2.3", "source_commit": released_commit,
              "previous_source": str(vi / "releases" / "1.2.2")}),
             encoding="utf-8")
-        (tmp / "cache-v" / "1.2.3").mkdir(parents=True)
         cok = product_eval.crit_consistent(vi, tmp / "cache-v", real_repo)
         assert cok["status"] == "pass", cok
+
+        # 5b) 发布提交只进本地主干、没进 origin/main：必须红，且红在远端锚点。
+        (real_repo / "app.txt").write_text("local-only\n", encoding="utf-8")
+        git(real_repo, "commit", "-q", "-am", "local-only release")
+        local_only_commit = git(real_repo, "rev-parse", "HEAD").stdout.strip()
+        assert local_only_commit != released_commit
+        (vi / "install-state.json").write_text(_json.dumps(
+            {"version": "1.2.3", "source_commit": local_only_commit,
+             "previous_source": str(vi / "releases" / "1.2.2")}),
+            encoding="utf-8")
+        remote_bad = product_eval.crit_consistent(vi, tmp / "cache-v", real_repo)
+        assert remote_bad["status"] == "fail", remote_bad
+        assert any("远端权威主干" in s for s in remote_bad["shortfall"]), remote_bad
+        (vi / "install-state.json").write_text(_json.dumps(
+            {"version": "1.2.3", "source_commit": released_commit,
+             "previous_source": str(vi / "releases" / "1.2.2")}),
+            encoding="utf-8")
 
         # 6) 认证物结构 + 人读报告必须带会红的结论。
         import os as _os
@@ -7215,7 +7518,8 @@ def test_product_eval():
                 else:
                     _os.environ[k] = v
 
-    print("selftest ok: 对外发布评估五条判据能红能绿，阴性对照 7/7 全部按预期变红。")
+    print("selftest ok: 对外发布评估五条判据能红能绿，阴性对照 %d/%d 全部按预期变红。"
+          % (len(rows) - len(bad), len(rows)))
 
 def test_compact_session_logs_is_lossless_and_under_pressure_only():
     import tempfile
@@ -7346,6 +7650,7 @@ if __name__ == "__main__":
     test_installer()
     test_installer_requires_clean_source()
     test_installer_shell_portability()
+    test_installer_first_install_daemon_is_explicit()
     test_daemon_project_binding()
     test_daemon_plist_repoints_on_upgrade()
     test_daemon_maintenance_mode_is_zero_touch()
