@@ -15,6 +15,7 @@ Codex 宿主的同一条通知把真实状态喂进去，最后把首屏各行�
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -223,9 +224,11 @@ console.log(JSON.stringify({
   hierarchyProject: read("hierProject"),
   hierarchyRoad: read("hierRoad"),
   hierarchyWork: read("hierWork"),
+  sysLine: read("sysLine"),
   folderBox: read("folderBox"),
   stateLabel: read("stateLabel"),
   subtitle: read("subtitle"),
+  q1State: read("q1State"),
   masterState: read("masterState"),
   focusStatus: read("focusStatus"),
   focusDoing: read("focusDoing"),
@@ -234,6 +237,11 @@ console.log(JSON.stringify({
   northStarDetail: read("nsDetail"),
   northStarClass: document.getElementById("northStar").className,
   needText: alertText.textContent,
+  needTitle: document.getElementById("need").title || "",
+  needAria: document.getElementById("need").getAttribute("aria-label") || "",
+  needEvidence: read("needEvidenceBox"),
+  needEvidenceHidden: document.getElementById("needEvidenceFold").hidden,
+  systemDetail: read("systemDetail"),
   nativeState: read("nativeState"),
   received: read("cReceived"),
   landned: read("cLanded"),
@@ -242,6 +250,7 @@ console.log(JSON.stringify({
   stDoing: read("stDoing"),
   recentBox: read("recentBox"),
   recentNote: read("recentNote"),
+  recentSerialized: serializeEl(document.getElementById("recentBox")),
   acceptBox: read("acceptBox"),
   blockedList: read("blockedList"),
   blockedHtml: document.getElementById("blockedList").innerHTML,
@@ -322,6 +331,24 @@ def main(argv):
                 return 1
             print(f"  PASS  {label}")
             return 0
+
+        def lacks(label, text, *needles):
+            found = [n for n in needles if str(n) in str(text)]
+            if found:
+                print(f"  FAIL  {label}（{text!r} 里仍有 {found}）")
+                return 1
+            print(f"  PASS  {label}")
+            return 0
+
+        def human_recent(text):
+            """镜像面板的最近收口文案：正文说结果，ID 只留在 title/aria。"""
+            value = str(text or "").strip()
+            closed = re.match(r"^[A-Z]+-\d+\s+已收口：\s*(.*)$", value)
+            if closed:
+                return "已收口：" + (closed.group(1) or "一项工作")
+            if value.endswith("已合入"):
+                return "代码已合入"
+            return value
 
         def hierarchy_work_text(state):
             """镜像面板的工作项优先级，别把现场状态写死成某一种空态。"""
@@ -444,6 +471,53 @@ def main(argv):
         fails += has("验收项带可点的补图动作", review_out["acceptBox"], "补一张复核截图")
         fails += has("补图动作写明不会替人收口", review_out["acceptBox"],
                      "补图只追加附件", "不会替你收口")
+
+        # 守护绑定错位曾经把两个绝对路径直接铺在首屏，用户一眼只看到工程内部细节。
+        # 这里验证：首屏只留后果，完整路径仍在 title / aria-label / 工程详情里。
+        daemon_bound = "/tmp/autopilot-logic-bound-project"
+        daemon_current = "/tmp/autopilot-logic-current-project"
+        daemon_detail = "绑定的是 " + daemon_bound + "，不是 " + daemon_current
+        dm = dict(payload)
+        dm.update({
+            "state": "blocked",
+            "state_label": "需要你处理",
+            "need_action": "自动推进绑到了别的项目；当前项目不会自己往前走。",
+            "need_action_detail": daemon_detail,
+        })
+        dout = run_once(dm)
+        fails += has("守护异常首屏只显示用户结论", dout["needText"],
+                     "自动推进绑到了别的项目", "当前项目不会自己往前走")
+        if daemon_bound in str(dout["needText"]):
+            fails += 1
+            print("  FAIL  守护绑定路径不该进首屏正文")
+        else:
+            print("  PASS  守护绑定路径不进首屏正文")
+        fails += has("守护绑定路径仍可从 title 取到", dout["needTitle"], daemon_bound)
+        fails += has("守护绑定路径仍可从 aria-label 取到", dout["needAria"], daemon_bound)
+        fails += has("守护详情进入折叠区", dout["needEvidence"], daemon_bound, daemon_current)
+        fails += has("守护异常时第一问摘要不再写不用你", dout["q1State"], "需关注")
+        if "不用你" in str(dout["q1State"]):
+            fails += 1
+            print("  FAIL  守护异常与“不用你”摘要自相矛盾")
+        else:
+            print("  PASS  守护异常与摘要保持一致")
+        if dout.get("needEvidenceHidden") is False:
+            print("  PASS  有详情时工程详情折叠区可见")
+        else:
+            fails += 1
+            print("  FAIL  有详情时工程详情折叠区被隐藏")
+        clean = dict(payload)
+        clean.update({
+            "need_action": "不需要你做什么，继续照常提需求就行",
+            "need_action_detail": "",
+        })
+        clean_out = run_once(clean)
+        fails += has("无需处理时第一问摘要写不用你", clean_out["q1State"], "不用你")
+        if clean_out.get("needEvidenceHidden") is True:
+            print("  PASS  无详情时工程详情折叠区不占空间")
+        else:
+            fails += 1
+            print("  FAIL  无详情时工程详情折叠区仍显示")
         fails += has("补图按钮发起截图工具调用", review_out.get("captureToolName", ""),
                      "capture_acceptance_screenshot")
         fails += has("补图按钮带真实验收 id", review_out.get("captureToolId", ""),
@@ -558,6 +632,18 @@ def main(argv):
         fails += has("候选写明命中信号", cout["blockedList"], "以后都")
         fails += has("候选写明不算就什么都不生效", cout["blockedList"],
                      "不算", "什么都不生效")
+        lout_payload = dict(cand)
+        lout_payload["constraint_candidates"] = {"status": "ok", "count": 1, "items": [{
+            "id": "CC-9002", "text": "面板不要展示和节点无关的信息",
+            "title": "面板不要展示和节点无关的信息", "kind": "expectation",
+            "source": "context_learning", "mentions": 5, "threads": 3,
+            "scope": ["plugin/ui/panel.html"], "signals": ["context_learning"],
+        }]}
+        lout = run_once(lout_payload)
+        fails += has("自学习候选上屏", lout["blockedList"], "CC-9002",
+                     "面板不要展示和节点无关的信息")
+        fails += has("自学习候选写清重复证据", lout["blockedList"],
+                     "出现 5 次 / 跨 3 个会话")
 
         # 验收标准候选是「先确认什么算成，再进入验收台账」的前半截。
         # 必须真点一次确认/不算：只检查文案挡不住按钮接错工具，也挡不住
@@ -950,9 +1036,41 @@ def main(argv):
         fails += has("计数：收到反馈", out["received"], counters.get("received"))
         fails += has("计数：已合入", out["landned"], counters.get("landed"))
         fails += has("计数：待你验收", out["stReview"], len(human_acc))
+
+        # 系统状态行只给人一句可信结论；PID、队列、-daemon 绑定等判据仍要能在
+        # 折叠的工程详情里查到，不能因为降噪把可观测性删掉。
+        hh = payload.get("harness_health") or {}
+        health_text = hh.get("headline") or (
+            "上下文健康：" + (hh.get("reason") or "取不到"))
+        q = payload.get("queue") or {}
+        fails += has("系统首屏只显示健康结论", out["sysLine"], health_text)
+        fails += lacks("系统首屏不铺开队列与守护读数", out["sysLine"],
+                       "可落盘 ", "冲突 ", "常驻运行中", "常驻未运行")
+        if q.get("clean") is not None:
+            fails += has("工程详情保留可落盘读数", out["systemDetail"],
+                         "可落盘 " + str(q.get("clean")))
+        if q.get("conflict") is not None:
+            fails += has("工程详情保留冲突读数", out["systemDetail"],
+                         "冲突 " + str(q.get("conflict")))
+
         recent = payload.get("recent_completed") or []
         if recent:
-            fails += has("首屏显示最近完成了什么", out["recentBox"], recent[0])
+            fails += has("首屏显示最近完成了什么", out["recentBox"],
+                         human_recent(recent[0]))
+            fails += lacks("最近收口正文不露原始 ID", out["recentBox"],
+                           *[r for r in recent if re.match(r"^[A-Z]+-\d+", str(r))])
+            if re.match(r"^[A-Z]+-\d+", str(recent[0])):
+                fails += has("最近收口 ID 保留在 title/aria", out["recentSerialized"],
+                             str(recent[0]), "收口详情：" + str(recent[0]))
+            visible_recent = min(len(recent), 3)
+            fails += has("最近收口首屏只报前三条", out["recentNote"],
+                         "最近 " + str(visible_recent) + " 项")
+            got_recent = str(out["recentSerialized"]).count("收口详情：")
+            if got_recent == visible_recent:
+                print("  PASS  最近收口正文最多三条")
+            else:
+                fails += 1
+                print(f"  FAIL  最近收口正文条数错误：期望 {visible_recent}，实得 {got_recent}")
         else:
             fails += has("没有收口记录时给出空态说明", out["recentBox"] or document_empty(out), "还没有收口记录")
 

@@ -70,6 +70,14 @@ setTimeout(function(){
       out[id] = n ? n.textContent.trim() : "";
     }
   });
+  var intake = d ? d.getElementById("intakeText") : null;
+  out["intakeInAdvanced"] = intake && intake.closest
+    ? (intake.closest("#advanced") ? "1" : "0") : "";
+  out["intakeVisible"] = intake
+    ? ((intake.getClientRects && intake.getClientRects().length) ? "1" : "0") : "";
+  var systemFold = d ? d.getElementById("systemEvidenceFold") : null;
+  out["systemEvidenceOpen"] = systemFold
+    ? ((systemFold.open || systemFold.hasAttribute("open")) ? "1" : "0") : "";
   out["__body__"] = (d.body ? d.body.innerText : "");
   out["bodyClass"] = d.body ? d.body.className : "";
   var ns = d.getElementById("nativeState");
@@ -86,7 +94,7 @@ setTimeout(function(){
 FIRST_SCREEN_IDS = [
     "stateLabel", "statusTime", "projectLine", "focusStatus", "focusDoing",
     "focusStep", "hierProject", "hierRoad", "hierWork", "sysLine",
-    "intakeRoute",
+    "intakeRoute", "needText", "systemDetail",
 ]
 ADV_SCREEN_IDS = FIRST_SCREEN_IDS + [
     "pmBriefingBox", "acceptBox", "pmBriefingFoldOpen",
@@ -333,6 +341,22 @@ def main(argv):
             print(f"  PASS  {label}")
         else:
             print(f"  FAIL  {label}（期望文本：{expected!r}）")
+            fails += 1
+
+    # 面板层级：Codex 原生输入框是常用入口；面板输入框只在高级区兜底。
+    # 系统判据默认折叠，但不能因为降噪把可观测性删掉。
+    layer_checks = [
+        ("面板输入框收进高级区", str(snapshot.get("intakeInAdvanced")) == "1"),
+        ("默认首屏看不到面板输入框", str(snapshot.get("intakeVisible")) == "0"),
+        ("系统判据详情默认折叠", str(snapshot.get("systemEvidenceOpen")) == "0"),
+        ("系统判据详情仍可查", "可落盘" in str(snapshot.get("systemDetail") or "")),
+        ("系统首屏不铺开队列读数", "可落盘" not in str(snapshot.get("sysLine") or "")),
+    ]
+    for label, ok in layer_checks:
+        if ok:
+            print(f"  PASS  {label}")
+        else:
+            print(f"  FAIL  {label}")
             fails += 1
 
     # 落点预览有三种真实返回，不能只锁住 resolved。这里直接给 route_preview

@@ -105,7 +105,7 @@ running 账本，也不会占并发槽位。未声明 allowlist 时沿用旧请�
 
 | 角色 | 拥有的判断 | 不拥有的权力 | 当前落点 |
 |---|---|---|---|
-| 上下文管家 | 从任意入口的预期、返修、决策、禁忌中提候选；按 `scope` 精准调取 | 不能未经用户确认就写生效约束 | `ops/constraint_candidates.py`、`ops/constraints.py`、面板候选卡 |
+| 上下文管家 | 从任意入口的预期、返修、决策、禁忌中提候选；跨会话发现重复诉求并提规范候选；按 `scope` 精准调取、逐条自检 | 不能未经用户确认就写生效约束，不能自动追问，不能把判不清归属的会话写进项目 | `ops/constraint_candidates.py`、`ops/context_learning.py`、`ops/constraints.py`、面板候选卡 |
 | PM 管家 | 理解预期、拆施工项、判断文件占地重复、规划不互相覆盖的路线、汇总追问候选；在用户逐项 explicit 授权后允许一次可逆追问 | 不能替用户决定产品方向、删数据或发布；不能自行授权或发破坏性追问 | `ops/pm_briefing.py`、`ops/exec_overlap.py`、`ops/authorized_followup.py`、`ops/central_daemon.py` 的 `overlap_hold` 与 `followup` pass |
 | 验收管家 | 从已路由原话提名验收标准候选；先定义标准并自己跑门禁；有证据后才请用户看，并带上复核截图附件 | 不能把候选直接写成验收项或把没有证据的项伪装成「需要你验收」；截图不参与证据闸门 | `ops/acceptance_criteria.py`、`ops/central_mcp.py` 的 `_acceptance_board()`、`ops/truthctl.py` 的 `cmd_accept()` |
 | 路由管家 | 从混合输入判断项目与泳道，把活派出去 | 不能把判不清的输入猜进某个项目 | `ops/project_router.py`、全局 routing inbox |

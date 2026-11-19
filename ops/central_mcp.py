@@ -182,6 +182,15 @@ def _constraint_candidates_summary():
         rows = constraint_candidates.pending()
     except Exception as exc:
         return {"status": "unknown", "reason": f"读不到约束候选（{exc!r}）", "items": []}
+    learning = {"status": "unknown", "themes": []}
+    try:
+        import context_learning
+        observed = context_learning.observe()
+        learning = {"status": observed.get("status"),
+                    "themes": observed.get("themes") or [],
+                    "reason": observed.get("reason")}
+    except Exception as exc:
+        learning = {"status": "unknown", "reason": f"读不到重复主题（{exc!r}）", "themes": []}
     items = [{
         "id": r.get("id"),
         "text": r.get("text"),
@@ -189,8 +198,13 @@ def _constraint_candidates_summary():
         "kind": r.get("kind"),
         "scope": r.get("scope") or [],
         "signals": r.get("signals") or [],
+        "source": r.get("source") or "intake",
+        "mentions": r.get("mentions"),
+        "threads": r.get("threads"),
+        "priority": r.get("priority"),
+        "evidence": (r.get("evidence") or [])[:2],
     } for r in rows]
-    return {"status": "ok", "count": len(items), "items": items}
+    return {"status": "ok", "count": len(items), "items": items, "learning": learning}
 
 
 def _acceptance_criteria_summary():
@@ -515,6 +529,7 @@ def _steward_health(payload):
     daemon = payload.get("daemon") or {}
     tune = payload.get("harness_tune") or {}
     cand = payload.get("constraint_candidates") or {}
+    learning = cand.get("learning") or {}
     acc_criteria = payload.get("acceptance_criteria") or {}
     harness_health = payload.get("harness_health") or {}
     route_health = payload.get("route_health") or {}
@@ -536,8 +551,10 @@ def _steward_health(payload):
         rows.append({"key": "context", "state": "unknown",
                      "label": "上下文管家：约束台账读不到"})
     elif pending_c:
-        rows.append({"key": "context", "state": "attention",
-                     "label": "上下文管家：%s 条候选等你确认 · 已生效 %s 条" % (pending_c, active)})
+        label = "上下文管家：%s 条候选等你确认 · 已生效 %s 条" % (pending_c, active)
+        if learning.get("status") == "ok" and learning.get("themes"):
+            label += " · 发现 %s 个重复主题" % len(learning["themes"])
+        rows.append({"key": "context", "state": "attention", "label": label})
     else:
         rows.append({"key": "context", "state": "ok",
                      "label": "上下文管家：已生效 %s 条约束，无待确认" % active})
@@ -1505,22 +1522,16 @@ def _daemon_live():
     return bool(st.get("live")), st.get("pid"), st.get("bound_repo")
 
 
-def _daemon_liveness_problem(daemon_enabled=True):
-    """「开关开着但没进程接活」这类静默死亡的判据，与 kgctl doctor 共用一份。
-
-    2026-11-16 实测：control.json 里 enabled/daemon_enabled=true，launchd 里那个
-    job 早没了，面板却只写「后台常驻=开（但没进程接活）」，首屏不提示、也不说怎么修。
-    这里把 doctor 的那一条搬到面板首屏，让配置位和现实的分歧直接可见。
-    """
+def _daemon_liveness_action(daemon_enabled=True):
+    """一次采样同时产生 doctor 详情与首屏短结论，避免同一拍两份读数。"""
     try:
         import daemon_liveness
-    except Exception:
-        return None
-    try:
         st = daemon_liveness.daemon_liveness(os.environ.get("KG_REPO") or _fallback_repo())
-        return daemon_liveness.liveness_problem(st, daemon_enabled)
+        problem = daemon_liveness.liveness_problem(st, daemon_enabled)
+        headline, detail = daemon_liveness.liveness_need_action(st, daemon_enabled)
+        return problem, headline, detail
     except Exception:
-        return None
+        return None, None, None
 
 
 def _ledger_count():
@@ -2509,6 +2520,7 @@ def _status_payload(fast=True):
             "why": line,
             "recent": "需求不会被可靠落账；这不是「没有待办」，是自动挡没接上项目",
             "need_action": "重跑 ./install.sh <真实 git 仓库根目录>；先不要继续提需求",
+            "need_action_detail": "安装绑定失效的详细路径与修复步骤见工程详情；不会自动改绑定。",
             "project": {
                 "path": health.get("repo"),
                 "name": Path(health.get("repo")).name if health.get("repo") else None,
@@ -2596,7 +2608,8 @@ def _status_payload(fast=True):
     job_running, pid, daemon_project = _daemon_live()
     current_project = str(Path(os.environ.get("KG_REPO") or _fallback_repo()).expanduser().resolve())
     live = bool(job_running and daemon_project == current_project)
-    daemon_problem = _daemon_liveness_problem(bool(ctrl.get("daemon_enabled", True)))
+    daemon_enabled = bool(ctrl.get("daemon_enabled", True))
+    daemon_problem, daemon_headline, daemon_detail = _daemon_liveness_action(daemon_enabled)
     st = _daemon_state() if live else {}
     summary = st.get("last_summary") or {}
     board = _acceptance_board()
@@ -2688,13 +2701,15 @@ def _status_payload(fast=True):
     else:
         recent = "还没有自动合入过分支"
 
+    need_action_detail = ""
     if not enabled:
         need_action = "需要继续使用自动挡时，重新开启总开关"
     elif daemon_problem:
         # 常驻静默死亡排最前：开关全绿而进程不在，自动挡一步都不会自己走。
         # 它必须盖过「等验收」这类正常待办——那些事项在「需要你介入」卡里仍然列着，
         # 但用户首先该知道的是「自动」这部分根本没在跑。
-        need_action = daemon_problem
+        need_action = daemon_headline or daemon_problem
+        need_action_detail = daemon_detail or daemon_problem
     elif failures:
         need_action = f"需要你拍板：{failures[0]['target']}（{failures[0]['kind']}）"
     elif board["human"]:
@@ -2722,6 +2737,7 @@ def _status_payload(fast=True):
         "why": why,
         "recent": recent,
         "need_action": need_action,
+        "need_action_detail": need_action_detail,
         "recent_completed": _recent_done(last, 5),
         "switches": {
             "auto_land": bool(ctrl.get("auto_land", True)),
@@ -2737,8 +2753,7 @@ def _status_payload(fast=True):
             "project": daemon_project,
             "last_cycle": st.get("last_cycle_iso"),
             "interval_min": st.get("interval_min"),
-            "problem": _daemon_liveness_problem(
-                bool(ctrl.get("daemon_enabled", True))),
+            "problem": daemon_problem,
         },
         "native": _native_status(),
         "counters": {
