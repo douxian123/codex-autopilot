@@ -351,6 +351,8 @@ def main(argv):
         ("系统判据详情默认折叠", str(snapshot.get("systemEvidenceOpen")) == "0"),
         ("系统判据详情仍可查", "可落盘" in str(snapshot.get("systemDetail") or "")),
         ("系统首屏不铺开队列读数", "可落盘" not in str(snapshot.get("sysLine") or "")),
+        ("系统首屏不说 automation 黑话", "automation" not in str(snapshot.get("sysLine") or "")),
+        ("系统首屏不说越线黑话", "越线" not in str(snapshot.get("sysLine") or "")),
     ]
     for label, ok in layer_checks:
         if ok:

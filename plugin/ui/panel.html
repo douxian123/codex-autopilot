@@ -1754,10 +1754,30 @@
     }
     function humanText(raw){
       var s = String(raw || "").trim();
-      var closed = s.match(/^[A-Z]+-\d+\s+已收口：\s*(.*)$/);
-      if (closed) return "已收口：" + (closed[1] || "一项工作");
+      s = s.replace(/^[A-Z]+-\d+\s+已收口：\s*/, "").replace(/^已收口：\s*/, "");
       if (/已合入$/.test(s)) return "代码已合入";
-      return s;
+      var topicBox = s.match(/^【([^】]+)】/);
+      var topic = topicBox ? topicBox[1] : "";
+      var rest = topicBox ? s.slice(topicBox[0].length) : s;
+      var shortTopic = topic.split("·").pop() || topic;
+      if (/面板首屏|首屏只回答/.test(topic + rest)) {
+        return "面板首屏：改为只看三问";
+      }
+      if (/防丢失|真相镜像/.test(topic + rest)) {
+        return "防丢失：落盘状态已和主干同步";
+      }
+      if (/门禁环境/.test(topic + rest)) {
+        return "门禁环境：可直接验证发布目录";
+      }
+      rest = rest.replace(/(?:~|\/Users\/|\/private\/|\/var\/folders\/)[^\s，,；;]+/g, "")
+        .replace(/kgctl\s+land/gi, "落盘")
+        .replace(/progress\.json\s*\/\s*acceptance\.json/gi, "状态台账")
+        .replace(/\bmain\b/gi, "主干")
+        .replace(/\s+/g, " ")
+        .replace(/^[：:\s]+|[：:\s]+$/g, "");
+      if (shortTopic && rest) return shortTopic + "：" + rest;
+      if (shortTopic) return shortTopic + "：已完成";
+      return rest.length > 42 ? (rest.slice(0, 42) + "…") : (rest || "一项工作已完成");
     }
     var ul = document.createElement("ul"); ul.className = "list";
     list.slice(0,3).forEach(function(raw){

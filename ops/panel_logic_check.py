@@ -325,14 +325,35 @@ def main(argv):
             return 0
 
         def human_recent(text):
-            """镜像面板的最近收口文案：正文说结果，ID 只留在 title/aria。"""
+            """镜像面板的最近收口文案：正文说需求与结果，ID 只留在 title/aria。"""
             value = str(text or "").strip()
-            closed = re.match(r"^[A-Z]+-\d+\s+已收口：\s*(.*)$", value)
-            if closed:
-                return "已收口：" + (closed.group(1) or "一项工作")
+            value = re.sub(r"^[A-Z]+-\d+\s+已收口：\s*", "", value)
+            value = re.sub(r"^已收口：\s*", "", value)
             if value.endswith("已合入"):
                 return "代码已合入"
-            return value
+            topic_box = re.match(r"^【([^】]+)】", value)
+            topic = topic_box.group(1) if topic_box else ""
+            rest = value[topic_box.end():] if topic_box else value
+            short_topic = topic.split("·")[-1] if topic else ""
+            combined = topic + rest
+            if "面板首屏" in combined or "首屏只回答" in combined:
+                return "面板首屏：改为只看三问"
+            if "防丢失" in combined or "真相镜像" in combined:
+                return "防丢失：落盘状态已和主干同步"
+            if "门禁环境" in combined:
+                return "门禁环境：可直接验证发布目录"
+            rest = re.sub(
+                r"(?:~|/Users/|/private/|/var/folders/)[^\s，,；;]+", "", rest)
+            rest = re.sub(r"kgctl\s+land", "落盘", rest, flags=re.I)
+            rest = re.sub(r"progress\.json\s*/\s*acceptance\.json",
+                          "状态台账", rest, flags=re.I)
+            rest = re.sub(r"\bmain\b", "主干", rest, flags=re.I)
+            rest = re.sub(r"\s+", " ", rest).strip(" :：")
+            if short_topic and rest:
+                return short_topic + "：" + rest
+            if short_topic:
+                return short_topic + "：已完成"
+            return rest[:42] + "…" if len(rest) > 42 else (rest or "一项工作已完成")
 
         def hierarchy_work_text(state):
             """镜像面板的工作项优先级，别把现场状态写死成某一种空态。"""
@@ -465,12 +486,12 @@ def main(argv):
         dm.update({
             "state": "blocked",
             "state_label": "需要你处理",
-            "need_action": "自动推进绑到了别的项目；当前项目不会自己往前走。",
+            "need_action": "后台现在在服务别的项目；当前项目要等自己的轮次。",
             "need_action_detail": daemon_detail,
         })
         dout = run_once(dm)
         fails += has("守护异常首屏只显示用户结论", dout["needText"],
-                     "自动推进绑到了别的项目", "当前项目不会自己往前走")
+                     "后台现在在服务别的项目", "当前项目要等自己的轮次")
         if daemon_bound in str(dout["needText"]):
             fails += 1
             print("  FAIL  守护绑定路径不该进首屏正文")
@@ -1010,6 +1031,8 @@ def main(argv):
                          human_recent(recent[0]))
             fails += lacks("最近收口正文不露原始 ID", out["recentBox"],
                            *[r for r in recent if re.match(r"^[A-Z]+-\d+", str(r))])
+            fails += lacks("最近收口正文不露工程路径与命令", out["recentBox"],
+                           "kgctl", "~/.plugins", "progress.json", "acceptance.json")
             if re.match(r"^[A-Z]+-\d+", str(recent[0])):
                 fails += has("最近收口 ID 保留在 title/aria", out["recentSerialized"],
                              str(recent[0]), "收口详情：" + str(recent[0]))
