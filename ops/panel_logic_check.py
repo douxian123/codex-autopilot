@@ -984,6 +984,13 @@ def main(argv):
                 "note": "只生成候选，不会自动追问；你点头才会发消息。",
                 "missing": [],
             },
+            "closure": {
+                "status": "ok",
+                "paths": [{
+                    "work_item": {"id": "L-0030", "title": "施工路径上屏",
+                                  "status": "doing", "occupancy": "known"},
+                }],
+            },
         }
         # 授权账本是顶层状态，不属于 PM 简报子对象；面板按这个契约读取。
         pm_payload["authorized_followups"] = {
@@ -1006,6 +1013,8 @@ def main(argv):
                      "90 分钟", "thread-abc", "不会自动追问")
         fails += has("PM 简报上屏：追问授权摘要", pm_out["pmBriefingBox"],
                      "追问授权", "1 条待发")
+        fails += has("PM 简报上屏：施工路径只读投影", pm_out["pmBriefingBox"],
+                     "施工路径", "L-0030", "施工路径上屏")
         authorize_calls = pm_out.get("followupAuthorizeCalls") or []
         if len(authorize_calls) != 1 or authorize_calls[0].get("confirm") is not True \
            or authorize_calls[0].get("ticket_id") != "L-0021" \

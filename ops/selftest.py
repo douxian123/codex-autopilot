@@ -288,6 +288,10 @@ def main():
         # 取不到说 unknown；尤其不许把「只生成候选」做成自动发消息。
         run([sys.executable, str(OPS / "test-pm-briefing.py")],
             cwd=str(OPS.parent), check=True)
+        # PM 施工闭环：十条真实输入必须能从原话走到施工项、依赖、路线投影、
+        # 追问候选和关闭证据；没有文件声明时保留 unknown，模块只读不派活。
+        run([sys.executable, str(OPS / "test-pm-closure-loop.py")],
+            cwd=str(OPS.parent), check=True)
         # 归属判定：「万法归一」入口后面那一层。最容易腐化的形态不是「判错」而是
         # 「判不清时悄悄猜」——插件 .mcp.json 写死一个 KG_REPO，于是用户在 A 项目
         # 窗口里说 B 项目的事，记录照样落进 A（2026-11-16 用户实测的 bug）。
