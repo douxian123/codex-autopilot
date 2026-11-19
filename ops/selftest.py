@@ -1334,6 +1334,13 @@ def test_installer():
         source = Path(tmp) / "source"
         shutil.copytree(OPS.parent, source,
                         ignore=shutil.ignore_patterns(".git", ".build"))
+        # release 副本按设计没有 ops/tasks 和 ops/truth；这里的 source 同时
+        # 充当 --no-seed 的状态根，所以要先补成合法的已初始化项目。
+        # Git 不跟踪空目录，必须提交占位文件，detached worktree 才会保留它们。
+        (source / "ops" / "tasks" / "inbox.jsonl").parent.mkdir(parents=True, exist_ok=True)
+        (source / "ops" / "truth" / "ledger.jsonl").parent.mkdir(parents=True, exist_ok=True)
+        (source / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+        (source / "ops" / "truth" / "ledger.jsonl").write_text("", encoding="utf-8")
         source_install = source / "install.sh"
         run(["git", "init", "-q", "-b", "main", str(source)])
         run(["git", "-C", str(source), "config", "user.email",
