@@ -80,6 +80,10 @@
   .iconbtn svg{width:15px;height:15px}
   body.adv .iconbtn.adv{background:var(--brand-50);border-color:var(--brand-200);color:var(--brand-700)}
 
+  /* 入口说明：常驻但不抢三问的注意力。只说用途，不暴露线程 ID 或内部术语。 */
+  .entrymap{display:flex;flex-wrap:wrap;gap:4px 14px;margin:-2px 0 12px;padding:8px 11px;background:var(--surface-2);border:1px solid var(--line-2);border-left:2px solid var(--brand-200);border-radius:var(--r-sm);font-size:11.5px;color:var(--ink-3)}
+  .entrymap b{color:var(--ink-2);font-weight:600}
+
   /* ---- hero ---- */
   .hero{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:var(--r);padding:16px 18px 15px;margin-bottom:11px;box-shadow:var(--shadow-2)}
   .hero-top{display:flex;align-items:center;gap:9px}
@@ -419,6 +423,12 @@
   </header>
 
   <!-- 首屏只回答三件事，其余一律下沉。健康时不占空间。 -->
+  <div class="entrymap" id="entryMap" aria-label="入口说明">
+    <span><b>主入口</b>：当前 Codex 输入框，万法归一</span>
+    <span><b>执行入口</b>：后台任务窗口，只汇报状态</span>
+    <span><b>兜底入口</b>：高级区输入框</span>
+  </div>
+
   <section class="q" id="q1">
     <div class="qhead"><span class="qn">1</span><h2>有东西需要我吗？</h2><span class="qstate" id="q1State"></span></div>
     <div class="alert lv-ok" id="need">
@@ -642,7 +652,7 @@
     </details>
 
     <details class="card fold">
-      <summary>运行信息</summary>
+      <summary>运行状态</summary>
       <div class="foldbody">
         <div class="grid2">
           <div class="kv"><div class="l">后台常驻进程</div><div class="v" id="daemonLive">—</div></div>
@@ -666,7 +676,7 @@
     </details>
 
     <details class="card fold" id="relationshipGoalsFold">
-      <summary>关系层 · 跨项目长期目标</summary>
+      <summary>关系目标 · 跨项目长期目标</summary>
       <div class="foldbody"><div id="relationshipGoalsBox"></div></div>
     </details>
 
@@ -691,17 +701,17 @@
     </details>
 
     <details class="card fold">
-      <summary>最近一次自验证 · 真跑真写真拦</summary>
+      <summary>验收台账 · 最近一次自验证</summary>
       <div class="foldbody"><div id="verifyBox"></div></div>
     </details>
 
     <details class="card fold">
-      <summary>需要你拍板 / 异常</summary>
+      <summary>需要你验收 / 拍板 / 异常</summary>
       <div class="foldbody"><ul class="list" id="blockedList"></ul></div>
     </details>
 
     <details class="card fold">
-      <summary>最近发生了什么</summary>
+      <summary>执行记录</summary>
       <div class="foldbody">
         <ul class="list" id="eventList"></ul>
         <p class="tiny" style="margin-top:10px">完整日志：<span id="logPath">~/.codex-autopilot/daemon.log</span></p>
