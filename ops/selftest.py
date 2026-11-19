@@ -7224,7 +7224,8 @@ def test_daemon_liveness_shared_judge():
     msg = daemon_liveness.liveness_problem(st_other, True)
     assert msg and "别的账本" in msg, msg
     headline, detail = daemon_liveness.liveness_need_action(st_other, True)
-    assert headline and "绑到了别的项目" in headline, headline
+    assert headline and "后台现在在服务别的项目" in headline, headline
+    assert "当前项目要等自己的轮次" in headline, headline
     assert detail and "别的账本" in detail and "/tmp/proj-b" in detail, detail
     assert "/tmp/proj-b" not in headline, "首屏结论不该塞工程路径"
 

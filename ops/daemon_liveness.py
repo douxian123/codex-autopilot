@@ -141,7 +141,7 @@ def liveness_need_action(state: dict, daemon_enabled=None):
 
     st = state.get("status")
     if st == "running" and state.get("matches_repo") is False:
-        headline = "自动推进绑到了别的项目；当前项目不会自己往前走。"
+        headline = "后台现在在服务别的项目；当前项目要等自己的轮次。"
         detail = (problem + " 当前项目：" + str(state.get("repo") or "取不到")
                   + "；守护绑定：" + str(state.get("bound_repo") or "取不到")
                   + "。需要精确修复时看工程详情，不会自动改绑定。")

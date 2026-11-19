@@ -133,11 +133,11 @@ def _harness_health():
 def _harness_health_line(level, worst):
     name = worst.get("automation") or "长驻窗口"
     if level == "ok":
-        return "上下文健康：正常（%s 没有越线）" % name
+        return "上下文健康：正常"
     if level == "warn":
-        return "上下文偏肥：%s 接近越线" % name
+        return "上下文偏紧：建议空闲时整理"
     if level == "over":
-        return "上下文已饱和：%s 需要换代" % name
+        return "上下文已饱和：建议空闲时换新窗口"
     return "上下文健康：读不到判定"
 
 
@@ -2639,8 +2639,8 @@ def _status_payload(fast=True):
         doing = f"正在处理 {len(rtasks)} 条冲突，拆成可执行任务后逐条收口"
         why = "冲突不丢给你逐条裁决，先自动拆成任务，解完再走同一道门禁"
     elif job_running and daemon_project and daemon_project != current_project:
-        doing = "后台守护正在服务另一个项目；当前项目的任务与进度不会混入它的队列"
-        why = "常驻守护按项目绑定，面板只读取当前项目自己的账本"
+        doing = "后台正在服务别的项目；当前项目会等自己的轮次"
+        why = "常驻守护按项目分开，当前项目只走自己的进度"
     else:
         doing = "已检查一轮，当前没有能安全自动合入的分支"
         why = "和 main 冲突的、或门禁没过的，不会被自动合，等你处理"

@@ -93,8 +93,10 @@ def main():
         h = _load_health(runtime)
         check("多条里取最差的一条（over 不被 ok 冲淡）",
               h.get("level") == "over", h.get("level"))
-        check("饱和时结论点名要换代",
-              "换代" in str(h.get("headline") or ""), h.get("headline"))
+        check("饱和时结论给出可执行的人话建议",
+              "上下文已饱和" in str(h.get("headline") or "")
+              and "换新窗口" in str(h.get("headline") or ""),
+              h.get("headline"))
         check("越线原因原样带出，不被吞掉",
               bool(h.get("reasons")), h.get("reasons"))
 
