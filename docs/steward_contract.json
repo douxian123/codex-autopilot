@@ -37,7 +37,7 @@
       "human_boundary": "不替用户决定产品方向、删数据或发布；不自动发追问",
       "history": "ledger.jsonl、progress.jsonl、truth 决策与判断台账",
       "status": "partial",
-      "gap": "简报与让路判定已落地；跨目标优先级、施工路径和追问闭环尚未全链路产品化"
+      "gap": "简报、让路判定和只读施工路径已落地；跨目标优先级、真实窗口追问授权与十条端到端击穿仍待收口"
     },
     {
       "id": "acceptance",

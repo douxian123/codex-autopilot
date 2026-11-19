@@ -275,8 +275,15 @@ def compute(repo, runtime=None, now=None, stale_minutes=DEFAULT_STALE_MINUTES):
     acceptance = _acceptance_criteria(truth)
     overlap = _overlap_holds(runtime)
     follow_up = _follow_up(runtime, truth, now, stale_minutes)
+    try:
+        import pm_closure_loop
+        closure = pm_closure_loop.compute(repo, runtime=runtime, now=now,
+                                          stale_minutes=stale_minutes)
+    except Exception as exc:
+        closure = {"status": "unknown", "paths": [], "missing": [str(exc)],
+                   "source": "施工路径算不出来；不把不知道当成 0 条。"}
     statuses = [expectations["status"], acceptance["status"],
-                overlap["status"], follow_up["status"]]
+                overlap["status"], follow_up["status"], closure["status"]]
     if "unknown" in statuses:
         overall = "unknown"
     elif (expectations["pending_count"] or acceptance["pending_count"]
@@ -290,6 +297,7 @@ def compute(repo, runtime=None, now=None, stale_minutes=DEFAULT_STALE_MINUTES):
         "acceptance_criteria": acceptance,
         "overlap_holds": overlap,
         "follow_up_candidates": follow_up,
+        "closure": closure,
         "source": "只读聚合：constraints / candidates / acceptance_criteria / mainline / ledger / native_routes / 运行面",
     }
 

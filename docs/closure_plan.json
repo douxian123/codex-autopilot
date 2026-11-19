@@ -37,10 +37,10 @@
       "id": "pm_loop",
       "title": "PM 施工闭环",
       "depends_on": ["context_archive"],
-      "status": "pending",
+      "status": "done",
       "exit": "从入口原话到施工项、依赖、让路队列、路线更新、追问候选与关闭都有确定路径，且文件占地未知时如实保留 unknown。",
-      "gate": "python3 ops/test-pm-closure-loop.py",
-      "evidence": "至少十条真实输入能生成施工路径并回写主线；不自动发追问，不替人拍板。",
+      "gate": "python3 ops/test-pm-closure-loop.py && python3 ops/test-pm-briefing.py && python3 ops/panel_logic_check.py && python3 ops/panel_render_check.py --no-shot",
+      "evidence": "十条真实输入生成只读施工路径；文件占地未知保留 unknown；面板 PM 简报只读投影，不自动发追问、不替人拍板。",
       "user_entry": "PM 简报"
     },
     {

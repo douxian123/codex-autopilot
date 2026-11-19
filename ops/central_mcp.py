@@ -358,7 +358,7 @@ def _project_health_summary(payload):
 
 
 def _pm_briefing_summary(runtime=None):
-    """PM 简报：只读聚合预期、让路与追问候选，不新增台账、不派活。"""
+    """PM 简报：只读聚合预期、施工路径、让路与追问候选，不新增台账、不派活。"""
     try:
         import pm_briefing
         return pm_briefing.compute(
