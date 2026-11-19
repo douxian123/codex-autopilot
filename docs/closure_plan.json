@@ -7,7 +7,7 @@
       "id": "steward_contract",
       "title": "职责契约总表",
       "depends_on": [],
-      "status": "in_progress",
+      "status": "done",
       "exit": "七管家与全局健康的触发、输入、输出、门禁、用户入口、人工边界、历史事件齐全，机器可读且反向门禁能拦住职责漂移。",
       "gate": "python3 ops/test-steward-contract.py",
       "evidence": "职责契约正向完整；删除/新增管家、unknown 伪装、次入口删除等反向用例全部变红。",
@@ -17,7 +17,7 @@
       "id": "release_foundation",
       "title": "发布地基一致性",
       "depends_on": ["steward_contract"],
-      "status": "pending",
+      "status": "done",
       "exit": "装得上、跑得起来、服务对象对、有效、一致可回滚五条判据全绿，且阴性对照全部仍能变红。",
       "gate": "python3 ops/product_eval.py --selftest && python3 ops/product_eval.py",
       "evidence": "release_ready=true；安装版本、运行版本、缓存版本、本地主干与远端主干 lineage 一致；守护绑定目标项目。",
@@ -27,9 +27,9 @@
       "id": "context_archive",
       "title": "上下文档案可查看可确认",
       "depends_on": ["release_foundation"],
-      "status": "pending",
+      "status": "done",
       "exit": "自动收录的上下文有档案、有来源、有用户确认入口；判不清和读取失败显示为 unknown。",
-      "gate": "python3 ops/test-context-archive.py",
+      "gate": "python3 ops/test-context-archive.py && python3 ops/panel_logic_check.py && python3 ops/panel_render_check.py --no-shot",
       "evidence": "候选、确认、驳回、查看四条路径有台账与面板入口；读取失败不等于 0。",
       "user_entry": "PM 简报 -> 上下文档案"
     },
@@ -95,8 +95,8 @@
     }
   ],
   "progress_estimates": {
-    "职责代码覆盖率": "80%-85%",
-    "用户预期击穿度": "60%-65%",
+    "职责代码覆盖率": "85%-90%",
+    "用户预期击穿度": "65%-70%",
     "公开发布就绪度": "40%",
     "口径": "来自当前文档、台账与 product_eval 的保守工程估计，不是自动计量；unknown 不按 0 计。"
   }

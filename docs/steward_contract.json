@@ -19,11 +19,11 @@
       "input": "唯一入口原话、项目账本、已确认约束、来源线程",
       "output": "候选约束、按 scope 调取的上下文、自动收录档案",
       "machine_gate": "候选未经显式确认不得写进生效约束；档案读取失败标 unknown",
-      "user_entry": "PM 简报 -> 上下文档案（次入口，可查看与确认自动收录内容）",
+      "user_entry": "高级区 -> 上下文档案（PM 简报下方次入口；确认仍在需要你决策区）",
       "human_boundary": "用户确认或驳回候选；系统不替用户把自然语言升成全局约束",
       "history": "constraint_candidates.jsonl、constraints.jsonl、truth 决策记录",
       "status": "partial",
-      "gap": "候选与生效边界已落地；自动收录档案的用户确认与查看入口仍需收口"
+      "gap": "自动收录档案的查看与追溯已落地；跨项目 scope 收紧与十条真实需求闭环仍待收口"
     },
     {
       "id": "pm",

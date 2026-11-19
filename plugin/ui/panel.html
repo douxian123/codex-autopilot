@@ -660,6 +660,11 @@
       <div class="foldbody"><div id="pmBriefingBox"></div></div>
     </details>
 
+    <details class="card fold" id="contextArchiveFold">
+      <summary>上下文档案 · 自动收录与确认去向</summary>
+      <div class="foldbody"><div id="contextArchiveBox"></div></div>
+    </details>
+
     <details class="card fold" id="relationshipGoalsFold">
       <summary>关系层 · 跨项目长期目标</summary>
       <div class="foldbody"><div id="relationshipGoalsBox"></div></div>
@@ -920,6 +925,7 @@
     renderOrientation(s);
     renderAcceptance(humanAcc, s.machine_verified || []);
     renderPmBriefing(s.pm_briefing, s.authorized_followups);
+    renderContextArchive(s.context_archive);
     renderRelationshipGoals(s.relationship_goals);
     renderOutcomeScore(s.outcome_score);
     renderRecent(s.recent_completed || []);
@@ -1199,6 +1205,46 @@
       meta.textContent = "取不到：" + missing.join("、") + "；这些项不计入正常。";
       box.appendChild(meta);
     }
+  }
+
+  // 上下文档案：只读展示自动收录、已确认、已驳回和生效记录。确认动作只在
+  // 「需要你拍板 / 异常」区出现，避免同一条候选有两套互相打架的按钮。
+  function renderContextArchive(ca){
+    var box = el("contextArchiveBox"); if (!box) return; box.innerHTML = "";
+    if (!ca || ca.status !== "ok"){
+      var why = (ca && (ca.reason || (ca.unknown || []).join("、")))
+        || "上下文档案取不到";
+      if (why.indexOf("不把不知道当成 0 条") < 0) why += "；不把不知道当成 0 条。";
+      box.innerHTML = '<div class="empty">' + why + '</div>';
+      return;
+    }
+    var list = document.createElement("ul"); list.className = "list";
+    var c = ca.counts || {};
+    pmRow(list, "已收录", "待确认 " + pmCount(c.proposed) + " · 已确认 "
+      + pmCount(c.promoted) + " · 已驳回 " + pmCount(c.dismissed)
+      + " · 生效 " + pmCount(c.active));
+    (ca.items || []).forEach(function(x){
+      var source = x.source === "context_learning"
+        ? "自学习：同一诉求出现 " + pmCount(x.mentions) + " 次 / 跨 "
+          + pmCount(x.threads) + " 个会话"
+        : "入口原话" + ((x.signals && x.signals.length)
+          ? " · 命中 " + x.signals.join("、") : "");
+      var detail = (x.id || "") + " · " + (x.text || x.title || "") + " · " + source;
+      if (x.evidence && x.evidence.length){
+        var ev = x.evidence[0];
+        detail += " · 证据：" + ((ev.thread) ? ev.thread + "：" : "") + (ev.text || "");
+      }
+      if (x.constraint_id) detail += " · 已落成 " + x.constraint_id;
+      if (x.reason) detail += " · 驳回原因：" + x.reason;
+      pmRow(list, x.status === "proposed" ? "待确认"
+        : x.status === "promoted" ? "已确认"
+        : x.status === "dismissed" ? "已驳回" : "生效", detail);
+    });
+    (ca.unknown || []).forEach(function(x){ pmRow(list, "取不到", x); });
+    box.appendChild(list);
+    var meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = ca.note || "自动收录只生成候选，不自动生效。";
+    box.appendChild(meta);
   }
 
   // 关系层：只照抄显式登记的目标摘要。它不自动派活，也不把「需要人」变成追问动作。

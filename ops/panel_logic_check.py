@@ -265,6 +265,8 @@ console.log(JSON.stringify({
   autonomyLine: read("autonomyLine"),
   autonomyAudit: read("autonomyAudit"),
   pmBriefingBox: read("pmBriefingBox") + " " + document.getElementById("pmBriefingBox").innerHTML,
+  contextArchiveBox: read("contextArchiveBox") + " " + document.getElementById("contextArchiveBox").innerHTML,
+  contextArchiveFoldOpen: (function(){ var n = document.getElementById("contextArchiveFold"); return n && (n.open || n.hasAttribute("open")) ? "1" : "0"; })(),
   relationshipGoalsBox: read("relationshipGoalsBox") + " "
     + document.getElementById("relationshipGoalsBox").innerHTML,
   outcomeScoreBox: read("outcomeScoreBox") + " "
@@ -1018,6 +1020,39 @@ def main(argv):
         pm_missing = run_once(dict(payload, pm_briefing=None))
         fails += has("PM 简报缺失时如实说取不到",
                      pm_missing["pmBriefingBox"], "取不到")
+
+        # 上下文档案是高级区的只读次入口：用户要能看见自动收了什么、来源是什么、
+        # 停在待确认/已确认/已驳回/生效哪一类；确认按钮仍只在唯一决策区。
+        archive_payload = dict(payload)
+        archive_payload["context_archive"] = {
+            "status": "ok", "counts": {"proposed": 1, "promoted": 1,
+                                       "dismissed": 1, "active": 1},
+            "items": [{
+                "id": "CC-9001", "status": "proposed", "text": "以后不要做破坏性修改",
+                "source": "intake", "signals": ["以后", "不要"],
+                "evidence": [{"thread": "thread-ca", "text": "以后不要做破坏性修改"}],
+            }, {
+                "id": "CC-9002", "status": "promoted", "text": "面板只展示值得关注的信息",
+                "source": "context_learning", "mentions": 5, "threads": 3,
+                "constraint_id": "C-9002",
+            }],
+            "unknown": [],
+            "note": "自动收录只生成候选，不自动生效；待确认项在「需要你决策」区逐条点「算 / 不算」。",
+        }
+        caout = run_once(archive_payload)
+        fails += has("上下文档案上屏：四类状态与数量", caout["contextArchiveBox"],
+                     "待确认 1", "已确认 1", "已驳回 1", "生效 1")
+        fails += has("上下文档案上屏：原话与来源", caout["contextArchiveBox"],
+                     "以后不要做破坏性修改", "入口原话", "thread-ca",
+                     "自学习：同一诉求出现 5 次 / 跨 3 个会话")
+        fails += has("上下文档案说明唯一确认入口", caout["contextArchiveBox"],
+                     "需要你决策", "不自动生效")
+        archive_missing = run_once(dict(payload, context_archive={
+            "status": "unknown", "reason": "档案目录读不到", "counts": {},
+            "items": [], "unknown": ["档案目录读不到"],
+        }))
+        fails += has("上下文档案取不到时如实说明", archive_missing["contextArchiveBox"],
+                     "档案目录读不到", "不把不知道当成 0 条")
 
         # 关系层：跨项目长期目标在高级区折叠展示。它必须照抄控制层摘要，
         # 缺失时说取不到，不能把 G-id / 优先级 / 需要人的原因藏在首屏。

@@ -155,6 +155,7 @@ def main():
             "test-authorized-followup.py",
             "test-steward-contract.py",
             "test-closure-plan.py",
+            "test-context-archive.py",
         )
         for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)
@@ -1833,6 +1834,12 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     assert "不会自动追问" in pm_text, "PM 简报必须明示候选不是动作"
     assert "acceptance_criteria" in pm_text, "PM 简报缺少验收标准候选契约"
 
+    archive = root / "ops" / "context_archive.py"
+    assert archive.is_file(), "发布树缺少 ops/context_archive.py"
+    archive_text = archive.read_text(encoding="utf-8")
+    assert "取不到就明确说取不到" in archive_text, "上下文档案缺少 unknown 边界"
+    assert "不把不知道当成 0 条" in archive_text, "上下文档案会把取不到伪装成空"
+
     followup = root / "ops" / "authorized_followup.py"
     assert followup.is_file(), "发布树缺少 ops/authorized_followup.py"
     followup_text = followup.read_text(encoding="utf-8")
@@ -1853,6 +1860,8 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     panel_text = (root / "plugin" / "ui" / "panel.html").read_text(encoding="utf-8")
     assert "pmBriefingBox" in panel_text, "面板缺少 PM 简报容器"
     assert "renderPmBriefing" in panel_text, "面板未接 PM 简报渲染"
+    assert "contextArchiveFold" in panel_text, "面板缺少上下文档案次入口"
+    assert "renderContextArchive" in panel_text, "面板未接上下文档案渲染"
     assert "复核截图" in panel_text, "面板缺少复核截图展示"
     assert "capture_acceptance_screenshot" in panel_text, \
         "面板补图按钮没有接 MCP 工具"
@@ -1867,10 +1876,11 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     mcp = (root / "ops" / "central_mcp.py").read_text(encoding="utf-8")
     assert '"screenshots"' in mcp, "MCP 工具契约缺少 screenshots"
     assert "_pm_briefing_summary" in mcp, "MCP 状态未接 PM 简报"
+    assert "_context_archive_summary" in mcp, "MCP 状态未接上下文档案"
     assert "_acceptance_criteria_summary" in mcp, "MCP 状态未接验收标准候选"
     assert "_route_health_summary" in mcp, "MCP 状态未接路线与效能检测"
     assert '"route_health"' in mcp, "MCP 状态快照缺少 route_health"
-    for tool in ("acceptance_criteria_list", "acceptance_criteria_promote",
+    for tool in ("context_archive", "acceptance_criteria_list", "acceptance_criteria_promote",
                  "acceptance_criteria_dismiss"):
         assert f'"name": "{tool}"' in mcp, f"MCP 未注册 {tool}"
     for tool in ("followup_authorize", "followup_cancel", "followup_list"):
