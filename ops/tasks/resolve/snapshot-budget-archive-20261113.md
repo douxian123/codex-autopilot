@@ -4,7 +4,7 @@
 - 执行分支：`codex/resolve-snapshot-budget-archive-20261113`
 - 工作树：`/Users/danta/.newmax/workspace/codex-autopilot-resolve-snapshot-budget-archive-20261113`
 - 基于：`acc08f24f10a`（origin/main）
-- 状态：`gate_fail`
+- 状态：`needs_agent`
 
 ## 要解的冲突文件（保留的 marker）
 - `ops/tasks/conflict_burden.json`

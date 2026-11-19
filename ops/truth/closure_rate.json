@@ -1,18 +1,13 @@
 {
  "status": "ok",
  "reason": null,
- "generated_at": "2026-10-18T03:52:41+08:00",
- "denominator": 15,
- "numerator": 5,
- "rate_pct": 33.3,
- "done_without_evidence": [
-  "L-0005",
-  "L-0003",
-  "L-0004"
- ],
+ "generated_at": "2026-11-19T05:02:22+08:00",
+ "denominator": 10,
+ "numerator": 9,
+ "rate_pct": 90.0,
+ "done_without_evidence": [],
  "not_closed": {
-  "open": 6,
-  "doing": 1
+  "open": 1
  },
  "unreadable_lines": 0,
  "policy": "closed = status==done 且 evidence 非空；done 无证据按未闭环算"

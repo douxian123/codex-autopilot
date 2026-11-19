@@ -1,7 +1,6 @@
 {
- "main": "ab5141cc9c8bbbd84bfdc3ec1519dbbdc4ac9440",
+ "main": "04bcdd8bc28526b3db24a352a29b11a3b3023d0f",
  "branches": [
-  "codex/arch-boundaries-port-20261119",
   "codex/autopilot-close-gate-20261026",
   "codex/autopilot-exec-recover-min-20261020",
   "codex/autopilot-health-20261019",
@@ -9,6 +8,7 @@
   "codex/autopilot-resolve-stderr",
   "codex/autopilot-truth-sync-failclosed",
   "codex/daemon-liveness-20261110",
+  "codex/disk-production-admission-20261112",
   "codex/eval-loop-judge-20261110",
   "codex/guard-release-version-20261119",
   "codex/reap-branch-preserve-20261111",
@@ -16,7 +16,6 @@
   "codex/snapshot-budget-archive-20261113"
  ],
  "burden": {
-  "codex/arch-boundaries-port-20261119": 1,
   "codex/autopilot-close-gate-20261026": 2,
   "codex/autopilot-exec-recover-min-20261020": 2,
   "codex/autopilot-health-20261019": 1,
@@ -24,7 +23,8 @@
   "codex/autopilot-resolve-stderr": 2,
   "codex/autopilot-truth-sync-failclosed": 2,
   "codex/daemon-liveness-20261110": 4,
-  "codex/eval-loop-judge-20261110": 7,
+  "codex/disk-production-admission-20261112": 3,
+  "codex/eval-loop-judge-20261110": 8,
   "codex/guard-release-version-20261119": 1,
   "codex/reap-branch-preserve-20261111": 2,
   "codex/resource-admission-verify-narrowing-20261115": 3,

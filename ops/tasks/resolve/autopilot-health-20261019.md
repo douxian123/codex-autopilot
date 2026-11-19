@@ -4,7 +4,7 @@
 - 执行分支：`codex/resolve-autopilot-health-20261019`
 - 工作树：`/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-health-20261019`
 - 基于：`acc08f24f10a`（origin/main）
-- 状态：`gate_fail`
+- 状态：`needs_agent`
 
 ## 要解的冲突文件（保留的 marker）
 - `ops/budget_gate.py`
