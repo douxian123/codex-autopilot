@@ -252,6 +252,10 @@ def main():
         # 但只能提复核。取不到必须 unknown；正常重试和 overlap 排队不能误报。
         run([sys.executable, str(OPS / "test-route-health.py")],
             cwd=str(OPS.parent), check=True)
+        # daemon 每拍巡检：必须共用同一份运行时判据、只提复核、状态变化才留账，
+        # observe 模式不能触碰账本，且 route-health pass 不能被静默升成破坏性动作。
+        run([sys.executable, str(OPS / "test-route-health-pass.py")],
+            cwd=str(OPS.parent), check=True)
         # 关系层：跨项目长期目标必须有稳定对象。显式来源、空账本与取不到的区别、
         # 损坏账本 fail-closed、只读投影不派活，都由这条门禁锁住。
         run([sys.executable, str(OPS / "test-relationship-ledger.py")],
@@ -1898,6 +1902,18 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
         "路线与效能检测缺少只提复核的机器约束"
     assert "不杀 worker" in route_health_text or "不自动纠偏" in route_health_text, \
         "路线与效能检测缺少非破坏性边界"
+    route_runtime = root / "ops" / "route_health_runtime.py"
+    assert route_runtime.is_file(), "发布树缺少 ops/route_health_runtime.py"
+    runtime_text = route_runtime.read_text(encoding="utf-8")
+    assert "def summarize_many" in runtime_text, \
+        "路线与效能运行时缺少多 worker 聚合门禁"
+    assert "def append_if_changed" in runtime_text, \
+        "路线与效能运行时缺少按状态变化去重留账"
+    assert "Pass(\"route-health\"" in daemon_text, \
+        "daemon pass registry 缺少每拍路线与效能巡检"
+    assert "if ctx.get(\"route_health\") is not None:" in daemon_text \
+        and "state[\"route_health\"] = ctx[\"route_health\"]" in daemon_text, \
+        "daemon 运行态缺少最近一次路线与效能摘要，或会抹掉上一拍摘要"
     architecture = (root / "docs" / "ARCHITECTURE_STEWARDS.md").read_text(encoding="utf-8")
     for needle in ("为什么这不是人类岗位分工", "execute / control / evaluate",
                    "「最优」只能是可证伪的闭环", "不是「自动把路线调回最优」"):
