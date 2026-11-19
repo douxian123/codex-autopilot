@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-19",
+ "updated": "2026-11-18",
  "modules": [
   {
    "area": "唯一入口",
@@ -149,32 +149,6 @@
    "why": "",
    "files": [],
    "updated": "2026-11-18"
-  },
-  {
-   "area": "输入落点预览",
-   "behavior": "自动挡面板输入框下方实时显示这句话将落到哪个项目；点名项目直接显示目标项目，有多个项目但无线索时提示进全局待路由箱，单项目默认落账时明确写出当前项目。预览只读，不写账本也不注册项目；提交与预览共用同一套内存候选和 cwd 依据。resolved / ambiguous / default 三种落点文案都在真浏览器渲染门禁里锁住，test_panel_contract 同时锁住 route_preview 调用、cwd 传参与 intakeRoute 元素。",
-   "why": "用户不应在多个对话和项目账本之间自己猜落点；预览必须只读，判不清和默认落点都必须明说。已有功能虽然合入，但若门禁只锁 resolved，一次误删仍会让 selftest 变绿，所以把工具调用、cwd 依据和三种渲染文案都变成机器可验的断言。",
-   "files": [
-    "ops/kgctl.py",
-    "ops/central_mcp.py",
-    "plugin/ui/panel.html",
-    "ops/selftest.py",
-    "ops/panel_render_check.py",
-    "ops/test-project-router.py"
-   ],
-   "updated": "2026-11-19"
-  },
-  {
-   "area": "常驻自追踪",
-   "behavior": "kgctl tick 每拍调用 truthctl synthesize --if-changed：比较时忽略生成时间，主线正文和台账事实没变就保留原文件与原生成时间；真相变化后立即刷新。守护 tick pass 继续调用 kgctl tick，不新增重复 pass。回归门禁锁住无变化不写、有变化刷新和整条接线。",
-   "why": "自动挡每拍都会综合产品主线；生成时间随拍刷新会把“什么都没发生”伪装成新进展，并让共享主干反复合并同一份视图。常驻自追踪必须只在真相内容变化时落盘。",
-   "files": [
-    "ops/truthctl.py",
-    "ops/kgctl.py",
-    "ops/test-selftrack-mainline.py",
-    "ops/selftest.py"
-   ],
-   "updated": "2026-11-19"
   }
  ]
 }
