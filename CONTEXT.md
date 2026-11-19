@@ -16,7 +16,8 @@
 **Codex 自动挡**是给 Codex 加的一层「工程控制面」：你平时打字的那个 Codex 输入框就是总输入框，零散需求进去，归类、落账、隔离工作区、跑验证、能合的自动合、收口、回写主线，全由它串起来。
 
 - 形态：Codex 插件（原生风格面板） + macOS 菜单栏 Companion（状态锚点，不是第二套产品）
-- 版本：当前运行/候选发布 `0.6.0-preview.59`（2026-11-11 发布，`install-state.json` 与 marketplace 均指向它）；旧版本目录逐版保留，可 `./install.sh --rollback` 回退，阶段：内部可用
+- 版本（2026-11-20 现场核对）：当前运行仍是 `0.6.0-preview.103`（现场 `install-state.json` 未改，常驻守护绑定 `/Users/danta/.newmax/workspace/codex-autopilot`）；`0.6.0-preview.104` 是**已验证候选，尚未安装切换**。旧版本目录逐版保留，可 `./install.sh --rollback` 回退，阶段：内部可用。
+- 候选 `0.6.0-preview.104`（源码提交 `11ef5cc21bcacab946b3970caf375507fe762e30`，已确认是 `origin/main` 祖先）：隔离安装 `install_exit=0`；三项定向门禁 `test-context-learning.py` / `test-constraint-candidates.py` / `test-selftest-release-dir.py` 全退出 0；全量 `ops/selftest.py` 退出 0；真机上下文学习扫描 `status=ok`、扫描 211 个会话，识别 `single_entry_unified_routing`（6 次/5 会话）和 `evidence_first_closure`（10 次/4 会话）两个高优先级主题；对外发布评估五条判据 5/5 通过、阴性对照 8/8。现场 `.103` 未受影响，是否切换到 `.104` 仍属用户拍板。
 - 13 步产品路线：**7 步已完成、6 步进行中、0 步未开始**
 - 验收：机器已自证项持续增加；当前 A-0005/A-0006/A-0007/A-0008 仍需真人/桌面操作
 - 本机实测（2026-10-25）：候选版本 **`0.6.0-preview.23`** 修复跨 worktree / clone 的真相编号复用：同一项目共用持久高水位与文件锁，并合并本地真相根和 `origin/main` 的已占编号；隔离分支先写进展、主干后落盘时不会再撞号。全量 `python3 ops/selftest.py` 退出码 0；真实双 clone 回归验证 `P-0001` / `P-0002` 连续分配。preview.22 的自动收口证据门禁与共享 partial clone 保护保留，旧 `preview.22` 可回滚。
