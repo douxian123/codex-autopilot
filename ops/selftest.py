@@ -154,6 +154,7 @@ def main():
             "test-wake-resume.py",
             "test-authorized-followup.py",
             "test-steward-contract.py",
+            "test-runtime-freshness.py",
             "test-closure-plan.py",
         )
         for guard in standalone_guards:
