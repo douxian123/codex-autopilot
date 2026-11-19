@@ -1,6 +1,27 @@
 {
  "tasks": [
   {
+   "slug": "arch-boundaries-port-20261119",
+   "branch": "codex/arch-boundaries-port-20261119",
+   "resolve_branch": "codex/resolve-arch-boundaries-port-20261119",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-arch-boundaries-port-20261119",
+   "base_main": "9dbb3e8865cf987185221577b55d55173f963463",
+   "source_head": "34eb923c461586367c506348679ca1a97653c048",
+   "source_commits": [
+    "34eb923c461586367c506348679ca1a97653c048"
+   ],
+   "created": "2026-11-19 14:37:44",
+   "updated": "2026-11-19 14:37:44",
+   "conflict_files": [
+    "ops/tasks/resolve.json"
+   ],
+   "unresolved_files": [
+    "ops/tasks/resolve.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
    "slug": "route-review-20261119",
    "branch": "codex/route-review-20261119",
    "resolve_branch": "codex/resolve-route-review-20261119",
@@ -437,5 +458,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-19 13:09:01"
+ "updated": "2026-11-19 14:37:45"
 }

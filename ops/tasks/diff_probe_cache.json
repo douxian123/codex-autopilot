@@ -326,5 +326,21 @@
  "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@1553069e195b9ba6296107b4d543f00a865fdc80": {
   "files": 15,
   "lines": 1221
+ },
+ "codex/arch-boundaries-port-20261119@34eb923c461586367c506348679ca1a97653c048@6dca0241bb522e2e902f9e536256370cc244aa64": {
+  "files": 1,
+  "lines": 144
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@6dca0241bb522e2e902f9e536256370cc244aa64": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/arch-boundaries-port-20261119@34eb923c461586367c506348679ca1a97653c048@9dbb3e8865cf987185221577b55d55173f963463": {
+  "files": 1,
+  "lines": 144
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@9dbb3e8865cf987185221577b55d55173f963463": {
+  "files": 15,
+  "lines": 1221
  }
 }
