@@ -43,6 +43,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import subprocess
@@ -87,6 +88,7 @@ MAIN = os.environ.get("KG_MAIN", "main")
 # 旧实现取「git 主工作树」当账本家，而 truthctl 取「调用所在 worktree」，于是
 # 同一个项目能同时存在两份互不相认的账本。现在两个脚本共用同一个解析器。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import gate_owner  # noqa: E402
 from plugin_binding import apply_plugin_env, binding_health, binding_line  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, looks_like_state_root, resolve_state_root  # noqa: E402
@@ -1261,6 +1263,112 @@ def cmd_inbox(args):
     return "ok", route, target_root
 
 
+def cmd_route_preview(args):
+    """只读预演一条输入会落到哪个项目；不写账本，也不补登记注册表。
+
+    这里刻意不复用 `_route_record()` 里的 `ensure_registered` / `_register_from_cwd`：
+    面板输入时每敲一个字都会预演，预览若偷偷写注册表，就把只读动作变成了写操作。
+    真正提交时 `cmd_inbox()` 仍走原来的登记逻辑；预览在内存里补上同一个 cwd 候选，
+    提交前后的判定来源保持一致，但磁盘上的注册表一个字都不动。
+    """
+    if not args:
+        print("用法：kgctl route-preview \"用户原话\"")
+        return 0
+    text = " ".join(args)
+    files = [f for f in os.environ.get("KG_INBOX_FILES", "").split(":") if f]
+    hint = os.environ.get("KG_INBOX_PROJECT") or ""
+    cwd_hint = os.environ.get("KG_INBOX_CWD") or ""
+    registry = project_router.load_registry()
+
+    # 提交路径会把 cwd 指向的状态根自动登记后再匹配。预览不能写注册表，
+    # 但必须在内存里放入同一个候选，否则会显示「判不清」而提交却落进该项目。
+    def add_implicit_row(root, name):
+        nonlocal registry
+        root = root.resolve()
+        row_id = project_router.identity(str(root))
+
+        def same(row):
+            try:
+                same_path = Path(str(row.get("root") or "")).expanduser().resolve() == root
+            except (OSError, ValueError):
+                same_path = False
+            return same_path or (bool(row_id) and row.get("identity") == row_id)
+
+        existing = next((row for row in registry if same(row)), None)
+        if existing:
+            return existing
+        row = {"name": str(name), "root": str(root),
+               "aliases": [], "clues": [], "identity": row_id}
+        registry = list(registry) + [row]
+        return row
+
+    # `_route_record()` 先 ensure_registered(REPO)，再从 cwd 登记。预览按同样顺序
+    # 在内存里补候选：少一个都会让「预演说判不清、提交却落进某个项目」。
+    add_implicit_row(REPO, REPO.name)
+    def implicit_root_from_cwd():
+        if not cwd_hint:
+            return None
+        try:
+            base = Path(cwd_hint).expanduser()
+        except (OSError, ValueError):
+            return None
+        if not base.is_dir():
+            return None
+        for cand in _state_root_candidates(base):
+            try:
+                if looks_like_state_root(cand):
+                    return cand.resolve()
+            except OSError:
+                continue
+        return None
+
+    implicit_root = implicit_root_from_cwd()
+    if implicit_root:
+        add_implicit_row(implicit_root, implicit_root.name)
+
+    if hint:
+        detail = []
+        pinned = project_router.resolve_hint(hint, registry, detail=detail)
+        if pinned:
+            route = {"decision": "resolved", "project": pinned["name"],
+                     "root": pinned["root"], "score": 1000,
+                     "reasons": ["调用方明确指定了「%s」" % hint], "candidates": []}
+        else:
+            route = {"decision": "ambiguous", "project": None, "root": None,
+                     "score": 0, "candidates": [],
+                     "reasons": detail or [
+                         "调用方指定了「%s」，但注册表里没有这个项目" % hint]}
+    else:
+        route = project_router.match(text, files, registry, cwd=cwd_hint or None)
+        if route["decision"] == "none" and (cwd_hint or len(registry) > 1):
+            route = dict(route)
+            route["decision"] = "ambiguous"
+            route["reasons"] = [
+                (f"调用方给的 cwd「{cwd_hint}」不在任何已注册项目里" if cwd_hint
+                 else "有多个已注册项目，但这条猜不出属于哪个")]
+        elif route["decision"] == "none" and REPO:
+            # cmd_inbox 的最终落点是 `route["root"] or REPO`。预览必须说出这个
+            # 兜底，不能一边显示「判不清」，一边提交时悄悄写进绑定项目。
+            route = dict(route)
+            route["decision"] = "none"
+            # 真实提交在 route.root 为空时用 target_root.name；这里必须同一口径。
+            route["project"] = REPO.name
+            route["root"] = str(REPO)
+            route["reasons"] = [
+                "没有其它线索，默认按当前绑定项目落账；如不是，请在原话里点名项目"]
+    reasons = route.get("reasons") or []
+    print(json.dumps({
+        "decision": route.get("decision"),
+        "project": route.get("project"),
+        "root": route.get("root"),
+        "reasons": reasons,
+        "candidates": [r.get("name") for r in (route.get("candidates") or [])
+                       if r.get("name")],
+        "error": route.get("error"),
+    }, ensure_ascii=False))
+    return 0
+
+
 def _inbox_path(root) -> Path:
     """某个状态根对应的输入账本。路由到别的项目时不能再写死模块级 INBOX。"""
     return Path(root) / "ops" / "tasks" / "inbox.jsonl"
@@ -1374,7 +1482,8 @@ def cmd_projects(args):
                 print(f"    线索  {'、'.join(p['clues'])}")
         backlog = project_router.routing_inbox_path()
         if backlog.exists():
-            print(f"  待路由箱 {backlog}（{len(read_jsonl(backlog))} 条）")
+            pending = project_router.pending_routing_records(backlog)
+            print(f"  待路由箱 {backlog}（{len(pending)} 条待复核；原始记录 {len(read_jsonl(backlog))} 条）")
         return
     if sub == "register":
         if len(args) < 3:
@@ -1442,14 +1551,118 @@ def _print_routing_backlog():
         path = project_router.routing_inbox_path()
         if not path.exists():
             return
-        rows = read_jsonl(path)
-        if rows:
-            print(f"\n全局待路由箱 {len(rows)} 条（判不清归属，未写进任何项目账本）：{path}")
-            for r in rows[-5:]:
-                print(f"  - [{r.get('ts','')[-11:]}] {str(r.get('text',''))[:70]}")
+        pending = project_router.pending_routing_records(path)
+        if pending:
+            print(f"\n全局待路由箱 {len(pending)} 条待复核（未写进任何项目账本）：{path}")
+            for item in pending[-5:]:
+                r = item["record"]
+                print(f"  - [{r.get('ts','')[-11:]}] {item['fingerprint']} "
+                      f"{str(r.get('text',''))[:70]}")
     except Exception:
         pass
 
+
+def cmd_route_inbox(args):
+    """复核全局待路由箱：只读列出，或把一条明确指派给某个项目。
+
+    自动路由判不清时进全局箱，绝不猜；但人看过一遍之后，原话里的产品名、日志里的
+    项目路径往往是明确证据。这里给这条证据一个显式出口：默认只读，必须同时给出
+    指纹 + 项目 + `--go` 才写。原始记录不删、不回写，只追加一份复核凭证。
+    """
+    if args and args[0] in ('-h', '--help'):
+        print('用法：kgctl route-inbox '
+              '[--fingerprint <指纹> --project <项目名> [--reason "为什么"]] [--go]')
+        print('  kgctl route-inbox                  # 只读列出待复核项')
+        print('  kgctl route-inbox --fingerprint a1b2 --project knowledge-graph '
+              '--reason "原话点名知识图谱" --go')
+        return 0
+    go = '--go' in args
+    rest = [a for a in args if a != '--go']
+    fingerprint, project_hint, reason = None, None, ''
+    i = 0
+    while i < len(rest):
+        flag = rest[i]
+        if flag in ('--fingerprint', '--project', '--reason') and i + 1 < len(rest):
+            value = rest[i + 1]
+            if flag == '--fingerprint':
+                fingerprint = value
+            elif flag == '--project':
+                project_hint = value
+            else:
+                reason = value
+            i += 2
+            continue
+        sys.exit(f'× 不认识的参数 {flag}')
+
+    path = project_router.routing_inbox_path()
+    pending = project_router.pending_routing_records(path)
+    if not project_hint and not fingerprint:
+        if not pending:
+            print('全局待路由箱为空（没有待复核项）。')
+            return 0
+        print(f'全局待路由箱 {len(pending)} 条待复核：{path}')
+        for item in pending:
+            row = item["record"]
+            text = str(row.get('text') or '')
+            candidates = [c.get('name') for c in (row.get('candidates') or [])
+                          if isinstance(c, dict) and c.get('name')]
+            context = f' 候选：{"、".join(candidates)}' if candidates else ''
+            print(f"  #{item['index']:03d} {item['fingerprint']} "
+                  f"[{row.get('ts','')[-11:]}] {text[:84]}{context}")
+        print('\n指派：kgctl route-inbox --fingerprint <指纹> --project <项目名> '
+              '--reason "证据" --go')
+        return 0
+
+    if not fingerprint or not project_hint:
+        sys.exit('× 指派必须同时给出 --fingerprint 和 --project；'
+                 '先跑 kgctl route-inbox 看指纹')
+    matches = [item for item in pending if item['fingerprint'] == fingerprint]
+    if not matches:
+        sys.exit(f'× 待复核箱里没有指纹 {fingerprint}（可能已指派；'
+                 '先跑 kgctl route-inbox 刷新）')
+    item = matches[0]
+    why = []
+    pinned = project_router.resolve_hint(project_hint, detail=why)
+    if not pinned:
+        sys.exit('× 项目指派有歧义或不存在：' + (why[0] if why else project_hint))
+    target_root = Path(pinned['root'])
+    if not looks_like_state_root(target_root):
+        sys.exit(f'× {target_root} 不像状态根；不写入')
+
+    print(f"待复核 #{item['index']:03d} [{item['record'].get('ts','')}] "
+          f"{str(item['record'].get('text',''))[:100]}")
+    print(f'指派到「{pinned["name"]}」→ {target_root}')
+    print(f'理由：{reason or "人工复核确认归属"}')
+    if not go:
+        print('\n预演：未写任何账本。确认后加 --go。')
+        return 0
+
+    source = item['record']
+    target_row = {k: v for k, v in source.items()
+                  if k not in ('status', 'candidates', 'reasons', 'routed')}
+    target_row.update({
+        'project': pinned['name'],
+        'project_root': str(target_root),
+        'routed': False,
+        'lane': None,
+        'routing_review': {
+            'fingerprint': fingerprint,
+            'reason': reason or '人工复核确认归属',
+            'source': str(path),
+        },
+    })
+    target_inbox = _inbox_path(target_root)
+    target_inbox.parent.mkdir(parents=True, exist_ok=True)
+    with target_inbox.open('a', encoding='utf-8') as fh:
+        fh.write(json.dumps(target_row, ensure_ascii=False) + '\n')
+
+    review_path = project_router.record_routing_review(
+        item['index'], source, pinned['name'], target_root,
+        reason or '人工复核确认归属')
+    print(f'已追加到 {target_inbox}')
+    print(f'复核凭证已追加（原记录不回写、不删除）：{review_path}')
+    print('只追加到目标项目唯一入口；归类由目标项目自己的 tick / route 处理。')
+    return 0
 
 
 def cmd_intake(args):
@@ -1839,13 +2052,21 @@ def cmd_gate(args):
         wt = Path(wt_path)
         print(f"用分支已有的工作树：{wt}")
     else:
-        tmp = Path(tempfile.gettempdir()) / f"kg-gate-{slugify(branch, 24)}-{os.getpid()}"
-        proc_run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
-                       capture_output=True, text=True)
+        # 随机后缀代替「同 pid 同名覆盖」：旧实现先 `worktree remove --force`
+        # 一个同路径对象，重启后 pid 复用就可能帮别人清现场。现在每次建树都是
+        # 新路径，崩溃残留靠 sidecar 标记交给带判活守卫的回收器处理。
+        tmp = (Path(tempfile.gettempdir())
+               / f"kg-gate-{slugify(branch, 24)}-{os.getpid()}-{secrets.token_hex(4)}")
         add = proc_run(["git", "-C", str(SHARED), "worktree", "add", "--detach", str(tmp), branch],
                              capture_output=True, text=True, errors="replace")
         if add.returncode != 0:
             sys.exit(f"× 建门禁工作树失败：{(add.stdout or '') + (add.stderr or '')}".strip()[:400])
+        try:
+            gate_owner.write_marker(tmp, branch)
+        except Exception as exc:
+            proc_run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
+                     capture_output=True, text=True)
+            sys.exit(f"× 写门禁工作树归属标记失败：{type(exc).__name__}: {exc}")
         wt = tmp
         print(f"门禁工作树（临时）：{wt}")
     try:
@@ -1875,8 +2096,10 @@ def cmd_gate(args):
         return 0 if ok else 1
     finally:
         if tmp is not None and not keep:
-            proc_run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
-                           capture_output=True, text=True)
+            cleanup = proc_run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
+                               capture_output=True, text=True)
+            if cleanup.returncode == 0:
+                gate_owner.remove_marker(tmp)
 
 
 def cmd_clash(args):
@@ -2393,7 +2616,8 @@ def _context_payload(branch: str, head: str = "", main_head: str = "") -> dict:
             REPO / "ops" / "truth" / "constraints.jsonl", files),
         "acceptance_todo": [r for r in latest_by_id(read_jsonl(REPO / "ops" / "truth" / "acceptance.jsonl")).values()
                             if r.get("status") in ("todo", "wip", "blocked")],
-        "recent_progress": sorted(latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values(),
+        "recent_progress": sorted([r for r in latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values()
+                                   if (r.get("status") or "active") != "retired"],
                                   key=lambda r: r.get("ts", ""))[-8:],
         "convergence": next((g for g in load_convergence().get("groups", [])
                              if g.get("branch") == branch), None),
@@ -2493,7 +2717,8 @@ def cmd_dash(args):
     open_led = [r for r in led if r.get("status") in ("open", "doing", "todo")]
     open_led.sort(key=lambda r: ({"bug": 0, "arch": 1, "ux": 2, "visual": 3}.get(r.get("kind"), 9),
                                  r.get("ts", "")))
-    prog = sorted(latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values(),
+    prog = sorted([r for r in latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values()
+                   if (r.get("status") or "active") != "retired"],
                   key=lambda r: r.get("ts", ""))[-8:]
     inbox = read_jsonl(INBOX)
     pending = [x for x in inbox if not x.get("routed")]
@@ -2622,17 +2847,23 @@ def cmd_dash(args):
     else:
         machine_html = '<div class="note">机器已自证 · 不需要你动手</div>'
 
-    # 当前在做什么 / 还差什么
+    # 当前在做什么 / 还差什么 / 等你确认
+    waiting = [r for r in led if r.get("status") == "awaiting_human"]
     doing = [r for r in open_led if r.get("status") == "doing"]
-    todo = [r for r in open_led if r.get("status") != "doing"]
+    todo = [r for r in open_led if r.get("status") not in ("doing", "awaiting_human")]
 
     def item_ul(items):
         return "".join(
             f'<li>{kind_tag(r.get("kind"))}<span class="grow">{esc(r.get("title"))}</span>'
             f'<span class="when">{esc(r.get("id"))}</span></li>' for r in items)
 
-    if doing or todo:
+    if doing or todo or waiting:
         parts = []
+        if waiting:
+            # 活已经干完，缺的是人这一票。放在「还差这些」之前，避免用户以为
+            # 机器还没做，也避免 agent 把这几条当成待办反复重做。
+            parts.append('<div class="subhead">等你确认（做完了，缺你看一眼）</div>'
+                         '<ul class="list">' + item_ul(waiting) + "</ul>")
         if doing:
             parts.append('<div class="subhead">正在做</div><ul class="list">' + item_ul(doing) + "</ul>")
         if todo:
@@ -3555,9 +3786,26 @@ def _mirror_truth_into_trunk(wt: Path) -> None:
 
     自包含安装下，账本在项目目录的 `ops/truth` 里，而主干工作树是从 `main` 检出的；
     若 `ops/truth` 没进过版本库，trunk 里连目录都不存在，写进展台账会直接崩。这里只做
-    文件级拷贝（加法），让主干工作树拥有同一份账本，后续 `sync_trunk_truth` 才能把它
+    加法镜像：真账本 JSONL 按行并集，不允许状态根的旧副本整文件覆盖 trunk 上已经
+    落盘的记录（2026-11-18 实测：状态根的 P-0080 覆盖掉 main 的 P-0079，A-0006
+    验收记录也被覆盖）；其它真相文件仍按文件级拷贝，后续 `sync_trunk_truth` 才能把它
     作为真相层提交，与代码一起推回 `main`。
     """
+    def mirror_file(src: Path, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        rel = target.relative_to(wt).as_posix()
+        if (rel.startswith(("ops/truth/", "ops/tasks/"))
+                and rel.endswith(".jsonl") and target.exists()):
+            try:
+                current = target.read_text(encoding="utf-8")
+                incoming = src.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                shutil.copy2(src, target)
+                return
+            target.write_text(_union_jsonl_text(current, incoming), encoding="utf-8")
+            return
+        shutil.copy2(src, target)
+
     for rel in TRUTH_PATHS:
         src, dst = REPO / rel, wt / rel
         if not src.exists():
@@ -3571,11 +3819,9 @@ def _mirror_truth_into_trunk(wt: Path) -> None:
                 if not item.is_file():
                     continue
                 target = dst / item.relative_to(src)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, target)
+                mirror_file(item, target)
         elif src.is_file():
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+            mirror_file(src, dst)
 
 
 def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
@@ -4364,6 +4610,28 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     # 直接 add 会把别的窗口已经落盘的整段章节删掉（实测一次删 232 + 75 行）。
     for rel in APPEND_ONLY_MARKDOWN:
         _reconcile_append_only_with_head(wt, rel)
+    # JSONL 同理。land 在落盘前会先把状态根账本镜像进 trunk；如果状态根是旧
+    # 检出，直接 git add 会把 main 已关闭的 L-0002/L-0003 整文件覆盖回 open。
+    # 镜像入口已经做过行级并集，但 tick/intake/land 都会走这个提交入口，必须
+    # 在暂存前再做一次，保证任何入口都不会丢已落盘记录。
+    for rel in truth_pending_status(wt):
+        path = _porcelain_body(rel).strip('"')
+        if not (path.startswith(("ops/truth/", "ops/tasks/"))
+                and path.endswith(".jsonl")):
+            continue
+        head = proc_run(["git", "-C", str(wt), "show", f"HEAD:{path}"],
+                        capture_output=True, text=True, errors="replace")
+        if head.returncode != 0:
+            continue
+        target = wt / path
+        try:
+            work_text = target.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        merged = _union_jsonl_text(head.stdout, work_text)
+        if merged != work_text:
+            target.write_text(merged, encoding="utf-8")
+            print(f"  JSONL 台账 {path} 已与 HEAD 并集对齐（防旧状态根覆盖）")
     add_failures = []
     for rel in TRUTH_PATHS:
         if not (wt / rel).exists():
@@ -4424,12 +4692,40 @@ def _stage_blob(wt: Path, stage: int, rel: str) -> str:
 
 
 def _union_jsonl_text(a: str, b: str) -> str:
-    seen, lines = set(), []
+    """JSONL 行级并集：同 id 的不同版本都保留，较新 ts 排在最后。
+
+    truthctl 的 `_latest_by_id` 按出现顺序取最后一条作为当前状态；如果并集把状态根
+    的旧副本追加在 main 新记录之后，旧记录会反过来变成「当前」。所以这里只在同一
+    id 的记录槽内按 ts 升序重排，不同 id 的首现顺序仍按输入顺序保留。
+    """
+    seen = set()
+    entries = []
     for text in (a, b):
         for line in text.splitlines():
-            if line and line not in seen:
-                seen.add(line)
-                lines.append(line)
+            if not line or line in seen:
+                continue
+            seen.add(line)
+            rid, ts = None, ""
+            try:
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    if row.get("id") is not None:
+                        rid = str(row["id"])
+                    ts = str(row.get("ts") or row.get("closed") or "")
+            except (ValueError, TypeError):
+                pass
+            entries.append({"line": line, "id": rid, "ts": ts})
+
+    by_id = {}
+    for entry in entries:
+        if entry["id"] is not None:
+            by_id.setdefault(entry["id"], []).append(entry)
+    for rid, group in by_id.items():
+        positions = [i for i, entry in enumerate(entries) if entry["id"] == rid]
+        for pos, newest_last in zip(positions, sorted(group, key=lambda e: e["ts"])):
+            entries[pos] = newest_last
+
+    lines = [entry["line"] for entry in entries]
     return "\n".join(lines) + ("\n" if lines else "")
 
 
@@ -5283,14 +5579,16 @@ def cmd_status(args):
     # 一条需求如果既不在项目账本里、也不在面板上，就等于丢了。
     try:
         _backlog_path = project_router.routing_inbox_path()
-        _backlog = read_jsonl(_backlog_path) if _backlog_path.exists() else []
+        _backlog = (project_router.pending_routing_records(_backlog_path)
+                    if _backlog_path.exists() else [])
     except Exception:
         _backlog, _backlog_path = [], None
     if _backlog:
-        print(f"全局待路由箱   {len(_backlog)} 条判不清归属（未写进任何项目账本）：{_backlog_path}")
-        for _r in _backlog[-3:]:
+        print(f"全局待路由箱   {len(_backlog)} 条待复核（未写进任何项目账本）：{_backlog_path}")
+        for _item in _backlog[-3:]:
+            _r = _item["record"]
             print(f"  ├ [{str(_r.get('ts',''))[-11:]}] {str(_r.get('text',''))[:60]}")
-        print("  └ 指派：kgctl projects list 看候选；重发时设 KG_INBOX_PROJECT=<项目名>")
+        print("  └ 指派：kgctl route-inbox 查看指纹；确认后 --fingerprint <指纹> --project <项目名> --go")
     try:
         _registered = project_router.load_registry()
     except Exception:
@@ -5492,7 +5790,9 @@ def cmd_tick(args):
     _stage(2, "refresh project status")
     _truth("snapshot")
     _stage(3, "synthesize product mainline")
-    _truth("synthesize")
+    # 常驻自追踪每拍都会到这里。内容没变时不重写生成时间，避免共享主干被
+    # 「看起来更新了、实际什么都没发生」的假进展反复弄脏。
+    _truth("synthesize", "--if-changed")
 
     if os.environ.get("KG_TICK_LIGHT") == "1":
         rows = []
@@ -5737,7 +6037,9 @@ def cmd_doctor(args):
     return 1 if problems else 0
 
 
-CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route, "suggest": cmd_suggest,
+CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route,
+        "route-preview": cmd_route_preview, "route-inbox": cmd_route_inbox,
+        "suggest": cmd_suggest,
         "projects": cmd_projects,
         "matrix": cmd_matrix, "queue": cmd_queue, "gate": cmd_gate, "converge": cmd_converge,
         "replan": cmd_replan,

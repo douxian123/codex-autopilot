@@ -65,11 +65,15 @@ def main():
           == "person/review")
     check("判不清归属要露面",
           st.panel_stage({"answer_count": 2})["stage"] == "person/answer")
+    check("判不清归属用人话",
+          "不知道归到哪个项目" in st.panel_stage({"answer_count": 2})["label"])
     check("常驻没接上要露面",
           st.panel_stage({"daemon_live": False})["stage"] == "session_only")
     check("在服务别的项目时文案不同",
           st.panel_stage({"daemon_live": False, "daemon_other_project": True})["label"]
           == st.SESSION_ONLY_OTHER_PROJECT)
+    check("在服务别的项目时不说后台队列黑话",
+          "不会混入它的队列" not in st.SESSION_ONLY_OTHER_PROJECT)
     check("有分支可合 = working/queued",
           st.panel_stage({"queued_count": 1})["stage"] == "working/queued")
 

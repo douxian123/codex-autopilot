@@ -24,6 +24,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from datetime import datetime, timezone
 
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "codex-autopilot"
@@ -132,11 +133,11 @@ def _harness_health():
 def _harness_health_line(level, worst):
     name = worst.get("automation") or "长驻窗口"
     if level == "ok":
-        return "上下文健康：正常（%s 没有越线）" % name
+        return "上下文健康：正常"
     if level == "warn":
-        return "上下文偏肥：%s 接近越线" % name
+        return "上下文偏紧：建议空闲时整理"
     if level == "over":
-        return "上下文已饱和：%s 需要换代" % name
+        return "上下文已饱和：建议空闲时换新窗口"
     return "上下文健康：读不到判定"
 
 
@@ -181,6 +182,15 @@ def _constraint_candidates_summary():
         rows = constraint_candidates.pending()
     except Exception as exc:
         return {"status": "unknown", "reason": f"读不到约束候选（{exc!r}）", "items": []}
+    learning = {"status": "unknown", "themes": []}
+    try:
+        import context_learning
+        observed = context_learning.observe()
+        learning = {"status": observed.get("status"),
+                    "themes": observed.get("themes") or [],
+                    "reason": observed.get("reason")}
+    except Exception as exc:
+        learning = {"status": "unknown", "reason": f"读不到重复主题（{exc!r}）", "themes": []}
     items = [{
         "id": r.get("id"),
         "text": r.get("text"),
@@ -188,8 +198,176 @@ def _constraint_candidates_summary():
         "kind": r.get("kind"),
         "scope": r.get("scope") or [],
         "signals": r.get("signals") or [],
+        "source": r.get("source") or "intake",
+        "mentions": r.get("mentions"),
+        "threads": r.get("threads"),
+        "priority": r.get("priority"),
+        "evidence": (r.get("evidence") or [])[:2],
+    } for r in rows]
+    return {"status": "ok", "count": len(items), "items": items, "learning": learning}
+
+
+def _context_archive_summary():
+    """上下文管家：只读档案投影，回答自动收了什么、来源是什么、现在停在哪。"""
+    try:
+        import context_archive
+        return context_archive.collect()
+    except Exception as exc:
+        return {
+            "status": "unknown",
+            "reason": f"上下文档案模块不可用（{exc!r}）",
+            "counts": {},
+            "items": [],
+            "unknown": [f"上下文档案模块不可用（{exc!r}）"],
+            "note": "取不到不等于 0 条。",
+        }
+
+
+def _acceptance_criteria_summary():
+    """验收管家：待用户点头的「可判定验收标准候选」（只读）。
+
+    候选从已路由原话里提名，确认前不进 acceptance.jsonl；确认后也只是登记
+    验收项，机器自证项仍需真门禁证据。取不到就说取不到，不用 0 冒充正常。
+    """
+    try:
+        import acceptance_criteria
+        rows = acceptance_criteria.pending()
+    except Exception as exc:
+        return {"status": "unknown", "reason": f"读不到验收标准候选（{exc!r}）",
+                "items": []}
+    items = [{
+        "id": r.get("id"),
+        "text": r.get("text"),
+        "title": r.get("title"),
+        "needs_human": bool(r.get("needs_human")),
+        "machine_gate_suggested": bool(r.get("machine_gate_suggested")),
+        "steps": r.get("steps") or "",
+        "signals": r.get("signals") or [],
+        "files": r.get("files") or [],
     } for r in rows]
     return {"status": "ok", "count": len(items), "items": items}
+
+
+def _route_health_summary(payload, state=None):
+    """状态管家内部的路线/效能只读检测：不是第八个管家，不自动纠偏。
+
+    判据只来自现有现场：worker 生命周期声明的 scope、当前工作区改动、
+    生命周期世代/推进事件、已知 exec 卡点。拿不到就交给检测器输出 unknown；
+    没有在跑的实现时是明确的空闲 ok，不拿「没有对象」冒充「检测通过」。
+    现场组装逻辑在 `route_health_runtime`，与 daemon 每拍巡检共用，避免两套定义。
+    """
+    try:
+        import route_health_runtime
+    except Exception as exc:
+        return {"status": "ok", "level": "unknown",
+                "headline": "路线与效能判据取不到：检测器不可用（%s）" % exc,
+                "unknown": ["检测器不可用"], "reasons": [], "action": "none"}
+    summary = route_health_runtime.summarize(payload, state=state, runtime=RUNTIME)
+    try:
+        import route_review
+        summary["review"] = route_review.current(RUNTIME)
+    except Exception as exc:
+        summary["review"] = {"status": "error", "level": "unknown", "count": None,
+                             "items": [], "headline": "路线复核状态取不到（%s）" % exc}
+    return summary
+
+
+_RUNTIME_FRESHNESS_UNSET = object()
+
+
+def _autopilot_source_repo_path():
+    """Find the plugin source repo when this machine actually has one.
+
+    KG_REPO points at the *target project*, which is not always the autopilot
+    source. Only treat it as source when it visibly contains the plugin
+    manifest and this server, otherwise source-vs-installed comparison stays
+    unavailable instead of guessing.
+    """
+    candidates = (
+        os.environ.get("KG_AUTOPILOT_SOURCE_REPO"),
+        os.environ.get("KG_REPO"),
+    )
+    for raw in candidates:
+        if not raw:
+            continue
+        repo = Path(raw).expanduser()
+        if ((repo / "plugin/.codex-plugin/plugin.json").is_file()
+                and (repo / "ops/central_mcp.py").is_file()):
+            return repo
+    return None
+
+
+def _autopilot_source_commit():
+    """Read the local source main commit without fetching or changing refs."""
+    repo = _autopilot_source_repo_path()
+    if repo is None:
+        return None
+    for ref in ("refs/remotes/origin/main", "HEAD"):
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(repo), "rev-parse", ref],
+                capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        commit = (proc.stdout or "").strip() if proc.returncode == 0 else ""
+        if commit:
+            return commit
+    return None
+
+
+def _daemon_freshness_summary():
+    """只读采集 daemon 代际：plist 指向、共享存活判据绑定、daemon 源码 commit。"""
+    result = {"installed": None, "script": None, "live": None,
+              "source_commit": None, "repo_matches": None,
+              "bound_repo": None, "target_repo": None}
+    try:
+        import central_daemon
+        installed = central_daemon.PLIST_PATH.is_file()
+        result["installed"] = installed
+        result["script"] = central_daemon.plist_script_path()
+        if installed and result["script"]:
+            script = Path(result["script"])
+            metadata = script.parent.parent / ".codex-autopilot-source.json"
+            try:
+                import json
+                result["source_commit"] = str(
+                    json.loads(metadata.read_text(encoding="utf-8")).get("commit") or "").strip() or None
+            except (OSError, ValueError):
+                result["source_commit"] = None
+    except Exception:
+        return {k: None for k in result}
+
+    try:
+        import daemon_liveness
+        target = os.environ.get("KG_REPO") or _fallback_repo()
+        state = daemon_liveness.daemon_liveness(str(target))
+        result["live"] = state.get("live")
+        result["repo_matches"] = state.get("matches_repo")
+        result["bound_repo"] = state.get("bound_repo")
+        result["target_repo"] = state.get("repo")
+    except Exception:
+        result["live"] = None
+        result["repo_matches"] = None
+    return result
+
+
+def _runtime_freshness_summary(binding=None, source_commit=_RUNTIME_FRESHNESS_UNSET,
+                               daemon=_RUNTIME_FRESHNESS_UNSET):
+    """状态管家内部判据：源码、已装版本、运行代码、daemon 是否同一代。只读。"""
+    try:
+        import plugin_binding
+        import runtime_freshness
+    except Exception as exc:
+        return {"status": "ok", "level": "unknown",
+                "headline": "运行态判据取不到：检测器不可用（%s）" % exc,
+                "unknown": ["检测器不可用"], "reasons": [], "action": "none"}
+    if source_commit is _RUNTIME_FRESHNESS_UNSET:
+        source_commit = _autopilot_source_commit()
+    if daemon is _RUNTIME_FRESHNESS_UNSET:
+        daemon = _daemon_freshness_summary()
+    return runtime_freshness.evaluate(
+        binding or plugin_binding.install_consistency(),
+        source_commit=source_commit, daemon=daemon)
 
 
 def _project_health_summary(payload):
@@ -220,7 +398,7 @@ def _project_health_summary(payload):
 
 
 def _pm_briefing_summary(runtime=None):
-    """PM 简报：只读聚合预期、让路与追问候选，不新增台账、不派活。"""
+    """PM 简报：只读聚合预期、施工路径、让路与追问候选，不新增台账、不派活。"""
     try:
         import pm_briefing
         return pm_briefing.compute(
@@ -237,6 +415,44 @@ def _pm_briefing_summary(runtime=None):
                 "source": "pm_briefing 模块不可用"}
 
 
+def _authorized_followup_summary(root=None):
+    """追问授权账本的只读投影：候选不是动作，只有逐项 explicit 授权才可发送。"""
+    try:
+        import authorized_followup
+        return authorized_followup.summary(
+            Path(root) if root else Path(os.environ.get("KG_REPO") or _fallback_repo()))
+    except Exception as exc:
+        return {"status": "unknown", "items": [],
+                "counts": {"approved": None, "sent": None,
+                           "cancelled": None, "failed": None},
+                "note": "追问授权账本取不到（%s）；不把不知道当成 0。" % exc}
+
+
+def _relationship_goals_summary():
+    """关系层只读摘要：跨项目长期目标、需要人的时机，不派活、不替人定优先级。"""
+    try:
+        import relationship_ledger
+        return relationship_ledger.summary()
+    except Exception as exc:
+        return {"status": "unknown", "level": "unknown",
+                "headline": "跨项目目标取不到（%s）" % exc,
+                "note": "取不到不等于 0 条；本层不自动派活，也不替你决定目标。",
+                "count": None, "needs_human_count": None, "items": []}
+
+
+def _outcome_score_summary():
+    """结果代理分：只读原始台账，命令绿灯不冒充用户结果。"""
+    try:
+        import outcome_score
+        return outcome_score.compute(os.environ.get("KG_REPO") or _fallback_repo())
+    except Exception as exc:
+        return {"status": "unknown", "score": None, "grade": "未知",
+                "coverage": 0.0,
+                "headline": "结果代理分取不到（%s）" % exc,
+                "note": "取不到不等于 0 分；机器命令通过不等于用户结果变好。",
+                "components": [], "missing": ["结果代理分"], "shortfalls": []}
+
+
 def _screenshots_env(value):
     """把 MCP 的 screenshots 数组归一成 truthctl 的 ':' 分隔 env。"""
     if value is None:
@@ -246,6 +462,28 @@ def _screenshots_env(value):
     else:
         items = [x.strip() for x in str(value).replace(",", ":").split(":") if x.strip()]
     return ":".join(items) or None
+
+
+def _acceptance_record(acceptance_id):
+    """按 id 取验收台账的最新一条；取不到就返回 None，不猜。"""
+    aid = str(acceptance_id or "").strip()
+    latest = {}
+    for row in _read_jsonl(_truth_dir() / "acceptance.jsonl"):
+        if row.get("id"):
+            latest[row["id"]] = row
+    return latest.get(aid)
+
+
+def _capture_ready_acceptance(record):
+    """只有已自验、仍待人工复核的项才允许补截图。
+
+    这把「先自验，再打扰用户」的顺序写进调用口：截图是复核附件，不能把
+    没有 evidence 的项伪装成可以给人看，也不能顺手把状态改成 verified。
+    """
+    rec = record or {}
+    return (bool(rec.get("needs_human"))
+            and rec.get("status") in ("todo", "wip", "blocked")
+            and bool(str(rec.get("evidence") or "").strip()))
 
 
 def _n(value):
@@ -276,8 +514,14 @@ def _steward_health(payload):
     daemon = payload.get("daemon") or {}
     tune = payload.get("harness_tune") or {}
     cand = payload.get("constraint_candidates") or {}
+    learning = cand.get("learning") or {}
+    acc_criteria = payload.get("acceptance_criteria") or {}
     harness_health = payload.get("harness_health") or {}
+    route_health = payload.get("route_health") or {}
+    route_review = route_health.get("review") or {}
+    route_review_count = route_review.get("count")
     project_health = payload.get("project_health") or {}
+    runtime_freshness = payload.get("runtime_freshness") or {}
     queue = payload.get("queue") or {}
     counters = payload.get("counters") or {}
     blocked = payload.get("blocked") or {}
@@ -295,8 +539,10 @@ def _steward_health(payload):
         rows.append({"key": "context", "state": "unknown",
                      "label": "上下文管家：约束台账读不到"})
     elif pending_c:
-        rows.append({"key": "context", "state": "attention",
-                     "label": "上下文管家：%s 条候选等你确认 · 已生效 %s 条" % (pending_c, active)})
+        label = "上下文管家：%s 条候选等你确认 · 已生效 %s 条" % (pending_c, active)
+        if learning.get("status") == "ok" and learning.get("themes"):
+            label += " · 发现 %s 个重复主题" % len(learning["themes"])
+        rows.append({"key": "context", "state": "attention", "label": label})
     else:
         rows.append({"key": "context", "state": "ok",
                      "label": "上下文管家：已生效 %s 条约束，无待确认" % active})
@@ -329,16 +575,44 @@ def _steward_health(payload):
                      % (_n(queue.get("clean")), _n(counters.get("landed")),
                         _n(queue.get("conflict")))})
 
-    # 4. 状态管家：待点头的 harness 调整卡 + 上下文健康结论。
+    # 4. 状态管家：待点头的 harness 调整卡 + 上下文健康 + 路线/效能复核 + 运行态新鲜度。
+    # 这些信号都是同一个管家内部的只读检测器；不新增一行，也不生成动作。
+    route_level = route_health.get("level")
+    freshness_level = runtime_freshness.get("level")
     if tune.get("status") != "ok":
         rows.append({"key": "tune", "state": "unknown",
                      "label": "状态管家：调整卡读不到"})
+    elif freshness_level == "attention":
+        rows.append({"key": "tune", "state": "attention",
+                     "label": "状态管家：%s（需受控换代或重载，不会自动重启）"
+                     % (runtime_freshness.get("headline") or "运行态需要复核")})
+    elif route_level == "unknown":
+        rows.append({"key": "tune", "state": "unknown",
+                     "label": "状态管家：%s" % (route_health.get("headline")
+                                              or "路线与效能判据取不到")})
+    elif route_review.get("status") == "error":
+        rows.append({"key": "tune", "state": "unknown",
+                     "label": "状态管家：%s" % (route_review.get("headline")
+                                              or "路线复核状态取不到")})
+    elif route_review_count:
+        rows.append({"key": "tune", "state": "attention",
+                     "label": "状态管家：%s 项路线与效能待复核（只提复核，不自动纠偏）"
+                              % route_review_count})
     elif tune.get("count"):
         rows.append({"key": "tune", "state": "attention",
                      "label": "状态管家：%s 张调整卡等你点头（config 未动）" % tune.get("count")})
     elif harness_health.get("status") == "ok" and harness_health.get("level") in ("warn", "over"):
         rows.append({"key": "tune", "state": "attention",
                      "label": "状态管家：%s" % (harness_health.get("headline") or "上下文偏紧")})
+    elif route_level == "attention":
+        rows.append({"key": "tune", "state": "attention",
+                     "label": "状态管家：路线与效能需复核（只提复核，不自动纠偏）"})
+    elif freshness_level == "unknown":
+        # 开发检出没有安装锚点只是「判据不足」，不能盖住真正需要人看的路线
+        # attention。放在最后：有可执行结论先报，确实取不到才报取不到。
+        rows.append({"key": "tune", "state": "unknown",
+                     "label": "状态管家：%s" % (runtime_freshness.get("headline")
+                                              or "运行态判据取不到")})
     else:
         rows.append({"key": "tune", "state": "ok",
                      "label": "状态管家：%s" % (harness_health.get("headline") or "当前无待调整项")})
@@ -369,6 +643,13 @@ def _steward_health(payload):
     if self_check_n is None:
         rows.append({"key": "accept", "state": "unknown",
                      "label": "验收管家：待自验项读不到"})
+    elif acc_criteria.get("status") != "ok":
+        rows.append({"key": "accept", "state": "unknown",
+                     "label": "验收管家：验收标准候选取不到"})
+    elif acc_criteria.get("count"):
+        rows.append({"key": "accept", "state": "attention",
+                     "label": "验收管家：%s 条验收标准候选等你确认（未登记）"
+                     % acc_criteria.get("count")})
     elif self_check_n and not sw.get("auto_exec"):
         # 待自验却没人会去跑，是真实卡点，不是「正在处理」。
         rows.append({"key": "accept", "state": "attention",
@@ -404,7 +685,7 @@ def _steward_health(payload):
 
 
 def _autonomy_summary(state):
-    """自治分级摘要：这一拍有多少工序是明确授权执行的、多少还在观察、多少等你转正。
+    """授权情况摘要：这一拍有多少工序是明确授权执行的、多少还在观察、多少等你转正。
 
     判据只读守护写进 `state.json` 的 `last_passes`，不重算注册表、不维护第二套真相。
     取不到时返回 `unknown` 并如实写「取不到」——不能把「没有记录」显示成
@@ -414,11 +695,28 @@ def _autonomy_summary(state):
     if not isinstance(passes, list) or not passes:
         return {
             "status": "unknown",
-            "label": "自治分级：本轮工序记录取不到",
+            "label": "授权情况：本轮记录取不到",
             "explicit": None,
             "observing": None,
             "proposed": None,
+            "passes": [],
         }
+
+    def _detail(pass_row):
+        row = pass_row if isinstance(pass_row, dict) else {}
+
+        def _value(key):
+            value = row.get(key)
+            return str(value).strip() if value not in (None, "") else "取不到"
+
+        return {
+            "name": _value("name"),
+            "mode": _value("mode"),
+            "status": _value("status"),
+            "authorization": _value("authorization"),
+            "effect": _value("effect"),
+        }
+
     explicit = sum(1 for p in passes if (p or {}).get("authorization") == "explicit")
     observing = sum(1 for p in passes if (p or {}).get("mode") == "observe")
     proposed = sum(1 for p in passes if (p or {}).get("status") == "proposed")
@@ -430,11 +728,12 @@ def _autonomy_summary(state):
         bits.append("%d 条出错" % errored)
     return {
         "status": "ok",
-        "label": "自治分级：" + " · ".join(bits),
+        "label": "授权情况：" + " · ".join(bits),
         "explicit": explicit,
         "observing": observing,
         "proposed": proposed,
         "errored": errored,
+        "passes": [_detail(p) for p in passes],
     }
 
 
@@ -457,6 +756,7 @@ SERVER_VERSION = _server_version()
 
 import control_state  # noqa: E402
 import codex_native  # noqa: E402
+import acceptance_criteria  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
 
 try:
@@ -529,6 +829,24 @@ TOOLS = [
                         "description": "当前会话所在目录（强烈建议带上）。归属判定靠它区分不同项目；不带就可能判不清，记录会进全局待路由箱而不是某个项目账本"},
                 "project": {"type": "string",
                             "description": "明确指定项目名或状态根（用户说了是哪个项目时带上）"},
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "route_preview",
+        "description": "只读预演当前这句话会落到哪个项目：不改账本、不注册项目。判不清就明说，默认落点也明说，不猜。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "用户原话，别重写、别归类"},
+                "files": {"type": "array", "items": {"type": "string"},
+                          "description": "相关文件路径（可选，帮助判断落点）"},
+                "cwd": {"type": "string",
+                        "description": "当前会话所在目录（可选；调用方知道时带上）"},
+                "project": {"type": "string",
+                            "description": "明确指定的项目名或状态根（可选）"},
             },
             "required": ["text"],
             "additionalProperties": False,
@@ -645,6 +963,7 @@ TOOLS = [
                 "note": {"type": "string", "description": "结论/证据，一句话"},
                 "commit": {"type": "string", "description": "落盘 commit sha，可选"},
                 "evidence": {"type": "string", "description": "可复核的验证证据，可选"},
+                "confirm_human": {"type": "boolean", "description": "仅当用户亲口说过「看过/可以了」时传 true。视觉、体验类条目默认停在「等你确认」，不要自己替用户签收。"},
             },
             "required": ["id"],
             "additionalProperties": False,
@@ -703,6 +1022,20 @@ TOOLS = [
                                 "description": "补充待复核截图路径，可选；只追加，不覆盖已有附件"},
             },
             "required": ["id", "status"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "capture_acceptance_screenshot",
+        "description": "用户在面板上主动给一条待人工复核的验收项补截图：本机交互式框选，图片写到用户级目录，只把路径追加到对应 A-id 的 screenshots，绝不自动把验收项标成通过。必须显式 confirm=true。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "验收台账 id，如 A-0030"},
+                "confirm": {"type": "boolean",
+                            "description": "用户已点击「补一张复核截图」并明确同意框选；false 一律拒绝"},
+            },
+            "required": ["id", "confirm"],
             "additionalProperties": False,
         },
     },
@@ -1007,6 +1340,11 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
+        "name": "context_archive",
+        "description": "上下文管家：只读查看自动收录档案，区分待确认、已确认、已驳回和生效约束，保留来源、重复次数、会话数与用户原话。这里不提供第二个审批入口：要确认或驳回仍走 constraint_candidate_promote / constraint_candidate_dismiss。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
         "name": "constraint_candidate_promote",
         "description": "上下文管家：把一条候选升成真正生效的项目约束（走 truthctl constraints add）。只有用户明确点头才能调用（confirm=true 是「人已同意」的语义）。生效后这条会参与落盘门禁与执行者 prompt，所以必须由人确认。",
         "inputSchema": {
@@ -1032,6 +1370,75 @@ TOOLS = [
             "required": ["id"],
             "additionalProperties": False,
         },
+    },
+    {
+        "name": "acceptance_criteria_list",
+        "description": "验收管家：列出待确认的「可判定验收标准候选」。守护从已路由原话里提名“怎么算完成”，候选阶段不写验收台账、不伪造自验证据，也不会自动催用户。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "acceptance_criteria_promote",
+        "description": "验收管家：用户点头后，把一条验收标准候选登记成正式验收项（走 truthctl accept）。confirm=true 表示用户已明确同意；确认后仍需真门禁证据，机器自证项不会自动标 verified，人工项也不会自动催用户。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "候选 id，如 AC-0001"},
+                "confirm": {"type": "boolean", "description": "必须为 true：代表用户已明确同意"},
+                "needs_human": {"type": "boolean", "description": "是否必须人看；默认按候选建议"},
+                "steps": {"type": "string", "description": "复核步骤（可选，默认按原话生成）"},
+                "level": {"type": "string", "description": "优先级，如 P0 / P1"},
+            },
+            "required": ["id", "confirm"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "acceptance_criteria_dismiss",
+        "description": "验收管家：把一条验收标准候选标记为「不算」——不登记验收项，同一句原话以后也不会再弹回来。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "候选 id，如 AC-0001"},
+                "reason": {"type": "string", "description": "为什么不算（可选，仅留档）"},
+            },
+            "required": ["id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "followup_authorize",
+        "description": "PM 管家：逐项授权一条追问候选。候选本身不会自动发消息；只有 confirm=true 才先把 explicit 授权写入 append-only 授权账本，再由后台在发送前重新校验资格后投递一次。重复授权不会重复打扰。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticket_id": {"type": "string", "description": "工作项 id，如 L-0021"},
+                "thread_id": {"type": "string", "description": "真实 Codex 原生窗口 id"},
+                "prompt": {"type": "string", "description": "要发给该窗口的追问答"},
+                "reason": {"type": "string", "description": "为什么现在授权追问；会留在账本里"},
+                "confirm": {"type": "boolean",
+                            "description": "必须为 true：代表用户已经明确同意这条追问"},
+            },
+            "required": ["ticket_id", "thread_id", "prompt", "reason", "confirm"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "followup_cancel",
+        "description": "PM 管家：撤销一条尚未发送的追问授权。已经发出去的消息不能撤回；撤销只追加事件，不覆盖历史。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "request_id": {"type": "string", "description": "授权 id，如 FU-xxxxxxxx"},
+                "reason": {"type": "string", "description": "为什么撤销；必填留痕"},
+            },
+            "required": ["request_id", "reason"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "followup_list",
+        "description": "PM 管家：只读查看追问授权账本摘要，区分 approved/sent/cancelled/failed；取不到就说取不到，不把不知道当成 0。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
 ]
 
@@ -1128,22 +1535,16 @@ def _daemon_live():
     return bool(st.get("live")), st.get("pid"), st.get("bound_repo")
 
 
-def _daemon_liveness_problem(daemon_enabled=True):
-    """「开关开着但没进程接活」这类静默死亡的判据，与 kgctl doctor 共用一份。
-
-    2026-11-16 实测：control.json 里 enabled/daemon_enabled=true，launchd 里那个
-    job 早没了，面板却只写「后台常驻=开（但没进程接活）」，首屏不提示、也不说怎么修。
-    这里把 doctor 的那一条搬到面板首屏，让配置位和现实的分歧直接可见。
-    """
+def _daemon_liveness_action(daemon_enabled=True):
+    """一次采样同时产生 doctor 详情与首屏短结论，避免同一拍两份读数。"""
     try:
         import daemon_liveness
-    except Exception:
-        return None
-    try:
         st = daemon_liveness.daemon_liveness(os.environ.get("KG_REPO") or _fallback_repo())
-        return daemon_liveness.liveness_problem(st, daemon_enabled)
+        problem = daemon_liveness.liveness_problem(st, daemon_enabled)
+        headline, detail = daemon_liveness.liveness_need_action(st, daemon_enabled)
+        return problem, headline, detail
     except Exception:
-        return None
+        return None, None, None
 
 
 def _ledger_count():
@@ -1672,6 +2073,43 @@ def _auto_section_name():
     return "%s · %s" % (base, project) if project else base
 
 
+_THREAD_TITLE_RE = re.compile(r"[^0-9A-Za-z\u4e00-\u9fff]+")
+
+
+def _compact_project_label(item, cwd=""):
+    """从账本/路径取一个短项目名，供原生对话标题使用。"""
+    raw = str(item.get("project") or item.get("project_root") or cwd or "").strip()
+    if not raw:
+        return "global"
+    name = Path(raw).name
+    parts = [p for p in _THREAD_TITLE_RE.split(name.lower()) if p]
+    if len(parts) > 1:
+        short = "".join(p[0] for p in parts)
+    else:
+        short = name
+    short = _THREAD_TITLE_RE.sub("", short).lower()[:12]
+    return short or "global"
+
+
+def _native_thread_prompt(item, prompt, cwd=""):
+    """把原生子对话的首句做成可扫读的标题，同时保留完整任务正文。
+
+    Codex 侧栏标题来自首条 user message；当前 app-server 契约没有独立的
+    thread/rename，所以把约定格式放在首行是唯一不写宿主库的落地方式。
+    """
+    body = str(prompt or "").strip()
+    if body.startswith("[AP]"):
+        return body
+    project = _compact_project_label(item, cwd)
+    lane = str(item.get("lane") or "route").strip().lower()
+    lane = _THREAD_TITLE_RE.sub("", lane)[:12] or "route"
+    ledger_id = str(item.get("id") or "").strip()[:24] or "L-0000"
+    # 没有账本题名时不用正文首句冒充标题：正文可能只是一句补充说明。
+    title = str(item.get("title") or item.get("detail") or "自动挡任务").strip()
+    title = " ".join(title.split())[:56] or "自动挡任务"
+    return "[AP][%s][%s] %s · %s\n\n%s" % (project, lane, ledger_id, title, body)
+
+
 def _append_native_route(ledger_id, result, status):
     """Persist host linkage metadata without creating a second task ledger."""
     path = _native_routes_path()
@@ -1809,6 +2247,7 @@ def _work_rows(project_name, limit=40):
     没有的证据字段留空，不用编的字符串填空。
     """
     import stage_table  # noqa: E402  只读纯函数，无副作用
+    import acceptance_criteria_compiler  # noqa: E402  只读纯函数，无副作用
 
     latest = {}
     for r in _read_jsonl(_truth_dir() / "ledger.jsonl"):
@@ -1849,6 +2288,8 @@ def _work_rows(project_name, limit=40):
             "stage": stage,
             "stage_label": stage_table.item_stage_label(stage),
             "evidence": evidence_text(rec, binding),
+            "acceptance_summary": acceptance_criteria_compiler.summary_label(
+                rec.get("acceptance_plan")),
         })
     for rec in acc_latest.values():
         if not (rec.get("needs_human") and rec.get("status") in ("todo", "wip", "blocked")):
@@ -1865,6 +2306,8 @@ def _work_rows(project_name, limit=40):
             "stage": stage,
             "stage_label": stage_table.item_stage_label(stage),
             "evidence": evidence_text(rec, None),
+            "acceptance_summary": acceptance_criteria_compiler.summary_label(
+                rec.get("acceptance_plan")),
         })
     # 「要人拍板」的排前面，其次进行中，再次待处理；同组按 id。
     prio = {"person/review": 0, stage_table.BUCKET_DOING: 1,
@@ -1969,9 +2412,11 @@ def _product_state(limit=25):
 
 
 def _answer_needed_count():
-    """判不清归属、还压在全局待路由箱里的投稿条数。
+    """判不清归属、还没人工复核指派的投稿条数。
 
     这些需求没进任何项目账本，只在待路由箱里——面板必须让它们露面，否则等于丢了。
+    已复核并写进目标项目的记录留原始凭证不删，但不再占用用户注意力；同一句诉求
+    反复投递也只算一项。取不到一律回 0，宁可少报一项，也不要虚报。
     取不到一律回 0：宁可少报一项「等你答一句」，也不要因为读不到就把现场说成有事。
     """
     try:
@@ -1979,18 +2424,7 @@ def _answer_needed_count():
         path = project_router.routing_inbox_path()
         if not path.exists():
             return 0
-        n = 0
-        for line in path.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rec = json.loads(line)
-            except ValueError:
-                continue
-            if not rec.get("routed"):
-                n += 1
-        return n
+        return len(project_router.pending_routing_records(path))
     except Exception:
         return 0
 
@@ -2127,6 +2561,7 @@ def _status_payload(fast=True):
             "why": line,
             "recent": "需求不会被可靠落账；这不是「没有待办」，是自动挡没接上项目",
             "need_action": "重跑 ./install.sh <真实 git 仓库根目录>；先不要继续提需求",
+            "need_action_detail": "安装绑定失效的详细路径与修复步骤见工程详情；不会自动改绑定。",
             "project": {
                 "path": health.get("repo"),
                 "name": Path(health.get("repo")).name if health.get("repo") else None,
@@ -2177,6 +2612,22 @@ def _status_payload(fast=True):
                 "layers": [],
                 "signals": {},
             },
+            "route_health": {
+                "status": "ok",
+                "level": "unknown",
+                "headline": "路线与效能判据取不到：安装绑定失效",
+                "unknown": ["安装绑定失效"],
+                "reasons": [],
+                "action": "none",
+            },
+            "runtime_freshness": {
+                "status": "ok",
+                "level": "unknown",
+                "headline": "运行态判据取不到：安装绑定失效",
+                "unknown": ["安装绑定失效"],
+                "reasons": [],
+                "action": "none",
+            },
             "mainline": {},
             "route": {},
             "roadmap": [],
@@ -2191,6 +2642,10 @@ def _status_payload(fast=True):
             "stewards": _steward_health({}),
             "autonomy": _autonomy_summary({}),
             "pm_briefing": _pm_briefing_summary({"blocked": {}}),
+            "authorized_followups": _authorized_followup_summary(),
+            "context_archive": _context_archive_summary(),
+            "relationship_goals": _relationship_goals_summary(),
+            "outcome_score": _outcome_score_summary(),
         }
         payload["__text__"] = (
             "自动挡 · 安装绑定失效\n"
@@ -2203,7 +2658,8 @@ def _status_payload(fast=True):
     job_running, pid, daemon_project = _daemon_live()
     current_project = str(Path(os.environ.get("KG_REPO") or _fallback_repo()).expanduser().resolve())
     live = bool(job_running and daemon_project == current_project)
-    daemon_problem = _daemon_liveness_problem(bool(ctrl.get("daemon_enabled", True)))
+    daemon_enabled = bool(ctrl.get("daemon_enabled", True))
+    daemon_problem, daemon_headline, daemon_detail = _daemon_liveness_action(daemon_enabled)
     st = _daemon_state() if live else {}
     summary = st.get("last_summary") or {}
     board = _acceptance_board()
@@ -2282,8 +2738,8 @@ def _status_payload(fast=True):
         doing = f"正在处理 {len(rtasks)} 条冲突，拆成可执行任务后逐条收口"
         why = "冲突不丢给你逐条裁决，先自动拆成任务，解完再走同一道门禁"
     elif job_running and daemon_project and daemon_project != current_project:
-        doing = "后台守护正在服务另一个项目；当前项目的任务与进度不会混入它的队列"
-        why = "常驻守护按项目绑定，面板只读取当前项目自己的账本"
+        doing = "后台正在服务别的项目；当前项目会等自己的轮次"
+        why = "常驻守护按项目分开，当前项目只走自己的进度"
     else:
         doing = "已检查一轮，当前没有能安全自动合入的分支"
         why = "和 main 冲突的、或门禁没过的，不会被自动合，等你处理"
@@ -2295,13 +2751,15 @@ def _status_payload(fast=True):
     else:
         recent = "还没有自动合入过分支"
 
+    need_action_detail = ""
     if not enabled:
         need_action = "需要继续使用自动挡时，重新开启总开关"
     elif daemon_problem:
         # 常驻静默死亡排最前：开关全绿而进程不在，自动挡一步都不会自己走。
         # 它必须盖过「等验收」这类正常待办——那些事项在「需要你介入」卡里仍然列着，
         # 但用户首先该知道的是「自动」这部分根本没在跑。
-        need_action = daemon_problem
+        need_action = daemon_headline or daemon_problem
+        need_action_detail = daemon_detail or daemon_problem
     elif failures:
         need_action = f"需要你拍板：{failures[0]['target']}（{failures[0]['kind']}）"
     elif board["human"]:
@@ -2329,6 +2787,7 @@ def _status_payload(fast=True):
         "why": why,
         "recent": recent,
         "need_action": need_action,
+        "need_action_detail": need_action_detail,
         "recent_completed": _recent_done(last, 5),
         "switches": {
             "auto_land": bool(ctrl.get("auto_land", True)),
@@ -2344,8 +2803,7 @@ def _status_payload(fast=True):
             "project": daemon_project,
             "last_cycle": st.get("last_cycle_iso"),
             "interval_min": st.get("interval_min"),
-            "problem": _daemon_liveness_problem(
-                bool(ctrl.get("daemon_enabled", True))),
+            "problem": daemon_problem,
         },
         "native": _native_status(),
         "counters": {
@@ -2407,8 +2865,16 @@ def _status_payload(fast=True):
                 "resolve": list(blocked),
             },
         }),
+        # 追问授权账本与 PM 候选分开：候选只读，授权逐项显式，daemon 再校验后投递。
+        "authorized_followups": _authorized_followup_summary(),
+        # 关系层：跨项目长期目标是显式账本，不属于某个项目真相；这里只读摘要，
+        # 不把目标自动派给 worker，也不把「需要人」变成自动追问。
+        "relationship_goals": _relationship_goals_summary(),
+        "outcome_score": _outcome_score_summary(),
         "harness_tune": _harness_tune_summary(),
         "constraint_candidates": _constraint_candidates_summary(),
+        "context_archive": _context_archive_summary(),
+        "acceptance_criteria": _acceptance_criteria_summary(),
         "autonomy": _autonomy_summary(st),
         "mainline": _mainline_summary(),
         # fast=True 是面板/开关那条路：只读缓存，不连宿主，绝不因此变慢。
@@ -2432,6 +2898,11 @@ def _status_payload(fast=True):
         # 面板只渲染，不再自己算 stage（唯一判据仍是 ops/stage_table.py）。
         "work_rows": _work_rows(Path(current_project).name),
     }
+    # 路线与效能是状态管家的内部只读检测器，不新增管家、不新增卡片。
+    payload["route_health"] = _route_health_summary(payload, st)
+    # 源码 / 已装版本 / 运行代码是否同一代，仍是状态管家内部判据。只提示
+    # 受控换代或重载，绝不自动重启、改配置、派工单。
+    payload["runtime_freshness"] = _runtime_freshness_summary(health)
     # 七管家健康条 + 全局项目健康：一眼看出哪个管家断了、项目整体是否还健康。
     # 必须等 payload 构造完再算——判据全来自上面这些字段，不能引用还在构造的自己。
     payload["stewards"] = _steward_health(payload)
@@ -2490,6 +2961,14 @@ def _status_text(payload):
         _m = int((en.get("elapsed_sec") or 0) // 60)
         lines.append("执行中：%s %s（已 %d 分钟，独立工作区改代码，自测通过后自动合入）"
                      % (en.get("id") or "", en.get("title") or "", _m))
+    rh = payload.get("route_health") or {}
+    if rh.get("level") in ("attention", "unknown"):
+        lines.append("路线与效能：%s（仅提复核，不自动纠偏）"
+                     % (rh.get("headline") or "取不到"))
+    rf = payload.get("runtime_freshness") or {}
+    if rf.get("level") in ("attention", "unknown"):
+        lines.append("运行态新鲜度：%s（只提示受控换代，不自动重启）"
+                     % (rf.get("headline") or "取不到"))
     ps = payload.get("product_state") or {}
     if ps.get("count"):
         lines.append("产品状态：已记录 %s 个模块行为（最后更新 %s）"
@@ -2637,7 +3116,9 @@ def call_tool(name, args):
         "suggest_branch", "resolve_list", "resolve_plan", "generate_context",
         "dashboard", "autopilot_status", "render_autopilot_panel",
         "autopilot_settings_read", "codex_native_threads", "codex_native_probe",
-        "harness_tune_list", "constraint_candidates_list",
+        "harness_tune_list", "constraint_candidates_list", "context_archive",
+        "acceptance_criteria_list", "route_preview",
+        "followup_list",
     }
     control_tools = {
         "autopilot_control", "autopilot_run_once",
@@ -2659,14 +3140,16 @@ def call_tool(name, args):
             result, error = codex_native.start_thread(cwd, args.get("section_id"))
         elif name == "codex_native_dispatch_task":
             ledger_id = (args.get("ledger_id") or "").strip()
-            if not _ledger_item(ledger_id):
+            item = _ledger_item(ledger_id)
+            if not item:
                 return {
                     "code": "AUTOPILOT_LEDGER_ITEM_NOT_DISPATCHABLE",
                     "message": "只能给自动挡台账中仍未收口的问题派活。",
                 }, 2
+            cwd = (args.get("cwd") or "").strip()
             result, error = codex_native.dispatch_task(
-                (args.get("cwd") or "").strip(),
-                args.get("prompt"),
+                cwd,
+                _native_thread_prompt(item, args.get("prompt"), cwd),
                 args.get("section_id"),
                 auto_section=_auto_section_name(),
             )
@@ -2790,6 +3273,8 @@ def call_tool(name, args):
             return "close_item 需要 id（如 L-0003）", 2
         env = {"KG_TRUTH_COMMIT": args.get("commit") or None,
                "KG_TRUTH_EVIDENCE": args.get("evidence") or None}
+        if args.get("confirm_human"):
+            env["KG_TRUTH_HUMAN_CONFIRMED"] = "1"
         return truthctl("close", rid, args.get("note") or "", extra_env=env)
     if name in ("register_acceptance", "accept_item"):
         title = (args.get("title") or "").strip()
@@ -2819,6 +3304,44 @@ def call_tool(name, args):
                "KG_TRUTH_SHOTS": _screenshots_env(args.get("screenshots")),
                "KG_TRUTH_SOURCE": "user"}
         return truthctl(*argv, extra_env=env)
+    if name == "capture_acceptance_screenshot":
+        # 这是人点按钮后才允许进来的动作。confirm 不是装饰：模型/守护/探针
+        # 即使拿到的工具参数里没有它，也不能借这条链路调系统截图器。
+        if not bool(args.get("confirm")):
+            return {"code": "SCREENSHOT_CONFIRM_REQUIRED",
+                    "message": "补图必须由人点按钮触发；请带 confirm=true。"}, 2
+        rid = (args.get("id") or "").strip()
+        if not rid:
+            return {"code": "SCREENSHOT_ID_REQUIRED",
+                    "message": "capture_acceptance_screenshot 需要验收 id（如 A-0030）。"}, 2
+        record = _acceptance_record(rid)
+        if record is None:
+            return {"code": "SCREENSHOT_ACCEPTANCE_NOT_FOUND",
+                    "message": "验收台账里没有 %s；先登记验收项。" % rid}, 2
+        if not _capture_ready_acceptance(record):
+            return {"code": "SCREENSHOT_NOT_HUMAN_READY",
+                    "message": "这条还没到人工复核：必须有机器自验证据且仍待人工确认；"
+                               "截图不能代替自验。"}, 2
+        try:
+            import acceptance_screenshot
+            shot = acceptance_screenshot.capture(rid)
+        except Exception as exc:
+            return {"code": "SCREENSHOT_CAPTURE_FAILED",
+                    "message": "截图失败：%s" % exc}, 2
+        if shot.get("error"):
+            return {"code": "SCREENSHOT_CAPTURE_FAILED",
+                    "message": shot["error"]}, 2
+        status = record.get("status") or "todo"
+        out, code = truthctl(
+            "accept", "--id", rid, "--status", status,
+            extra_env={"KG_TRUTH_SHOTS": shot["path"],
+                       "KG_TRUTH_SOURCE": "panel-screenshot"})
+        if code != 0:
+            return {"code": "SCREENSHOT_APPEND_FAILED",
+                    "message": "截图已生成，但没写进验收台账：%s" % out}, 2
+        control_state.append_event("acceptance_screenshot", id=rid, path=shot["path"])
+        return {"__text__": "已给 %s 补上复核截图；验收状态仍是 %s，没有替你收口。" % (rid, status),
+                "id": rid, "path": shot["path"], "status": status}, 0
     if name == "reopen_item":
         rid = (args.get("id") or "").strip()
         if not rid:
@@ -2842,6 +3365,10 @@ def call_tool(name, args):
             res = harness_tune.rollback(rid)
         return json.dumps(res, ensure_ascii=False, indent=1), (
             0 if res.get("status") != "error" else 2)
+    if name == "context_archive":
+        import context_archive
+        data = context_archive.collect()
+        return context_archive.human(data), (0 if data.get("status") == "ok" else 1)
     if name in ("constraint_candidates_list", "constraint_candidate_promote",
                 "constraint_candidate_dismiss"):
         import constraint_candidates
@@ -2864,8 +3391,100 @@ def call_tool(name, args):
             res = constraint_candidates.dismiss(cid, args.get("reason") or "")
         return json.dumps(res, ensure_ascii=False, indent=1), (
             0 if res.get("status") != "error" else 2)
+    if name in ("acceptance_criteria_list", "acceptance_criteria_promote",
+                "acceptance_criteria_dismiss"):
+        import acceptance_criteria
+        if name == "acceptance_criteria_list":
+            rows = acceptance_criteria.pending()
+            if not rows:
+                return ("验收管家：当前没有待确认的验收标准候选。"
+                        "（验收台账一个字都没动）", 0)
+            return acceptance_criteria.human(), 0
+        cid = (args.get("id") or "").strip()
+        if not cid:
+            return f"{name} 需要 id（如 AC-0001）", 2
+        if name == "acceptance_criteria_promote":
+            # confirm 就是「人已明确同意」的语义；不点头绝不登记验收项，
+            # 更不会把候选直接标成 verified 或塞进「需要你验收」。
+            if not bool(args.get("confirm")):
+                return ("登记验收项必须由人明确点头：请带 confirm=true（或直接在面板上点确认）。"
+                        "候选本身不写验收台账，也不伪造证据。", 2)
+            res = acceptance_criteria.promote(
+                cid, confirm=True,
+                needs_human=args.get("needs_human"),
+                steps=args.get("steps") or "", level=args.get("level") or "")
+        else:
+            res = acceptance_criteria.dismiss(cid, args.get("reason") or "")
+        return json.dumps(res, ensure_ascii=False, indent=1), (
+            0 if res.get("status") != "error" else 2)
+    if name in ("followup_authorize", "followup_cancel", "followup_list"):
+        import authorized_followup as followup
+        root = Path(os.environ.get("KG_REPO") or _fallback_repo())
+        if name == "followup_list":
+            return followup.summary(root), 0
+        if name == "followup_authorize":
+            if not bool(args.get("confirm")):
+                return {"code": "FOLLOWUP_CONFIRM_REQUIRED",
+                        "message": "逐项追问必须由人明确点头：请带 confirm=true；候选本身不会发消息。"}, 2
+            try:
+                res = followup.approve({
+                    "ticket_id": args.get("ticket_id"),
+                    "thread_id": args.get("thread_id"),
+                    "prompt": args.get("prompt"),
+                    "reason": args.get("reason"),
+                    "authorization": "explicit",
+                    "effect": "reversible",
+                    "source": "panel",
+                }, root)
+            except followup.AuthorizationError as exc:
+                return {"code": "FOLLOWUP_AUTHORIZATION_REJECTED", "message": str(exc)}, 2
+            return {"__text__": "已登记这条追问授权；后台发送前还会再校验一次窗口和工作项。",
+                    **res}, 0
+        try:
+            res = followup.cancel(
+                (args.get("request_id") or "").strip(),
+                args.get("reason"),
+                root,
+            )
+        except followup.AuthorizationError as exc:
+            return {"code": "FOLLOWUP_CANCEL_REJECTED", "message": str(exc)}, 2
+        return {"__text__": "已撤销未发送的追问授权；历史授权记录保留。", **res}, 0
     if name == "suggest_branch":
         return kgctl("suggest")
+    if name == "route_preview":
+        text = (args.get("text") or "").strip()
+        if not text:
+            return "route_preview 需要 text", 2
+        files = args.get("files") or []
+        env = {"KG_INBOX_FILES": ":".join(files) if files else None,
+               "KG_INBOX_CWD": (args.get("cwd") or "").strip() or None,
+               "KG_INBOX_PROJECT": (args.get("project") or "").strip() or None}
+        raw, code = kgctl("route-preview", text, extra_env=env)
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return {"decision": "unknown", "project": None,
+                    "__text__": "落点取不到；不会假装正常", "detail": raw}, 2
+        decision = data.get("decision")
+        project = data.get("project")
+        reasons = [str(r) for r in (data.get("reasons") or []) if r]
+        if decision == "resolved" and project:
+            message = "将落到：" + str(project)
+        elif decision == "ambiguous":
+            message = "判不清落点；提交会进全局待路由箱，请在原话里点名项目"
+        elif decision == "none":
+            if project:
+                message = ("默认落到当前绑定项目：" + str(project) +
+                           "；如不是，请在原话里点名项目")
+            else:
+                message = "落点判不清：没有可用线索；请点名项目"
+        else:
+            message = "落点取不到；不会假装正常"
+        result = dict(data)
+        result["__text__"] = message
+        if reasons:
+            result["reasons"] = reasons
+        return result, (0 if code == 0 else 2)
     if name == "intake_request":
         guard = control_state.mutation_guard()
         if guard:

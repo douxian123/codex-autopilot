@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import tempfile
+import types
 from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
@@ -68,14 +69,10 @@ def main():
 
         old = os.environ.get("KG_REPO")
         os.environ["KG_REPO"] = str(repo)
-        try:
-            import central_mcp
-            board = central_mcp._acceptance_board()
-        finally:
-            if old is None:
-                os.environ.pop("KG_REPO", None)
-            else:
-                os.environ["KG_REPO"] = old
+        # 这个临时仓库要一直活到 MCP 边界测试结束：补图工具在 call_tool 里
+        # 重新读验收台账，早还原就会把「已自验」误判成「未自验」。
+        import central_mcp
+        board = central_mcp._acceptance_board()
 
         human = {r["id"] for r in board["human"]}
         self_check = {r["id"] for r in board["self_check"]}
@@ -94,6 +91,66 @@ def main():
         check("人工验收截图原样带给面板",
               board["human"][0].get("screenshots") == ["/tmp/first.png", "/tmp/second.png"],
               board["human"][0].get("screenshots"))
+
+        # MCP 调用口四道边界：没有显式确认不截；验收项不存在不截；
+        # 未自验项不截；只有已自验且待人工复核、且人点了确认，才追加附件。
+        # 这里注入假截图器与假 truthctl，绝不在门禁里调用系统截图或写现场台账。
+        calls = []
+        events = []
+        fake_shot = types.ModuleType("acceptance_screenshot")
+        fake_shot.capture = lambda aid: {"path": "/tmp/fake-acceptance-%s.png" % aid}
+        old_shot = sys.modules.get("acceptance_screenshot")
+        old_truthctl = central_mcp.truthctl
+        old_append = central_mcp.control_state.append_event
+        sys.modules["acceptance_screenshot"] = fake_shot
+        central_mcp.truthctl = lambda *a, **kw: (
+            calls.append((a, kw)) or ("appended", 0))
+        central_mcp.control_state.append_event = lambda *a, **kw: events.append((a, kw))
+        try:
+            out, code = central_mcp.call_tool(
+                "capture_acceptance_screenshot", {"id": "A-0001"})
+            check("补图必须显式 confirm=true",
+                  code == 2 and out.get("code") == "SCREENSHOT_CONFIRM_REQUIRED", out)
+            out, code = central_mcp.call_tool(
+                "capture_acceptance_screenshot", {"confirm": True})
+            check("补图必须有验收 id",
+                  code == 2 and out.get("code") == "SCREENSHOT_ID_REQUIRED", out)
+            out, code = central_mcp.call_tool(
+                "capture_acceptance_screenshot", {"id": "A-9999", "confirm": True})
+            check("不存在的验收项不补图",
+                  code == 2 and out.get("code") == "SCREENSHOT_ACCEPTANCE_NOT_FOUND", out)
+            out, code = central_mcp.call_tool(
+                "capture_acceptance_screenshot", {"id": "A-0002", "confirm": True})
+            check("未自验的人工项不补图",
+                  code == 2 and out.get("code") == "SCREENSHOT_NOT_HUMAN_READY", out)
+            check("拒绝路径不调用截图器", not calls and not events, (calls, events))
+
+            out, code = central_mcp.call_tool(
+                "capture_acceptance_screenshot", {"id": "A-0001", "confirm": True})
+            check("人点确认后才追加截图",
+                  code == 0 and out.get("id") == "A-0001"
+                  and out.get("path") == "/tmp/fake-acceptance-A-0001.png", out)
+            check("补图保持原验收状态，不替人收口",
+                  out.get("status") == "todo", out)
+            check("补图只走 truthctl 追加，不改状态",
+                  len(calls) == 1 and calls[0][0] == (
+                      "accept", "--id", "A-0001", "--status", "todo")
+                  and calls[0][1].get("extra_env", {}).get("KG_TRUTH_SHOTS")
+                  == "/tmp/fake-acceptance-A-0001.png", calls)
+            check("补图写入事件流水",
+                  len(events) == 1 and events[0][0][0] == "acceptance_screenshot", events)
+        finally:
+            central_mcp.truthctl = old_truthctl
+            central_mcp.control_state.append_event = old_append
+            if old_shot is None:
+                sys.modules.pop("acceptance_screenshot", None)
+            else:
+                sys.modules["acceptance_screenshot"] = old_shot
+
+        if old is None:
+            os.environ.pop("KG_REPO", None)
+        else:
+            os.environ["KG_REPO"] = old
 
     print()
     if failures:
