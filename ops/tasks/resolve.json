@@ -11,7 +11,7 @@
     "fe5cd24406e9d127a68f9354bf9f15f938e11650"
    ],
    "created": "2026-11-19 04:53:21",
-   "updated": "2026-11-20 14:08:39",
+   "updated": "2026-11-20 14:10:18",
    "conflict_files": [
     "docs/PRODUCT_MAINLINE.md"
    ],
@@ -20,7 +20,8 @@
    ],
    "auto_resolved_jsonl": [],
    "status": "landed",
-   "gate_output": "→ codex/resolve-guard-release-version-20261119: 2 提交、落后 8、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n已有 land 在进行（/Users/danta/.newmax/workspace/codex-autopilot/.git/kgctl-land.lock）"
+   "gate_output": "→ codex/resolve-guard-release-version-20261119: 2 提交、落后 8、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n已有 land 在进行（/Users/danta/.newmax/workspace/codex-autopilot/.git/kgctl-land.lock）",
+   "reason": "锁占用导致的 gate_fail 是误记；正式落盘已通过门禁：main 1db2bc55630d7baf620d8ec364d65b6e7eb5a031，P-0181，A-0158"
   },
   {
    "slug": "autopilot-truth-sync-failclosed",
@@ -478,7 +479,7 @@
     "b4d56939cf323ba107e321ade73fe96e8247ca06"
    ],
    "created": "2026-11-17 19:38:15",
-   "updated": "2026-11-17 19:38:15",
+   "updated": "2026-11-20 14:10:18",
    "conflict_files": [
     "ops/kgctl.py",
     "ops/test-reap-branch-preserve.py"
@@ -488,7 +489,8 @@
     "ops/test-reap-branch-preserve.py"
    ],
    "auto_resolved_jsonl": [],
-   "status": "needs_agent"
+   "status": "landed",
+   "reason": "已落盘：main beda436be2a738d233560587f88f6d0cd9aa9366，P-0177，A-0151"
   },
   {
    "slug": "autopilot-close-gate-20261026",
@@ -560,5 +562,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-20 14:08:39"
+ "updated": "2026-11-20 14:30:00"
 }
