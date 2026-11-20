@@ -4,7 +4,7 @@
 - 执行分支：`codex/resolve-guard-release-version-20261119`
 - 工作树：`/Users/danta/.newmax/workspace/codex-autopilot-resolve-guard-release-version-20261119`
 - 基于：`7ef93627729f`（origin/main）
-- 状态：`gate_fail`
+- 状态：`needs_agent`
 
 ## 要解的冲突文件（保留的 marker）
 - `docs/PRODUCT_MAINLINE.md`
