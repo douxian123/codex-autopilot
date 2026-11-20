@@ -27,11 +27,14 @@ truthctl 管「这个项目现在到底是什么状态」。
   truthctl distill add "<判断>"  把判断背后的判断逻辑写回（why/scope 走环境变量）
   truthctl constraints add "<约束>"  记一条约束（kind/scope/enforceable 走环境变量）
   truthctl constraints [--files a:b]  列出约束；带 --files 只列命中的
+  truthctl retire <decision|judgment|constraint|progress> <id>  追加式停用一条真相
   truthctl close <L-id> "<结论>"  标 done（必须带证据：KG_TRUTH_EVIDENCE 或 KG_TRUTH_COMMIT）
   truthctl reopen <L-id> "<原因>"  把已关闭的问题重新打开
   truthctl accept "<标题>" [--human --steps "..."]  登记验收项，分清机器自证/人工验收
   truthctl accept --id <A-id> --status verified [--note "..."]  收敛一条验收项（人工拍板/机器复核）
+  truthctl goal <summary|list|create|update|link|close>  跨项目长期目标（显式账本）
   truthctl synthesize          把决策/进展/问题/验收综合成 docs/PRODUCT_MAINLINE.md
+  truthctl synthesize --if-changed  常驻自追踪用：内容无变化时不重写生成时间
 
 add 的环境变量：
   KG_TRUTH_DETAIL KG_TRUTH_STATUS KG_TRUTH_LANE KG_TRUTH_FILES
@@ -77,6 +80,8 @@ from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, resolve_state_root  # noqa: E402
 import constraints as constraints_mod  # noqa: E402
 import central_config  # noqa: E402
+import relationship_ledger  # noqa: E402
+import acceptance_criteria_compiler  # noqa: E402
 
 # 自包含安装下，绑定的项目写在插件 .mcp.json 里；显式 KG_REPO 优先。
 apply_plugin_env()
@@ -105,6 +110,12 @@ def _kgctl_cmd() -> str:
 PREFIX = {'decision': 'D', 'ledger': 'L', 'progress': 'P', 'acceptance': 'A',
           'judgment': 'J', 'constraint': 'C'}
 LEDGER_KINDS = {'visual', 'ux', 'bug', 'arch', 'gate'}
+# 只能由人翻的「完成」：审美、手感、真实产品里点一下才算。机器再怎么跑命令也判不了
+# 「这样够不够好看 / 顺不顺手」，所以这类条目关闭时停在 awaiting_human，不直接 done。
+# 依据：agent 循环里执行层（磨距离）归机器，判断层（目标本身对不对）归人；把最后一票
+# 交给机器，等于删掉了高层反馈 —— 它会又快又狠地冲向一个没人质疑过的错误目标。
+HUMAN_JUDGMENT_KINDS = {'visual', 'ux'}
+AWAITING_HUMAN = 'awaiting_human'
 LANES = REPO / 'ops' / 'tasks' / 'lanes.json'
 # 从具体到泛化：第一条命中的规则就是归类结果。可用 central.config.json 的
 # lane_rules 覆盖；不配就用这套通用默认。
@@ -397,6 +408,10 @@ def cmd_add(args):
         fields.update(kind=os.environ.get('KG_TRUTH_KIND', 'bug'),
                       detail=os.environ.get('KG_TRUTH_DETAIL', ''),
                       status=os.environ.get('KG_TRUTH_STATUS', 'open'))
+        # 登记时就能声明「这条的完成只能人判」：比如门禁类条目里含一步「上线前手动点一遍」。
+        # 只有 acceptance 支持这个字段是不够的 —— 收口门禁看的是 ledger。
+        if os.environ.get('KG_TRUTH_NEEDS_HUMAN', '') == '1':
+            fields['needs_human'] = True
     elif t == 'decision':
         fields.update(decision=os.environ.get('KG_TRUTH_DECISION', ''),
                       why=os.environ.get('KG_TRUTH_WHY', ''),
@@ -412,7 +427,8 @@ def cmd_add(args):
                       status=os.environ.get('KG_TRUTH_STATUS', 'todo'),
                       needs_human=os.environ.get('KG_TRUTH_NEEDS_HUMAN', '') == '1',
                       steps=os.environ.get('KG_TRUTH_STEPS', ''),
-                      evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''))
+                      evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''),
+                      source_hash=os.environ.get('KG_TRUTH_SOURCE_HASH') or None)
     elif t == 'judgment':
         fields.update(statement=os.environ.get('KG_TRUTH_STATEMENT', '') or title,
                       why=os.environ.get('KG_TRUTH_WHY', ''),
@@ -496,6 +512,7 @@ def cmd_accept(args):
                       screenshots=_merge_screenshots(
                           [], screenshots or os.environ.get('KG_TRUTH_SHOTS', '')),
                       evidence=os.environ.get('KG_TRUTH_EVIDENCE', ''),
+                      source_hash=os.environ.get('KG_TRUTH_SOURCE_HASH') or None,
                       lane=lane or os.environ.get('KG_TRUTH_LANE') or None,
                       files=_files(),
                       source=os.environ.get('KG_TRUTH_SOURCE', 'agent'))
@@ -626,9 +643,31 @@ def infer_lane(kind: str, text: str, files) -> str:
     return DEFAULT_LANE
 
 
-def _append_ledger(kind, title, detail, files, source, lane) -> dict:
-    return _append_new('ledger', kind=kind, title=title, detail=detail,
-                       status='open', lane=lane, files=files or [], source=source)
+def _append_ledger(kind, title, detail, files, source, lane,
+                   acceptance_plan=None) -> dict:
+    fields = {'kind': kind, 'title': title, 'detail': detail,
+              'status': 'open', 'lane': lane, 'files': files or [], 'source': source}
+    if acceptance_plan is not None:
+        fields['acceptance_plan'] = acceptance_plan
+    return _append_new('ledger', **fields)
+
+
+def _compile_acceptance_plan(text, kind, files, lane) -> dict:
+    """路由预演时编译验收标准；编译器异常不能阻塞唯一入口。"""
+    try:
+        return acceptance_criteria_compiler.compile_criteria(
+            text=text or '', kind=kind or '', files=list(files or []),
+            lane=lane or '', cfg=CFG)
+    except Exception as exc:
+        return {
+            'status': 'unknown',
+            'summary': '验收标准编译失败：%s' % exc,
+            'lane': lane or '',
+            'machine_checks': [],
+            'human_checks': [],
+            'needs_human': False,
+            'source': 'acceptance-criteria-compiler',
+        }
 
 
 def _lane_names() -> set:
@@ -717,7 +756,9 @@ def cmd_route(args):
         if not lane:
             lane = infer_lane(kind, it.get('text', ''), it.get('files'))
         plan.append({'n': i, 'kind': kind, 'lane': lane, 'text': it.get('text', ''),
-                     'files': it.get('files') or [], 'cand': cand[:2]})
+                     'files': it.get('files') or [], 'cand': cand[:2],
+                     'acceptance_plan': _compile_acceptance_plan(
+                         it.get('text', ''), kind, it.get('files') or [], lane)})
     # text[:120] -> 已有台账 id。命中即「这条其实已经进过台账」，不再新建，但必须把它
     # 归并到那条台账并把 inbox 标 routed —— 否则重复输入会永远停在「待路由」，
     # 每轮 tick 都重复报同一批待办，进度永远清不干净。
@@ -736,6 +777,9 @@ def cmd_route(args):
     for p in plan:
         mark = f"  <已有 {p['cand'][0][3]}>" if p['cand'] else ''
         print(f" #{p['n']:03d} [{p['kind']:6s}] -> {p['lane']:14s} {p['text'][:78]}{mark}")
+        label = acceptance_criteria_compiler.summary_label(p['acceptance_plan'])
+        if label:
+            print(f"       {label}")
     for p in dups:
         print(f" #{p['n']:03d} [{p['kind']:6s}] -> 归并 {seen[p['text'][:120]]}  {p['text'][:70]}")
     if not go:
@@ -758,17 +802,20 @@ def cmd_route(args):
                 if note not in ev:
                     ev.append(note)
                     target['evidence'] = ev
-                    path = TRUTH / FILES['ledger']
-                    rows = _read(path)
-                    for i, rec in enumerate(rows):
-                        if rec.get('id') == ref:
-                            rows[i] = target
-                    with path.open('w') as fh:
-                        for rec in rows:
-                            fh.write(json.dumps(rec, ensure_ascii=False) + '\n')
+                if not target.get('acceptance_plan'):
+                    target['acceptance_plan'] = p['acceptance_plan']
+                path = TRUTH / FILES['ledger']
+                rows = _read(path)
+                for i, rec in enumerate(rows):
+                    if rec.get('id') == ref:
+                        rows[i] = target
+                with path.open('w') as fh:
+                    for rec in rows:
+                        fh.write(json.dumps(rec, ensure_ascii=False) + '\n')
         else:
             rec = _append_ledger(p['kind'], p['text'][:80].replace('\n', ' '),
-                                 p['text'], p['files'], f"inbox#{p['n']}", p['lane'])
+                                 p['text'], p['files'], f"inbox#{p['n']}", p['lane'],
+                                 acceptance_plan=p['acceptance_plan'])
             it['lane'], it['ledger_id'], it['routed'] = rec['lane'], rec['id'], True
             made.append(rec['id'])
     merged = 0
@@ -785,7 +832,9 @@ def cmd_route(args):
                 if note not in ev:
                     ev.append(note)
                     rec['evidence'] = ev
-                    rows[j] = rec
+                if not rec.get('acceptance_plan'):
+                    rec['acceptance_plan'] = p['acceptance_plan']
+                rows[j] = rec
                 break
         with path.open('w') as fh:
             for rec in rows:
@@ -799,17 +848,24 @@ def cmd_route(args):
 
 def cmd_next(args):
     """只回答一个问题：现在最该动的是哪几条，用户不用自己翻台账。"""
-    led = [r for r in _latest_ledger(_read(TRUTH / 'ledger.jsonl')).values()
-           if r.get('status') in ('open', 'doing')]
+    all_led = list(_latest_ledger(_read(TRUTH / 'ledger.jsonl')).values())
+    led = [r for r in all_led if r.get('status') in ('open', 'doing')]
     led.sort(key=lambda r: (PRIORITY.get(r.get('kind'), 9), r.get('ts', '')))
+    waiting = [r for r in all_led if r.get('status') == AWAITING_HUMAN]
     acc = [r for r in _latest_by_id(_read(TRUTH / 'acceptance.jsonl')).values()
            if r.get('status') == 'blocked']
     print('=== 自动挡 · 现在做什么 ===')
+    if waiting:
+        # 单列：这些活机器已经做完了，「完成」这一票在你手上。混进「优先处理」
+        # 会让 agent 以为还有活要干，反复重做同一件事。
+        print('等你确认（做完了，但要你看过才算完）：')
+        for r in waiting:
+            print(f"  {r['id']} [{r.get('kind','')}] {r.get('title','')}")
     if acc:
         print('被卡住的验收项（需要用户拍板或外部条件）：')
         for r in acc:
             print(f"  {r['id']} [{r.get('level','')}] {r.get('title','')}")
-    if not led and not acc:
+    if not led and not acc and not waiting:
         print('没有未决项：可以跑 kgctl reap --go 回收已合并分支，或接收新输入。')
         return
     print('优先处理：')
@@ -1027,6 +1083,23 @@ def cmd_constraints(args):
     print('\n调取约定：scope 为空 = 全局约束（恒命中）；写了 scope 就只在改动命中时带上。')
 
 
+def cmd_retire(args):
+    """按 id 追加一条「已停用」投影；决策/判断/约束/进展统一走加法。"""
+    if len(args) != 2 or args[0] not in ('decision', 'judgment', 'constraint', 'progress'):
+        sys.exit('用法: truthctl retire <decision|judgment|constraint|progress> <id>')
+    t, rid = args
+    with _truth_lock():
+        row = _latest_by_id(_read(TRUTH / FILES[t])).get(rid)
+        if row is None:
+            sys.exit(f'{t} 台账里没有 {rid}')
+        merged = dict(row)
+        merged['status'] = 'retired'
+        merged['ts'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        merged['retired_from'] = row.get('status')
+        _append(merged)
+    print(f'已停用 {t} [{rid}]')
+
+
 def _coerce_evidence(evidence):
     """evidence 历史上出现过 str / list / None 三种类型；统一成单个字符串。"""
     if not evidence:
@@ -1068,6 +1141,10 @@ def _set_ledger_status(rid, status, note, evidence='', commit=''):
             merged['closed'] = merged['ts']
         elif evidence:
             merged['evidence'] = _coerce_evidence(evidence)
+        if status != 'done':
+            # 重新打开或停在 awaiting_human 时不能留着上一次的关闭时间。
+            # 留着就等于对外宣称「这条已经完成过」，面板会把它当已完成渲染。
+            merged.pop('closed', None)
         _append(merged)
         return merged
 
@@ -1108,6 +1185,10 @@ def _set_acceptance_status(rid, status, note='', evidence='', source=None,
             # 否则事后没人能复核「谁说这条验过了」。
             merged['verified_by'] = source or os.environ.get('KG_TRUTH_SOURCE', 'user')
             merged['verified_at'] = merged['ts']
+        else:
+            # 停在 awaiting_human / 重新 open 时不能留着上一次的关闭时间：
+            # 留着就等于对外宣称「这条已经完成过」，面板会把它当已完成渲染。
+            merged.pop('closed', None)
         _append(merged)
         return merged
 
@@ -1118,15 +1199,38 @@ def cmd_close(args):
     fail-closed：必须带可复核证据——KG_TRUTH_EVIDENCE（命令/退出码/复现结果）
     或 KG_TRUTH_COMMIT（已合入 main 的 commit sha，会据此派生证据）。
     只有自由文本结论、两者都没有的，拒绝关闭。
+
+    但「done」这一格只能由人翻：视觉/体验（以及登记时标了 needs_human 的）条目，
+    agent 跑再多命令也判不了「这样够不够好看 / 顺不顺手」。这类条目 close 时停在
+    awaiting_human，把最后一步交回人；机器能自证的（bug/gate/arch）照旧直接 done，
+    不打断自动派发的闭环。
+
+    用法：
+      truthctl close <L-id> "<结论/证据>"              机器可证的收口；人判类停在 awaiting_human
+      truthctl close <L-id> "<结论>" --confirm-human  人已看过并认可，直接 done
     """
     if not args:
-        sys.exit('用法: truthctl close <L-id> "<结论>"'
-                 '（需 KG_TRUTH_EVIDENCE 或 KG_TRUTH_COMMIT 至少一个）')
+        sys.exit('用法: truthctl close <L-id> "<结论/证据>"'
+                 '（需 KG_TRUTH_EVIDENCE 或 KG_TRUTH_COMMIT；人判类可 --confirm-human）')
     rid = args[0]
-    note = ' '.join(args[1:]) if len(args) > 1 else ''
+    rest = [a for a in args[1:] if a != '--confirm-human']
+    confirmed = ('--confirm-human' in args
+                 or os.environ.get('KG_TRUTH_HUMAN_CONFIRMED', '') == '1')
+    note = ' '.join(rest) if rest else ''
+    prev = _latest_ledger(_read(TRUTH / FILES['ledger'])).get(rid) or {}
+    if _needs_human_verdict(prev) and not confirmed:
+        return _park_for_human(rid, prev, note)
     raw_commit = os.environ.get('KG_TRUTH_COMMIT') or ''
-    rec = _set_ledger_status(rid, 'done', note,
-                             os.environ.get('KG_TRUTH_EVIDENCE', ''), raw_commit)
+    evidence = os.environ.get('KG_TRUTH_EVIDENCE', '')
+    if confirmed and not evidence:
+        # 人的显式确认也是证据；否则 --confirm-human 会被 fail-closed 卡死。
+        evidence = '用户确认：%s（--confirm-human）' % (note or '看过，可以')
+    if not evidence and not raw_commit.strip():
+        sys.exit(
+            '拒绝把 %s 标成 done：没有证据。\n'
+            '  KG_TRUTH_EVIDENCE="<命令/退出码/复现结果>"，或\n'
+            '  KG_TRUTH_COMMIT=<已合入 main 的 commit sha>。' % rid)
+    rec = _set_ledger_status(rid, 'done', note, evidence, raw_commit)
     commit = raw_commit.strip() or None
     prog = _append_new('progress', title='关闭 %s：%s' % (rid, rec.get('title', '')),
                        summary=note, commit=commit, landed=bool(commit),
@@ -1134,6 +1238,47 @@ def cmd_close(args):
                        source=os.environ.get('KG_TRUTH_SOURCE', 'agent'),
                        status='done')
     print('已关闭 [%s] %s（同时记入进展 %s）' % (rid, rec.get('title', ''), prog['id']))
+
+
+def _needs_human_verdict(rec: dict) -> bool:
+    """这条的「完成」是不是只能由人判。
+
+    两类：登记时就标了 needs_human 的，和天然属于审美/手感的 kind（视觉、体验）。
+    bug/gate/arch 有客观判据（命令退出码、断言、diff），机器自证即可。
+    """
+    if rec.get('needs_human'):
+        return True
+    return rec.get('kind') in HUMAN_JUDGMENT_KINDS
+
+
+def _park_for_human(rid: str, prev: dict, note: str) -> None:
+    """把条目停在 awaiting_human：活干完了，但「完成」这一票留给用户。
+
+    不写 closed 时间戳——写了就等于宣称它完成了。同时落一条进展，说明技术上到哪一步，
+    这样面板和主线里都能看到「这条在等你，不在等机器」。
+    """
+    detail = note or '实现已完成，等用户确认视觉/手感'
+    rec = _set_ledger_status(rid, AWAITING_HUMAN, detail,
+                             os.environ.get('KG_TRUTH_EVIDENCE', ''))
+    commit = os.environ.get('KG_TRUTH_COMMIT') or None
+    _append_new('progress', title='待你确认 %s：%s' % (rid, rec.get('title', '')),
+                summary=detail, commit=commit, landed=bool(commit),
+                lane=rec.get('lane'), files=rec.get('files') or [],
+                source=os.environ.get('KG_TRUTH_SOURCE', 'agent'),
+                status=AWAITING_HUMAN)
+    print('已停在「等你确认」[%s] %s' % (rid, rec.get('title', '')))
+    print('  原因：这条属于 %s，好不好只能你看过再说，机器不替你签收。'
+          % (prev.get('kind') or 'needs_human'))
+    print('  你看过认为可以，再让它翻成 done：')
+    print('    %s close %s "看过，可以" --confirm-human' % (_cmd_hint(), rid))
+
+
+def _cmd_hint() -> str:
+    """给用户抄的命令前缀（自包含安装下运行时不在项目目录里）。"""
+    ops_dir = Path(__file__).resolve().parent
+    if (ops_dir.parent / '.mcp.json').exists():
+        return 'python3 %s' % (ops_dir / 'truthctl.py')
+    return 'python3 ops/truthctl.py'
 
 
 def cmd_open(args):
@@ -1172,12 +1317,20 @@ def cmd_synthesize(args):
 
     mainline.json 是人拍板的方向，不改；这份是 Agent 从台账里综合出来的现状。
     人只读这一页，就知道产品现在是什么样、最近在推什么、还差什么。
+
+    `--if-changed` 给守护每拍调用：生成视图正文不变时保留原文件和原生成时间，
+    避免常驻自追踪把同一份主线反复写成「刚更新」并制造无意义的 git 脏改动。
     """
+    if_changed = '--if-changed' in args
+    args = [a for a in args if a != '--if-changed']
     ml = _read_json(TRUTH / 'mainline.json')
     dec = [r for r in _latest_by_id(_read(TRUTH / 'decisions.jsonl')).values()
            if r.get('status') == 'active']
     led = list(_latest_ledger(_read(TRUTH / 'ledger.jsonl')).values())
-    prg = sorted(_latest_by_id(_read(TRUTH / 'progress.jsonl')).values(),
+    # retire 是追加的状态覆盖行：历史行留着，但停用后的进展不许再渲染进
+    # 人看的主线（否则重复落盘会印两遍同一件事）。
+    prg = sorted([r for r in _latest_by_id(_read(TRUTH / 'progress.jsonl')).values()
+                  if (r.get('status') or 'active') != 'retired'],
                  key=lambda r: r.get('ts', ''))
     acc = list(_latest_by_id(_read(TRUTH / 'acceptance.jsonl')).values())
     ps = _read_json(PRODUCT_STATE)
@@ -1187,8 +1340,11 @@ def cmd_synthesize(args):
     landed = [r for r in prg if r.get('landed')]
     verified = [r for r in acc if r.get('status') == 'verified']
 
+    # 生成时间必须位于正文之外：守护逐拍 synthesize 时，只有真相内容真的变化
+    # 才应该刷新它。把时间混在正文里做 diff 会让「什么都没发生」也像新进展。
+    generated_at = time.strftime('%Y-%m-%d %H:%M:%S')
     L = ['# 产品主线（自动综合，勿手改）', '',
-         '> 生成时间 %s　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合' % time.strftime('%Y-%m-%d %H:%M:%S'),
+         '@GEN_TIME@',
          '> 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。', '']
     if ml:
         L += ['## %s' % ml.get('product', '产品'), '',
@@ -1314,21 +1470,41 @@ def cmd_synthesize(args):
           '- 未决问题：%d 条' % len(open_led),
           '- 已验收：%d 条' % len(verified), '']
 
+    L[2] = '> 生成时间 %s　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合' % generated_at
+    text = '\n'.join(L) + '\n'
     PRODUCT_MAINLINE.parent.mkdir(parents=True, exist_ok=True)
-    PRODUCT_MAINLINE.write_text('\n'.join(L) + '\n')
-    print('\n'.join(L))
-    print('\n已写出 %s' % PRODUCT_MAINLINE.relative_to(REPO), file=sys.stderr)
+    wrote = True
+    if if_changed and PRODUCT_MAINLINE.exists():
+        old = PRODUCT_MAINLINE.read_text(encoding='utf-8')
+        marker = '> 生成时间 '
+        def without_stamp(value):
+            return '\n'.join(
+                line for line in value.splitlines()
+                if not line.startswith(marker)
+            )
+        if without_stamp(old) == without_stamp(text):
+            wrote = False
+    if wrote:
+        PRODUCT_MAINLINE.write_text(text, encoding='utf-8')
+    if wrote:
+        print('\n'.join(L))
+        print('\n已写出 %s' % PRODUCT_MAINLINE.relative_to(REPO), file=sys.stderr)
+    else:
+        print('产品主线内容未变化，保留原生成时间：%s'
+              % PRODUCT_MAINLINE.relative_to(REPO))
 
 
 def cmd_snapshot(args):
     ml = json.loads((TRUTH / 'mainline.json').read_text()) if (TRUTH / 'mainline.json').exists() else {}
     dec = list(_latest_by_id(_read(TRUTH / 'decisions.jsonl')).values())
     led = list(_latest_ledger(_read(TRUTH / 'ledger.jsonl')).values())
-    prg = sorted(_latest_by_id(_read(TRUTH / 'progress.jsonl')).values(),
+    prg = sorted([r for r in _latest_by_id(_read(TRUTH / 'progress.jsonl')).values()
+                  if (r.get('status') or 'active') != 'retired'],
                  key=lambda r: r.get('ts', ''))
     acc = list(_latest_by_id(_read(TRUTH / 'acceptance.jsonl')).values())
 
     open_led = [r for r in led if r.get('status') in ('open', 'doing')]
+    waiting_human = [r for r in led if r.get('status') == AWAITING_HUMAN]
     blocked_acc = [r for r in acc if r.get('status') == 'blocked']
     p0_open = [r for r in led if r.get('status') in ('open', 'doing') and r.get('kind') in ('bug', 'arch', 'gate')]
 
@@ -1368,7 +1544,12 @@ def cmd_snapshot(args):
         for r in blocked_acc:
             L.append(f"- `{r['id']}` {r.get('title','')}")
         L.append('')
-    if not p0_open and not blocked_acc:
+    if waiting_human:
+        L.append('**等你确认（机器已做完，好不好只有你能判）**')
+        for r in waiting_human:
+            L.append(f"- `{r['id']}` {r.get('title','')}")
+        L.append('')
+    if not p0_open and not blocked_acc and not waiting_human:
         L += ['（当前没有需要你拍板的事项）', '']
 
     L += ['## 三、问题台账', '']
@@ -1456,12 +1637,167 @@ def cmd_snapshot(args):
     print(f'\n已写出 {STATUS.relative_to(REPO)}', file=sys.stderr)
 
 
+def cmd_goal(args):
+    """关系层显式入口：跨项目长期目标不混进单个项目真相。"""
+    if not args:
+        print(__doc__)
+        print('用法: truthctl goal <summary|list|create|update|link|close> ...')
+        return 1
+    sub, rest = args[0], args[1:]
+    if sub == 'summary':
+        result = relationship_ledger.summary(*rest)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if sub == 'list':
+        path = rest[0] if rest else None
+        state = relationship_ledger.summary(path)
+        if state.get('status') == 'unknown':
+            print('关系目标取不到：%s' % state.get('headline'), file=sys.stderr)
+            return 1
+        try:
+            rows = relationship_ledger.list_goals(path)
+        except relationship_ledger.RelationshipError as exc:
+            print('关系目标取不到：%s' % exc, file=sys.stderr)
+            return 1
+        for row in rows:
+            print(json.dumps(row, ensure_ascii=False))
+        return 0
+
+    if sub not in ('create', 'update', 'link', 'close'):
+        raise SystemExit('用法: truthctl goal <summary|list|create|update|link|close> ...')
+
+    source = os.environ.get('KG_GOAL_SOURCE', 'user').strip()
+    if source not in ('user', 'operator'):
+        raise SystemExit('KG_GOAL_SOURCE 只能是 user 或 operator')
+    path = os.environ.get('KG_RELATIONSHIP_GOALS_PATH') or None
+
+    if sub in ('link', 'close'):
+        if not rest:
+            raise SystemExit('用法: truthctl goal link <G-id> [--ledger L-id,...] '
+                             '[--acceptance A-id,...] [--thread id] | '
+                             'truthctl goal close <G-id> "<结论>"')
+        gid = rest[0]
+        try:
+            if sub == 'link':
+                def values(flag):
+                    if flag not in rest:
+                        return []
+                    idx = rest.index(flag) + 1
+                    if idx >= len(rest):
+                        raise SystemExit('%s 后面缺少值' % flag)
+                    return [x.strip() for x in rest[idx].split(',') if x.strip()]
+                def value(flag):
+                    if flag not in rest:
+                        return ''
+                    idx = rest.index(flag) + 1
+                    if idx >= len(rest):
+                        raise SystemExit('%s 后面缺少值' % flag)
+                    return rest[idx]
+                row = relationship_ledger.link(
+                    gid, ledger=values('--ledger'),
+                    acceptance=values('--acceptance'),
+                    thread=value('--thread'),
+                    source=source, path=path)
+            else:
+                if len(rest) < 2 or not rest[1].strip():
+                    raise SystemExit('close 必须写结论（证据或人确认的理由）')
+                conclusion = rest[1]
+                if conclusion.startswith('--'):
+                    raise SystemExit('close 的第二个参数必须是结论')
+                evidence = conclusion
+                if '--evidence' in rest:
+                    idx = rest.index('--evidence') + 1
+                    if idx >= len(rest):
+                        raise SystemExit('--evidence 后面缺少值')
+                    evidence = rest[idx]
+                row = relationship_ledger.close(
+                    gid, conclusion, source=source, evidence=evidence, path=path)
+        except relationship_ledger.RelationshipError as exc:
+            print('关系目标写入被拒绝：%s' % exc, file=sys.stderr)
+            return 2
+        print(json.dumps(row, ensure_ascii=False, indent=2))
+        return 0
+
+    def has(flag):
+        return flag in rest
+
+    def take(flag, default=''):
+        if flag not in rest:
+            return default
+        index = rest.index(flag) + 1
+        if index >= len(rest):
+            raise SystemExit('%s 后面缺少值' % flag)
+        return rest[index]
+
+    if sub == 'update':
+        if not rest or not rest[0].startswith('G-'):
+            raise SystemExit('用法: truthctl goal update <G-id> [--title "..." ...]')
+        gid = rest[0]
+        try:
+            fields = relationship_ledger.fields_for(gid, path, source)
+        except relationship_ledger.RelationshipError as exc:
+            print('关系目标写入被拒绝：%s' % exc, file=sys.stderr)
+            return 2
+        if has('--title'):
+            fields['title'] = take('--title')
+        if has('--priority'):
+            fields['priority'] = take('--priority')
+        if has('--projects'):
+            fields['projects'] = [x.strip() for x in take('--projects').split(',')
+                                  if x.strip()]
+        if has('--status'):
+            fields['status'] = take('--status')
+        if has('--reason'):
+            fields['reason'] = take('--reason')
+        if has('--north-star'):
+            fields['north_star'] = take('--north-star')
+        if has('--thread'):
+            fields['source_thread'] = take('--thread')
+        if has('--ledger'):
+            fields['linked_ledger'] = [x.strip() for x in take('--ledger').split(',')
+                                       if x.strip()]
+        if has('--acceptance'):
+            fields['linked_acceptance'] = [
+                x.strip() for x in take('--acceptance').split(',') if x.strip()]
+        if has('--evidence'):
+            fields['evidence'] = take('--evidence')
+        if has('--needs-human'):
+            fields['needs_human'] = True
+        fields['id'] = gid
+        fields['last_touched'] = take('--touched') or relationship_ledger.now()
+    else:
+        fields = {
+            'title': take('--title'),
+            'priority': take('--priority', 'normal'),
+            'projects': [x.strip() for x in take('--projects').split(',') if x.strip()],
+            'status': take('--status', 'proposed'),
+            'reason': take('--reason'),
+            'north_star': take('--north-star'),
+            'source_thread': take('--thread'),
+            'linked_ledger': [x.strip() for x in take('--ledger').split(',') if x.strip()],
+            'linked_acceptance': [x.strip() for x in take('--acceptance').split(',')
+                                  if x.strip()],
+            'last_touched': take('--touched') or relationship_ledger.now(),
+            'needs_human': has('--needs-human'),
+            'source': source,
+            'evidence': take('--evidence'),
+        }
+    try:
+        row = (relationship_ledger.update(fields['id'], fields, path)
+               if sub == 'update' else relationship_ledger.create(fields, path))
+    except relationship_ledger.RelationshipError as exc:
+        print('关系目标写入被拒绝：%s' % exc, file=sys.stderr)
+        return 2
+    print(json.dumps(row, ensure_ascii=False, indent=2))
+    return 0
+
+
 CMDS = {'add': cmd_add, 'ls': cmd_ls, 'snapshot': cmd_snapshot, 'promote': cmd_promote,
         'route': cmd_route, 'lanes': cmd_lanes, 'next': cmd_next,
         'product': cmd_product, 'distill': cmd_distill,
-        'constraints': cmd_constraints,
+        'constraints': cmd_constraints, 'retire': cmd_retire,
         'close': cmd_close, 'open': cmd_open, 'synthesize': cmd_synthesize,
-        'accept': cmd_accept}
+        'accept': cmd_accept, 'goal': cmd_goal}
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
@@ -1471,6 +1807,6 @@ if __name__ == '__main__':
     else:
         print(__doc__)
         print('命令：' + ' | '.join(['snapshot', 'ls', 'add', 'promote', 'route', 'lanes',
-                                     'next', 'product', 'distill', 'close', 'open',
-                                     'synthesize']))
+                                     'next', 'product', 'distill', 'constraints', 'retire',
+                                     'close', 'open', 'synthesize', 'accept', 'goal']))
         sys.exit(1)

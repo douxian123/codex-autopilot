@@ -23,6 +23,7 @@
 #   ./install.sh --no-marketplace     # 只装插件，不动 marketplace.json
 #   ./install.sh --no-companion       # 不编译/安装 macOS 菜单栏 Companion
 #   ./install.sh --refresh-plugin     # 装完后用 codex CLI 刷新已安装插件（否则桌面端可能仍用旧缓存）
+#   ./install.sh --install-daemon     # 显式首次安装/重装 launchd 常驻守护（默认不动常驻）
 #   ./install.sh --verify             # 装完立刻跑一遍验收（落地物/菜单栏应用/原生自检/总闸）
 set -euo pipefail
 
@@ -33,6 +34,7 @@ VERIFY=0
 ROLLBACK=0
 LIST_RELEASES=0
 COMPANION=1
+INSTALL_DAEMON=0
 PROJECT=""
 TRUNK=""
 while [ $# -gt 0 ]; do
@@ -42,11 +44,12 @@ while [ $# -gt 0 ]; do
     --verify) VERIFY=1; shift ;;
     --no-seed) NO_SEED=1; shift ;;
     --no-companion) COMPANION=0; shift ;;
+    --install-daemon) INSTALL_DAEMON=1; shift ;;
     --rollback) ROLLBACK=1; shift ;;
     --list-releases) LIST_RELEASES=1; shift ;;
     --state-root) PROJECT="${2:?--state-root 需要一个目录}"; shift 2 ;;
     --trunk) TRUNK="${2:?--trunk 需要一个目录}"; shift 2 ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
     *) PROJECT="$1"; shift ;;
   esac
 done
@@ -271,6 +274,15 @@ cp "$REPO"/ops/*.py "$STAGE/ops/"
 # 运行时可能带非 .py 的配套文件（模板/示例配置）。一并复制，避免安装后缺文件。
 cp "$REPO"/ops/*.md "$STAGE/ops/" 2>/dev/null || true
 cp "$REPO"/ops/*.json "$STAGE/ops/" 2>/dev/null || true
+# 安装件自检要读源码根的 docs/*.json 契约（七管家职责、施工闭环计划等），
+# 也要读管家架构约束文档；不把项目生成的 docs 视图塞进不可变发布目录。
+if [ -d "$REPO/docs" ]; then
+  mkdir -p "$STAGE/docs"
+  cp "$REPO"/docs/*.json "$STAGE/docs/" 2>/dev/null || true
+  if [ -f "$REPO/docs/ARCHITECTURE_STEWARDS.md" ]; then
+    cp "$REPO/docs/ARCHITECTURE_STEWARDS.md" "$STAGE/docs/ARCHITECTURE_STEWARDS.md"
+  fi
+fi
 # 本机 launchd 定时任务的源文件（看门狗 / 快照 / hooks 看门狗 / 3000 巡检 /
 # 日志轮转）。它们以前散落在 ~/.codex-guard/ 这类「没有版本、没人升级」的位置，
 # install 永远写不到，于是发版之后它们还在跑几周前的代码。搬进版本目录后，
@@ -513,24 +525,40 @@ fi
 #   机械根因：新代码已落盘、进程却从没加载过它。
 #
 #   所以：只要这台机器上已经装了守护，就在装完后用新版本重写 plist 并重启它。
-#   没装守护就什么都不做（不替用户擅自常驻）。
+#   没装守护时默认什么都不做（不替用户擅自常驻）；只有显式 --install-daemon
+#   才是首次安装路径。以前这里只看 plist 是否存在，于是 plist 被清掉后安装
+#   永远成功、守护永远不在，开关却仍显示开——正是最痛的静默失效。
 if [ "${NO_DAEMON_REPOINT:-0}" != "1" ]; then
   PLIST="$HOME/Library/LaunchAgents/com.codex-autopilot.daemon.plist"
-  if [ -f "$PLIST" ]; then
+  DAEMON_PLIST_EXISTS=0
+  [ -f "$PLIST" ] && DAEMON_PLIST_EXISTS=1
+  if [ "$INSTALL_DAEMON" -eq 1 ] || [ "$DAEMON_PLIST_EXISTS" -eq 1 ]; then
     echo
-    echo "守护改指新版本（否则 live 会继续跑上一版代码）…"
+    if [ "$DAEMON_PLIST_EXISTS" -eq 1 ]; then
+      echo "守护改指新版本（否则 live 会继续跑上一版代码）…"
+    else
+      echo "按显式 --install-daemon 首次安装常驻守护…"
+    fi
     set +e
     KG_REPO="$PROJECT" KG_TRUNK="$TRUNK" "$PY" "$DEST/ops/central_daemon.py" --install \
       >>"$HOME/.codex-autopilot/install-daemon.log" 2>&1
     daemon_rc=$?
     set -e
     if [ "$daemon_rc" -eq 0 ]; then
-      echo "守护已切到 ${VERSION} 并重启。"
+      if [ "$DAEMON_PLIST_EXISTS" -eq 1 ]; then
+        echo "守护已切到 ${VERSION} 并重启。"
+      else
+        echo "守护已首次安装为 ${VERSION} 并启动。"
+      fi
     else
       echo "× 守护改指失败（rc=${daemon_rc}），日志："
       echo "  $HOME/.codex-autopilot/install-daemon.log"
       echo "  手动重试：KG_REPO=\"$PROJECT\" KG_TRUNK=\"$TRUNK\" python3 \"$DEST/ops/central_daemon.py\" --install"
     fi
+  else
+    echo
+    echo "本机没有守护 plist；按约定不替你启用常驻。"
+    echo "需要常驻时用：./install.sh --install-daemon（会写 plist 并回读 launchd 判活）。"
   fi
 fi
 
@@ -640,6 +668,20 @@ fi
 #   全部手工维护、全部不在任何仓、全部不会被 install 刷新。它们的源文件现在
 #   随版本目录一起发布（ops/guards/），改指由 ops/guards/repoint_launchd.py
 #   按 registry.json 统一执行：幂等、改前备份、逐条打印、只碰自己登记的 label。
+#
+#   HyAPI 三条任务的密钥不能进版本库：先把旧脚本里的 token 补进本地
+#   ~/.codex-proxy/secrets.env（0600、只补缺失、不回显），再让 repoint 改指。
+#   顺序反了会得到「路径新鲜但任务立刻 SystemExit」的假绿。
+if [ -f "$DEST/ops/guards/hyapi_secrets.py" ]; then
+  echo
+  echo "迁移 HyAPI 本地密钥（只写 ~/.codex-proxy/secrets.env，不回显）…"
+  if ! "$PY" "$DEST/ops/guards/hyapi_secrets.py" --migrate; then
+    echo "× 本地密钥迁移失败；不继续改指 launchd。" >&2
+    echo "  避免 plist 指向新脚本但任务因缺密钥立刻退出。" >&2
+    exit 1
+  fi
+fi
+
 if [ -f "$DEST/ops/guards/repoint_launchd.py" ]; then
   echo
   echo "定时任务改指当前版本（watchdog / 快照 / hooks / 3000 巡检 / 日志轮转）…"

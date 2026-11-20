@@ -276,6 +276,24 @@ def _running_release_version() -> str | None:
     return None
 
 
+def _running_source_commit() -> str | None:
+    """Which plugin source commit the running code was packaged from.
+
+    Installed releases carry `.codex-autopilot-source.json`; a dev checkout usually
+    does not. Missing metadata is None, never an inferred commit.
+    """
+    for candidate in (plugin_root() / ".codex-autopilot-source.json",
+                      plugin_root().parent / ".codex-autopilot-source.json"):
+        try:
+            data = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        commit = str(data.get("commit") or "").strip()
+        if commit:
+            return commit
+    return None
+
+
 def install_consistency() -> dict:
     """Version-consistency check: install-state / marketplace / running code must agree.
 
@@ -292,12 +310,15 @@ def install_consistency() -> dict:
     market_path = home / ".agents/plugins/marketplace.json"
 
     state_version = None
+    installed_commit = None
     if state_path.exists():
         try:
-            state_version = json.loads(
-                state_path.read_text(encoding="utf-8")).get("version")
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state_version = state.get("version")
+            installed_commit = str(state.get("source_commit") or "").strip() or None
         except (OSError, ValueError):
             state_version = None
+            installed_commit = None
 
     market_version = None
     market_path_raw = None
@@ -314,13 +335,16 @@ def install_consistency() -> dict:
             pass
 
     running_version = None
+    running_commit = None
     # 发布前自检跑在 .staging-<version>-pid 里，此时 install-state / marketplace 还是上一版，
     # 不该因为「正在跑临时目录」被判成不一致。
     if not plugin_root().name.startswith(".staging-"):
         running_version = _running_release_version()
+        running_commit = _running_source_commit()
 
     versions = {"install_state": state_version, "marketplace": market_version,
-                "running": running_version}
+                "running": running_version, "installed_commit": installed_commit,
+                "running_commit": running_commit}
 
     if state_version is None and market_version is None:
         return {"status": "skip", "problems": [], "warnings": [], "versions": versions}
@@ -337,6 +361,10 @@ def install_consistency() -> dict:
         warnings.append(
             f"正在跑的代码是 {running_version}，install-state 写 {state_version}；"
             "重启 Codex 或重新加载插件后再确认。")
+    if installed_commit and running_commit and installed_commit != running_commit:
+        warnings.append(
+            f"正在跑的代码来自 {running_commit[:12]}，install-state 写 "
+            f"{installed_commit[:12]}；需要受控重载或换代，不能自动重启。")
 
     return {"status": "broken" if problems else "ok", "problems": problems,
             "warnings": warnings, "versions": versions}

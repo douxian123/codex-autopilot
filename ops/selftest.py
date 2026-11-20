@@ -15,6 +15,9 @@ import subprocess
 import sys
 import tempfile
 import time as _time
+from contextlib import redirect_stdout
+from importlib.util import module_from_spec, spec_from_file_location
+from io import StringIO
 from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
@@ -31,6 +34,19 @@ def _installed_version() -> str:
         if path.exists():
             return json.loads(path.read_text(encoding="utf-8"))["version"]
     raise AssertionError(f"找不到插件清单：{candidates[0]}")
+
+
+def _make_state_root(path: Path) -> None:
+    """把 release 副本补成合法的 `--no-seed` 状态根夹具。
+
+    release 目录按设计不带 ops/tasks 和 ops/truth；安装器的生产校验必须拒绝
+    空壳目录。测试若要模拟“已经初始化的项目”，就得自己放可提交的账本占位；
+    Git 不跟踪空目录，所以这里写文件而不是只 mkdir。
+    """
+    (path / "ops" / "tasks").mkdir(parents=True, exist_ok=True)
+    (path / "ops" / "truth").mkdir(parents=True, exist_ok=True)
+    (path / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+    (path / "ops" / "truth" / "ledger.jsonl").write_text("", encoding="utf-8")
 
 
 def run(cmd, cwd=None, env=None, check=True):
@@ -113,6 +129,9 @@ def main():
             "test-reap-worktree-lock.py",
             "test-reap-live-session-guard.py",
             "test-reap-weak-signal-mode.py",
+            # kg-gate 崩溃残留只能凭自动挡 sidecar 认领；无标记/外部标记/宽限期内
+            # 一律不碰，过宽限期仍要走 worktree guard 的 all 判活。L-0001。
+            "test-gate-owner-reap.py",
             "test-reap-creation-grace.py",
             "test-reap-stripped-only.py",
             "test-reap-backend-orphans.py",
@@ -141,7 +160,20 @@ def main():
             "test-repoint-interval.py",
             "test-snapshot-clone-prune.py",
             "test-runtime-truthctl-selection.py",
+            "test-state-root-freshness.py",
+            "test-mirror-truth-jsonl-union.py",
+            "test-selftest-release-dir.py",
             "test-gate-registration.py",
+            "test-acceptance-criteria.py",
+            "test-worker-lifecycle.py",
+            "test-exec-lifecycle.py",
+            "test-wake-resume.py",
+            "test-authorized-followup.py",
+            "test-steward-contract.py",
+            "test-runtime-freshness.py",
+            "test-closure-plan.py",
+            "test-context-archive.py",
+            "test-e2e-ten-real-inputs.py",
         )
         for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)
@@ -200,6 +232,10 @@ def main():
         # 要么是登记过的薄转发。单测用假 HOME 造现场，不碰真实 launchd。
         run([sys.executable, str(OPS / "test-launchd-entry-freshness.py")],
             cwd=str(OPS.parent), check=True)
+        # 版本化 HyAPI 入口后，密钥不能进仓库：缺本地密钥时 repoint 必须
+        # fail closed，绝不把 plist 改成「路径新鲜但立刻 SystemExit」。
+        run([sys.executable, str(OPS / "test-launchd-repoint-secrets.py")],
+            cwd=str(OPS.parent), check=True)
         # 改指 managed 任务时必须保留常驻参数：2026-10-27 真实事故是
         # `--loop --interval 15 --max-land 3` 被抹成只剩脚本路径，launchd
         # 直接 exec 一个 .py，守护进程静默停摆，而改指脚本照样打印「✓」。
@@ -225,13 +261,41 @@ def main():
         # 「需要你验收」，等于让用户当第一道测试——用户明确要求过这个顺序。
         run([sys.executable, str(OPS / "test-acceptance-selfcheck.py")],
             cwd=str(OPS.parent), check=True)
+        # 复核截图必须由人点确认、只追加附件、失败时不写假路径。
+        # 面板按钮和 MCP 工具都靠这条门禁守住边界，不能只做静态文案检查。
+        run([sys.executable, str(OPS / "test-acceptance-screenshot.py")],
+            cwd=str(OPS.parent), check=True)
         # 全局项目健康：只读聚合真相/执行/验收三层，取不到必须 unknown。
         # 这条同时锁住「空台账与文件缺失不同」「overlap 排队不是病」「待自验没人跑是真卡点」。
         run([sys.executable, str(OPS / "test-project-health.py")],
             cwd=str(OPS.parent), check=True)
+        # 路线与效能健康：状态管家要能发现路线跑偏、无关卡点和重试空转，
+        # 但只能提复核。取不到必须 unknown；正常重试和 overlap 排队不能误报。
+        run([sys.executable, str(OPS / "test-route-health.py")],
+            cwd=str(OPS.parent), check=True)
+        # daemon 每拍巡检：必须共用同一份运行时判据、只提复核、状态变化才留账，
+        # observe 模式不能触碰账本，且 route-health pass 不能被静默升成破坏性动作。
+        run([sys.executable, str(OPS / "test-route-health-pass.py")],
+            cwd=str(OPS.parent), check=True)
+        # 路线复核状态机：异常发现后要能自动复测，恢复要清除，判据不足要保留；
+        # 全程只追加只读事件，不能长出杀 worker / 改配置 / 写工单的动作。
+        run([sys.executable, str(OPS / "test-route-review.py")],
+            cwd=str(OPS.parent), check=True)
+        # 关系层：跨项目长期目标必须有稳定对象。显式来源、空账本与取不到的区别、
+        # 损坏账本 fail-closed、只读投影不派活，都由这条门禁锁住。
+        run([sys.executable, str(OPS / "test-relationship-ledger.py")],
+            cwd=str(OPS.parent), check=True)
+        # 结果代理分：只读已有台账，北极星判据缺失不能由其他项替补，
+        # unknown 不算 0 分，机器门禁绿灯不等于用户结果变好。
+        run([sys.executable, str(OPS / "test-outcome-score.py")],
+            cwd=str(OPS.parent), check=True)
         # PM 简报：预期打磨、施工让路、进度追问候选必须来自已有台账，
         # 取不到说 unknown；尤其不许把「只生成候选」做成自动发消息。
         run([sys.executable, str(OPS / "test-pm-briefing.py")],
+            cwd=str(OPS.parent), check=True)
+        # PM 施工闭环：十条真实输入必须能从原话走到施工项、依赖、路线投影、
+        # 追问候选和关闭证据；没有文件声明时保留 unknown，模块只读不派活。
+        run([sys.executable, str(OPS / "test-pm-closure-loop.py")],
             cwd=str(OPS.parent), check=True)
         # 归属判定：「万法归一」入口后面那一层。最容易腐化的形态不是「判错」而是
         # 「判不清时悄悄猜」——插件 .mcp.json 写死一个 KG_REPO，于是用户在 A 项目
@@ -240,6 +304,11 @@ def main():
         run([sys.executable, str(OPS / "test-project-router.py")],
             cwd=str(OPS.parent), check=True,
             env={**os.environ, "KG_AUTOPILOT_HOME": str(root / "autopilot-home")})
+        # 全局待路由箱的复核出口：自动路由猜不出时进全局箱是对的，但箱里的历史
+        # 记录此前没有可审计的指派路径，重复条目也一直占着面板注意力。这条门禁
+        # 锁住默认只读、显式 --go 才写、原始记录不回写、重复原文只落一次。
+        run([sys.executable, str(OPS / "test-route-inbox.py")],
+            cwd=str(OPS.parent), check=True)
         # 「装的版本」与「跑的版本」是两件事：Codex 升级插件时替换版本目录，却不
         # 重启已经在跑的 MCP 进程。那些进程的 OPS_DIR 指向已删除的目录，每次调用
         # kgctl 都只拿到 can't open file，而宿主只表现为「工具坏了」——不抛异常、
@@ -268,6 +337,15 @@ def main():
         # 此前只有 judgments.jsonl（判断逻辑），没有 scope 也没有强制回路 ——
         # 写了不会被后续实现自动引用，等于「规范是文字，文字输给顺手」。
         run([sys.executable, str(OPS / "test-constraints-intake.py")],
+            cwd=str(OPS.parent), check=True)
+        # 真相层 append-only 台账的 active 投影不能因为重复落盘长出双份：
+        # 决策/判断/约束同一内容出现两次，会把产品主线和实现 prompt 一起污染。
+        # 这条同时锁住 retire 必须追加状态行、不许删历史物理行。
+        run([sys.executable, str(OPS / "test-truth-dedupe.py")],
+            cwd=str(OPS.parent), check=True)
+        # 常驻自追踪每拍都会综合产品主线。正文没变时不许重写生成时间，
+        # 否则共享主干会被同一份「刚更新」的假进展反复弄脏。
+        run([sys.executable, str(OPS / "test-selftrack-mainline.py")],
             cwd=str(OPS.parent), check=True)
         # 约束必须真的能兜底：标了 enforceable=gate 的约束此前从没被执行过 ——
         # 落盘门禁只读 central.config.json，而 CLI/面板却渲染成「有门禁」，是实打实
@@ -317,6 +395,19 @@ def main():
         # 过的同句不再弹回）。
         run([sys.executable, str(OPS / "test-constraint-candidates.py")],
             cwd=str(OPS.parent), check=True)
+        # 上下文管家自学习：跨会话重复诉求只能出候选，用户确认前不改
+        # constraints.jsonl；确认后带 source=context_learning 进统一约束闸；
+        # 否掉的同主题不再复发；源目录读不到时如实报 unknown。
+        run([sys.executable, str(OPS / "test-context-learning.py")],
+            cwd=str(OPS.parent), check=True)
+        # 验收管家：模糊预期必须先变成「怎么算完成」的候选，确认前不写验收台账；
+        # 人点头后登记 A-id，但仍不伪造 evidence，机器项要真门禁、人工项先自验。
+        run([sys.executable, str(OPS / "test-acceptance-criteria.py")],
+            cwd=str(OPS.parent), check=True)
+        # 关单必须有命令/cwd/退出码或已落 commit，回归必须重新打开：
+        # 自由文本不能把台账刷成 done，也不能把原证据抹掉。
+        run([sys.executable, str(OPS / "test-acceptance-close-reopen.py")],
+            cwd=str(OPS.parent), check=True)
         repo = root / "state"
         trunk = root / "state-trunk"
         repo.mkdir()
@@ -363,6 +454,17 @@ def main():
         land = kgctl(repo, trunk, "land", "codex/bad", "--dry")
         if land.returncode != 0 or "拒绝自动 land" not in land.stdout:
             raise AssertionError(f"land 没有拒绝坏分支:\n{land.stdout}\n{land.stderr}")
+
+        # Regression: network errors are classified as transport failures;
+        # authentication failures stay fatal. The full land path below covers
+        # the actual local-main advance.
+        sys.path.insert(0, str(OPS))
+        import kgctl as _kgctl
+        if not _kgctl._is_network_unreachable(
+                "fatal: unable to access: Failed to connect to 127.0.0.1 port 9674"):
+            raise AssertionError("网络不可达没有被识别为可离线收口")
+        if _kgctl._is_network_unreachable("fatal: Authentication failed for repository"):
+            raise AssertionError("认证失败被错误地识别为网络抖动")
 
         good = kgctl(repo, trunk, "land", "codex/good", "--dry")
         if good.returncode != 0 or "无冲突" not in good.stdout:
@@ -819,6 +921,47 @@ def _test_resolve(root):
             raise AssertionError("KG_RESOLVE_SKIP 还是建了 worktree")
 
 
+def test_resolve_gate_failure_surfaces_stderr():
+    """land 把真实失败写在 stderr 时，resolve 任务不能再留下空门禁结果。"""
+    spec = spec_from_file_location("kgctl_under_test", KGCTL)
+    kgctl_module = module_from_spec(spec)
+    spec.loader.exec_module(kgctl_module)
+    rec = {
+        "slug": "stderr-surface",
+        "branch": "codex/stderr-surface",
+        "resolve_branch": "codex/resolve-stderr-surface",
+        "worktree": "/tmp/codex-autopilot-resolve-stderr-surface",
+    }
+    real_run = kgctl_module.proc_run
+    real_write_record = kgctl_module._write_resolve_record
+    real_write_task_md = kgctl_module._write_resolve_task_md
+    stdout = StringIO()
+    try:
+        kgctl_module.proc_run = lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0],
+            returncode=1,
+            stdout="partial land output\n",
+            stderr="fatal: another land operation owns the lock\n",
+        )
+        kgctl_module._write_resolve_record = lambda record: None
+        kgctl_module._write_resolve_task_md = lambda record: None
+        with redirect_stdout(stdout):
+            kgctl_module._resolve_land(rec, Path(rec["worktree"]))
+    finally:
+        kgctl_module.proc_run = real_run
+        kgctl_module._write_resolve_record = real_write_record
+        kgctl_module._write_resolve_task_md = real_write_task_md
+
+    combined = stdout.getvalue() + rec.get("gate_output", "")
+    if rec.get("status") != "gate_fail":
+        raise AssertionError(f"模拟失败后状态不对: {rec.get('status')}")
+    for expected in ("partial land output", "fatal: another land operation owns the lock"):
+        if expected not in combined:
+            raise AssertionError(f"resolve 门禁结果漏掉 {expected!r}: {combined!r}")
+
+    print("selftest ok: resolve 落盘失败会同时保留 stdout/stderr，不再留下空门禁原因。")
+
+
 def test_reset_trunk_truth_conflict():
     """锁住 reset_trunk_head 的回归：失败 land 在主干工作树留下「纯真相层」提交后，
     origin/main 又前进了同一批真相文件（别的 land 更新了 PROJECT_STATUS / inbox.jsonl）。
@@ -1249,6 +1392,7 @@ def test_project_auto_exec_default_is_off():
 def test_installer():
     """版本化安装只切 marketplace 指针，不覆盖旧插件；回滚只还原自动挡入口。"""
     import json as _json
+    import shutil
 
     install = OPS.parent / "install.sh"
     # 源码级锁：装完必须尝试把守护改指新版本。少了这一段，用户「装了新版」
@@ -1257,6 +1401,10 @@ def test_installer():
     assert "--install" in _install_src and "NO_DAEMON_REPOINT" in _install_src, \
         "install.sh 缺少「装完把守护改指新版本」这一步"
     assert "daemon.plist" in _install_src, "install.sh 没有检查本机是否已装守护"
+    assert "--install-daemon" in _install_src, \
+        "install.sh 缺少显式首次安装守护入口"
+    assert "按约定不替你启用常驻" in _install_src, \
+        "install.sh 缺少「默认不替用户启用常驻」的明确出口"
     assert "install-resource-hooks.py" in _install_src, \
         "install.sh 缺少「安装时主动刷新资源准入 hook」这一步"
     assert "资源准入 hook 安装失败" in _install_src, \
@@ -1265,6 +1413,26 @@ def test_installer():
     release_path = f"./plugins/codex-autopilot/releases/{installed_version}"
     with tempfile.TemporaryDirectory(prefix="autopilot-install-test-") as tmp:
         home = Path(tmp) / "home"
+        # 安装器同时检查两处 git：
+        #   1) REPO（安装脚本所在目录）可追到 source_commit；
+        #   2) PROJECT（状态根）必须是 git 仓库根。
+        # 发版目录本身不是 git 仓，若继续拿 OPS.parent 当 PROJECT，test_installer
+        # 在 release 目录里必然红。这里构建一个临时 git 源仓 + detached worktree，
+        # 忠实模拟真实安装布局，而不是放宽安装器的生产校验。
+        source = Path(tmp) / "source"
+        shutil.copytree(OPS.parent, source,
+                        ignore=shutil.ignore_patterns(".git", ".build"))
+        _make_state_root(source)
+        source_install = source / "install.sh"
+        run(["git", "init", "-q", "-b", "main", str(source)])
+        run(["git", "-C", str(source), "config", "user.email",
+             "selftest@example.invalid"])
+        run(["git", "-C", str(source), "config", "user.name", "Autopilot Selftest"])
+        run(["git", "-C", str(source), "add", "."])
+        run(["git", "-C", str(source), "commit", "-qm", "fixture"])
+        trunk = Path(tmp) / "source-trunk"
+        run(["git", "-C", str(source), "worktree", "add", "-q", "--detach",
+             str(trunk), "main"])
         release_dir = home / "plugins" / "codex-autopilot" / "releases" / installed_version
         old_plugin = home / "plugins" / "codex-autopilot"
         old_plugin.mkdir(parents=True)
@@ -1289,10 +1457,13 @@ def test_installer():
         env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
         # --no-companion：菜单栏 .app 的编译单独测（test_companion_contract），
         # 不让一次安装测试既跑安装又跑 Swift 编译。
-        command = ["bash", str(install), "--no-seed", "--no-companion", str(OPS.parent)]
+        command = ["bash", str(source_install), "--trunk", str(trunk),
+                   "--no-seed", "--no-companion", str(source)]
         upgraded = run(command, env=env, check=False)
         if upgraded.returncode:
             raise AssertionError(f"版本化安装失败:\n{upgraded.stdout}\n{upgraded.stderr}")
+        assert "本机没有守护 plist；按约定不替你启用常驻。" in upgraded.stdout, \
+            f"没有 plist 时安装没说清默认不启用常驻:\n{upgraded.stdout}"
         data = _json.loads(market.read_text(encoding="utf-8"))
         entry = next(p for p in data["plugins"] if p["name"] == "codex-autopilot")
         other = next(p for p in data["plugins"] if p["name"] == "other-plugin")
@@ -1301,6 +1472,22 @@ def test_installer():
         assert sentinel.read_text(encoding="utf-8") == "keep\n"
         release = release_dir
         assert (release / "ops" / "central_mcp.py").is_file()
+        # registry 登记的 launchd 脚本和依赖必须随版本目录一起发布。
+        # 少了任何一个，5.7 改指后会变成 missing-script 或任务启动即失败；
+        # 发布门禁必须比本机 freshness 更早发现这件事。
+        guard_registry = _json.loads(
+            (release / "ops" / "guards" / "registry.json").read_text(encoding="utf-8"))
+        for guard_entry in guard_registry.get("entries") or []:
+            _label = guard_entry["label"]
+            for rel in [guard_entry["script"], *(guard_entry.get("siblings") or [])]:
+                assert (release / rel).is_file(), (
+                    f"发布版本缺少 launchd 登记脚本 {rel}（{_label}）")
+        for required in ("ops/guards/repoint_launchd.py",
+                         "ops/guards/hyapi_secrets.py",
+                         "docs/steward_contract.json",
+                         "docs/closure_plan.json",
+                         "docs/ARCHITECTURE_STEWARDS.md"):
+            assert (release / required).is_file(), f"发布版本缺少 {required}"
         resource_hook = home / ".codex" / "hooks" / "resource-admission.py"
         assert resource_hook.is_file(), "安装后没有落地资源准入 hook"
         installed_hooks = _json.loads(
@@ -1327,7 +1514,6 @@ def test_installer():
 
         # 故障回归：版本目录被手工移除后，用户会用同一版本重装恢复。
         # 这时 marketplace 已指向当前版本，不能把回滚指针也覆盖成当前版本。
-        import shutil
         shutil.rmtree(release)
         reinstalled = run(command, env=env, check=False)
         if reinstalled.returncode:
@@ -1341,7 +1527,8 @@ def test_installer():
         assert state["previous_source"] == "./plugins/codex-autopilot", \
             "同版本恢复安装把回滚指针覆盖成了当前版本"
 
-        rolled_back = run(["bash", str(install), "--rollback"], env=env, check=False)
+        rolled_back = run(["bash", str(source_install), "--rollback"],
+                          env=env, check=False)
         if rolled_back.returncode:
             raise AssertionError(f"回滚失败:\n{rolled_back.stdout}\n{rolled_back.stderr}")
         restored = _json.loads(market.read_text(encoding="utf-8"))
@@ -1366,6 +1553,7 @@ def test_installer_requires_clean_source():
         root = Path(tmp)
         source = root / "source"
         shutil.copytree(OPS.parent, source, ignore=shutil.ignore_patterns(".git"))
+        _make_state_root(source)
         source_install = source / "install.sh"
         run(["git", "init", "-q", "-b", "main", str(source)])
         run(["git", "-C", str(source), "config", "user.email", "selftest@example.invalid"])
@@ -1420,6 +1608,7 @@ def test_installer_shell_portability():
     路径下才暴露。
     """
     import re
+    import shutil
 
     installed_version = _installed_version()
     pattern = re.compile(rb"\$[A-Za-z_][A-Za-z0-9_]*")
@@ -1437,6 +1626,16 @@ def test_installer_shell_portability():
 
     install = OPS.parent / "install.sh"
     with tempfile.TemporaryDirectory(prefix="autopilot-install-bash32-") as tmp:
+        source = Path(tmp) / "source"
+        shutil.copytree(OPS.parent, source,
+                        ignore=shutil.ignore_patterns(".git", ".build"))
+        _make_state_root(source)
+        run(["git", "init", "-q", "-b", "main", str(source)])
+        run(["git", "-C", str(source), "config", "user.email",
+             "selftest@example.invalid"])
+        run(["git", "-C", str(source), "config", "user.name", "Autopilot Selftest"])
+        run(["git", "-C", str(source), "add", "."])
+        run(["git", "-C", str(source), "commit", "-qm", "fixture"])
         home = Path(tmp) / "home"
         home.mkdir(parents=True)
         # 用一个立刻失败的 swiftc 桩，只为让 Companion 分支走「编译失败降级」，
@@ -1447,23 +1646,24 @@ def test_installer_shell_portability():
         stub.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         stub.chmod(0o755)
         trunk = Path(tmp) / "project-trunk"
-        run(["git", "-C", str(OPS.parent), "worktree", "add", "-q", "--detach",
+        run(["git", "-C", str(source), "worktree", "add", "-q", "--detach",
              str(trunk), "HEAD"])
 
         env = os.environ.copy()
         env["HOME"] = str(home)
         env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
         env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
-        result = run(["bash", str(install), "--trunk", str(trunk), "--no-seed",
-                      "--no-marketplace", str(OPS.parent)], env=env, check=False)
+        result = run(["bash", str(source / "install.sh"), "--trunk", str(trunk),
+                      "--no-seed", "--no-marketplace", str(source)],
+                     env=env, check=False)
         combined = result.stdout + result.stderr
         assert "unbound variable" not in combined, f"bash 3.2 变量解析崩了:\n{combined}"
         assert result.returncode == 0, f"完整安装路径没跑完:\n{combined}"
         assert (home / "plugins" / "codex-autopilot" / "releases" / installed_version
                 / "ops" / "central_mcp.py").is_file()
         # 同一份安装不带 Companion 时也必须照样成功。
-        result2 = run(["bash", str(install), "--trunk", str(trunk), "--no-seed",
-                       "--no-marketplace", "--no-companion", str(OPS.parent)],
+        result2 = run(["bash", str(source / "install.sh"), "--trunk", str(trunk),
+                       "--no-seed", "--no-marketplace", "--no-companion", str(source)],
                       env=env, check=False)
         # 版本目录已存在，第二次会因「拒绝覆盖」退出；只要不是崩在变量解析上就说明路径健康。
         assert "unbound variable" not in (result2.stdout + result2.stderr)
@@ -1695,11 +1895,13 @@ def test_broken_binding_panel_contract():
             assert "普通目录无法闭环" in payload["why"], payload
             for key in ("project", "switches", "queue", "counters", "closure_rate",
                         "human_acceptance", "daemon", "doing_items", "todo_items",
-                        "project_health",
+                        "project_health", "route_health",
                         "machine_verified", "roadmap", "project_folders"):
                 assert key in payload, f"坏绑定状态缺少面板字段：{key}"
             assert payload["counters"]["landed"] is None, "坏绑定的计数不能伪装成 0"
             assert payload["queue"]["clean"] is None, "坏绑定的队列不能伪装成空"
+            assert payload["route_health"]["level"] == "unknown", \
+                "坏绑定时路线与效能不能伪装成正常"
             import central_mcp
             closure_line = central_mcp._closure_rate_line(payload["closure_rate"])
             assert "取不到" in closure_line, closure_line
@@ -1730,28 +1932,127 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     def _version_key(text):
         parts = text.replace("-preview.", ".").split(".")
         return tuple(int(p) if p.isdigit() else 0 for p in parts)
-    assert _version_key(version) >= _version_key("0.6.0-preview.102"), \
-        f"发布清单版本低于 PM 简报首发版：{version}"
+    assert _version_key(version) >= _version_key("0.6.0-preview.103"), \
+        f"发布清单版本低于 launchd guard 版本化版：{version}"
 
     pm = root / "ops" / "pm_briefing.py"
     assert pm.is_file(), "发布树缺少 ops/pm_briefing.py"
     pm_text = pm.read_text(encoding="utf-8")
     assert "follow_up_candidates" in pm_text, "PM 简报缺少追问候选契约"
     assert "不会自动追问" in pm_text, "PM 简报必须明示候选不是动作"
+    assert "acceptance_criteria" in pm_text, "PM 简报缺少验收标准候选契约"
 
-    panel_text = (root / "plugin" / "ui" / "panel.html").read_text(encoding="utf-8")
+    archive = root / "ops" / "context_archive.py"
+    assert archive.is_file(), "发布树缺少 ops/context_archive.py"
+    archive_text = archive.read_text(encoding="utf-8")
+    assert "取不到就明确说取不到" in archive_text, "上下文档案缺少 unknown 边界"
+    assert "不把不知道当成 0 条" in archive_text, "上下文档案会把取不到伪装成空"
+
+    followup = root / "ops" / "authorized_followup.py"
+    assert followup.is_file(), "发布树缺少 ops/authorized_followup.py"
+    followup_text = followup.read_text(encoding="utf-8")
+    assert "authorization != \"explicit\"" in followup_text, \
+        "追问授权必须拒绝 inferred/隐式授权"
+    assert "effect != \"reversible\"" in followup_text, \
+        "追问授权必须拒绝破坏性副作用"
+    assert "STATE_CANCELLED" in followup_text and "mark_failed" in followup_text, \
+        "追问授权缺少撤销/失败留账"
+
+    acceptance = root / "ops" / "acceptance_criteria.py"
+    assert acceptance.is_file(), "发布树缺少 ops/acceptance_criteria.py"
+    acceptance_text = acceptance.read_text(encoding="utf-8")
+    assert "confirm" in acceptance_text and "不在这里伪造" in acceptance_text, \
+        "验收标准候选缺少显式确认与不伪造证据约束"
+    assert "routed" in acceptance_text, "验收标准候选没有沿用已路由入口闸门"
+
+    # 源码树把插件放在 plugin/ui/；不可变发布树的插件内容直接位于发布根。
+    # 这条契约要同时守住两种真实布局，不能只在源码 checkout 里绿。
+    panel = root / "plugin" / "ui" / "panel.html"
+    if not panel.is_file():
+        panel = root / "ui" / "panel.html"
+    assert panel.is_file(), "发布树缺少 ui/panel.html"
+    panel_text = panel.read_text(encoding="utf-8")
     assert "pmBriefingBox" in panel_text, "面板缺少 PM 简报容器"
     assert "renderPmBriefing" in panel_text, "面板未接 PM 简报渲染"
+    assert "contextArchiveFold" in panel_text, "面板缺少上下文档案次入口"
+    assert "renderContextArchive" in panel_text, "面板未接上下文档案渲染"
     assert "复核截图" in panel_text, "面板缺少复核截图展示"
+    assert "capture_acceptance_screenshot" in panel_text, \
+        "面板补图按钮没有接 MCP 工具"
+    assert "补一张复核截图" in panel_text, "面板缺少补图按钮"
+    assert "{id:a.id, confirm:true}" in panel_text, \
+        "面板补图按钮没有显式带 confirm=true"
+    assert "followup_authorize" in panel_text and "followup_cancel" in panel_text, \
+        "面板缺少追问授权/撤销工具"
+    assert "confirm: true" in panel_text, \
+        "面板授权追问按钮没有显式带 confirm=true"
 
     mcp = (root / "ops" / "central_mcp.py").read_text(encoding="utf-8")
     assert '"screenshots"' in mcp, "MCP 工具契约缺少 screenshots"
     assert "_pm_briefing_summary" in mcp, "MCP 状态未接 PM 简报"
+    assert "_context_archive_summary" in mcp, "MCP 状态未接上下文档案"
+    assert "_acceptance_criteria_summary" in mcp, "MCP 状态未接验收标准候选"
+    assert "_route_health_summary" in mcp, "MCP 状态未接路线与效能检测"
+    assert '"route_health"' in mcp, "MCP 状态快照缺少 route_health"
+    for tool in ("context_archive", "acceptance_criteria_list", "acceptance_criteria_promote",
+                 "acceptance_criteria_dismiss"):
+        assert f'"name": "{tool}"' in mcp, f"MCP 未注册 {tool}"
+    for tool in ("followup_authorize", "followup_cancel", "followup_list"):
+        assert f'"name": "{tool}"' in mcp, f"MCP 未注册 {tool}"
+    assert "FOLLOWUP_CONFIRM_REQUIRED" in mcp, \
+        "MCP 追问授权缺少 confirm=true 闸门"
+    assert '"name": "capture_acceptance_screenshot"' in mcp, \
+        "MCP 未注册 capture_acceptance_screenshot"
+    assert "SCREENSHOT_CONFIRM_REQUIRED" in mcp, \
+        "MCP 补图工具缺少显式确认闸门"
+
+    daemon_text = (root / "ops" / "central_daemon.py").read_text(encoding="utf-8")
+    assert 'Pass("followup"' in daemon_text, \
+        "daemon pass registry 缺少 followup 投递工序"
+    assert "_followup_is_eligible" in daemon_text, \
+        "followup pass 发送前缺少工作项与 thread 资格复核"
 
     truthctl = (root / "ops" / "truthctl.py").read_text(encoding="utf-8")
     assert "_split_screenshots" in truthctl and "_merge_screenshots" in truthctl, \
         "验收台账未接截图附件"
-    print(f"selftest ok: 发布包包含 PM 简报与验收截图通道，版本 {version}。")
+    assert "KG_TRUTH_SOURCE_HASH" in truthctl, \
+        "验收台账未记原话 hash，候选台账丢失后同一条会复发"
+    route_health = root / "ops" / "route_health.py"
+    assert route_health.is_file(), "发布树缺少 ops/route_health.py"
+    route_health_text = route_health.read_text(encoding="utf-8")
+    assert "propose_review" in route_health_text, \
+        "路线与效能检测缺少只提复核的机器约束"
+    assert "不杀 worker" in route_health_text or "不自动纠偏" in route_health_text, \
+        "路线与效能检测缺少非破坏性边界"
+    route_runtime = root / "ops" / "route_health_runtime.py"
+    assert route_runtime.is_file(), "发布树缺少 ops/route_health_runtime.py"
+    runtime_text = route_runtime.read_text(encoding="utf-8")
+    assert "def summarize_many" in runtime_text, \
+        "路线与效能运行时缺少多 worker 聚合门禁"
+    assert "def append_if_changed" in runtime_text, \
+        "路线与效能运行时缺少按状态变化去重留账"
+    assert "Pass(\"route-health\"" in daemon_text, \
+        "daemon pass registry 缺少每拍路线与效能巡检"
+    assert "if ctx.get(\"route_health\") is not None:" in daemon_text \
+        and "state[\"route_health\"] = ctx[\"route_health\"]" in daemon_text, \
+        "daemon 运行态缺少最近一次路线与效能摘要，或会抹掉上一拍摘要"
+    route_review = root / "ops" / "route_review.py"
+    assert route_review.is_file(), "发布树缺少 ops/route_review.py"
+    review_text = route_review.read_text(encoding="utf-8")
+    assert "route_reviews.jsonl" in review_text, \
+        "路线复核状态机缺少 append-only 账本"
+    assert "unknown" in review_text and "不冒充恢复" in review_text, \
+        "路线复核状态机缺少判据不足的诚实边界"
+    assert "route_review.sync" in daemon_text, \
+        "daemon 每拍巡检没有接路线复核状态机"
+    assert "route_review.current" in (root / "ops" / "central_mcp.py").read_text(
+        encoding="utf-8"), "面板数据层没有读取路线复核状态"
+    architecture = (root / "docs" / "ARCHITECTURE_STEWARDS.md").read_text(encoding="utf-8")
+    for needle in ("为什么这不是人类岗位分工", "execute / control / evaluate",
+                   "「最优」只能是可证伪的闭环", "不是「自动把路线调回最优」",
+                   "异常发现 → 自动复测 → 恢复或持续待复核"):
+        assert needle in architecture, f"架构文档缺少约束：{needle}"
+    print(f"selftest ok: 发布包包含 PM 简报、验收标准候选与截图通道，版本 {version}。")
 
 
 def test_preview_check_contract():
@@ -1889,6 +2190,8 @@ def test_daemon_plist_repoints_on_upgrade():
         with mock.patch.object(central_daemon, "launchctl",
                               side_effect=lambda *a, **k: calls.append(a) or 0), \
              mock.patch.object(central_daemon, "wait_for_job_gone", return_value=True), \
+             mock.patch.object(central_daemon, "verify_job_running",
+                               return_value=(True, {"status": "running", "pid": 4242})), \
              mock.patch.object(central_daemon, "log"):
             rc = central_daemon.install(15)
         assert rc == 0, "改指新版本的 install 失败"
@@ -1903,6 +2206,18 @@ def test_daemon_plist_repoints_on_upgrade():
         bootstrap_i = next((i for i, c in enumerate(joined) if "bootstrap" in c), None)
         assert enable_i is not None and bootstrap_i is not None and enable_i < bootstrap_i, \
             f"被 launchd 禁用的 label 必须先 enable 再 bootstrap：{calls}"
+
+        # 阴性对照：bootstrap 即使返回 0，回读不到运行中 pid 也必须失败。
+        # 否则又会回到「安装命令成功、开关写开、实际没有进程」的静默失效。
+        logs = []
+        with mock.patch.object(central_daemon, "launchctl", return_value=0), \
+             mock.patch.object(central_daemon, "wait_for_job_gone", return_value=True), \
+             mock.patch.object(central_daemon, "verify_job_running",
+                               return_value=(False, {"status": "not_installed", "pid": None})), \
+             mock.patch.object(central_daemon, "log", side_effect=logs.append):
+            rc = central_daemon.install(15)
+        assert rc == 1, "回读不到守护进程却报安装成功"
+        assert any("回读不到运行中的守护进程" in line for line in logs), logs
     finally:
         central_daemon.PLIST_PATH = real_plist
         import shutil
@@ -1979,6 +2294,8 @@ def test_daemon_install_preserves_maintenance_mode():
              mock.patch.object(central_daemon, "launchctl",
                               side_effect=lambda *a, **k: calls.append(a) or 0), \
              mock.patch.object(central_daemon, "wait_for_job_gone", return_value=True), \
+             mock.patch.object(central_daemon, "verify_job_running",
+                               return_value=(True, {"status": "running", "pid": 4242})), \
              mock.patch.object(central_daemon, "log"):
             assert central_daemon.plist_maintenance_only() is True
             assert central_daemon.install(15) == 0
@@ -2000,6 +2317,99 @@ def test_daemon_install_preserves_maintenance_mode():
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
     print("selftest ok: 已装维护模式在重装后仍是维护模式，显式开关才能改变它。")
+
+
+def test_installer_first_install_daemon_is_explicit():
+    """守护首次安装必须显式授权，且回读 launchd 运行后才报成功。
+
+    L-0004 的真实故障：`install.sh` 只在 plist 已存在时改指守护。plist 被清掉后
+    每次安装都成功、launchd 里没有 job，control.json 却仍显示常驻开启。这里用
+    假 launchctl 端到端跑安装器：默认不写 plist，只有 --install-daemon 才写，
+    并且 bootstrap 后回读不到 pid 时 install 不能返回 0。
+    """
+    import json as _json
+    import shutil
+
+    installed_version = _installed_version()
+    with tempfile.TemporaryDirectory(prefix="autopilot-daemon-first-install-") as tmp:
+        root = Path(tmp)
+        source = root / "source"
+        shutil.copytree(OPS.parent, source, ignore=shutil.ignore_patterns(".git"))
+        _make_state_root(source)
+        run(["git", "init", "-q", "-b", "main", str(source)])
+        run(["git", "-C", str(source), "config", "user.email", "selftest@example.invalid"])
+        run(["git", "-C", str(source), "config", "user.name", "Autopilot Selftest"])
+        run(["git", "-C", str(source), "add", "."])
+        run(["git", "-C", str(source), "commit", "-qm", "fixture"])
+        trunk = root / "source-trunk"
+        run(["git", "-C", str(source), "worktree", "add", "-q", "--detach", str(trunk), "main"])
+
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        fake_launchctl = fake_bin / "launchctl"
+        fake_launchctl.write_text(
+            "#!/bin/sh\n"
+            'STATE_FILE="${KG_FAKE_LAUNCHCTL_STATE_FILE:?}"\n'
+            'case "$1" in\n'
+            '  print)\n'
+            '    if [ "$(cat "$STATE_FILE" 2>/dev/null)" = "running" ]; then\n'
+            "      printf 'state = running\\n'\n"
+            "      printf 'pid = 4242\\n'\n"
+            "      printf 'KG_REPO => %s\\n' \"${KG_FAKE_PROJECT:-/tmp/fixture}\"\n"
+            "      exit 0\n"
+            "    fi\n"
+            "    exit 1\n"
+            "    ;;\n"
+            '  bootout) printf "gone\\n" > "$STATE_FILE" ;;\n'
+            '  bootstrap) printf "running\\n" > "$STATE_FILE" ;;\n'
+            "esac\n"
+            "exit 0\n",
+            encoding="utf-8")
+        fake_launchctl.chmod(0o755)
+
+        def install_env(home, state_file):
+            home.mkdir(parents=True)
+            state_file.write_text("gone\n", encoding="utf-8")
+            env = os.environ.copy()
+            env["HOME"] = str(home)
+            env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+            env["KG_DAEMON_LABEL"] = "com.codex-autopilot.fixture.daemon"
+            env["KG_FAKE_LAUNCHCTL_STATE_FILE"] = str(state_file)
+            env["KG_FAKE_PROJECT"] = str(source)
+            return env
+
+        plist_name = "com.codex-autopilot.fixture.daemon.plist"
+        install = source / "install.sh"
+        base = ["bash", str(install), "--trunk", str(trunk),
+                "--no-seed", "--no-marketplace", "--no-companion"]
+
+        home_default = root / "home-default"
+        default_env = install_env(home_default, root / "launchctl-default")
+        default = run(base + [str(source)], env=default_env, check=False)
+        assert default.returncode == 0, \
+            f"默认安装失败:\n{default.stdout}\n{default.stderr}"
+        assert "按约定不替你启用常驻" in default.stdout, default.stdout
+        assert not (home_default / "Library" / "LaunchAgents" / plist_name).exists(), \
+            "默认安装擅自写了守护 plist"
+
+        home_explicit = root / "home-explicit"
+        explicit_state = root / "launchctl-explicit"
+        explicit_env = install_env(home_explicit, explicit_state)
+        explicit = run(base + ["--install-daemon", str(source)],
+                       env=explicit_env, check=False)
+        assert explicit.returncode == 0, \
+            f"显式首次安装失败:\n{explicit.stdout}\n{explicit.stderr}"
+        assert "首次安装" in explicit.stdout, explicit.stdout
+        plist = home_explicit / "Library" / "LaunchAgents" / plist_name
+        assert plist.is_file(), "显式 --install-daemon 没有写 plist"
+        assert explicit_state.read_text(encoding="utf-8").strip() == "running", \
+            "安装器没有回读到运行中的 launchd job"
+        meta = _json.loads(
+            (home_explicit / "plugins" / "codex-autopilot" / "releases"
+             / installed_version / ".codex-autopilot-source.json").read_text(encoding="utf-8"))
+        assert meta["dirty"] is False, f"首次安装混入了未提交改动：{meta}"
+
+    print("selftest ok: 首次安装守护必须显式 --install-daemon，且回读 launchd 后才报成功。")
 
 
 def test_daemon_control_action():
@@ -2224,6 +2634,34 @@ def test_panel_contract():
     script = "\n".join(re.findall(r"<script>([\s\S]*?)</script>", html))
     assert script.strip(), "面板里没有脚本，等于没接上控制层"
 
+    # 原生感必须来自官方 Apps SDK UI 语义 token，不是另写一套色板。
+    # 顺序是硬契约：官方 token -> 旧宿主变量 -> 独立浏览器兜底色。
+    root_css = html.split("<style>", 1)[1].split("</style>", 1)[0]
+    root_css = root_css.split(":root{", 1)[1].split("}", 1)[0]
+    required_tokens = (
+        ("--bg", "--color-surface-secondary", "--color-background-secondary"),
+        ("--surface", "--color-surface", "--color-background-primary"),
+        ("--surface-2", "--color-surface-secondary", "--color-background-secondary"),
+        ("--surface-3", "--color-surface-tertiary", "--color-background-tertiary"),
+        ("--ink", "--color-text", "--color-text-primary"),
+        ("--line", "--color-border", "--color-border-primary"),
+    )
+    for local, official, legacy in required_tokens:
+        match = re.search(re.escape(local) + r"\s*:\s*var\(([^;]+);", root_css)
+        assert match, f"面板主题缺少 {local} 的 token 映射"
+        chain = match.group(1)
+        assert chain.find(official) < chain.find(legacy) < chain.find("#"), (
+            f"{local} 没有按 官方 token -> 旧宿主变量 -> 兜底色 排序：{chain}")
+    for semantic in ("success", "warning", "danger"):
+        assert re.search(
+            r"var\(--color-background-%s-surface,var\(--color-background-%s,"
+            % (semantic, semantic), root_css), (
+                f"{semantic} 软背景没有优先使用官方 surface token")
+        assert re.search(
+            r"var\(--color-border-%s-surface,var\(--color-border-%s,"
+            % (semantic, semantic), root_css), (
+                f"{semantic} 描边没有优先使用官方 surface token")
+
     dom_ids = set(re.findall(r'id="([^"]+)"', html))
     used_ids = set(re.findall(r'\bel\("([^"]+)"\)', script))
     created_ids = set(re.findall(r'\.id\s*=\s*"([^"]+)"', script))
@@ -2237,6 +2675,19 @@ def test_panel_contract():
     tool_names = {tool["name"] for tool in central_mcp.TOOLS}
     called = set(re.findall(r'callTool\("([^"]+)"', script))
     assert called <= tool_names, f"面板调了不存在的工具：{sorted(called - tool_names)}"
+    assert "route_preview" in called, "输入落点预览没有调用 route_preview，删了功能门禁也会绿"
+    assert re.search(
+        r'callTool\("route_preview",\s*\{[^}]*\bcwd\s*:\s*currentCwd\(\)', script
+    ), "route_preview 没有传当前 cwd，跨项目预览会判不清"
+
+    # 宿主能力边界：面板走官方 entrypoint，不伪造置顶或侧栏默认展开。
+    render_tool = next(
+        (t for t in central_mcp.TOOLS if t["name"] == "render_autopilot_panel"), None)
+    assert render_tool is not None, "面板没有注册入口工具"
+    assert render_tool["_meta"]["ui"]["resourceUri"] == "ui://autopilot/panel-v2.html"
+    entrypoints = render_tool["_meta"]["openai/ui"]["entrypoints"]
+    assert {e.get("type") for e in entrypoints} == {"global", "thread"}, (
+        f"面板入口应同时支持全局与会话：{entrypoints}")
 
     switch_keys = set(re.findall(r'data-key="([^"]+)"', html))
     unknown = sorted(switch_keys - set(control_state.DEFAULTS))
@@ -2244,6 +2695,7 @@ def test_panel_contract():
 
     # 首屏必须能回答「当前绑定哪个项目」：面板元素、控制层字段、真实名字三边都在。
     assert "projectLine" in dom_ids, "面板首屏缺少绑定项目那一行"
+    assert "intakeRoute" in dom_ids, "面板首屏缺少输入落点预览那一行"
     payload = central_mcp._status_payload(fast=True)
     project = payload.get("project")
     assert isinstance(project, dict), "控制层没有把绑定项目吐给面板"
@@ -2689,6 +3141,74 @@ def test_native_section_grouping():
             os.environ.pop("FAKE_FAIL_SECTIONS", None)
 
     print("selftest ok: 派活自动归入项目窗口集合、同名复用不重复建、集合失败不拦派活。")
+
+
+def test_native_thread_title_contract():
+    """原生子对话首行即侧栏标题：项目、泳道、台账 ID、简述按顺序可扫读。
+
+    当前 app-server 只有 thread/start、thread/section/move、turn/start，
+    没有独立 rename；Codex 侧栏标题取首条 user message。所以派活首行就是
+    标题契约，完整任务正文必须仍然保留，不能把首行当正文全部替换。
+    """
+    import inspect
+    from unittest import mock
+
+    sys.path.insert(0, str(OPS))
+    import central_mcp
+
+    item = {
+        "id": "L-0001",
+        "lane": "bug",
+        "project": "knowledge-graph",
+        "title": "修复移动端首屏溢出",
+    }
+    prompt = central_mcp._native_thread_prompt(item, "请实现并验证这个任务", "/tmp")
+    assert prompt.startswith("[AP][kg][bug] L-0001 · 修复移动端首屏溢出\n\n"), prompt
+    assert prompt.endswith("请实现并验证这个任务"), prompt
+
+    unsafe = central_mcp._native_thread_prompt(
+        {"id": "L-0002", "lane": "arch / gate", "title": "边界"},
+        "正文", "/Users/danta/Documents/Codex/codex-autopilot")
+    assert unsafe.startswith("[AP][ca][archgate] L-0002 · 边界\n\n"), unsafe
+
+    fallback = central_mcp._native_thread_prompt({}, "正文", "")
+    assert fallback.startswith("[AP][global][route] L-0000 · 自动挡任务\n\n"), fallback
+
+    already = "[AP][kg][ux] L-0003 · 不要重复加前缀\n\n正文"
+    assert central_mcp._native_thread_prompt(item, already, "/tmp") == already
+
+    # 函数写对了还不够：真正的派活入口必须接它，否则侧栏标题仍是乱的。
+    call_source = inspect.getsource(central_mcp.call_tool)
+    assert "_native_thread_prompt(item" in call_source, \
+        "codex_native_dispatch_task 没有接线程标题契约"
+
+    # 源码文本断言只能证明“写了”，这里再跑一次真实入口，锁住实际传参。
+    dispatch_result = {"thread_id": "thr-1", "turn_id": "turn-1"}
+    with mock.patch.object(central_mcp.control_state, "mutation_guard",
+                           return_value=None), \
+         mock.patch.object(central_mcp, "_ledger_item", return_value=item), \
+         mock.patch.object(central_mcp.codex_native, "dispatch_task",
+                           return_value=(dispatch_result, None)) as dispatch, \
+         mock.patch.object(central_mcp, "_append_native_route") as append_route, \
+         mock.patch.object(central_mcp.control_state, "append_event"):
+        result, code = central_mcp.call_tool("codex_native_dispatch_task", {
+            "ledger_id": "L-0001",
+            "cwd": "/tmp/demo",
+            "prompt": "请实现并验证这个任务",
+            "section_id": "sec-1",
+        })
+    assert code == 0 and result == dispatch_result, (result, code)
+    args, kwargs = dispatch.call_args
+    assert args[0] == "/tmp/demo", args
+    assert args[1].startswith("[AP][kg][bug] L-0001 · 修复移动端首屏溢出\n\n"), args[1]
+    assert args[1].endswith("请实现并验证这个任务"), args[1]
+    assert args[2] == "sec-1", args
+    assert kwargs.get("auto_section"), kwargs
+    append_route.assert_called_once()
+    assert append_route.call_args.args[0] == "L-0001", append_route.call_args
+    assert append_route.call_args.kwargs.get("status") == "dispatched", \
+        append_route.call_args
+    print("selftest ok: 原生子对话首行标题按项目/泳道/ID/简述命名，正文仍完整。")
 
 
 def test_native_call_budget():
@@ -3362,6 +3882,10 @@ def test_auto_exec():
         # 可能还在退出过程中。模块级进程缓存若不重置，会把旧 worktree 误当成本
         # fixture 的活进程，跳过派发并直接清掉新分支。
         central_daemon._LIVE_EXEC_CACHE.update(ts=0.0, slugs=frozenset())
+        # ps 扫描仍可能看见上一个 fixture 正在退出的 fake codex（-C L-0001-item），
+        # 让本 fixture 的派发被重复派发保护静默跳过。这里只固定测试里的探针结果；
+        # 生产扫描逻辑和断言都不放宽。
+        central_daemon._live_exec_slugs = lambda *a, **k: frozenset()
         return central_daemon
 
     def dispatch_until_done(daemon, blocked, workers=None, limit=100, pause=0.1):
@@ -3775,7 +4299,7 @@ def test_auto_exec():
         daemon_q = load_daemon(repo_q, trunk_q, home_q, throttle_cmd)
         daemon_q.EXEC_CHANNEL_RETRY_SECONDS = 3600
         blocked_q, workers_q = {}, {}
-        daemon_q.dispatch_exec(False, blocked_q, workers_q)
+        initial_results_q, workers_q = daemon_q.dispatch_exec(False, blocked_q, workers_q)
         results_q = []
         for _ in range(100):
             results_q, workers_q = daemon_q.dispatch_exec(False, blocked_q, workers_q)
@@ -3783,7 +4307,10 @@ def test_auto_exec():
                 break
             _time.sleep(0.1)
         if not results_q or results_q[-1].get("outcome") != "channel_unavailable":
-            raise AssertionError(f"429 没被记成可恢复通道失败: {results_q}, blocked={blocked_q}")
+            raise AssertionError(
+                f"429 没被记成可恢复通道失败: {results_q}, blocked={blocked_q}, "
+                f"initial={initial_results_q}, workers={workers_q}, "
+                f"count={throttle_count.read_text().strip() if throttle_count.exists() else 'missing'}")
         if int(throttle_count.read_text().strip()) != 1:
             raise AssertionError("429 在收口线程内被重复重试，阻塞了其他 worker")
         if blocked_q.get("L-0001", {}).get("reason") != "channel_unavailable":
@@ -4262,11 +4789,13 @@ def test_parallel_exec_slots():
                 release.touch()
                 deadline = _time.time() + 15
                 landed = []
+                all_results = []
                 while _time.time() < deadline and len(landed) < slots:
                     results, workers = central_daemon.dispatch_exec(False, blocked, workers)
+                    all_results.extend(results)
                     landed.extend(r for r in results if r.get("outcome") == "landed")
                     _time.sleep(0.1)
-                assert len(landed) == slots, (slots, landed, blocked, workers)
+                assert len(landed) == slots, (slots, landed, all_results, blocked, workers)
                 assert not workers["exec_jobs"], workers
 
             finally:
@@ -6894,7 +7423,6 @@ def test_rotation_streaming():
     print("selftest ok: 窗口轮换在 thread.started 后立即返回，不受首次长回复阻塞。")
 
 
-
 def test_disk_reap_reaps_stale_code_sign_clones():
     """签名临时副本只清旧副本，活跃副本和探针失败时必须保留。"""
     import importlib.util
@@ -6983,6 +7511,11 @@ def test_daemon_liveness_shared_judge():
     assert st_other["matches_repo"] is False
     msg = daemon_liveness.liveness_problem(st_other, True)
     assert msg and "别的账本" in msg, msg
+    headline, detail = daemon_liveness.liveness_need_action(st_other, True)
+    assert headline and "后台现在在服务别的项目" in headline, headline
+    assert "当前项目要等自己的轮次" in headline, headline
+    assert detail and "别的账本" in detail and "/tmp/proj-b" in detail, detail
+    assert "/tmp/proj-b" not in headline, "首屏结论不该塞工程路径"
 
     # 3) not_installed：launchctl 非零返回
     gone = lambda argv: (113, "")
@@ -6994,6 +7527,10 @@ def test_daemon_liveness_shared_judge():
     # 开关显示开却没有 job -> 必须报，且给出装回命令
     msg = daemon_liveness.liveness_problem(st_gone, True)
     assert msg and "central_daemon.py --install" in msg, msg
+    headline, detail = daemon_liveness.liveness_need_action(st_gone, True)
+    assert headline and "常驻没接上" in headline, headline
+    assert detail and "central_daemon.py --install" in detail, detail
+    assert "central_daemon.py --install" not in headline, "首屏结论不该塞修复命令"
     line = daemon_liveness.liveness_line(st_gone, True)
     assert "未运行" in line and "没有这个 job" in line, line
 
@@ -7090,6 +7627,7 @@ def test_product_eval():
         (real_repo / "app.txt").write_text("x\n", encoding="utf-8")
         git(real_repo, "add", "app.txt")
         git(real_repo, "commit", "-q", "-m", "init")
+        git(real_repo, "update-ref", "refs/remotes/origin/main", "HEAD")
         ci = tmp / "install-bound"
         crel = ci / "releases" / "1.2.3"
         crel.mkdir(parents=True)
@@ -7118,17 +7656,35 @@ def test_product_eval():
             encoding="utf-8")
         assert product_eval.crit_effective(proj)["status"] == "fail"
 
-        # 5) 判据 5：三线一致 + 有回滚点才绿。
+        # 5) 判据 5：安装 / 缓存 / 本地主干 / 远端主干一致 + 有回滚点才绿。
         vi = tmp / "install-v"
         (vi / "releases" / "1.2.3").mkdir(parents=True)
         (vi / "releases" / "1.2.2").mkdir(parents=True)
+        (tmp / "cache-v" / "1.2.3").mkdir(parents=True)
+        released_commit = git(real_repo, "rev-parse", "HEAD").stdout.strip()
         (vi / "install-state.json").write_text(_json.dumps(
-            {"version": "1.2.3", "source_commit": git(real_repo, "rev-parse", "HEAD").stdout.strip(),
+            {"version": "1.2.3", "source_commit": released_commit,
              "previous_source": str(vi / "releases" / "1.2.2")}),
             encoding="utf-8")
-        (tmp / "cache-v" / "1.2.3").mkdir(parents=True)
         cok = product_eval.crit_consistent(vi, tmp / "cache-v", real_repo)
         assert cok["status"] == "pass", cok
+
+        # 5b) 发布提交只进本地主干、没进 origin/main：必须红，且红在远端锚点。
+        (real_repo / "app.txt").write_text("local-only\n", encoding="utf-8")
+        git(real_repo, "commit", "-q", "-am", "local-only release")
+        local_only_commit = git(real_repo, "rev-parse", "HEAD").stdout.strip()
+        assert local_only_commit != released_commit
+        (vi / "install-state.json").write_text(_json.dumps(
+            {"version": "1.2.3", "source_commit": local_only_commit,
+             "previous_source": str(vi / "releases" / "1.2.2")}),
+            encoding="utf-8")
+        remote_bad = product_eval.crit_consistent(vi, tmp / "cache-v", real_repo)
+        assert remote_bad["status"] == "fail", remote_bad
+        assert any("远端权威主干" in s for s in remote_bad["shortfall"]), remote_bad
+        (vi / "install-state.json").write_text(_json.dumps(
+            {"version": "1.2.3", "source_commit": released_commit,
+             "previous_source": str(vi / "releases" / "1.2.2")}),
+            encoding="utf-8")
 
         # 6) 认证物结构 + 人读报告必须带会红的结论。
         import os as _os
@@ -7215,7 +7771,8 @@ def test_product_eval():
                 else:
                     _os.environ[k] = v
 
-    print("selftest ok: 对外发布评估五条判据能红能绿，阴性对照 7/7 全部按预期变红。")
+    print("selftest ok: 对外发布评估五条判据能红能绿，阴性对照 %d/%d 全部按预期变红。"
+          % (len(rows) - len(bad), len(rows)))
 
 def test_compact_session_logs_is_lossless_and_under_pressure_only():
     import tempfile
@@ -7318,11 +7875,123 @@ def test_portable_serve_requires_token():
     print("selftest ok: 跨机移植 serve 走一次性令牌，缺/错令牌一律 404。")
 
 
+def test_human_verdict_close_gate():
+    """「done」这一格只能由人翻：人判类停在 awaiting_human，机器可证的照旧 done。
+
+    背景：agent 循环里执行层（磨「离目标多远」）归机器，判断层（「这个目标本身对不对」）
+    归人。视觉/体验这类条目，机器跑再多命令也判不了「够不够好看 / 顺不顺手」；
+    让 close 直接翻成 done，等于删掉高层反馈 —— 它会又快又狠地奔向一个没人质疑过的
+    错误目标，而且台账上看起来「全部完成」。
+
+    同时必须保住另一头：bug/gate/arch 有客观判据（退出码、断言、diff），它们的收口
+    必须仍然直达 done，否则 auto_exec 的自动闭环会断在这里。
+    """
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-gate-") as tmp:
+        repo = Path(tmp) / "state"
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        for name in ("inbox.jsonl", "ledger.jsonl", "progress.jsonl",
+                     "decisions.jsonl", "acceptance.jsonl"):
+            (repo / "ops" / ("tasks" if name == "inbox.jsonl" else "truth")
+             / name).write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "app.txt").write_text("main\n", encoding="utf-8")
+        git(repo, "add", "app.txt")
+        git(repo, "commit", "-q", "-m", "init")
+
+        def latest_ledger():
+            out = {}
+            for line in (repo / "ops" / "truth" / "ledger.jsonl").read_text(
+                    encoding="utf-8").splitlines():
+                if line.strip():
+                    r = _json.loads(line)
+                    out[r["id"]] = r
+            return out
+
+        # 视觉类：close 必须停在 awaiting_human，不能自称完成。
+        add = truthctl(repo, "add", "ledger", "首屏按钮挤在一起",
+                       extra_env={"KG_TRUTH_KIND": "visual"})
+        if add.returncode != 0:
+            raise AssertionError(f"ledger add 失败:\n{add.stdout}\n{add.stderr}")
+        v_id = _json.loads((repo / "ops" / "truth" / "ledger.jsonl")
+                           .read_text(encoding="utf-8").splitlines()[-1])["id"]
+        cl = truthctl(repo, "close", v_id, "已调整间距",
+                      extra_env={"KG_TRUTH_COMMIT": "abc1234"})
+        if cl.returncode != 0:
+            raise AssertionError(f"视觉类 close 失败:\n{cl.stdout}\n{cl.stderr}")
+        rec = latest_ledger()[v_id]
+        if rec.get("status") != "awaiting_human":
+            raise AssertionError(
+                f"视觉类 close 不该直接 done（应停在 awaiting_human）: {rec}")
+        if rec.get("closed"):
+            raise AssertionError(
+                f"停等确认时不该写 closed 时间戳 —— 那等于宣称已完成: {rec}")
+        if "等你确认" not in cl.stdout:
+            raise AssertionError(f"close 输出没有告诉用户要做什么:\n{cl.stdout}")
+
+        # 人看过了再翻：--confirm-human 才允许 done。
+        cl2 = truthctl(repo, "close", v_id, "看过，可以", "--confirm-human")
+        if cl2.returncode != 0:
+            raise AssertionError(f"confirm-human close 失败:\n{cl2.stdout}\n{cl2.stderr}")
+        rec2 = latest_ledger()[v_id]
+        if rec2.get("status") != "done":
+            raise AssertionError(f"人已确认后应翻成 done: {rec2}")
+        if not rec2.get("closed"):
+            raise AssertionError(f"确认完成后应写 closed 时间戳: {rec2}")
+
+        # bug 类：有客观判据，收口必须直达 done，否则自动派发闭环断掉。
+        add2 = truthctl(repo, "add", "ledger", "导出按钮报错",
+                        extra_env={"KG_TRUTH_KIND": "bug"})
+        if add2.returncode != 0:
+            raise AssertionError(f"bug add 失败:\n{add2.stdout}\n{add2.stderr}")
+        b_id = _json.loads((repo / "ops" / "truth" / "ledger.jsonl")
+                           .read_text(encoding="utf-8").splitlines()[-1])["id"]
+        cl3 = truthctl(repo, "close", b_id, "修好并跑过门禁",
+                       extra_env={"KG_TRUTH_COMMIT": "def5678",
+                                  "KG_TRUTH_EVIDENCE": "pytest -> exit 0"})
+        if cl3.returncode != 0:
+            raise AssertionError(f"bug close 失败:\n{cl3.stdout}\n{cl3.stderr}")
+        rec3 = latest_ledger()[b_id]
+        if rec3.get("status") != "done":
+            raise AssertionError(
+                f"机器可证的 bug 收口被误拦成 {rec3.get('status')}，"
+                f"会打断 auto_exec 自动闭环: {rec3}")
+
+        # 登记时就标了 needs_human 的，无论 kind 都要人签收。
+        add3 = truthctl(repo, "add", "ledger", "上线前手动点一遍",
+                        extra_env={"KG_TRUTH_KIND": "gate",
+                                   "KG_TRUTH_NEEDS_HUMAN": "1"})
+        if add3.returncode != 0:
+            raise AssertionError(f"needs_human add 失败:\n{add3.stdout}\n{add3.stderr}")
+        h_id = _json.loads((repo / "ops" / "truth" / "ledger.jsonl")
+                           .read_text(encoding="utf-8").splitlines()[-1])["id"]
+        cl4 = truthctl(repo, "close", h_id, "机器侧已就绪")
+        if latest_ledger()[h_id].get("status") != "awaiting_human":
+            raise AssertionError(
+                f"标了 needs_human 的条目应停在 awaiting_human: {latest_ledger()[h_id]}")
+
+        # next 里必须把「等你确认」单列，不能混进「优先处理」，
+        # 否则 agent 会以为还有活要干，反复重做同一件事。
+        nxt = truthctl(repo, "next")
+        if nxt.returncode != 0:
+            raise AssertionError(f"next 失败:\n{nxt.stdout}\n{nxt.stderr}")
+        if "等你确认" not in nxt.stdout:
+            raise AssertionError(f"next 没有单列等你确认的条目:\n{nxt.stdout}")
+
+    print("selftest ok: 人判类收口停在 awaiting_human、人确认后才 done；"
+          "机器可证的 bug 仍直达 done，自动派发闭环未被打断。")
+
+
 if __name__ == "__main__":
     test_disk_reap_reaps_stale_code_sign_clones()
     main()
     test_replan()
     test_resolve()
+    test_resolve_gate_failure_surfaces_stderr()
     test_resolve_exec_parallel()
     test_collect_exec_keeps_reaping_after_nonlanding_failure()
     test_resolve_gate_fail_auto_retry()
@@ -7346,6 +8015,7 @@ if __name__ == "__main__":
     test_installer()
     test_installer_requires_clean_source()
     test_installer_shell_portability()
+    test_installer_first_install_daemon_is_explicit()
     test_daemon_project_binding()
     test_daemon_plist_repoints_on_upgrade()
     test_daemon_maintenance_mode_is_zero_touch()
@@ -7363,6 +8033,7 @@ if __name__ == "__main__":
     test_codex_native_bridge()
     test_native_socket_lstat()
     test_native_section_grouping()
+    test_native_thread_title_contract()
     test_native_call_budget()
     test_real_codex_app_server()
     test_verify_and_truth()
@@ -7403,6 +8074,7 @@ if __name__ == "__main__":
     test_budget_gate()
     test_compact_session_logs_is_lossless_and_under_pressure_only()
     test_rotation_streaming()
+    test_human_verdict_close_gate()
 
 
 def test_reap_ignores_untracked_machine_scratch():
@@ -7566,3 +8238,4 @@ def test_disk_reap_follows_installed_release():
             pathlib.Path.home = orig
 
     print("selftest ok: 磁盘回收器跟随当前安装版本，且脚本本身已入库可回归。")
+
