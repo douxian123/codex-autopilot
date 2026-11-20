@@ -1,10 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-<<<<<<< HEAD
-> 生成时间 2026-11-19 04:34:35　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
-=======
-> 生成时间 2026-11-19 04:44:40　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
->>>>>>> codex/guard-release-version-20261119
+> 生成时间 2026-11-20 07:02:44　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -42,7 +38,6 @@
 - **关系层**：跨项目长期目标通过 truthctl goal 显式登记，支持 summary/list/create/update/link/close；可关联工作项、验收项、来源窗口和收口证据，并在高级面板折叠区展示。聊天里的一句话不会自动升成生效目标；账本取不到显示 unknown。
 - **守护首次安装**：install.sh 默认不替用户启用常驻；只有 --install-daemon 才首次安装守护。central_daemon.py --install 在 bootstrap 后回读 launchd，只有 running 且有 pid 才返回成功，否则不写常驻开启。
 - **快照清理兼容**：snapshot_prune.py 使用 typing.Optional/List/Dict/Tuple，守护脚本固定用 /usr/bin/python3 3.9.6 执行；test-snapshot-clone-prune.py 每次门禁用 /usr/bin/python3 -m py_compile 回编译，旧版 Path | None 语法回归会直接红灯。
-- **输入落点预览**：自动挡面板输入框下方实时显示这句话将落到哪个项目；点名项目直接显示目标项目，有多个项目但无线索时提示进全局待路由箱，单项目默认落账时明确写出当前项目。预览只读，不写账本也不注册项目；提交与预览共用同一套内存候选和 cwd 依据。resolved / ambiguous / default 三种落点文案都在真浏览器渲染门禁里锁住，test_panel_contract 同时锁住 route_preview 调用、cwd 传参与 intakeRoute 元素。
 
 ## 决策脉络
 
@@ -50,62 +45,40 @@
 
 ## 最近在推进
 
-- [已落盘] @ b07f8317 已修复 sync_trunk_truth 暂存前 JSONL 与 HEAD 行级并集，新增 test-mirror-truth-jsonl-union 阴性对照；提交 d61f0194 已随 b07f8317 落盘 origin/main，插件运行时已同步同一哈希 4782a6eb；本提交恢复被旧状态根覆盖的 JSONL 历史。
-- [已落盘] @ 3660e786ef codex/truth-restore-union-20261118 验证门禁通过，已落盘 main @ 3660e786ef；改动 4 个文件：docs/PRODUCT_MAINLINE.md（+30/-16）、ops/truth/acceptance.jsonl（+8/-2）、ops/truth/ledger.jsonl（+4/-0）、ops/truth/progress.jsonl（+10/-0）｜4 files changed, 52 insertions(+), 18 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0008
-- [已落盘] @ 99cb2c660e codex/gate-selftest-release-dir-20261118 验证门禁通过，已落盘 main @ 99cb2c660e；改动 2 个文件：ops/selftest.py（+25/-3）、ops/test-selftest-release-dir.py（+65/-0）｜2 files changed, 90 insertions(+), 3 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0009
-- [已落盘] @ 97c1374e 已修复 release 目录总闸恒红：test_installer 自建临时 git 源仓与 detached worktree，不再把非 git 发版目录当状态根；新增 test-selftest-release-dir.py 锁住无 .git 副本可跑，并反向确认安装器仍拒绝非 git 状态根。提交 2ac41afc 已随 97c1374e 落盘 origin/main，门禁 selftest/panel-logic/panel-render 均 exit 0。
-- [已落盘] @ fc4ec4c22d codex/tmp-owner-cleanup-20261118 验证门禁通过，已落盘 main @ fc4ec4c22d；改动 5 个文件：ops/disk_reap.py（+31/-1）、ops/gate_owner.py（+73/-0）、ops/kgctl.py（+17/-5）、ops/selftest.py（+3/-0）、ops/test-gate-owner-reap.py（+216/-0）｜5 files changed, 340 insertions(+), 6 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0077
-- [已落盘] @ 7db4f0c9 临时 gate worktree 加 sidecar 归属标记与随机路径；无标记/外部标记/新标记/在用会话均不回收，过期且无人占用的归属树仍走 all 判活后回收；官方门禁与落盘 ancestry 均已核验
-- [已落盘] @ 5575426665 codex/tmp-owner-cleanup-20261118 验证门禁通过，已落盘 main @ 5575426665；改动 12 个文件：install.sh（+14/-0）、ops/guards/hyapi_burner.py（+206/-0）、ops/guards/hyapi_deadpool_reap.py（+428/-0）、ops/guards/hyapi_freewatch.py（+172/-0）、ops/guards/hyapi_secrets.py（+182/-0），另有 7 个文件｜12 files changed, 1497 insertions(+), 4 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0077、A-0078、A-0079、A-0080
-- [在途] @ ec369b7dc9 launchd 版本化代码与测试诊断已落盘 origin/main（ec369b7d）。真机 freshness 仍为 1：本机 5 条 launchd 入口仍指旧路径，当前安装版本缺新 guard 文件；真正的现场修复需要执行 install.sh 5.7 或 repoint_launchd.py --install，会改 plist 并 reload 后台服务，未获明确授权前不执行，L-0007 保持 open。
-<<<<<<< HEAD
-- [已落盘] @ 5653e04e8d codex/panel-windshield-20261119 验证门禁通过，已落盘 main @ 5653e04e8d；改动 5 个文件：ops/central_mcp.py（+53/-1）、ops/kgctl.py（+108/-1）、ops/panel_render_check.py（+24/-1）、ops/test-project-router.py（+52/-0）、plugin/ui/panel.html（+35/-1）｜5 files changed, 272 insertions(+), 4 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [已落盘] @ 730b15607b codex/guard-release-version-20261119 验证门禁通过，已落盘 main @ 730b15607b；改动 2 个文件：ops/selftest.py（+15/-2）、plugin/.codex-plugin/plugin.json（+1/-1）｜2 files changed, 16 insertions(+), 3 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0084
+- [在途] 补 --install-daemon 显式首次安装与 launchd 回读判活；默认不替用户启用常驻，回读不到 pid 不报成功。
+- [在途] 确认修复已在 origin/main：snapshot_prune.py 使用 typing.Optional/List/Dict/Tuple，不再依赖 Python 3.10 联合类型语法；系统 Python 3.9.6 真导入与快照清理门禁均通过，并补上旧 Path | None 语法的阴性对照，证明门禁能抓回原故障。
+- [在途] 临时 gate worktree 归属标记、随机路径与 all 判活已随 7db4f0c9 落盘 origin/main；全量门禁通过。生产磁盘回收仍保留人工动作边界。
+- [在途] 状态根新鲜度与真相 JSONL 行级并集已随 5caaabb7 落盘 origin/main；陈旧台账不再覆盖主线，同 id 不同内容保留较新记录。
+- [在途] resolve_state_root 已按配置新鲜度选择活状态根，显式 KG_REPO 仍最高优先；门禁 EXIT=0。
+- [在途] 发布 lineage 门禁已落盘；product_eval 判据5 从红转 OK，发布提交需在远端权威主干可见。
+- [在途] release 目录里跑 selftest 的安装器门禁已落盘 origin/main；新版安装目录完整性有回归保护。
+- [在途] progress/acceptance JSONL 按 identity 行级并集已随 5caaabb7 落盘 origin/main；并发 land 不再覆盖同 ID 历史。
+- [已落盘] @ e1e5e5d1 原生 Codex 面板设计契约已落盘并推送：官方 token 优先链、global/thread entrypoint、section 分组、首行线程标题契约与行为级门禁均完成；永久置顶/默认展开明确记为宿主能力目标，未伪造实现。
+- [在途] 2026-11-20 只读复核 L-0007：verify-launchd-entry-freshness 从原 4 条 stale 降到 1 条，repoint --check exit 0；唯一 stale ai.danta.ok8888-gpt-sse-bridge 是运行中的 provider bridge（pid 25675），不在 autopilot registry，repoint --dry-run exit 2。未跑 install.sh、未改 plist、未 reload，L-0007 因需用户单独授权保持 open。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-=======
-- [已落盘] @ d5e7c7af launchd guard 文件发布链已代码层闭环：插件版本提升到 0.6.0-preview.103，安装测试新增 registry 登记的 guard 脚本与依赖完整性断言，避免不可变版本目录缺文件导致 5.7 改指失败。提交 d68a3fce 已随 d5e7c7af 落盘 origin/main。本机 install/reload/plist 改指仍未执行，真机 freshness 继续按红灯处理，L-0007 不 close。
-- [在途] 本轮只读刷新确认：freshness 真机 exit 1、5 条 stale；repoint --check 显示 5 条因当前安装版本 0.6.0-preview.102 缺 guard 文件而 FAIL；repoint --dry-run 显示三条 HyAPI 任务还会因 secrets.env 未迁移 fail-closed；5 个 job 当前均 not running。真实 HOME 安装/reload/plist 改指未执行。
-
-## 关键验收证据（核对用，不替代 mainline.json）
-
-- `A-0074` [P1] codex/state-root-freshness-20261118 落盘验收
+- `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0005` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0006` [P1] codex/release-lineage-gate-20261118 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
->>>>>>> codex/guard-release-version-20261119
 - `A-0007` [P1] codex/truth-sync-union-20261118 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0008` [P1] codex/truth-restore-union-20261118 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0075` [P1] codex/truth-restore-union-20261118 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0009` [P1] codex/gate-selftest-release-dir-20261118 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0076` [P1] codex/gate-selftest-release-dir-20261118 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0077` [P1] codex/tmp-owner-cleanup-20261118 门禁预跑（未落盘）
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0078` [P1] codex/tmp-owner-cleanup-20261118 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0081` [P1] codex/tmp-owner-cleanup-20261118 门禁预跑（未落盘）
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0082` [P1] codex/tmp-owner-cleanup-20261118 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-<<<<<<< HEAD
-- `A-0083` [P1] codex/panel-windshield-20261119 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0084` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0085` [P1] codex/guard-release-version-20261119 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-=======
-- `A-0084` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
->>>>>>> codex/guard-release-version-20261119
 
 ## 还差什么
+
+**bug（1 待处理）**
+- `L-0011` 闭环所有预期功能：按职责契约、发布地基、上下文、PM、验收、运行、面板、端到端验收顺序推进；独立 worktree；不碰共享检出脏文件。
 
 **gate（1 待处理）**
 - `L-0007` 【launchd 陈旧项·非 Stop 复发链】freshness 门禁真机实测 4 条 stale：ai.danta.codex-proxy-watchdog
@@ -123,35 +96,12 @@
 - `A-0006` [P1] codex/release-lineage-gate-20261118 门禁预跑（未落盘）
 - `A-0007` [P1] codex/truth-sync-union-20261118 门禁预跑（未落盘）
 - `A-0008` [P1] codex/truth-restore-union-20261118 门禁预跑（未落盘）
-- `A-0071` [P1] 补记 codex/daemon-first-install-20261118 落盘验收（原 A-0006 被覆盖）
-- `A-0072` [P1] codex/truth-restore-land-record-20261118 落盘验收
-- `A-0073` [P1] codex/jsonl-truth-no-overwrite-20261118 落盘验收
-- `A-0074` [P1] codex/state-root-freshness-20261118 落盘验收
-- `A-0075` [P1] codex/truth-restore-union-20261118 落盘验收
 - `A-0009` [P1] codex/gate-selftest-release-dir-20261118 门禁预跑（未落盘）
-- `A-0076` [P1] codex/gate-selftest-release-dir-20261118 落盘验收
-- `A-0077` [P1] codex/tmp-owner-cleanup-20261118 门禁预跑（未落盘）
-- `A-0078` [P1] codex/tmp-owner-cleanup-20261118 落盘验收
-- `A-0081` [P1] codex/tmp-owner-cleanup-20261118 门禁预跑（未落盘）
-- `A-0082` [P1] codex/tmp-owner-cleanup-20261118 落盘验收
-<<<<<<< HEAD
-- `A-0083` [P1] codex/panel-windshield-20261119 落盘验收
-- `A-0084` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
-- `A-0085` [P1] codex/guard-release-version-20261119 落盘验收
-=======
-- `A-0084` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
->>>>>>> codex/guard-release-version-20261119
 
 ## 进度概览
 
-- 累计关闭问题：9 条
-<<<<<<< HEAD
-- 累计落盘：18 条
-- 未决问题：1 条
-- 已验收：21 条
-=======
-- 累计落盘：17 条
-- 未决问题：1 条
-- 已验收：19 条
->>>>>>> codex/guard-release-version-20261119
+- 累计关闭问题：10 条
+- 累计落盘：2 条
+- 未决问题：2 条
+- 已验收：8 条
 
