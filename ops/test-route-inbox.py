@@ -33,6 +33,18 @@ def check(label, cond, detail=""):
         print(f"  FAIL {label} {detail}")
 
 
+def last_json(text):
+    for line in reversed(str(text or "").splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            return json.loads(line)
+        except ValueError:
+            continue
+    return {}
+
+
 def load_module(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
@@ -113,6 +125,14 @@ def main():
               (alpha / "ops" / "tasks" / "inbox.jsonl").read_text() == ""
               and (beta / "ops" / "tasks" / "inbox.jsonl").read_text() == "")
 
+        out = run("route-inbox", "--json")
+        machine = last_json(out.stdout)
+        check("机器清单退出码为 0", out.returncode == 0, out.stderr)
+        check("机器清单只报未复核项", machine.get("count") == 3, machine)
+        check("机器清单带稳定指纹",
+              {x.get("fingerprint") for x in machine.get("items", [])} ==
+              {alpha_fp, beta_fp, pr.routing_fingerprint(rows[3])}, machine)
+
         out = run("route-inbox", "--fingerprint", beta_fp,
                   "--project", "beta", "--reason", "原话点名 beta")
         check("预演退出码为 0", out.returncode == 0, out.stderr)
@@ -123,8 +143,17 @@ def main():
               and (beta / "ops" / "tasks" / "inbox.jsonl").read_text() == "")
 
         out = run("route-inbox", "--fingerprint", beta_fp,
-                  "--project", "beta", "--reason", "原话点名 beta", "--go")
+                  "--project", "beta", "--reason", "原话点名 beta", "--json")
+        preview = last_json(out.stdout)
+        check("机器预演标记未写盘", preview.get("written") is False, preview)
+
+        out = run("route-inbox", "--fingerprint", beta_fp,
+                  "--project", "beta", "--reason", "原话点名 beta",
+                  "--go", "--json")
         check("显式指派退出码为 0", out.returncode == 0, out.stderr)
+        assigned = last_json(out.stdout)
+        check("机器指派标记已写盘", assigned.get("written") is True,
+              {"stdout": out.stdout, "stderr": out.stderr, "parsed": assigned})
         beta_rows = [json.loads(x) for x in
                      (beta / "ops" / "tasks" / "inbox.jsonl").read_text(
                          encoding="utf-8").splitlines() if x.strip()]
@@ -156,6 +185,36 @@ def main():
         check("面板等你答一句只剩未复核项",
               central._answer_needed_count() == 1,
               central._answer_needed_count())
+        summary = central._global_routing_summary()
+        check("MCP 状态摘要带三态和项目清单",
+              summary.get("status") == "ok" and summary.get("count") == 1
+              and any(p.get("name") == "beta" for p in summary.get("projects", [])),
+              summary)
+        listed, listed_code = central.call_tool("routing_review_list", {})
+        check("MCP 只读清单不写盘",
+              listed_code == 0 and listed.get("count") == 1
+              and routing.read_text(encoding="utf-8") == original, listed)
+        rejected, rejected_code = central.call_tool(
+            "routing_review_assign", {"project": "beta", "confirm": True})
+        check("MCP 指派缺指纹时拒绝", rejected_code == 2
+              and rejected.get("code") == "ROUTING_REVIEW_FIELDS_REQUIRED", rejected)
+        preview_mcp, preview_mcp_code = central.call_tool(
+            "routing_review_assign", {"fingerprint": pr.routing_fingerprint(rows[3]),
+                                      "project": "beta", "confirm": False})
+        check("MCP 预演不写盘", preview_mcp_code == 0
+              and preview_mcp.get("written") is False
+              and routing.read_text(encoding="utf-8") == original, preview_mcp)
+        old_routing_env = os.environ.get("KG_ROUTING_INBOX")
+        os.environ["KG_ROUTING_INBOX"] = str(home)
+        try:
+            check("路由箱取不到时面板不冒充 0",
+                  central._answer_needed_count() is None,
+                  central._answer_needed_count())
+        finally:
+            if old_routing_env is None:
+                os.environ.pop("KG_ROUTING_INBOX", None)
+            else:
+                os.environ["KG_ROUTING_INBOX"] = old_routing_env
     finally:
         for key, value in old_env.items():
             if value is None:
