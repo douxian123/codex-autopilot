@@ -1125,6 +1125,7 @@
     var closure = pb.closure || {};
     var auth = authSummary || {};
     var authCounts = auth.counts || {};
+    var research = pb.research || {};
     var approvedByTicket = {};
     ((auth.status === "ok" && auth.items) || []).forEach(function(a){
       if (a.state === "approved" && a.ticket_id) approvedByTicket[a.ticket_id] = a;
@@ -1134,6 +1135,26 @@
       + pmCount(exp.active_count) + " 条";
     if (exp.mainline_stage) expText += " · 主线阶段：" + exp.mainline_stage;
     pmRow(list, "预期", expText);
+    var researchItems = research.items || [];
+    var researchLabel = research.status === "unknown" ? "取不到"
+      : (research.attention_count ? "需要关注" : (research.count ? "有研究记录" : "暂无研究"));
+    var researchText = research.status === "unknown"
+      ? "研究状态取不到，不把不知道当成没有成熟方案。"
+      : researchLabel;
+    if (research.status !== "unknown" && research.count != null) {
+      researchText += " · " + pmCount(research.count) + " 项";
+    }
+    pmRow(list, "PM 判断", researchText);
+    researchItems.slice(0, 2).forEach(function(r){
+      var decision = ({adopt:"复用", adapt:"适配", build:"自建", defer:"暂缓", reject:"不采用"})[r.choice]
+        || ({awaiting_external_research:"等研究", awaiting_approval:"等你确认", decision_needed:"待判断",
+            decision_ready:"可判断", blocked:"受阻"})[r.decision_status]
+        || "研究中";
+      var detail = (r.question || r.research_id || "研究事项") + " · " + decision;
+      if (r.decision_status === "awaiting_approval") detail += " · 需要你确认";
+      else if (r.decision_status === "awaiting_external_research") detail += " · 等待研究证据";
+      pmRow(list, r.research_id || "研究", detail);
+    });
     var closurePaths = closure.paths || [];
     pmRow(list, "施工路径", pmCount(closure.status === "unknown" ? null : closurePaths.length)
       + " 条 · " + (closure.status === "unknown"
