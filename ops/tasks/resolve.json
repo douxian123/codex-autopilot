@@ -1,6 +1,54 @@
 {
  "tasks": [
   {
+   "slug": "autopilot-parallel-runtime-fix-20261019",
+   "branch": "codex/autopilot-parallel-runtime-fix-20261019",
+   "resolve_branch": "codex/resolve-autopilot-parallel-runtime-fix-20261019",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-parallel-runtime-fix-20261019",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "38aed5c0e38e3cf92dc147982e2e68a35e37ec68",
+   "source_commits": [
+    "65d2dcc10ea4a8ac162592a03af025feac323b83",
+    "40d123b65f8159dc5f52e5729f7d39b6f7c024ae",
+    "38aed5c0e38e3cf92dc147982e2e68a35e37ec68"
+   ],
+   "created": "2026-11-17 19:28:05",
+   "updated": "2026-11-20 10:03:39",
+   "conflict_files": [
+    "ops/kgctl.py"
+   ],
+   "unresolved_files": [
+    "ops/kgctl.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "gate_fail",
+   "gate_output": "→ codex/resolve-autopilot-parallel-runtime-fix-20261019: 5 提交、落后 361、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n  已把 51 个真相层文件从切换前状态写回（路由/台账不丢）\n  跳过 1 个备份/临时副本（留在磁盘，不进版本库）：ops/tasks/inbox.jsonl.bak-route-smoke-20261116-235548\n  真相层 2 个文件已提交（chore(truth): sync state before landing）\n  merge ok（main 未动）\n  验证门禁 × 失败 → 丢弃，main 不动\n有「工作项走到哪了」区块\n  PASS  有「工程详情与证据」区块\n  PASS  项目文件夹显示 19 层工程进度\n  PASS  项目文件夹显示工程快照日期\n  PASS  项目文件夹显示工程下一步\n  PASS  项目文件夹显示工程卡点\n  PASS  项目文件夹显示独立质量门禁状态\n  PASS  项目文件夹显示当前步骤\n  PASS  路线里显示下一步\n  PASS  首屏明示主入口、执行入口与兜底入口\n  PASS  面板输入框收进高级区\n  PASS  默认首屏看不到面板输入框\n  PASS  系统判据详情默认折叠\n  PASS  系统判据详情仍可查\n  PASS  系统首屏不铺开队列读数\n  PASS  系统首屏不说 automation 黑话\n  PASS  系统首屏不说越线黑话\n  PASS  输入落点预览显示判不清落点\n  PASS  输入落点预览显示默认落点\nCodex 自动挡 高级区渲染检查\n  PASS  高级区由 ?adv=1 打开\n  PASS  PM 简报折叠区实际展开\n  PASS  PM 简报上屏：待确认预期\n  PASS  PM 简报上屏：验收标准候选\n  PASS  PM 简报上屏：让路与追问候选\n  PASS  PM 简报上屏：追问授权摘要与可撤销授权\n  PASS  PM 简报上屏：施工路径只读投影\n  PASS  上下文档案折叠区实际展开\n  PASS  上下文档案上屏：四类状态与来源证据\n  PASS  上下文档案说明唯一确认入口\n  PASS  关系层上屏：跨项目目标与需要人的原因\n  PASS  关系层上屏：北极星与关联工作项\n  PASS  关系层上屏：来源窗口\n  PASS  关系层明示不会自动派活\n  PASS  结果代理分上屏：总分、判据与边界\n  PASS  人工验收上屏：复核截图与补图按钮\n\n结果：全部通过\n\n  main 仍是 5b09eb9f67，源分支 codex/resolve-autopilot-parallel-runtime-fix-20261019 未受影响"
+  },
+  {
+   "slug": "autopilot-resolve-stderr",
+   "branch": "codex/autopilot-resolve-stderr",
+   "resolve_branch": "codex/resolve-autopilot-resolve-stderr",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-resolve-stderr",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "3ab07ffa9ff49fd140b55f73e3272fa5277d6915",
+   "source_commits": [
+    "3ab07ffa9ff49fd140b55f73e3272fa5277d6915"
+   ],
+   "created": "2026-11-17 19:33:12",
+   "updated": "2026-11-20 08:57:03",
+   "conflict_files": [
+    "ops/kgctl.py",
+    "ops/selftest.py"
+   ],
+   "unresolved_files": [
+    "ops/kgctl.py",
+    "ops/selftest.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "gate_fail",
+   "gate_output": "→ codex/resolve-autopilot-resolve-stderr: 4 提交、落后 361、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n  已把 51 个真相层文件从切换前状态写回（路由/台账不丢）\n  跳过 1 个备份/临时副本（留在磁盘，不进版本库）：ops/tasks/inbox.jsonl.bak-route-smoke-20261116-235548\n  真相层 2 个文件已提交（chore(truth): sync state before landing）\n  merge ok（main 未动）\n  验证门禁 × 失败 → 丢弃，main 不动\n有「工作项走到哪了」区块\n  PASS  有「工程详情与证据」区块\n  PASS  项目文件夹显示 19 层工程进度\n  PASS  项目文件夹显示工程快照日期\n  PASS  项目文件夹显示工程下一步\n  PASS  项目文件夹显示工程卡点\n  PASS  项目文件夹显示独立质量门禁状态\n  PASS  项目文件夹显示当前步骤\n  PASS  路线里显示下一步\n  PASS  首屏明示主入口、执行入口与兜底入口\n  PASS  面板输入框收进高级区\n  PASS  默认首屏看不到面板输入框\n  PASS  系统判据详情默认折叠\n  PASS  系统判据详情仍可查\n  PASS  系统首屏不铺开队列读数\n  PASS  系统首屏不说 automation 黑话\n  PASS  系统首屏不说越线黑话\n  PASS  输入落点预览显示判不清落点\n  PASS  输入落点预览显示默认落点\nCodex 自动挡 高级区渲染检查\n  PASS  高级区由 ?adv=1 打开\n  PASS  PM 简报折叠区实际展开\n  PASS  PM 简报上屏：待确认预期\n  PASS  PM 简报上屏：验收标准候选\n  PASS  PM 简报上屏：让路与追问候选\n  PASS  PM 简报上屏：追问授权摘要与可撤销授权\n  PASS  PM 简报上屏：施工路径只读投影\n  PASS  上下文档案折叠区实际展开\n  PASS  上下文档案上屏：四类状态与来源证据\n  PASS  上下文档案说明唯一确认入口\n  PASS  关系层上屏：跨项目目标与需要人的原因\n  PASS  关系层上屏：北极星与关联工作项\n  PASS  关系层上屏：来源窗口\n  PASS  关系层明示不会自动派活\n  PASS  结果代理分上屏：总分、判据与边界\n  PASS  人工验收上屏：复核截图与补图按钮\n\n结果：全部通过\n\n  main 仍是 5b09eb9f67，源分支 codex/resolve-autopilot-resolve-stderr 未受影响"
+  },
+  {
    "slug": "snapshot-budget-archive-20261113",
    "branch": "codex/snapshot-budget-archive-20261113",
    "resolve_branch": "codex/resolve-snapshot-budget-archive-20261113",
@@ -11,7 +59,7 @@
     "2ac1fa10624c491adac90a6175f495bc77597cac"
    ],
    "created": "2026-11-17 19:29:23",
-   "updated": "2026-11-20 08:07:49",
+   "updated": "2026-11-20 08:46:16",
    "conflict_files": [
     "ops/tasks/conflict_burden.json"
    ],
@@ -19,8 +67,31 @@
     "ops/tasks/conflict_burden.json"
    ],
    "auto_resolved_jsonl": [],
-   "status": "gate_fail",
+   "status": "landed",
    "gate_output": "× codex/resolve-snapshot-budget-archive-20261113 与 main 有 1 个冲突文件，拒绝自动 land：\n    ops/tasks/conflict_burden.json\n  这是需要归属裁决的信号（kgctl matrix 的 C 组）。"
+  },
+  {
+   "slug": "autopilot-close-gate-20261026",
+   "branch": "codex/autopilot-close-gate-20261026",
+   "resolve_branch": "codex/resolve-autopilot-close-gate-20261026",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-close-gate-20261026",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "80afdc3670903d66e9187e534661cc7c97775f27",
+   "source_commits": [
+    "80afdc3670903d66e9187e534661cc7c97775f27"
+   ],
+   "created": "2026-11-17 19:37:07",
+   "updated": "2026-11-20 08:45:41",
+   "conflict_files": [
+    "ops/selftest.py",
+    "ops/truthctl.py"
+   ],
+   "unresolved_files": [
+    "ops/selftest.py",
+    "ops/truthctl.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "landed"
   },
   {
    "slug": "install-architecture-doc-20261119",
@@ -414,29 +485,6 @@
    "status": "needs_agent"
   },
   {
-   "slug": "autopilot-close-gate-20261026",
-   "branch": "codex/autopilot-close-gate-20261026",
-   "resolve_branch": "codex/resolve-autopilot-close-gate-20261026",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-close-gate-20261026",
-   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
-   "source_head": "80afdc3670903d66e9187e534661cc7c97775f27",
-   "source_commits": [
-    "80afdc3670903d66e9187e534661cc7c97775f27"
-   ],
-   "created": "2026-11-17 19:37:07",
-   "updated": "2026-11-17 19:37:07",
-   "conflict_files": [
-    "ops/selftest.py",
-    "ops/truthctl.py"
-   ],
-   "unresolved_files": [
-    "ops/selftest.py",
-    "ops/truthctl.py"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
-  },
-  {
    "slug": "autopilot-truth-sync-failclosed",
    "branch": "codex/autopilot-truth-sync-failclosed",
    "resolve_branch": "codex/resolve-autopilot-truth-sync-failclosed",
@@ -458,53 +506,7 @@
    ],
    "auto_resolved_jsonl": [],
    "status": "needs_agent"
-  },
-  {
-   "slug": "autopilot-resolve-stderr",
-   "branch": "codex/autopilot-resolve-stderr",
-   "resolve_branch": "codex/resolve-autopilot-resolve-stderr",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-resolve-stderr",
-   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
-   "source_head": "3ab07ffa9ff49fd140b55f73e3272fa5277d6915",
-   "source_commits": [
-    "3ab07ffa9ff49fd140b55f73e3272fa5277d6915"
-   ],
-   "created": "2026-11-17 19:33:12",
-   "updated": "2026-11-17 19:33:12",
-   "conflict_files": [
-    "ops/kgctl.py",
-    "ops/selftest.py"
-   ],
-   "unresolved_files": [
-    "ops/kgctl.py",
-    "ops/selftest.py"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
-  },
-  {
-   "slug": "autopilot-parallel-runtime-fix-20261019",
-   "branch": "codex/autopilot-parallel-runtime-fix-20261019",
-   "resolve_branch": "codex/resolve-autopilot-parallel-runtime-fix-20261019",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-parallel-runtime-fix-20261019",
-   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
-   "source_head": "38aed5c0e38e3cf92dc147982e2e68a35e37ec68",
-   "source_commits": [
-    "65d2dcc10ea4a8ac162592a03af025feac323b83",
-    "40d123b65f8159dc5f52e5729f7d39b6f7c024ae",
-    "38aed5c0e38e3cf92dc147982e2e68a35e37ec68"
-   ],
-   "created": "2026-11-17 19:28:05",
-   "updated": "2026-11-17 19:28:05",
-   "conflict_files": [
-    "ops/kgctl.py"
-   ],
-   "unresolved_files": [
-    "ops/kgctl.py"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
   }
  ],
- "updated": "2026-11-20 08:07:49"
+ "updated": "2026-11-20 10:03:39"
 }
