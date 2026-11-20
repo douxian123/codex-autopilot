@@ -1196,7 +1196,7 @@ def _set_ledger_status(rid, status, note, evidence='', commit=''):
         return merged
 
 
-ACCEPTANCE_STATUSES = ('todo', 'wip', 'blocked', 'verified')
+ACCEPTANCE_STATUSES = ('todo', 'wip', 'blocked', 'verified', 'void')
 
 
 def _set_acceptance_status(rid, status, note='', evidence='', source=None,

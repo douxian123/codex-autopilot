@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-20 14:40:46　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-20 15:36:53　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -46,21 +46,19 @@
 
 ## 最近在推进
 
-- [已落盘] @ ca0b76b92f codex/resolve-autopilot-routing-context-20261119 验证门禁通过，已落盘 main @ ca0b76b92f；改动 4 个文件：ops/central_mcp.py（+20/-1）、ops/request_context.py（+66/-0）、ops/selftest.py（+2/-0）、ops/test-request-context.py（+42/-0）｜4 files changed, 130 insertions(+), 1 deletion(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [已落盘] @ cf8a6e099d codex/resolve-eval-loop-judge-20261110 验证门禁通过，已落盘 main @ cf8a6e099d；改动 2 个文件：ops/tasks/inbox.jsonl（+1/-0）、ops/truth/judgments.jsonl（+1/-0）｜2 files changed, 2 insertions(+)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [已落盘] @ ca8146450e codex/resolve-resource-admission-verify-narrowing-20261115 验证门禁通过，已落盘 main @ ca8146450e；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [已落盘] @ beda436be2 codex/resolve-reap-branch-preserve-20261111 验证门禁通过，已落盘 main @ beda436be2；改动 1 个文件：ops/workspace_guard.py（+8/-0）｜1 file changed, 8 insertions(+)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 70e5bcbc3b codex/resolve-autopilot-truth-sync-failclosed 验证门禁通过，已落盘 main @ 70e5bcbc3b；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ fe7ae040c0 codex/pm-research-decision-20261120 验证门禁通过，已落盘 main @ fe7ae040c0；改动 13 个文件：README.md（+1/-0）、ops/central_mcp.py（+147/-0）、ops/kgctl.py（+18/-0）、ops/panel_logic_check.py（+7/-0）、ops/panel_render_check.py（+7/-0），另有 8 个文件｜13 files changed, 1099 insertions(+), 11 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0152
 - [已落盘] @ b827dba849 codex/cross-entry-route-control-20261120 验证门禁通过，已落盘 main @ b827dba849；改动 6 个文件：ops/central_mcp.py（+139/-6）、ops/kgctl.py（+39/-2）、ops/panel_logic_check.py（+44/-0）、ops/test-route-inbox.py（+60/-1）、ops/truth/acceptance.jsonl（+1/-0），另有 1 个文件｜6 files changed, 390 insertions(+), 9 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0155、A-0156
 - [已落盘] @ 1db2bc5563 codex/resolve-guard-release-version-20261119 验证门禁通过，已落盘 main @ 1db2bc5563；改动 2 个文件：ops/truth/acceptance.jsonl（+2/-0）、ops/truth/progress.jsonl（+1/-0）｜2 files changed, 3 insertions(+)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 543f005f37 codex/resolve-ledger-normalization-20261120 验证门禁通过，已落盘 main @ 543f005f37；改动 1 个文件：ops/tasks/resolve.json（+51/-4）｜1 file changed, 51 insertions(+), 4 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [在途] 0.6.0-preview.105 受控换代完成：marketplace、install-state、Companion、Codex 插件缓存、自动挡守护均指向 .105；守护 live pid 由旧版切到新版；产品评估 5/5 通过，阴性对照 8/8 变红。
+- [已落盘] @ 3595c70326 codex/resolve-dedupe-load-20261120 验证门禁通过，已落盘 main @ 3595c70326；改动 2 个文件：ops/kgctl.py（+47/-1）、ops/selftest.py（+6/-1）｜2 files changed, 53 insertions(+), 2 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [在途] 端到端闭环施工地图九阶段已按门禁闭环并推送 main
+- [在途] 端到端闭环施工地图九阶段已按门禁闭环并推送 main
+- [在途] launchd guard 随版本发布完整性门禁已覆盖并全量通过
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0148` [P1] codex/resolve-eval-loop-judge-20261110 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0149` [P1] codex/resolve-resource-admission-verify-narrowing-20261115 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0151` [P1] codex/resolve-reap-branch-preserve-20261111 落盘验收
@@ -83,19 +81,13 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0161` [P1] 0.6.0-preview.105 换代验证
   - 证据：python3 ops/test-pm-research-decision.py -> 19/19 PASS；python3 ops/product_eval.py -> 可以对外（5/5 通过），阴性对照 8/8；plist/launchctl 指向 /Users/danta/plugins/codex-autopilot/releases/0.6.0-preview.105…
+- `A-0162` [P1] codex/resolve-dedupe-load-20261120 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
 
-**bug（2 待处理）**
-- `L-0011` 闭环所有预期功能：按职责契约、发布地基、上下文、PM、验收、运行、面板、端到端验收顺序推进；独立 worktree；不碰共享检出脏文件。
-- `L-0014` 闭环所有预期功能：按职责契约、发布地基、上下文、PM、验收、运行、面板、端到端验收的顺序，把 Codex 自动挡做到稳定健康、可发布、可开源使用；先落在独立 w
-
-**gate（2 待处理）**
+**gate（1 待处理）**
 - `L-0007` 【launchd 陈旧项·非 Stop 复发链】freshness 门禁真机实测 4 条 stale：ai.danta.codex-proxy-watchdog
-- `L-0013` launchd guard 文件随版本发布完整性：版本目录不可覆盖导致新 guard 文件进不了 live；补版本提升与 registry 发布完整性门禁。仅代
-
-**被卡住的验收项**
-- `A-0150` --help
 
 ## 需要你验收
 
@@ -192,11 +184,12 @@
 - `A-0158` [P1] codex/resolve-guard-release-version-20261119 落盘验收
 - `A-0159` [P1] codex/resolve-ledger-normalization-20261120 落盘验收
 - `A-0161` [P1] 0.6.0-preview.105 换代验证
+- `A-0162` [P1] codex/resolve-dedupe-load-20261120 落盘验收
 
 ## 进度概览
 
-- 累计关闭问题：10 条
-- 累计落盘：90 条
-- 未决问题：4 条
-- 已验收：89 条
+- 累计关闭问题：13 条
+- 累计落盘：91 条
+- 未决问题：1 条
+- 已验收：90 条
 

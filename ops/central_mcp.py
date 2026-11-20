@@ -1093,7 +1093,7 @@ TOOLS = [
                                 "description": "待用户复核的截图/录屏路径，可选；不参与机器自验判定"},
                 "level": {"type": "string", "description": "优先级，默认 P1"},
                 "lane": {"type": "string", "description": "归属分支，可选"},
-                "status": {"type": "string", "description": "todo / wip / verified，默认 todo"},
+                "status": {"type": "string", "description": "todo / wip / blocked / verified / void，默认 todo"},
                 "evidence": {"type": "string", "description": "机器自证的真实命令+结果，可选"},
             },
             "required": ["title"],
@@ -1107,12 +1107,12 @@ TOOLS = [
     },
     {
         "name": "resolve_acceptance",
-        "description": "收敛一条已登记的验收项：人工拍板（用户看过、点过、说可以）或机器复核完之后，把对应 A-id 从 todo/wip/blocked 翻成 verified，面板的「需要你验收」才会真正减少。传 id 必带 status；人工拍板不需要 evidence，机器复核建议带 evidence。",
+        "description": "收敛一条已登记的验收项：人工拍板（用户看过、点过、说可以）或机器复核完之后，把对应 A-id 从 todo/wip/blocked 翻成 verified；误登记项翻成 void，从卡点与验收统计里消失。传 id 必带 status；人工拍板不需要 evidence，机器复核建议带 evidence。",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "id": {"type": "string", "description": "验收台账 id，如 A-0030"},
-                "status": {"type": "string", "enum": ["todo", "wip", "blocked", "verified"],
+                "status": {"type": "string", "enum": ["todo", "wip", "blocked", "verified", "void"],
                            "description": "目标状态；人工验收通过用 verified"},
                 "note": {"type": "string", "description": "为什么翻成这个状态，一句话，可选"},
                 "evidence": {"type": "string", "description": "机器复核的命令+结果，可选"},
@@ -3540,8 +3540,8 @@ def call_tool(name, args):
         status = (args.get("status") or "").strip()
         if not rid:
             return "resolve_acceptance 需要 id（如 A-0030）", 2
-        if status not in ("todo", "wip", "blocked", "verified"):
-            return "resolve_acceptance 需要 status（todo/wip/blocked/verified）", 2
+        if status not in ("todo", "wip", "blocked", "verified", "void"):
+            return "resolve_acceptance 需要 status（todo/wip/blocked/verified/void）", 2
         argv = ["accept", "--id", rid, "--status", status]
         if args.get("note"):
             argv += ["--note", args["note"]]

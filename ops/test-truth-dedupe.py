@@ -182,11 +182,43 @@ def main() -> int:
         check("停用的进展不进产品主线", "停用的进展" not in mainline_text,
               mainline_text[-200:])
 
+        acceptance = root / "ops" / "truth" / "acceptance.jsonl"
+        acceptance.write_text(
+            json.dumps({"id": "A-0001", "type": "acceptance", "title": "误登记的验收项",
+                        "status": "blocked", "needs_human": False}, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+        void_run = subprocess.run(
+            [sys.executable, str(OPS / "truthctl.py"), "accept", "--id", "A-0001",
+             "--status", "void", "--note", "误登记，作废"],
+            cwd=str(REPO), env=env, capture_output=True, text=True)
+        check("误登记验收项可作废", void_run.returncode == 0,
+              (void_run.stdout + void_run.stderr)[-200:])
+        check("作废保留历史物理行", len(read_rows(acceptance)) == 2,
+              len(read_rows(acceptance)))
+
+        nxt = subprocess.run(
+            [sys.executable, str(OPS / "truthctl.py"), "next"],
+            cwd=str(REPO), env=env, capture_output=True, text=True)
+        check("作废项不进 next 卡点", "误登记的验收项" not in nxt.stdout,
+              nxt.stdout[-300:])
+        snap = subprocess.run(
+            [sys.executable, str(OPS / "truthctl.py"), "snapshot"],
+            cwd=str(REPO), env=env, capture_output=True, text=True)
+        status_text = status_path.read_text(encoding="utf-8") if status_path.exists() else ""
+        check("作废项不进项目状态卡点", "误登记的验收项" not in status_text,
+              status_text[-300:])
+        synth = subprocess.run(
+            [sys.executable, str(OPS / "truthctl.py"), "synthesize"],
+            cwd=str(REPO), env=env, capture_output=True, text=True)
+        mainline_text = mainline_path.read_text(encoding="utf-8") if mainline_path.exists() else ""
+        check("作废项不进产品主线卡点", "误登记的验收项" not in mainline_text,
+              mainline_text[-300:])
+
     print()
     if fails:
         print(f"结果：{fails} 项未通过")
     else:
-        print("selftest ok: 真相层 active 无重复，retire 只追加不停删历史。")
+        print("selftest ok: 真相层 active 无重复，retire/void 只追加不停删历史。")
     return fails
 
 
