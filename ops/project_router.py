@@ -54,6 +54,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -151,6 +152,83 @@ def registry_path() -> Path:
 def routing_inbox_path() -> Path:
     return Path(os.environ.get("KG_ROUTING_INBOX",
                                str(_home() / "routing" / "inbox.jsonl"))).expanduser()
+
+
+def routing_review_path() -> Path:
+    """复核指派台账：只追加，永远不回写/删除原始 ambiguous 记录。"""
+    return Path(os.environ.get("KG_ROUTING_REVIEW",
+                               str(_home() / "routing" / "reviews.jsonl"))).expanduser()
+
+
+def routing_fingerprint(row: dict) -> str:
+    """待路由项的稳定指纹：同一句诉求反复投递只算一项。
+
+    2026-11-20 现场待路由箱里同一条状态管家提示连着出现三次，时间戳不同但诉求完全
+    一样；若把 ts 放进指纹，重复项会一直占据用户注意力。这里按规范化原文取指纹，
+    后续相同原文只留一条指派凭证，不再重复写进目标项目账本。
+    """
+    blob = " ".join(str(row.get("text") or "").split())
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def _load_jsonl(path: Path) -> list:
+    if not path.exists():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            got = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(got, dict):
+            out.append(got)
+    return out
+
+
+def load_routing_reviews(path=None) -> list:
+    return _load_jsonl(Path(path) if path else routing_review_path())
+
+
+def pending_routing_records(path=None, review_path=None) -> list:
+    """还没被复核指派的 ambiguous 项，带原始行号（从 1 开始）。"""
+    rows = _load_jsonl(Path(path) if path else routing_inbox_path())
+    reviews = load_routing_reviews(review_path)
+    reviewed = {str(r.get("source_fingerprint") or "")
+                for r in reviews if r.get("status") == "assigned"}
+    out = []
+    seen = set()
+    for index, row in enumerate(rows, 1):
+        if row.get("routed") or row.get("status") in ("assigned", "resolved"):
+            continue
+        fingerprint = routing_fingerprint(row)
+        if fingerprint in reviewed or fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        out.append({"index": index, "record": row, "fingerprint": fingerprint})
+    return out
+
+
+def record_routing_review(index: int, row: dict, project: str, root, reason: str,
+                          path=None) -> Path:
+    """追加一条复核凭证。写目标项目账本成功后才调用，原始项保持不动。"""
+    p = Path(path) if path else routing_review_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "status": "assigned",
+        "source_index": int(index),
+        "source_fingerprint": routing_fingerprint(row),
+        "source_ts": row.get("ts"),
+        "text": row.get("text"),
+        "project": str(project),
+        "project_root": str(Path(str(root)).expanduser().resolve()),
+        "reason": str(reason),
+    }
+    with p.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    return p
 
 
 def load_registry(path=None) -> list:

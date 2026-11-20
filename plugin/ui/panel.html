@@ -6,17 +6,17 @@
 <title>Codex 自动挡</title>
 <style>
   :root{
-    /* 主题：优先读宿主（Codex）注入的 CSS 变量，取不到才回落到自带浅色。
-       面板因此和 Codex 同底色、同字色、同描边、同圆角，不再是一块风格
-       独立的外挂网页；在普通浏览器里也有一套完整的兜底。 */
-    --bg:var(--color-background-secondary,#F3F4F8);
-    --surface:var(--color-background-primary,#FFFFFF);
-    --surface-2:var(--color-background-secondary,#F8F9FC);
-    --surface-3:var(--color-background-tertiary,#EDEFF5);
-    --ink:var(--color-text-primary,#111420);
+    /* 主题：先读 @openai/apps-sdk-ui / Codex 宿主注入的官方语义 token，
+       再读旧宿主变量，最后才是独立浏览器里的兜底色。这样插件在宿主里
+       跟原生容器同一套底色、字色和描边，离开宿主也不会变成一块黑底外挂。 */
+    --bg:var(--color-surface-secondary,var(--color-background-secondary,#F3F4F8));
+    --surface:var(--color-surface,var(--color-background-primary,#FFFFFF));
+    --surface-2:var(--color-surface-secondary,var(--color-background-secondary,#F8F9FC));
+    --surface-3:var(--color-surface-tertiary,var(--color-background-tertiary,#EDEFF5));
+    --ink:var(--color-text,var(--color-text-primary,#111420));
     --ink-2:var(--color-text-secondary,#4C5464);
     --ink-3:var(--color-text-tertiary,#737B8C);
-    --line:var(--color-border-primary,#E6E9F0);
+    --line:var(--color-border,var(--color-border-primary,#E6E9F0));
     --line-2:var(--color-border-subtle,#EEF1F6);
 
     /* brand · OpenAI 绿 */
@@ -34,14 +34,14 @@
 
     /* semantic · 同样优先宿主语义色 */
     --ok:var(--color-text-success,#0E7A57);
-    --ok-soft:var(--color-background-success,#E7F4EE);
-    --ok-line:var(--color-border-success,#CDE8DD);
+    --ok-soft:var(--color-background-success-surface,var(--color-background-success,#E7F4EE));
+    --ok-line:var(--color-border-success-surface,var(--color-border-success,#CDE8DD));
     --warn:var(--color-text-warning,#8F5F0B);
-    --warn-soft:var(--color-background-warning,#FAF2E1);
-    --warn-line:var(--color-border-warning,#EFDDBB);
+    --warn-soft:var(--color-background-warning-surface,var(--color-background-warning,#FAF2E1));
+    --warn-line:var(--color-border-warning-surface,var(--color-border-warning,#EFDDBB));
     --err:var(--color-text-danger,#B93A31);
-    --err-soft:var(--color-background-danger,#FAEBE9);
-    --err-line:var(--color-border-danger,#F0D1CD);
+    --err-soft:var(--color-background-danger-surface,var(--color-background-danger,#FAEBE9));
+    --err-line:var(--color-border-danger-surface,var(--color-border-danger,#F0D1CD));
     --neutral:var(--color-text-secondary,#69707E);
     --neutral-soft:var(--surface-3);
     --neutral-line:var(--line);
@@ -79,6 +79,10 @@
   .iconbtn:hover{background:var(--surface-2);color:var(--ink);border-color:var(--neutral-line)}
   .iconbtn svg{width:15px;height:15px}
   body.adv .iconbtn.adv{background:var(--brand-50);border-color:var(--brand-200);color:var(--brand-700)}
+
+  /* 入口说明：常驻但不抢三问的注意力。只说用途，不暴露线程 ID 或内部术语。 */
+  .entrymap{display:flex;flex-wrap:wrap;gap:4px 14px;margin:-2px 0 12px;padding:8px 11px;background:var(--surface-2);border:1px solid var(--line-2);border-left:2px solid var(--brand-200);border-radius:var(--r-sm);font-size:11.5px;color:var(--ink-3)}
+  .entrymap b{color:var(--ink-2);font-weight:600}
 
   /* ---- hero ---- */
   .hero{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:var(--r);padding:16px 18px 15px;margin-bottom:11px;box-shadow:var(--shadow-2)}
@@ -419,6 +423,12 @@
   </header>
 
   <!-- 首屏只回答三件事，其余一律下沉。健康时不占空间。 -->
+  <div class="entrymap" id="entryMap" aria-label="入口说明">
+    <span><b>主入口</b>：当前 Codex 输入框，万法归一</span>
+    <span><b>执行入口</b>：后台任务窗口，只汇报状态</span>
+    <span><b>兜底入口</b>：高级区输入框</span>
+  </div>
+
   <section class="q" id="q1">
     <div class="qhead"><span class="qn">1</span><h2>有东西需要我吗？</h2><span class="qstate" id="q1State"></span></div>
     <div class="alert lv-ok" id="need">
@@ -642,7 +652,7 @@
     </details>
 
     <details class="card fold">
-      <summary>运行信息</summary>
+      <summary>运行状态</summary>
       <div class="foldbody">
         <div class="grid2">
           <div class="kv"><div class="l">后台常驻进程</div><div class="v" id="daemonLive">—</div></div>
@@ -660,8 +670,13 @@
       <div class="foldbody"><div id="pmBriefingBox"></div></div>
     </details>
 
+    <details class="card fold" id="contextArchiveFold">
+      <summary>上下文档案 · 自动收录与确认去向</summary>
+      <div class="foldbody"><div id="contextArchiveBox"></div></div>
+    </details>
+
     <details class="card fold" id="relationshipGoalsFold">
-      <summary>关系层 · 跨项目长期目标</summary>
+      <summary>关系目标 · 跨项目长期目标</summary>
       <div class="foldbody"><div id="relationshipGoalsBox"></div></div>
     </details>
 
@@ -686,17 +701,17 @@
     </details>
 
     <details class="card fold">
-      <summary>最近一次自验证 · 真跑真写真拦</summary>
+      <summary>验收台账 · 最近一次自验证</summary>
       <div class="foldbody"><div id="verifyBox"></div></div>
     </details>
 
     <details class="card fold">
-      <summary>需要你拍板 / 异常</summary>
+      <summary>需要你验收 / 拍板 / 异常</summary>
       <div class="foldbody"><ul class="list" id="blockedList"></ul></div>
     </details>
 
     <details class="card fold">
-      <summary>最近发生了什么</summary>
+      <summary>执行记录</summary>
       <div class="foldbody">
         <ul class="list" id="eventList"></ul>
         <p class="tiny" style="margin-top:10px">完整日志：<span id="logPath">~/.codex-autopilot/daemon.log</span></p>
@@ -920,6 +935,7 @@
     renderOrientation(s);
     renderAcceptance(humanAcc, s.machine_verified || []);
     renderPmBriefing(s.pm_briefing, s.authorized_followups);
+    renderContextArchive(s.context_archive);
     renderRelationshipGoals(s.relationship_goals);
     renderOutcomeScore(s.outcome_score);
     renderRecent(s.recent_completed || []);
@@ -1106,6 +1122,7 @@
     var ac = pb.acceptance_criteria || {};
     var hold = pb.overlap_holds || {};
     var follow = pb.follow_up_candidates || {};
+    var closure = pb.closure || {};
     var auth = authSummary || {};
     var authCounts = auth.counts || {};
     var approvedByTicket = {};
@@ -1117,6 +1134,17 @@
       + pmCount(exp.active_count) + " 条";
     if (exp.mainline_stage) expText += " · 主线阶段：" + exp.mainline_stage;
     pmRow(list, "预期", expText);
+    var closurePaths = closure.paths || [];
+    pmRow(list, "施工路径", pmCount(closure.status === "unknown" ? null : closurePaths.length)
+      + " 条 · " + (closure.status === "unknown"
+        ? "施工路径取不到，不把不知道当成 0 条。"
+        : "原话到施工、依赖、路线、追问、关闭只做只读投影"));
+    closurePaths.slice(0, 2).forEach(function(r){
+      var w = r.work_item || {};
+      pmRow(list, w.id || "施工", (w.title || "未命名施工项")
+        + " · " + (w.status || "unknown")
+        + " · 文件占地" + (w.occupancy === "unknown" ? "取不到" : "已声明"));
+    });
     (exp.pending || []).slice(0, 2).forEach(function(r){
       pmRow(list, "待确认", r.text || r.id || "（无文案）");
     });
@@ -1199,6 +1227,46 @@
       meta.textContent = "取不到：" + missing.join("、") + "；这些项不计入正常。";
       box.appendChild(meta);
     }
+  }
+
+  // 上下文档案：只读展示自动收录、已确认、已驳回和生效记录。确认动作只在
+  // 「需要你拍板 / 异常」区出现，避免同一条候选有两套互相打架的按钮。
+  function renderContextArchive(ca){
+    var box = el("contextArchiveBox"); if (!box) return; box.innerHTML = "";
+    if (!ca || ca.status !== "ok"){
+      var why = (ca && (ca.reason || (ca.unknown || []).join("、")))
+        || "上下文档案取不到";
+      if (why.indexOf("不把不知道当成 0 条") < 0) why += "；不把不知道当成 0 条。";
+      box.innerHTML = '<div class="empty">' + why + '</div>';
+      return;
+    }
+    var list = document.createElement("ul"); list.className = "list";
+    var c = ca.counts || {};
+    pmRow(list, "已收录", "待确认 " + pmCount(c.proposed) + " · 已确认 "
+      + pmCount(c.promoted) + " · 已驳回 " + pmCount(c.dismissed)
+      + " · 生效 " + pmCount(c.active));
+    (ca.items || []).forEach(function(x){
+      var source = x.source === "context_learning"
+        ? "自学习：同一诉求出现 " + pmCount(x.mentions) + " 次 / 跨 "
+          + pmCount(x.threads) + " 个会话"
+        : "入口原话" + ((x.signals && x.signals.length)
+          ? " · 命中 " + x.signals.join("、") : "");
+      var detail = (x.id || "") + " · " + (x.text || x.title || "") + " · " + source;
+      if (x.evidence && x.evidence.length){
+        var ev = x.evidence[0];
+        detail += " · 证据：" + ((ev.thread) ? ev.thread + "：" : "") + (ev.text || "");
+      }
+      if (x.constraint_id) detail += " · 已落成 " + x.constraint_id;
+      if (x.reason) detail += " · 驳回原因：" + x.reason;
+      pmRow(list, x.status === "proposed" ? "待确认"
+        : x.status === "promoted" ? "已确认"
+        : x.status === "dismissed" ? "已驳回" : "生效", detail);
+    });
+    (ca.unknown || []).forEach(function(x){ pmRow(list, "取不到", x); });
+    box.appendChild(list);
+    var meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = ca.note || "自动收录只生成候选，不自动生效。";
+    box.appendChild(meta);
   }
 
   // 关系层：只照抄显式登记的目标摘要。它不自动派活，也不把「需要人」变成追问动作。

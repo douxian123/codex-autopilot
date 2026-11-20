@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-19 14:33:27　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-20 07:02:44　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -45,7 +45,6 @@
 
 ## 最近在推进
 
-- [已落盘] @ d36087b804 首屏三问与 PM/验收管家闭环已落盘：首屏只回答要不要我、是不是在干对的事、替我做成了什么；PM 简报、人工验收复核截图与补图按钮进入折叠区；补图不替人收口。落盘 commit 3a950f4e，真相记录 d36087b8。
 - [在途] 补 --install-daemon 显式首次安装与 launchd 回读判活；默认不替用户启用常驻，回读不到 pid 不报成功。
 - [在途] 确认修复已在 origin/main：snapshot_prune.py 使用 typing.Optional/List/Dict/Tuple，不再依赖 Python 3.10 联合类型语法；系统 Python 3.9.6 真导入与快照清理门禁均通过，并补上旧 Path | None 语法的阴性对照，证明门禁能抓回原故障。
 - [在途] 临时 gate worktree 归属标记、随机路径与 all 判活已随 7db4f0c9 落盘 origin/main；全量门禁通过。生产磁盘回收仍保留人工动作边界。
@@ -54,6 +53,8 @@
 - [在途] 发布 lineage 门禁已落盘；product_eval 判据5 从红转 OK，发布提交需在远端权威主干可见。
 - [在途] release 目录里跑 selftest 的安装器门禁已落盘 origin/main；新版安装目录完整性有回归保护。
 - [在途] progress/acceptance JSONL 按 identity 行级并集已随 5caaabb7 落盘 origin/main；并发 land 不再覆盖同 ID 历史。
+- [已落盘] @ e1e5e5d1 原生 Codex 面板设计契约已落盘并推送：官方 token 优先链、global/thread entrypoint、section 分组、首行线程标题契约与行为级门禁均完成；永久置顶/默认展开明确记为宿主能力目标，未伪造实现。
+- [在途] 2026-11-20 只读复核 L-0007：verify-launchd-entry-freshness 从原 4 条 stale 降到 1 条，repoint --check exit 0；唯一 stale ai.danta.ok8888-gpt-sse-bridge 是运行中的 provider bridge（pid 25675），不在 autopilot registry，repoint --dry-run exit 2。未跑 install.sh、未改 plist、未 reload，L-0007 因需用户单独授权保持 open。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
@@ -99,8 +100,8 @@
 
 ## 进度概览
 
-- 累计关闭问题：9 条
-- 累计落盘：1 条
+- 累计关闭问题：10 条
+- 累计落盘：2 条
 - 未决问题：2 条
 - 已验收：8 条
 
