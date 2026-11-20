@@ -804,6 +804,65 @@ def kgctl(*args, extra_env=None):
     return _run([str(_live_ops() / "kgctl.py"), *args], extra_env)
 
 
+def _json_line(text):
+    """从 kgctl 输出里取最后一行 JSON；人类可读行仍在，机器只读结构化尾行。"""
+    for line in reversed(str(text or "").splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            got = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(got, dict):
+            return got
+    return None
+
+
+def _registered_projects():
+    try:
+        import project_router
+        return [{"name": str(p.get("name") or ""),
+                 "root": str(p.get("root") or "")}
+                for p in project_router.load_registry()
+                if p.get("name")]
+    except Exception:
+        return []
+
+
+def _global_routing_summary():
+    """全局待路由箱的三态摘要：ok 有明确计数，unknown 绝不冒充 0。"""
+    projects = _registered_projects()
+    try:
+        import project_router
+        path = project_router.routing_inbox_path()
+        if not path.exists():
+            return {"status": "ok", "count": 0, "items": [],
+                    "projects": projects, "path": str(path),
+                    "text": "全局待路由箱为空"}
+        pending = project_router.pending_routing_records(path)
+        items = []
+        for item in pending:
+            row = item.get("record") or {}
+            items.append({
+                "index": item.get("index"),
+                "fingerprint": item.get("fingerprint"),
+                "ts": row.get("ts"),
+                "text": str(row.get("text") or ""),
+                "candidates": [c.get("name") for c in (row.get("candidates") or [])
+                               if isinstance(c, dict) and c.get("name")],
+            })
+        count = len(items)
+        return {"status": "ok", "count": count, "items": items,
+                "projects": projects, "path": str(path),
+                "text": ("全局待路由 %d 条待复核" % count) if count
+                        else "全局待路由箱为空"}
+    except Exception as exc:
+        return {"status": "unknown", "count": None, "items": [],
+                "projects": projects, "error": str(exc),
+                "text": "全局待路由箱取不到；不会当成 0 条"}
+
+
 def truthctl(*args, extra_env=None):
     return _run([str(_live_ops() / "truthctl.py"), *args], extra_env)
 
@@ -875,6 +934,26 @@ TOOLS = [
         "name": "sync_control_plane",
         "description": "自动挡主循环：路由 inbox 到固定泳道 -> 刷新项目真相 -> 刷新控制看板 -> 落盘真相层 -> 给出下一步。用户一次抛了多条需求后调用。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "routing_review_list",
+        "description": "只读列出全局待路由箱里仍未复核指派的投稿。它不等于 route_inbox：后者是把当前项目 inbox 落到泳道，这里只处理跨项目判不清归属的原始记录。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "routing_review_assign",
+        "description": "把一条全局待路由投稿显式指派给某个项目。默认预演不写账本；只有同时给出 fingerprint、project、confirm=true 才追加目标项目 inbox 和复核凭证，原始待路由记录不删不改。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "fingerprint": {"type": "string", "description": "routing_review_list 返回的稳定指纹"},
+                "project": {"type": "string", "description": "注册项目名、别名或状态根路径；歧义会拒绝，绝不取第一个"},
+                "reason": {"type": "string", "description": "复核依据，写进 append-only 凭证"},
+                "confirm": {"type": "boolean", "description": "true 才真正追加；缺省或 false 只预演"},
+            },
+            "required": ["fingerprint", "project"],
+            "additionalProperties": False,
+        },
     },
     {
         "name": "route_inbox",
@@ -2435,8 +2514,8 @@ def _answer_needed_count():
 
     这些需求没进任何项目账本，只在待路由箱里——面板必须让它们露面，否则等于丢了。
     已复核并写进目标项目的记录留原始凭证不删，但不再占用用户注意力；同一句诉求
-    反复投递也只算一项。取不到一律回 0，宁可少报一项，也不要虚报。
-    取不到一律回 0：宁可少报一项「等你答一句」，也不要因为读不到就把现场说成有事。
+    反复投递也只算一项。取不到回 None，绝不成 0：面板要显示「取不到」，
+    不能把失明说成没有待复核项。
     """
     try:
         import project_router
@@ -2445,7 +2524,7 @@ def _answer_needed_count():
             return 0
         return len(project_router.pending_routing_records(path))
     except Exception:
-        return 0
+        return None
 
 
 def _active_judgments(limit=12):
@@ -2639,6 +2718,14 @@ def _status_payload(fast=True):
                 "reasons": [],
                 "action": "none",
             },
+            "global_routing": {
+                "status": "unknown",
+                "count": None,
+                "items": [],
+                "projects": [],
+                "error": "安装绑定失效",
+                "text": "全局待路由箱取不到：安装绑定失效",
+            },
             "runtime_freshness": {
                 "status": "ok",
                 "level": "unknown",
@@ -2710,6 +2797,7 @@ def _status_payload(fast=True):
                           if k not in overlap_holds}
     stuck_n = len(failures) + len(blocked) + len(exec_blocked_stuck)
     review_n = len(board["human"])
+    global_routing = _global_routing_summary()
     stage = stage_table.panel_stage({
         "error": ctrl.get("error"),
         "enabled": enabled,
@@ -2717,7 +2805,7 @@ def _status_payload(fast=True):
         "exec_running": bool(exec_now),
         "blocked_count": blocked_n,
         "review_count": review_n,
-        "answer_count": _answer_needed_count(),
+        "answer_count": global_routing.get("count"),
         "daemon_live": bool(live),
         "daemon_other_project": bool(
             job_running and daemon_project and daemon_project != current_project),
@@ -2783,6 +2871,12 @@ def _status_payload(fast=True):
         need_action = f"需要你拍板：{failures[0]['target']}（{failures[0]['kind']}）"
     elif board["human"]:
         need_action = f"需要你验收：{board['human'][0].get('title') or '请打开面板查看验收步骤'}"
+    elif global_routing.get("status") == "ok" and int(global_routing.get("count") or 0) > 0:
+        need_action = f"需要你复核：全局待路由 {global_routing['count']} 条判不清归属的需求"
+        need_action_detail = (
+            "这些原始投稿没有进任何项目账本。确认指派只会追加目标项目 inbox 和复核凭证，"
+            "原始待路由记录不删不改；不确认就继续留在这条提醒里。"
+        )
     elif ctrl.get("error"):
         need_action = "控制文件异常，去高级面板看一眼或恢复默认"
     else:
@@ -2909,6 +3003,8 @@ def _status_payload(fast=True):
         "self_check_count": board["self_check_count"],
         "machine_verified": board["machine"],
         "human_accepted_count": board["human_done_count"],
+        # 全局待路由箱是跨项目的，不属于当前绑定项目；状态摘要与面板复核区同源。
+        "global_routing": global_routing,
         # stage_table 的同一个结论：面板拿它填格子与状态，不必再自己算一遍。
         "stage": stage["stage"],
         "stage_owner": stage["owner"],
@@ -3138,7 +3234,11 @@ def call_tool(name, args):
         "harness_tune_list", "constraint_candidates_list", "context_archive",
         "acceptance_criteria_list", "route_preview",
         "followup_list",
+        "routing_review_list",
     }
+    # 预演不写盘，但确认指派是可写动作；因此它走自己的显式 guard，不能塞进
+    # 上面的 read_only_tools，也不能让通用 guard 连预演一起拦掉。
+    explicit_guard_tools = {"routing_review_assign"}
     control_tools = {
         "autopilot_control", "autopilot_run_once",
         "autopilot_settings_update",
@@ -3208,7 +3308,7 @@ def call_tool(name, args):
             return {"code": "CODEX_NATIVE_UNAVAILABLE", "message": error}, 2
         control_state.append_event("codex_native", action=name, result=result)
         return result, 0
-    if name not in read_only_tools | control_tools:
+    if name not in read_only_tools | explicit_guard_tools | control_tools:
         guard = control_state.mutation_guard()
         if guard:
             return guard, 2
@@ -3245,6 +3345,40 @@ def call_tool(name, args):
         if guard:
             return guard, 2
         return kgctl("route", *(["--go"] if args.get("confirm") else []))
+    if name == "routing_review_list":
+        summary = _global_routing_summary()
+        return {"status": summary["status"], "count": summary["count"],
+                "items": summary["items"], "projects": summary["projects"],
+                "path": summary.get("path"), "error": summary.get("error"),
+                "__text__": summary["text"]}, 0
+    if name == "routing_review_assign":
+        fingerprint = str(args.get("fingerprint") or "").strip()
+        project = str(args.get("project") or "").strip()
+        reason = str(args.get("reason") or "").strip()
+        if not fingerprint or not project:
+            return {"code": "ROUTING_REVIEW_FIELDS_REQUIRED",
+                    "message": "指派必须同时给出 fingerprint 和 project；"
+                               "先用 routing_review_list 看指纹。",
+                    "__text__": "指派缺少指纹或项目；没有写任何账本。"}, 2
+        confirmed = bool(args.get("confirm"))
+        argv = ["route-inbox", "--fingerprint", fingerprint,
+                "--project", project, "--reason",
+                reason or "面板复核确认归属", "--json"]
+        if confirmed:
+            guard = control_state.mutation_guard()
+            if guard:
+                return guard, 2
+            argv.append("--go")
+        raw, code = kgctl(*argv)
+        data = _json_line(raw)
+        if code == 0 and isinstance(data, dict):
+            written = bool(data.get("written"))
+            return {**data,
+                    "__text__": ("已追加复核凭证；原待路由记录未删未改。"
+                                 if written else
+                                 "预演完成，未写任何账本；确认后才追加。")}, 0
+        return {"code": "ROUTING_REVIEW_ASSIGN_FAILED",
+                "message": raw, "__text__": "指派未完成：" + str(raw)[:300]}, code or 2
     if name == "next_actions":
         return truthctl("next")
     if name == "product_state":

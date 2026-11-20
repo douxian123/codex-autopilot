@@ -473,6 +473,10 @@
       <summary>系统为什么这么判断</summary>
       <div class="foldbody"><div class="sysline" id="systemDetail">正在读取运行指标…</div></div>
     </details>
+    <details class="card fold" id="globalRoutingFold" hidden>
+      <summary id="globalRoutingSummary">全局待路由</summary>
+      <div class="foldbody"><div id="globalRoutingBox"></div></div>
+    </details>
   </section>
 
   <section class="q" id="q3">
@@ -809,6 +813,7 @@
       var icn = box.querySelector(".al-ic"); if (icn) icn.innerHTML = IC_WARN;
       var tx = box.querySelector(".al-tx"); if (tx) tx.textContent = "读不到自动挡状态：" + reason;
     }
+    var routingFold = el("globalRoutingFold"); if (routingFold) routingFold.hidden = true;
     var en = el("execNow"); if (en) en.hidden = true;
   }
 
@@ -861,6 +866,7 @@
     setText("statusTime", "更新于 " + fmtTime(s.generated_at));
     renderNorthStar(s.closure_rate);
     setAlert(s);
+    renderGlobalRouting(s.global_routing);
     renderExecNow(s.exec_now);
     var c = s.counters || {};
     num("cReceived", c.received); num("cLanded", c.landed); num("cResolved", c.resolved);
@@ -1099,6 +1105,107 @@
       li.appendChild(dot); li.appendChild(tx); strip.appendChild(li);
     });
     box.appendChild(strip);
+  }
+
+  // 全局待路由箱不属于当前项目，所以只在真有未复核项时出现；0 条不占首屏，
+  // 取不到则明确说取不到。指派默认预演，只有第二个按钮带 confirm=true。
+  function renderGlobalRouting(gr){
+    var fold = el("globalRoutingFold"); if (!fold) return;
+    var box = el("globalRoutingBox");
+    var summary = el("globalRoutingSummary");
+    if (!gr || gr.status === "unknown"){
+      fold.hidden = false;
+      if (summary) summary.textContent = "全局待路由取不到";
+      if (box) {
+        box.innerHTML = "";
+        var warn = document.createElement("div");
+        warn.className = "empty";
+        warn.textContent = (gr && gr.text) || "全局待路由箱取不到；不会当成 0 条。";
+        box.appendChild(warn);
+      }
+      return;
+    }
+    if (gr.status !== "ok" || typeof gr.count !== "number"){
+      fold.hidden = true;
+      return;
+    }
+    if (!gr.count){
+      fold.hidden = true;
+      if (summary) summary.textContent = "全局待路由";
+      if (box) box.innerHTML = "";
+      return;
+    }
+    fold.hidden = false;
+    if (summary) summary.textContent = "全局待路由 " + gr.count + " 条待复核";
+    if (!box) return;
+    box.innerHTML = "";
+    var note = document.createElement("div");
+    note.className = "meta";
+    note.textContent = "这些原始投稿没有进任何项目账本。确认只追加目标项目 inbox 和复核凭证，不改原始记录；预演不写任何账本。";
+    box.appendChild(note);
+    (gr.items || []).forEach(function(item){
+      var row = document.createElement("div");
+      row.className = "steward-summary";
+      row.style.marginTop = "10px";
+      var title = document.createElement("div");
+      title.textContent = (item.text || "未命名投稿")
+        + ((item.candidates && item.candidates.length)
+           ? "（候选：" + item.candidates.join("、") + "）" : "");
+      title.title = "指纹 " + (item.fingerprint || "取不到");
+      row.appendChild(title);
+
+      var preferred = (item.candidates || [])[0]
+        || ((gr.projects || [])[0] || {}).name || "";
+      var select = document.createElement("select");
+      select.value = preferred;
+      (gr.projects || []).forEach(function(p){
+        var option = document.createElement("option");
+        option.value = p.name;
+        option.textContent = p.name;
+        select.appendChild(option);
+      });
+      row.appendChild(select);
+
+      var reason = document.createElement("input");
+      reason.type = "text";
+      reason.value = "面板复核确认归属";
+      reason.title = "复核依据会写进 append-only 凭证";
+      row.appendChild(reason);
+
+      [false, true].forEach(function(confirmed){
+        var btn = document.createElement("button");
+        btn.className = confirmed ? "btn primary" : "btn";
+        btn.type = "button";
+        btn.textContent = confirmed ? "确认指派" : "预演指派";
+        btn.addEventListener("click", function(){
+          var project = select.value || preferred;
+          if (!project || !item.fingerprint){
+            toast("这条缺指纹或可选项目，不能指派", "err");
+            return;
+          }
+          btn.disabled = true;
+          var old = btn.textContent;
+          btn.textContent = confirmed ? "正在写入…" : "正在预演…";
+          callTool("routing_review_assign", {
+            fingerprint: item.fingerprint,
+            project: project,
+            reason: reason.value || "面板复核确认归属",
+            confirm: confirmed,
+          }).then(function(res){
+            toast((res && res.__text__) || "已完成", "ok");
+            if (confirmed) return loadStatus(false);
+            return null;
+          }).catch(function(e){
+            toast("操作失败：" + (e && e.message || e), "err");
+          }).then(function(){
+            btn.disabled = false;
+            btn.textContent = old;
+          });
+        });
+        row.appendChild(btn);
+      });
+      box.appendChild(row);
+    });
   }
 
   // PM 简报：预期磨到哪、谁给谁让路、哪条该追进度。候选只照抄控制层结论；

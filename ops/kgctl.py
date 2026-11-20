@@ -1571,13 +1571,15 @@ def cmd_route_inbox(args):
     """
     if args and args[0] in ('-h', '--help'):
         print('用法：kgctl route-inbox '
-              '[--fingerprint <指纹> --project <项目名> [--reason "为什么"]] [--go]')
+              '[--fingerprint <指纹> --project <项目名> [--reason "为什么"]] [--go] [--json]')
         print('  kgctl route-inbox                  # 只读列出待复核项')
+        print('  kgctl route-inbox --json           # 只读清单，输出机器可解析 JSON')
         print('  kgctl route-inbox --fingerprint a1b2 --project knowledge-graph '
               '--reason "原话点名知识图谱" --go')
         return 0
     go = '--go' in args
-    rest = [a for a in args if a != '--go']
+    json_out = '--json' in args
+    rest = [a for a in args if a not in ('--go', '--json')]
     fingerprint, project_hint, reason = None, None, ''
     i = 0
     while i < len(rest):
@@ -1598,7 +1600,28 @@ def cmd_route_inbox(args):
     pending = project_router.pending_routing_records(path)
     if not project_hint and not fingerprint:
         if not pending:
+            if json_out:
+                print(json.dumps({"status": "ok", "count": 0, "items": [],
+                                  "path": str(path)}, ensure_ascii=False))
+                return 0
             print('全局待路由箱为空（没有待复核项）。')
+            return 0
+        if json_out:
+            items = []
+            for item in pending:
+                row = item["record"]
+                candidates = [c.get('name') for c in (row.get('candidates') or [])
+                              if isinstance(c, dict) and c.get('name')]
+                items.append({
+                    "index": item["index"],
+                    "fingerprint": item["fingerprint"],
+                    "ts": row.get('ts'),
+                    "text": str(row.get('text') or ''),
+                    "candidates": candidates,
+                })
+            print(json.dumps({"status": "ok", "count": len(items),
+                              "items": items, "path": str(path)},
+                             ensure_ascii=False))
             return 0
         print(f'全局待路由箱 {len(pending)} 条待复核：{path}')
         for item in pending:
@@ -1635,6 +1658,12 @@ def cmd_route_inbox(args):
     print(f'理由：{reason or "人工复核确认归属"}')
     if not go:
         print('\n预演：未写任何账本。确认后加 --go。')
+        if json_out:
+            print(json.dumps({"status": "ok", "written": False,
+                              "fingerprint": fingerprint,
+                              "project": pinned["name"],
+                              "reason": reason or '人工复核确认归属'},
+                             ensure_ascii=False))
         return 0
 
     source = item['record']
@@ -1662,6 +1691,14 @@ def cmd_route_inbox(args):
     print(f'已追加到 {target_inbox}')
     print(f'复核凭证已追加（原记录不回写、不删除）：{review_path}')
     print('只追加到目标项目唯一入口；归类由目标项目自己的 tick / route 处理。')
+    if json_out:
+        print(json.dumps({"status": "ok", "written": True,
+                          "fingerprint": fingerprint,
+                          "project": pinned["name"],
+                          "reason": reason or '人工复核确认归属',
+                          "target_inbox": str(target_inbox),
+                          "review_path": str(review_path)},
+                         ensure_ascii=False))
     return 0
 
 

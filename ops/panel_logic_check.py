@@ -194,6 +194,15 @@ var followCancelButton = findButton(document.getElementById("pmBriefingBox"), "�
 if (followCancelButton) {
   followCancelButton._clickHandlers.slice().forEach(function (fn) { fn(); });
 }
+// 全局待路由确认按钮必须真的发出 confirm=true；预演按钮不能带 confirm。
+var routingConfirmButton = findButton(document.getElementById("globalRoutingBox"), "确认指派");
+if (routingConfirmButton) {
+  routingConfirmButton._clickHandlers.slice().forEach(function (fn) { fn(); });
+}
+var routingPreviewButton = findButton(document.getElementById("globalRoutingBox"), "预演指派");
+if (routingPreviewButton) {
+  routingPreviewButton._clickHandlers.slice().forEach(function (fn) { fn(); });
+}
 
 const read = function (id) { return document.getElementById(id).textContent; };
 console.log(JSON.stringify({
@@ -223,6 +232,12 @@ console.log(JSON.stringify({
   followupCancelCalls: toolCalls.filter(function (c) {
     return c.name === "followup_cancel";
   }).map(function (c) { return c.arguments || {}; }),
+  routingAssignCalls: toolCalls.filter(function (c) {
+    return c.name === "routing_review_assign";
+  }).map(function (c) { return c.arguments || {}; }),
+  globalRoutingFoldHidden: document.getElementById("globalRoutingFold").hidden,
+  globalRoutingSummary: read("globalRoutingSummary"),
+  globalRoutingBox: read("globalRoutingBox"),
   projectLine: read("projectLine"),
   projectTitle: document.getElementById("projectLine").title,
   hierarchyProject: read("hierProject"),
@@ -396,6 +411,35 @@ def main(argv):
             return "等待下一条需求"
 
         fails = 0
+        routing = payload.get("global_routing") or {}
+        if routing.get("status") == "ok" and routing.get("count"):
+            fails += has("全局待路由提醒显示条数", out["globalRoutingSummary"],
+                         "全局待路由 " + str(routing["count"]) + " 条待复核")
+            fails += has("全局待路由说明只追加不改原文", out["globalRoutingBox"],
+                         "不改原始记录", "预演不写任何账本")
+            calls = out.get("routingAssignCalls") or []
+            confirmed = [c for c in calls if c.get("confirm") is True]
+            previewed = [c for c in calls if c.get("confirm") is False]
+            if confirmed and previewed:
+                print("  PASS  全局待路由预演与确认分别接线")
+            else:
+                print(f"  FAIL  全局待路由预演与确认分别接线 {calls}")
+                fails += 1
+            for c in calls:
+                if c.get("fingerprint") and c.get("project"):
+                    continue
+                print(f"  FAIL  全局待路由指派缺指纹或项目 {c}")
+                fails += 1
+                break
+        elif routing.get("status") == "unknown":
+            fails += has("全局待路由取不到时明说", out["globalRoutingSummary"], "取不到")
+        else:
+            if out.get("globalRoutingFoldHidden") is False:
+                print("  FAIL  没有待复核项时全局待路由区不应占首屏")
+                fails += 1
+            else:
+                print("  PASS  没有待复核项时全局待路由区不占首屏")
+
         if not quiet:
             print("Codex 自动挡 面板首屏逻辑检查")
         fails += has("首屏区分主入口、执行入口与兜底入口", out["entryMap"],
