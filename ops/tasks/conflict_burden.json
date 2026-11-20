@@ -1,15 +1,11 @@
 {
- "main": "bf862e9b0e0e4805fd0146feda52a35c48865ddc",
+ "main": "5ee2b78610abe24a0f864ea782fbfa293b8dab32",
  "branches": [
   "codex/autopilot-truth-sync-failclosed",
-  "codex/guard-release-version-20261119",
-  "codex/reap-branch-preserve-20261111",
-  "codex/resource-admission-verify-narrowing-20261115"
+  "codex/guard-release-version-20261119"
  ],
  "burden": {
   "codex/autopilot-truth-sync-failclosed": 2,
-  "codex/guard-release-version-20261119": 1,
-  "codex/reap-branch-preserve-20261111": 2,
-  "codex/resource-admission-verify-narrowing-20261115": 1
+  "codex/guard-release-version-20261119": 1
  }
 }

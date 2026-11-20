@@ -1459,6 +1459,98 @@ TOOLS = [
         "description": "PM 管家：只读查看追问授权账本摘要，区分 approved/sent/cancelled/failed；取不到就说取不到，不把不知道当成 0。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
+    {
+        "name": "pm_research_status",
+        "description": "PM 管家：查看竞品/开源研究与产品决策状态。只展示研究结论、等待确认和阻塞，不把没有证据误报成没有成熟方案。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"research_id": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "pm_research_request",
+        "description": "PM 管家：为一个产品诉求创建研究请求。研究由宿主或人工适配器提供证据；本工具不联网、不绑定搜索 provider。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "intent_id": {"type": "string"},
+                "question": {"type": "string"},
+                "scope": {"type": "array", "items": {"type": "string"}},
+                "research_level": {"type": "string", "enum": ["L0", "L1", "L2", "L3"]},
+                "risk_level": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+            },
+            "required": ["intent_id", "question"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "pm_research_evidence",
+        "description": "PM 管家：写入一个研究来源和证据摘要。来源必须可追溯；许可证未知时不能自动 Adopt。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "research_id": {"type": "string"},
+                "source_url": {"type": "string"},
+                "source_kind": {"type": "string"},
+                "title": {"type": "string"},
+                "claims": {"type": "array", "items": {"type": "string"}},
+                "license_status": {"type": "string"},
+                "maintenance_signal": {"type": "string"},
+                "relevance": {"type": "string"},
+                "confidence": {"type": "string"},
+                "notes": {"type": "string"},
+            },
+            "required": ["research_id", "source_url"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "pm_research_option",
+        "description": "PM 管家：登记候选方案及 Adopt/Adapt/Build/Defer/Reject 判断。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "research_id": {"type": "string"},
+                "name": {"type": "string"},
+                "disposition": {"type": "string", "enum": ["adopt", "adapt", "build", "defer", "reject"]},
+                "rationale": {"type": "string"},
+                "capabilities": {"type": "array", "items": {"type": "string"}},
+                "gaps": {"type": "array", "items": {"type": "string"}},
+                "license_status": {"type": "string"},
+                "confidence": {"type": "string"},
+                "selected": {"type": "boolean"},
+            },
+            "required": ["research_id", "name"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "pm_product_decide",
+        "description": "PM 管家：将研究候选写入既有决策台账。L3、高风险或许可证未知的 Adopt 必须 confirm=true；未批准不能施工。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "research_id": {"type": "string"},
+                "choice": {"type": "string", "enum": ["adopt", "adapt", "build", "defer", "reject"]},
+                "selected_option": {"type": "string"},
+                "why": {"type": "string"},
+                "alternatives": {"type": "array", "items": {"type": "string"}},
+                "confirm": {"type": "boolean"},
+            },
+            "required": ["research_id", "choice"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "pm_execution_gate",
+        "description": "PM 管家：检查一个工作项是否已有可执行的产品决策；没有决策或高风险未批准时 fail-closed。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"intent_id": {"type": "string"}, "research_id": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    },
 ]
 
 # 设置项：宿主在插件设置页用原生控件渲染，本 server 负责读值、写值、持久化。
@@ -3138,6 +3230,7 @@ def call_tool(name, args):
         "harness_tune_list", "constraint_candidates_list", "context_archive",
         "acceptance_criteria_list", "route_preview",
         "followup_list",
+        "pm_research_status", "pm_execution_gate",
     }
     control_tools = {
         "autopilot_control", "autopilot_run_once",
@@ -3468,6 +3561,60 @@ def call_tool(name, args):
         except followup.AuthorizationError as exc:
             return {"code": "FOLLOWUP_CANCEL_REJECTED", "message": str(exc)}, 2
         return {"__text__": "已撤销未发送的追问授权；历史授权记录保留。", **res}, 0
+    if name in {"pm_research_status", "pm_execution_gate", "pm_research_request",
+                "pm_research_evidence", "pm_research_option", "pm_product_decide"}:
+        import pm_decision
+        import research
+        root = Path(os.environ.get("KG_REPO") or _fallback_repo())
+        try:
+            if name == "pm_research_status":
+                rid = (args.get("research_id") or "").strip()
+                result = (pm_decision.brief(root) if not rid else {
+                    "research": research.summary(root, rid),
+                    "recommendation": pm_decision.recommendation(root, rid),
+                    "gate": pm_decision.execution_gate(root, research_id=rid),
+                })
+                return result, 0
+            if name == "pm_execution_gate":
+                return pm_decision.execution_gate(
+                    root, intent_id=args.get("intent_id"), research_id=args.get("research_id")), 0
+            if name == "pm_research_request":
+                result = research.create_request(
+                    root, intent_id=args.get("intent_id"), question=args.get("question"),
+                    scope=args.get("scope") or [], research_level=args.get("research_level") or "L2",
+                    risk_level=args.get("risk_level") or "medium", source="mcp")
+                return result, 0
+            if name == "pm_research_evidence":
+                result = research.add_evidence(
+                    root, research_id=args.get("research_id"), source_url=args.get("source_url"),
+                    source_kind=args.get("source_kind") or "unknown", title=args.get("title") or "",
+                    claims=args.get("claims") or [], license_status=args.get("license_status") or "unknown",
+                    maintenance_signal=args.get("maintenance_signal") or "unknown",
+                    relevance=args.get("relevance") or "unknown", confidence=args.get("confidence") or "unknown",
+                    notes=args.get("notes") or "", source="mcp")
+                return result, 0
+            if name == "pm_research_option":
+                result = research.add_option(
+                    root, research_id=args.get("research_id"), name=args.get("name"),
+                    disposition=args.get("disposition") or "adapt", rationale=args.get("rationale") or "",
+                    capabilities=args.get("capabilities") or [], gaps=args.get("gaps") or [],
+                    license_status=args.get("license_status") or "unknown",
+                    confidence=args.get("confidence") or "unknown", selected=bool(args.get("selected")),
+                    source="mcp")
+                return result, 0
+            recommendation = pm_decision.recommendation(
+                root, args.get("research_id"))
+            needs_confirmation = recommendation.get("approval_mode") == "user_required"
+            if needs_confirmation and not bool(args.get("confirm")):
+                return {"code": "PM_DECISION_CONFIRM_REQUIRED",
+                        "message": "产品决策需要 confirm=true；未确认不能进入施工。"}, 2
+            result = pm_decision.decide(
+                root, research_id=args.get("research_id"), choice=args.get("choice"),
+                selected_option=args.get("selected_option") or "", why=args.get("why") or "",
+                alternatives=args.get("alternatives") or [], approved=bool(args.get("confirm")), source="mcp")
+            return result, 0
+        except (TypeError, ValueError) as exc:
+            return {"code": "PM_RESEARCH_INVALID", "message": str(exc)}, 2
     if name == "suggest_branch":
         return kgctl("suggest")
     if name == "route_preview":

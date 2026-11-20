@@ -82,6 +82,7 @@ import constraints as constraints_mod  # noqa: E402
 import central_config  # noqa: E402
 import relationship_ledger  # noqa: E402
 import acceptance_criteria_compiler  # noqa: E402
+import pm_decision  # noqa: E402
 
 # 自包含安装下，绑定的项目写在插件 .mcp.json 里；显式 KG_REPO 优先。
 apply_plugin_env()
@@ -533,10 +534,9 @@ def cmd_promote(args):
     if n < 1 or n > len(items):
         sys.exit(f'inbox 只有 {len(items)} 条，序号 {n} 越界')
     it = items[n - 1]
-    rec = _append_new('ledger', kind=kind, title=it.get('text', '')[:80],
-                      detail=it.get('text', ''), status='open',
-                      lane=it.get('lane'), files=it.get('files') or [],
-                      source=f"inbox#{n}")
+    rec = _append_ledger_with_pm(
+        kind, it.get('text', '')[:80], it.get('text', ''), it.get('files') or [],
+        f"inbox#{n}", it.get('lane'))
     # 回写 inbox 的 routed 标记
     items[n - 1]['routed'] = True
     items[n - 1]['ledger_id'] = rec['id']
@@ -644,12 +644,59 @@ def infer_lane(kind: str, text: str, files) -> str:
 
 
 def _append_ledger(kind, title, detail, files, source, lane,
-                   acceptance_plan=None) -> dict:
+                   acceptance_plan=None, pm_research=None) -> dict:
     fields = {'kind': kind, 'title': title, 'detail': detail,
               'status': 'open', 'lane': lane, 'files': files or [], 'source': source}
     if acceptance_plan is not None:
         fields['acceptance_plan'] = acceptance_plan
+    if pm_research is not None:
+        fields['pm_research'] = pm_research
     return _append_new('ledger', **fields)
+
+
+def _append_ledger_with_pm(kind, title, detail, files, source, lane,
+                           acceptance_plan=None) -> dict:
+    """一次写入 ledger 与 PM 绑定，保持稳定 intent_id 且不制造重复工作项。"""
+    with _truth_lock():
+        rec = {'id': _next_id('ledger'), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
+               'type': 'ledger', 'kind': kind, 'title': title, 'detail': detail,
+               'status': 'open', 'lane': lane, 'files': files or [], 'source': source}
+        if acceptance_plan is not None:
+            rec['acceptance_plan'] = acceptance_plan
+        rec.update(_pm_fields(_pm_research_for_ledger(rec, source=source)))
+        _append(rec)
+        return rec
+
+
+def _pm_research_for_ledger(rec, source='route') -> dict:
+    """为新工作项创建 PM 研究请求；研究只挂到 ledger，不替用户做决策。
+
+    这是 route 的写入阶段才调用的副作用。预演仍然只显示分级，不创建 research.jsonl，
+    这样「看一眼会怎么路由」不会污染项目真相。
+    """
+    try:
+        return pm_decision.ensure_for_ledger(
+            REPO, ledger_id=rec.get('id'), title=rec.get('title') or rec.get('detail'),
+            kind=rec.get('kind') or 'unknown', files=rec.get('files') or [],
+            project_id=os.environ.get('KG_TRUTH_PROJECT_ID'), source=source)
+    except Exception as exc:
+        # 研究模块失效不能阻塞原有唯一入口；保留可见的 unknown，后续 PM 简报会如实报错。
+        return {'status': 'unknown', 'error': str(exc),
+                'framing': {'research_level': 'unknown', 'needs_research': None}}
+
+
+def _pm_fields(result: dict) -> dict:
+    """把 PM 研究请求投影到首次 ledger 记录，避免为同一工作项制造重复行。"""
+    if not result or result.get('status') in ('not_required', 'unknown'):
+        return {}
+    request = result.get('request') or {}
+    fields = {'pm_research': {
+        'status': result.get('status'),
+        'research_id': request.get('research_id'),
+        'research_level': (result.get('framing') or {}).get('research_level'),
+        'risk_level': (result.get('framing') or {}).get('risk_level'),
+    }}
+    return fields if fields['pm_research']['research_id'] else {}
 
 
 def _compile_acceptance_plan(text, kind, files, lane) -> dict:
@@ -813,9 +860,9 @@ def cmd_route(args):
                     for rec in rows:
                         fh.write(json.dumps(rec, ensure_ascii=False) + '\n')
         else:
-            rec = _append_ledger(p['kind'], p['text'][:80].replace('\n', ' '),
-                                 p['text'], p['files'], f"inbox#{p['n']}", p['lane'],
-                                 acceptance_plan=p['acceptance_plan'])
+            rec = _append_ledger_with_pm(
+                p['kind'], p['text'][:80].replace('\n', ' '), p['text'], p['files'],
+                f"inbox#{p['n']}", p['lane'], acceptance_plan=p['acceptance_plan'])
             it['lane'], it['ledger_id'], it['routed'] = rec['lane'], rec['id'], True
             made.append(rec['id'])
     merged = 0
