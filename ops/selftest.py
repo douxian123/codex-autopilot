@@ -301,6 +301,8 @@ def main():
         # 「判不清时悄悄猜」——插件 .mcp.json 写死一个 KG_REPO，于是用户在 A 项目
         # 窗口里说 B 项目的事，记录照样落进 A（2026-11-16 用户实测的 bug）。
         # 这条门禁锁住：分层证据有序、近似并列不猜、判不清时任何项目账本都不许写。
+        run([sys.executable, str(OPS / "test-request-context.py")],
+            cwd=str(OPS.parent), check=True)
         run([sys.executable, str(OPS / "test-project-router.py")],
             cwd=str(OPS.parent), check=True,
             env={**os.environ, "KG_AUTOPILOT_HOME": str(root / "autopilot-home")})
@@ -7986,128 +7988,6 @@ def test_human_verdict_close_gate():
           "机器可证的 bug 仍直达 done，自动派发闭环未被打断。")
 
 
-def test_product_eval():
-    """对外发布评估闭环：五条判据必须能红、能绿，且阴性对照全部按预期变红。
-
-    本项目踩过的坑：所有开关全绿、面板显示「后台常驻=开」，但插件 .mcp.json 把
-    KG_REPO 指到一个空目录，真实项目里一条需求都没落 —— 装上跟没装一样。这类失效
-    不会抛异常，只会「静默地什么都不干」，所以评估本身必须是一个闭环：
-      1. 每条判据都配阴性对照，喂坏现场必须变红（不然判据等于没写）；
-      2. 好现场必须能绿（不然判据太吵，没人信）；
-      3. 结论收敛成一份会红的认证物，差哪几条、差多少都写清楚。
-    全程在临时目录里造现场，绝不碰真实安装 / 真实项目 / 真实 launchd。
-    """
-    import importlib
-    import json as _json
-
-    ops = Path(__file__).resolve().parent
-    if str(ops) not in sys.path:
-        sys.path.insert(0, str(ops))
-    import product_eval
-    importlib.reload(product_eval)
-
-    # 1) 阴性对照：五条判据喂已知坏现场，必须全部变红。
-    rows = product_eval.negative_controls()
-    assert len(rows) >= 5, rows
-    bad = [c for c, ok, _n in rows if not ok]
-    assert not bad, f"这些判据的阴性对照没能变红，等于判据失效：{bad}"
-
-    with tempfile.TemporaryDirectory(prefix="product-eval-test-") as tmp:
-        tmp = Path(tmp)
-
-        # 2) 判据 1：好安装目录必须绿，缺文件必须红。
-        good_install = tmp / "install-good"
-        rel = good_install / "releases" / "1.2.3"
-        for sub in ("ops", ".codex-plugin", "skills"):
-            (rel / sub).mkdir(parents=True, exist_ok=True)
-        (rel / "ops" / "central_mcp.py").write_text("# fake\n", encoding="utf-8")
-        (rel / ".mcp.json").write_text("{}", encoding="utf-8")
-        (rel / ".codex-plugin" / "plugin.json").write_text("{}", encoding="utf-8")
-        (good_install / "install-state.json").write_text(
-            _json.dumps({"version": "1.2.3"}), encoding="utf-8")
-        assert product_eval.crit_installable(good_install)["status"] == "pass"
-        broken = tmp / "install-broken"
-        (broken / "releases" / "1.2.3").mkdir(parents=True)
-        (broken / "install-state.json").write_text(
-            _json.dumps({"version": "1.2.3"}), encoding="utf-8")
-        assert product_eval.crit_installable(broken)["status"] == "fail"
-
-        # 3) 判据 3：绑定到真实期望仓库必须绿；绑到别处必须红。
-        real_repo = tmp / "real-repo"
-        real_repo.mkdir()
-        (real_repo / "ops" / "tasks").mkdir(parents=True)
-        (real_repo / "ops" / "truth").mkdir(parents=True)
-        run(["git", "init", "-q", "-b", "main", str(real_repo)])
-        git(real_repo, "config", "user.email", "t@example.com")
-        git(real_repo, "config", "user.name", "t")
-        (real_repo / "app.txt").write_text("x\n", encoding="utf-8")
-        git(real_repo, "add", "app.txt")
-        git(real_repo, "commit", "-q", "-m", "init")
-        ci = tmp / "install-bound"
-        crel = ci / "releases" / "1.2.3"
-        crel.mkdir(parents=True)
-        (ci / "install-state.json").write_text(
-            _json.dumps({"version": "1.2.3"}), encoding="utf-8")
-        (crel / ".mcp.json").write_text(_json.dumps({"mcpServers": {
-            "codex-autopilot": {"env": {"KG_REPO": str(real_repo)}}}}),
-            encoding="utf-8")
-        ok = product_eval.crit_targets(ci, expected_repo=str(real_repo))
-        assert ok["status"] == "pass", ok
-        wr = product_eval.crit_targets(ci, expected_repo=str(tmp / "other"))
-        assert wr["status"] == "fail", wr
-
-        # 4) 判据 4：好台账绿；全 open 红；台账缺失红（取不到分母，不是 0%）。
-        proj = tmp / "proj"
-        (proj / "ops" / "truth").mkdir(parents=True)
-        (proj / "ops" / "truth" / "ledger.jsonl").write_text("\n".join(
-            _json.dumps({"id": "L-%04d" % i, "type": "ledger",
-                         "status": "done",
-                         "evidence": "cmd -> exit 0"}) for i in range(8)) + "\n",
-            encoding="utf-8")
-        assert product_eval.crit_effective(proj)["status"] == "pass"
-        (proj / "ops" / "truth" / "ledger.jsonl").write_text("\n".join(
-            _json.dumps({"id": "L-%04d" % i, "type": "ledger",
-                         "status": "open"}) for i in range(8)) + "\n",
-            encoding="utf-8")
-        assert product_eval.crit_effective(proj)["status"] == "fail"
-
-        # 5) 判据 5：三线一致 + 有回滚点才绿。
-        vi = tmp / "install-v"
-        (vi / "releases" / "1.2.3").mkdir(parents=True)
-        (vi / "releases" / "1.2.2").mkdir(parents=True)
-        (vi / "install-state.json").write_text(_json.dumps(
-            {"version": "1.2.3", "source_commit": git(real_repo, "rev-parse", "HEAD").stdout.strip(),
-             "previous_source": str(vi / "releases" / "1.2.2")}),
-            encoding="utf-8")
-        (tmp / "cache-v" / "1.2.3").mkdir(parents=True)
-        cok = product_eval.crit_consistent(vi, tmp / "cache-v", real_repo)
-        assert cok["status"] == "pass", cok
-
-        # 6) 认证物结构 + 人读报告必须带会红的结论。
-        import os as _os
-        saved = {k: _os.environ.get(k) for k in
-                 ("KG_EVAL_INSTALL_DIR", "KG_EVAL_CACHE_DIR", "KG_EVAL_TRUNK")}
-        try:
-            _os.environ["KG_EVAL_INSTALL_DIR"] = str(good_install)
-            _os.environ["KG_EVAL_CACHE_DIR"] = str(tmp / "cache-v")
-            _os.environ["KG_EVAL_TRUNK"] = str(real_repo)
-            cert = product_eval.certify(str(real_repo))
-            assert set(cert["summary"]) >= {"passed", "total", "failed",
-                                            "release_ready"}
-            assert cert["summary"]["total"] == 5
-            assert isinstance(cert["summary"]["release_ready"], bool)
-            text = product_eval.human_report(cert)
-            assert "对外发布评估" in text and "结论" in text, text
-            assert "不能对外" in text or "可以对外" in text, text
-        finally:
-            for k, v in saved.items():
-                if v is None:
-                    _os.environ.pop(k, None)
-                else:
-                    _os.environ[k] = v
-
-    print("selftest ok: 对外发布评估五条判据能红能绿，阴性对照 7/7 全部按预期变红。")
-
 if __name__ == "__main__":
     test_disk_reap_reaps_stale_code_sign_clones()
     main()
@@ -8192,10 +8072,7 @@ if __name__ == "__main__":
     test_mcp_contract()
     test_closure_rate()
     test_product_eval()
-<<<<<<< HEAD
     test_portable_serve_requires_token()
-=======
->>>>>>> codex/eval-loop-judge-20261110
     test_budget_gate()
     test_compact_session_logs_is_lossless_and_under_pressure_only()
     test_rotation_streaming()

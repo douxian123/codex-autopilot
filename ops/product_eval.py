@@ -71,7 +71,6 @@ def cache_dir() -> Path:
 
 
 def trunk_dir(repo=None) -> Path:
-<<<<<<< HEAD
     """判据 5 的「主干」是**插件自己**的落盘主干，不是被服务项目的。
 
     install-state.json 里的 source_commit 记的是插件源码仓库的提交
@@ -102,16 +101,10 @@ def trunk_dir(repo=None) -> Path:
         if t:
             return Path(t).expanduser()
     # 兜底：插件源码目录同级、名字加 -trunk（install.sh 的默认落盘主干位置）
-=======
-    env = os.environ.get("KG_EVAL_TRUNK") or os.environ.get("KG_TRUNK")
-    if env:
-        return Path(env).expanduser()
->>>>>>> codex/eval-loop-judge-20261110
     repo = Path(repo or DEFAULT_REPO).resolve()
     return repo.parent / (repo.name + "-trunk")
 
 
-<<<<<<< HEAD
 def bound_repo_from_mcp(idir=None) -> str:
     """读安装的 .mcp.json 里 KG_REPO —— 这是这套部署真正服务的项目。"""
     idir = Path(idir or install_dir())
@@ -152,8 +145,6 @@ def resolve_expected_repo(cli=None):
     return DEFAULT_REPO.resolve(), "代码目录（兜底，可能不是被服务的项目）"
 
 
-=======
->>>>>>> codex/eval-loop-judge-20261110
 def ev(argv, cwd=None, note=""):
     """跑一条只读命令，把证据压成固定结构。绝不抛异常，拿不到就是拿不到。"""
     argv = [str(a) for a in argv]
@@ -185,14 +176,11 @@ def _git_ok(args, cwd):
     return p.returncode == 0
 
 
-<<<<<<< HEAD
 def _remote_main_head(cwd):
     """发布提交必须能追到远端权威主干，不能只存在于本地 HEAD。"""
     return _git(["rev-parse", "--verify", "refs/remotes/origin/main"], cwd)
 
 
-=======
->>>>>>> codex/eval-loop-judge-20261110
 def _age_days(path: Path):
     try:
         return (time.time() - path.stat().st_mtime) / 86400.0
@@ -349,19 +337,11 @@ def crit_effective(repo=None):
 
 
 # ----------------------------------------------------------------- 判据 5
-<<<<<<< HEAD
 def crit_consistent(idir=None, cdir=None, trunk=None, repo=None):
     """5 一致可回滚：release / 缓存 / 本地主干 / 远端主干一致，且有旧版本。"""
     idir = Path(idir or install_dir())
     cdir = Path(cdir or cache_dir())
     trunk = Path(trunk or trunk_dir(repo))
-=======
-def crit_consistent(idir=None, cdir=None, trunk=None):
-    """5 一致可回滚：release / Codex 缓存 / 主干三处版本一致，且有旧版本。"""
-    idir = Path(idir or install_dir())
-    cdir = Path(cdir or cache_dir())
-    trunk = Path(trunk or trunk_dir())
->>>>>>> codex/eval-loop-judge-20261110
     evidence, shortfall = [], []
 
     try:
@@ -375,7 +355,6 @@ def crit_consistent(idir=None, cdir=None, trunk=None):
                   if cdir.is_dir() else [])
     cache_latest = cache_vers[-1] if cache_vers else None
     trunk_head = _git(["rev-parse", "HEAD"], trunk)
-<<<<<<< HEAD
     remote_head = _remote_main_head(trunk)
     evidence += [ev(["cat", str(idir / "install-state.json")]),
                  ev(["ls", str(cdir)], note="Codex 实际加载的缓存版本"),
@@ -384,11 +363,6 @@ def crit_consistent(idir=None, cdir=None, trunk=None):
         evidence.append(ev(
             ["git", "-C", str(trunk), "rev-parse", "--verify",
              "refs/remotes/origin/main"], cwd=trunk, note="远端权威主干"))
-=======
-    evidence += [ev(["cat", str(idir / "install-state.json")]),
-                 ev(["ls", str(cdir)], note="Codex 实际加载的缓存版本"),
-                 ev(["git", "-C", str(trunk), "log", "--oneline", "-1"], cwd=trunk)]
->>>>>>> codex/eval-loop-judge-20261110
 
     if not installed_v:
         shortfall.append("读不到安装版本")
@@ -406,7 +380,6 @@ def crit_consistent(idir=None, cdir=None, trunk=None):
                              % (trunk_head[:8], installed_c[:8]))
         elif ok is None:
             shortfall.append("无法判断主干是否包含已发布提交")
-<<<<<<< HEAD
     if installed_c:
         if not remote_head:
             shortfall.append("找不到远端权威主干 refs/remotes/origin/main，"
@@ -420,22 +393,15 @@ def crit_consistent(idir=None, cdir=None, trunk=None):
                                  % (remote_head[:8], installed_c[:8]))
             elif ok_remote is None:
                 shortfall.append("无法判断远端权威主干是否包含已发布提交")
-=======
->>>>>>> codex/eval-loop-judge-20261110
     if previous:
         prev_name = Path(str(previous).rstrip("/")).name
         if prev_name and not (idir / "releases" / prev_name).is_dir():
             shortfall.append("上一个版本目录不在，回滚没有落点：%s" % previous)
 
     status = "pass" if not shortfall else "fail"
-<<<<<<< HEAD
     detail = "安装 %s / 缓存 %s / 本地主干 %s / 远端主干 %s" % (
         installed_v, cache_latest, trunk_head[:8] or "?",
         remote_head[:8] or "缺失")
-=======
-    detail = "安装 %s / 缓存 %s / 主干 %s" % (installed_v, cache_latest,
-                                              trunk_head[:8] or "?")
->>>>>>> codex/eval-loop-judge-20261110
     return _result("consistent", "5 一致可回滚", status, evidence, detail, shortfall)
 
 
@@ -514,7 +480,6 @@ def negative_controls():
         r = crit_consistent(ci, tmp / "cache-v", tmp / "nodir")
         out.append(("5 一致可回滚(缓存落后)", r["status"] == "fail",
                     "缓存 0.0.8 vs 安装 0.0.9 -> %s" % r["status"]))
-<<<<<<< HEAD
 
         # 5b 已发布提交只在本地主干，不在远端权威主干：必须红。
         # 这是 L-0005 的真实失效形态：本地 main 有 release 提交，origin/main 没有。
@@ -553,26 +518,17 @@ def negative_controls():
         out.append(("5 一致可回滚(发布提交未进远端主干)", went_red,
                     "本地 HEAD %s 不在 refs/remotes/origin/main -> %s"
                     % (local_release[:8], r["status"])))
-=======
->>>>>>> codex/eval-loop-judge-20261110
     return out
 
 
 # ----------------------------------------------------------------- 认证物
 def certify(repo=None):
     """跑完五条判据，产出一份会红的认证物。只读。"""
-<<<<<<< HEAD
     repo, anchor_src = resolve_expected_repo(repo)
     frozen = {
         "evaluated_at": _now(),
         "expected_repo": str(repo),
         "expected_repo_source": anchor_src,
-=======
-    repo = Path(repo or DEFAULT_REPO).resolve()
-    frozen = {
-        "evaluated_at": _now(),
-        "expected_repo": str(repo),
->>>>>>> codex/eval-loop-judge-20261110
         "install_dir": str(install_dir()),
         "cache_dir": str(cache_dir()),
         "trunk": str(trunk_dir(repo)),
@@ -583,11 +539,7 @@ def certify(repo=None):
         crit_runnable(repo),
         crit_targets(expected_repo=repo),
         crit_effective(repo),
-<<<<<<< HEAD
         crit_consistent(repo=repo),
-=======
-        crit_consistent(),
->>>>>>> codex/eval-loop-judge-20261110
     ]
     controls = [{"criterion": c, "went_red": ok, "note": note}
                 for c, ok, note in negative_controls()]
@@ -609,17 +561,11 @@ def certify(repo=None):
 
 
 def human_report(cert):
-<<<<<<< HEAD
     src_note = cert["frozen"].get("expected_repo_source")
     lines = ["对外发布评估  %s" % cert["generated_at"],
              "冻结对象  项目 %s @ %s%s" % (cert["frozen"]["expected_repo"],
                                          (cert["frozen"]["repo_head"] or "?")[:8],
                                          ("（锚点来自 %s）" % src_note) if src_note else "")]
-=======
-    lines = ["对外发布评估  %s" % cert["generated_at"],
-             "冻结对象  项目 %s @ %s" % (cert["frozen"]["expected_repo"],
-                                         (cert["frozen"]["repo_head"] or "?")[:8])]
->>>>>>> codex/eval-loop-judge-20261110
     for c in cert["criteria"]:
         mark = {"pass": "OK  ", "fail": "红  ", "unknown": "看不清"}.get(c["status"], "?")
         lines.append("  %s %s  %s" % (mark, c["name"], c["detail"]))
@@ -650,12 +596,8 @@ def write_certification(repo, cert):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="对外发布评估闭环（默认只读）")
-<<<<<<< HEAD
     ap.add_argument("--repo", default=None,
                     help="期望服务的目标项目（默认按 KG_REPO/.mcp.json 自动解析）")
-=======
-    ap.add_argument("--repo", default=str(DEFAULT_REPO), help="期望服务的目标项目")
->>>>>>> codex/eval-loop-judge-20261110
     ap.add_argument("--json", action="store_true", help="输出认证物 JSON")
     ap.add_argument("--write", action="store_true",
                     help="把认证物写进 <repo>/ops/truth/release-certification.json")

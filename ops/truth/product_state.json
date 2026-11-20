@@ -1,9 +1,5 @@
 {
-<<<<<<< HEAD
  "updated": "2026-11-18",
-=======
- "updated": "2026-10-13",
->>>>>>> codex/eval-loop-judge-20261110
  "modules": [
   {
    "area": "唯一入口",
@@ -74,7 +70,6 @@
     "plugin/skills/central-command/SKILL.md"
    ],
    "updated": "2026-10-13"
-<<<<<<< HEAD
   },
   {
    "area": "两平面架构",
@@ -154,8 +149,6 @@
    "why": "",
    "files": [],
    "updated": "2026-11-18"
-=======
->>>>>>> codex/eval-loop-judge-20261110
   }
  ]
 }
