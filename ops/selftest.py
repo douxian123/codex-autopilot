@@ -6894,8 +6894,6 @@ def test_rotation_streaming():
     print("selftest ok: 窗口轮换在 thread.started 后立即返回，不受首次长回复阻塞。")
 
 
-<<<<<<< HEAD
-
 def test_disk_reap_reaps_stale_code_sign_clones():
     """签名临时副本只清旧副本，活跃副本和探针失败时必须保留。"""
     import importlib.util
@@ -7317,7 +7315,8 @@ def test_portable_serve_requires_token():
     assert 'not in ("", f"/{SERVE_NAME}")' not in src, (
         "旧的裸路径放行写法还在，等于令牌形同虚设")
     print("selftest ok: 跨机移植 serve 走一次性令牌，缺/错令牌一律 404。")
-=======
+
+
 def test_human_verdict_close_gate():
     """「done」这一格只能由人翻：人判类停在 awaiting_human，机器可证的照旧 done。
 
@@ -7427,7 +7426,6 @@ def test_human_verdict_close_gate():
 
     print("selftest ok: 人判类收口停在 awaiting_human、人确认后才 done；"
           "机器可证的 bug 仍直达 done，自动派发闭环未被打断。")
->>>>>>> codex/autopilot-close-gate-20261026
 
 
 if __name__ == "__main__":
@@ -7515,7 +7513,7 @@ if __name__ == "__main__":
     test_budget_gate()
     test_compact_session_logs_is_lossless_and_under_pressure_only()
     test_rotation_streaming()
-<<<<<<< HEAD
+    test_human_verdict_close_gate()
 
 
 def test_reap_ignores_untracked_machine_scratch():
@@ -7679,7 +7677,4 @@ def test_disk_reap_follows_installed_release():
             pathlib.Path.home = orig
 
     print("selftest ok: 磁盘回收器跟随当前安装版本，且脚本本身已入库可回归。")
-=======
-    test_human_verdict_close_gate()
 
->>>>>>> codex/autopilot-close-gate-20261026

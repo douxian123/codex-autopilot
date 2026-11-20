@@ -1083,9 +1083,12 @@ def _set_ledger_status(rid, status, note, evidence='', commit=''):
                 ev = 'commit %s（已合入 main，可用 git show %s 复核）' % (commit, commit)
             merged['evidence'] = ev
             merged['closed'] = merged['ts']
-<<<<<<< HEAD
         elif evidence:
             merged['evidence'] = _coerce_evidence(evidence)
+        if status != 'done':
+            # 重新打开或停在 awaiting_human 时不能留着上一次的关闭时间。
+            # 留着就等于对外宣称「这条已经完成过」，面板会把它当已完成渲染。
+            merged.pop('closed', None)
         _append(merged)
         return merged
 
@@ -1126,12 +1129,10 @@ def _set_acceptance_status(rid, status, note='', evidence='', source=None,
             # 否则事后没人能复核「谁说这条验过了」。
             merged['verified_by'] = source or os.environ.get('KG_TRUTH_SOURCE', 'user')
             merged['verified_at'] = merged['ts']
-=======
         else:
             # 停在 awaiting_human / 重新 open 时不能留着上一次的关闭时间：
             # 留着就等于对外宣称「这条已经完成过」，面板会把它当已完成渲染。
             merged.pop('closed', None)
->>>>>>> codex/autopilot-close-gate-20261026
         _append(merged)
         return merged
 
@@ -1139,11 +1140,10 @@ def _set_acceptance_status(rid, status, note='', evidence='', source=None,
 def cmd_close(args):
     """把一条问题台账标成 done，并追加一条进展：从「收到」走到「已关闭」。
 
-<<<<<<< HEAD
     fail-closed：必须带可复核证据——KG_TRUTH_EVIDENCE（命令/退出码/复现结果）
     或 KG_TRUTH_COMMIT（已合入 main 的 commit sha，会据此派生证据）。
     只有自由文本结论、两者都没有的，拒绝关闭。
-=======
+
     但「done」这一格只能由人翻：视觉/体验（以及登记时标了 needs_human 的）条目，
     agent 跑再多命令也判不了「这样够不够好看 / 顺不顺手」。这类条目 close 时停在
     awaiting_human，把最后一步交回人；机器能自证的（bug/gate/arch）照旧直接 done，
@@ -1152,19 +1152,11 @@ def cmd_close(args):
     用法：
       truthctl close <L-id> "<结论/证据>"              机器可证的收口；人判类停在 awaiting_human
       truthctl close <L-id> "<结论>" --confirm-human  人已看过并认可，直接 done
->>>>>>> codex/autopilot-close-gate-20261026
     """
     if not args:
-        sys.exit('用法: truthctl close <L-id> "<结论>"'
-                 '（需 KG_TRUTH_EVIDENCE 或 KG_TRUTH_COMMIT 至少一个）')
+        sys.exit('用法: truthctl close <L-id> "<结论/证据>"'
+                 '（需 KG_TRUTH_EVIDENCE 或 KG_TRUTH_COMMIT；人判类可 --confirm-human）')
     rid = args[0]
-<<<<<<< HEAD
-    note = ' '.join(args[1:]) if len(args) > 1 else ''
-    raw_commit = os.environ.get('KG_TRUTH_COMMIT') or ''
-    rec = _set_ledger_status(rid, 'done', note,
-                             os.environ.get('KG_TRUTH_EVIDENCE', ''), raw_commit)
-    commit = raw_commit.strip() or None
-=======
     rest = [a for a in args[1:] if a != '--confirm-human']
     confirmed = ('--confirm-human' in args
                  or os.environ.get('KG_TRUTH_HUMAN_CONFIRMED', '') == '1')
@@ -1172,9 +1164,18 @@ def cmd_close(args):
     prev = _latest_ledger(_read(TRUTH / FILES['ledger'])).get(rid) or {}
     if _needs_human_verdict(prev) and not confirmed:
         return _park_for_human(rid, prev, note)
-    rec = _set_ledger_status(rid, 'done', note, os.environ.get('KG_TRUTH_EVIDENCE', ''))
-    commit = os.environ.get('KG_TRUTH_COMMIT') or None
->>>>>>> codex/autopilot-close-gate-20261026
+    raw_commit = os.environ.get('KG_TRUTH_COMMIT') or ''
+    evidence = os.environ.get('KG_TRUTH_EVIDENCE', '')
+    if confirmed and not evidence:
+        # 人的显式确认也是证据；否则 --confirm-human 会被 fail-closed 卡死。
+        evidence = '用户确认：%s（--confirm-human）' % (note or '看过，可以')
+    if not evidence and not raw_commit.strip():
+        sys.exit(
+            '拒绝把 %s 标成 done：没有证据。\n'
+            '  KG_TRUTH_EVIDENCE="<命令/退出码/复现结果>"，或\n'
+            '  KG_TRUTH_COMMIT=<已合入 main 的 commit sha>。' % rid)
+    rec = _set_ledger_status(rid, 'done', note, evidence, raw_commit)
+    commit = raw_commit.strip() or None
     prog = _append_new('progress', title='关闭 %s：%s' % (rid, rec.get('title', '')),
                        summary=note, commit=commit, landed=bool(commit),
                        lane=rec.get('lane'), files=rec.get('files') or [],
