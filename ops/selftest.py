@@ -833,12 +833,12 @@ def test_resolve_gate_failure_surfaces_stderr():
         "resolve_branch": "codex/resolve-stderr-surface",
         "worktree": "/tmp/codex-autopilot-resolve-stderr-surface",
     }
-    real_run = kgctl_module.subprocess.run
+    real_run = kgctl_module.proc_run
     real_write_record = kgctl_module._write_resolve_record
     real_write_task_md = kgctl_module._write_resolve_task_md
     stdout = StringIO()
     try:
-        kgctl_module.subprocess.run = lambda *args, **kwargs: subprocess.CompletedProcess(
+        kgctl_module.proc_run = lambda *args, **kwargs: subprocess.CompletedProcess(
             args=args[0],
             returncode=1,
             stdout="partial land output\n",
@@ -849,7 +849,7 @@ def test_resolve_gate_failure_surfaces_stderr():
         with redirect_stdout(stdout):
             kgctl_module._resolve_land(rec, Path(rec["worktree"]))
     finally:
-        kgctl_module.subprocess.run = real_run
+        kgctl_module.proc_run = real_run
         kgctl_module._write_resolve_record = real_write_record
         kgctl_module._write_resolve_task_md = real_write_task_md
 
