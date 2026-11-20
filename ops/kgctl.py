@@ -1482,7 +1482,8 @@ def cmd_projects(args):
                 print(f"    线索  {'、'.join(p['clues'])}")
         backlog = project_router.routing_inbox_path()
         if backlog.exists():
-            print(f"  待路由箱 {backlog}（{len(read_jsonl(backlog))} 条）")
+            pending = project_router.pending_routing_records(backlog)
+            print(f"  待路由箱 {backlog}（{len(pending)} 条待复核；原始记录 {len(read_jsonl(backlog))} 条）")
         return
     if sub == "register":
         if len(args) < 3:
@@ -1550,14 +1551,118 @@ def _print_routing_backlog():
         path = project_router.routing_inbox_path()
         if not path.exists():
             return
-        rows = read_jsonl(path)
-        if rows:
-            print(f"\n全局待路由箱 {len(rows)} 条（判不清归属，未写进任何项目账本）：{path}")
-            for r in rows[-5:]:
-                print(f"  - [{r.get('ts','')[-11:]}] {str(r.get('text',''))[:70]}")
+        pending = project_router.pending_routing_records(path)
+        if pending:
+            print(f"\n全局待路由箱 {len(pending)} 条待复核（未写进任何项目账本）：{path}")
+            for item in pending[-5:]:
+                r = item["record"]
+                print(f"  - [{r.get('ts','')[-11:]}] {item['fingerprint']} "
+                      f"{str(r.get('text',''))[:70]}")
     except Exception:
         pass
 
+
+def cmd_route_inbox(args):
+    """复核全局待路由箱：只读列出，或把一条明确指派给某个项目。
+
+    自动路由判不清时进全局箱，绝不猜；但人看过一遍之后，原话里的产品名、日志里的
+    项目路径往往是明确证据。这里给这条证据一个显式出口：默认只读，必须同时给出
+    指纹 + 项目 + `--go` 才写。原始记录不删、不回写，只追加一份复核凭证。
+    """
+    if args and args[0] in ('-h', '--help'):
+        print('用法：kgctl route-inbox '
+              '[--fingerprint <指纹> --project <项目名> [--reason "为什么"]] [--go]')
+        print('  kgctl route-inbox                  # 只读列出待复核项')
+        print('  kgctl route-inbox --fingerprint a1b2 --project knowledge-graph '
+              '--reason "原话点名知识图谱" --go')
+        return 0
+    go = '--go' in args
+    rest = [a for a in args if a != '--go']
+    fingerprint, project_hint, reason = None, None, ''
+    i = 0
+    while i < len(rest):
+        flag = rest[i]
+        if flag in ('--fingerprint', '--project', '--reason') and i + 1 < len(rest):
+            value = rest[i + 1]
+            if flag == '--fingerprint':
+                fingerprint = value
+            elif flag == '--project':
+                project_hint = value
+            else:
+                reason = value
+            i += 2
+            continue
+        sys.exit(f'× 不认识的参数 {flag}')
+
+    path = project_router.routing_inbox_path()
+    pending = project_router.pending_routing_records(path)
+    if not project_hint and not fingerprint:
+        if not pending:
+            print('全局待路由箱为空（没有待复核项）。')
+            return 0
+        print(f'全局待路由箱 {len(pending)} 条待复核：{path}')
+        for item in pending:
+            row = item["record"]
+            text = str(row.get('text') or '')
+            candidates = [c.get('name') for c in (row.get('candidates') or [])
+                          if isinstance(c, dict) and c.get('name')]
+            context = f' 候选：{"、".join(candidates)}' if candidates else ''
+            print(f"  #{item['index']:03d} {item['fingerprint']} "
+                  f"[{row.get('ts','')[-11:]}] {text[:84]}{context}")
+        print('\n指派：kgctl route-inbox --fingerprint <指纹> --project <项目名> '
+              '--reason "证据" --go')
+        return 0
+
+    if not fingerprint or not project_hint:
+        sys.exit('× 指派必须同时给出 --fingerprint 和 --project；'
+                 '先跑 kgctl route-inbox 看指纹')
+    matches = [item for item in pending if item['fingerprint'] == fingerprint]
+    if not matches:
+        sys.exit(f'× 待复核箱里没有指纹 {fingerprint}（可能已指派；'
+                 '先跑 kgctl route-inbox 刷新）')
+    item = matches[0]
+    why = []
+    pinned = project_router.resolve_hint(project_hint, detail=why)
+    if not pinned:
+        sys.exit('× 项目指派有歧义或不存在：' + (why[0] if why else project_hint))
+    target_root = Path(pinned['root'])
+    if not looks_like_state_root(target_root):
+        sys.exit(f'× {target_root} 不像状态根；不写入')
+
+    print(f"待复核 #{item['index']:03d} [{item['record'].get('ts','')}] "
+          f"{str(item['record'].get('text',''))[:100]}")
+    print(f'指派到「{pinned["name"]}」→ {target_root}')
+    print(f'理由：{reason or "人工复核确认归属"}')
+    if not go:
+        print('\n预演：未写任何账本。确认后加 --go。')
+        return 0
+
+    source = item['record']
+    target_row = {k: v for k, v in source.items()
+                  if k not in ('status', 'candidates', 'reasons', 'routed')}
+    target_row.update({
+        'project': pinned['name'],
+        'project_root': str(target_root),
+        'routed': False,
+        'lane': None,
+        'routing_review': {
+            'fingerprint': fingerprint,
+            'reason': reason or '人工复核确认归属',
+            'source': str(path),
+        },
+    })
+    target_inbox = _inbox_path(target_root)
+    target_inbox.parent.mkdir(parents=True, exist_ok=True)
+    with target_inbox.open('a', encoding='utf-8') as fh:
+        fh.write(json.dumps(target_row, ensure_ascii=False) + '\n')
+
+    review_path = project_router.record_routing_review(
+        item['index'], source, pinned['name'], target_root,
+        reason or '人工复核确认归属')
+    print(f'已追加到 {target_inbox}')
+    print(f'复核凭证已追加（原记录不回写、不删除）：{review_path}')
+    print('只追加到目标项目唯一入口；归类由目标项目自己的 tick / route 处理。')
+    return 0
 
 
 def cmd_intake(args):
@@ -2742,17 +2847,23 @@ def cmd_dash(args):
     else:
         machine_html = '<div class="note">机器已自证 · 不需要你动手</div>'
 
-    # 当前在做什么 / 还差什么
+    # 当前在做什么 / 还差什么 / 等你确认
+    waiting = [r for r in led if r.get("status") == "awaiting_human"]
     doing = [r for r in open_led if r.get("status") == "doing"]
-    todo = [r for r in open_led if r.get("status") != "doing"]
+    todo = [r for r in open_led if r.get("status") not in ("doing", "awaiting_human")]
 
     def item_ul(items):
         return "".join(
             f'<li>{kind_tag(r.get("kind"))}<span class="grow">{esc(r.get("title"))}</span>'
             f'<span class="when">{esc(r.get("id"))}</span></li>' for r in items)
 
-    if doing or todo:
+    if doing or todo or waiting:
         parts = []
+        if waiting:
+            # 活已经干完，缺的是人这一票。放在「还差这些」之前，避免用户以为
+            # 机器还没做，也避免 agent 把这几条当成待办反复重做。
+            parts.append('<div class="subhead">等你确认（做完了，缺你看一眼）</div>'
+                         '<ul class="list">' + item_ul(waiting) + "</ul>")
         if doing:
             parts.append('<div class="subhead">正在做</div><ul class="list">' + item_ul(doing) + "</ul>")
         if todo:
@@ -3302,23 +3413,134 @@ def _fetch_origin_main(attempts: int = 5, delay: float = 3.0) -> bool:
     raise RuntimeError(f"fetch origin/{MAIN} 失败（重试 {attempts} 次后仍失败）: {last}")
 
 
+def _is_network_unreachable(text: str) -> bool:
+    """只识别传输层不可达；认证/non-fast-forward/hook 拒绝绝不能降成本地落盘。"""
+    lowered = (text or "").lower()
+    signals = (
+        "couldn't connect to server",
+        "could not connect to server",
+        "failed to connect",
+        "connection refused",
+        "connection timed out",
+        "operation timed out",
+        "network is unreachable",
+        "could not resolve host",
+        "temporary failure in name resolution",
+        "proxy connect",
+        "could not read from remote repository",
+        "operation too slow",
+        "less than 1 bytes/sec",
+    )
+    return any(s in lowered for s in signals)
+
+
+def _push_main_with_offline_fallback(wt: Path) -> str:
+    """推送 main；网络明确不可达时本地推进，其他失败仍 fail-closed。"""
+    try:
+        return _push_main_with_one_retry(wt)
+    except RuntimeError as exc:
+        text = str(exc)
+        if not _is_network_unreachable(text):
+            raise
+        # The merge happened in the trunk worktree. Advance the local main
+        # ref only when it is still exactly the pre-merge value; this is a
+        # compare-and-swap, so a concurrent writer can never be overwritten.
+        new = git("-C", str(wt), "rev-parse", "HEAD")
+        pre = git("rev-parse", MAIN)
+        if not new or not pre:
+            raise
+        if not git("rev-parse", "--verify", new):
+            raise RuntimeError("离线落盘无法读取合并提交")
+        cas = proc_run(
+            ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}", new, pre],
+            capture_output=True, text=True)
+        if cas.returncode != 0:
+            raise RuntimeError(
+                f"离线落盘无法安全推进本地 {MAIN}（引用已变化）："
+                f"{pre[:10]} -> {new[:10]}；{(cas.stdout + cas.stderr).strip()[:500]}")
+        return ("origin 当前网络不可达，已在本地安全推进 main，尚未推送；"
+                "联网后 daemon 会继续推送。原始错误：" + text[:300])
+
+
 def _align_main():
-    """落盘前先把本地 main 引用对齐 origin/main，拒绝在分叉引用上继续。"""
+    """落盘前对齐 origin/main；断网时用已知远端引用，并安全处理领先/分叉。"""
     if not _fetch_origin_main():
-        return
+        print(f"  ! origin 网络不可达，使用已知 origin/{MAIN} 本地收口")
     local = git("rev-parse", MAIN)
     remote = git("rev-parse", f"origin/{MAIN}")
     if local == remote:
         return
     ff = proc_run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
                          local, remote], capture_output=True, text=True)
-    if ff.returncode != 0:
+    if ff.returncode == 0:
+        proc_run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
+                  remote, local], check=True)
+        print(f"  {MAIN} 本地引用 {local[:8]} -> {remote[:8]}（同步 origin）")
+        return
+
+    # 本地领先：纯真相提交可以快照后安全重置引用；产品提交绝不自动丢弃。
+    rev = proc_run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
+                          remote, local], capture_output=True, text=True)
+    if rev.returncode == 0:
+        if trunk_head_is_truth_only(REPO, remote):
+            snap = _snapshot_truth_files(REPO)
+            proc_run(
+                ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
+                 remote, local], check=True)
+            _restore_truth_files(REPO, snap)
+            print(f"  {MAIN} 本地领先的纯真相提交已安全对齐到已知 origin/{MAIN}")
+            return
         raise RuntimeError(
-            f"本地 {MAIN} 与 origin/{MAIN} 已分叉：local={local[:10]} remote={remote[:10]}；"
-            "先人工合并/推送本地提交，再执行 land")
-    proc_run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
-                    remote, local], check=True)
-    print(f"  {MAIN} 本地引用 {local[:8]} -> {remote[:8]}（同步 origin）")
+            f"本地 {MAIN} 领先且包含产品提交，拒绝自动对齐："
+            f"local={local[:10]} remote={remote[:10]}；先推送或人工合并")
+
+    # 真正的分叉：内容等价只移动引用；否则在临时 worktree 重放，绝不切用户检出。
+    local_delta = proc_run(
+        ["git", "-C", str(REPO), "diff", "--quiet", local, remote, "--"],
+        capture_output=True, text=True)
+    if local_delta.returncode == 0:
+        proc_run(
+            ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
+             remote, local], check=True)
+        print(f"  {MAIN} 本地分叉内容已在 origin/{MAIN}，引用已安全对齐")
+        return
+    import tempfile
+    wt = _trunk_worktree()
+    replay_temp = Path(tempfile.mkdtemp(prefix="kg-replay-", dir="/private/tmp"))
+    tmp = f"refs/kgctl/replay/{os.getpid()}"
+    proc_run(["git", "-C", str(REPO), "update-ref", tmp, remote],
+                   check=True)
+    try:
+        added = proc_run(
+            ["git", "-C", str(REPO), "worktree", "add", "--detach",
+             str(replay_temp), tmp],
+            capture_output=True, text=True)
+        if added.returncode != 0:
+            raise RuntimeError(
+                "安全重放准备失败，无法创建临时 worktree："
+                f"{(added.stdout + added.stderr).strip()[:500]}")
+        replayed = proc_run(
+            ["git", "-C", str(replay_temp), "merge", "--no-ff", local,
+             "-m", f"train: replay local {MAIN} over origin/{MAIN}"],
+            capture_output=True, text=True)
+        if replayed.returncode != 0:
+            proc_run(["git", "-C", str(replay_temp), "merge", "--abort"],
+                           capture_output=True, text=True)
+            raise RuntimeError(
+                f"本地 {MAIN} 与 origin/{MAIN} 分叉且重放冲突，"
+                "已放弃并保持 main 不动；需人工裁决")
+        replay_head = git("-C", str(replay_temp), "rev-parse", "HEAD")
+        proc_run(
+            ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
+             replay_head, local], check=True)
+        print(f"  {MAIN} 本地分叉已安全重放到 origin/{MAIN}："
+              f"{local[:8]} + {remote[:8]} -> {replay_head[:8]}（尚未推送）")
+    finally:
+        proc_run(["git", "-C", str(REPO), "worktree", "remove", "--force",
+                        str(replay_temp)], capture_output=True, text=True)
+        proc_run(["git", "-C", str(REPO), "update-ref", "-d", tmp],
+                       check=False)
+        shutil.rmtree(replay_temp, ignore_errors=True)
 
 
 def _verify_evidence(verify_results: list) -> str:
@@ -5287,7 +5509,7 @@ def cmd_land(args):
                                       capture_output=True, text=True).stdout.strip()
         manifest = _land_manifest(wt, branch, merge_commit, pre)
         _record_land_progress(wt, branch, merge_commit, gate_results, manifest, pre)
-        pushed = _push_main_with_one_retry(wt)
+        pushed = _push_main_with_offline_fallback(wt)
         if pushed:
             print("  " + pushed.replace("\n", "\n  "))
         new = proc_run(["git", "-C", str(wt), "rev-parse", "HEAD"],
@@ -5357,14 +5579,16 @@ def cmd_status(args):
     # 一条需求如果既不在项目账本里、也不在面板上，就等于丢了。
     try:
         _backlog_path = project_router.routing_inbox_path()
-        _backlog = read_jsonl(_backlog_path) if _backlog_path.exists() else []
+        _backlog = (project_router.pending_routing_records(_backlog_path)
+                    if _backlog_path.exists() else [])
     except Exception:
         _backlog, _backlog_path = [], None
     if _backlog:
-        print(f"全局待路由箱   {len(_backlog)} 条判不清归属（未写进任何项目账本）：{_backlog_path}")
-        for _r in _backlog[-3:]:
+        print(f"全局待路由箱   {len(_backlog)} 条待复核（未写进任何项目账本）：{_backlog_path}")
+        for _item in _backlog[-3:]:
+            _r = _item["record"]
             print(f"  ├ [{str(_r.get('ts',''))[-11:]}] {str(_r.get('text',''))[:60]}")
-        print("  └ 指派：kgctl projects list 看候选；重发时设 KG_INBOX_PROJECT=<项目名>")
+        print("  └ 指派：kgctl route-inbox 查看指纹；确认后 --fingerprint <指纹> --project <项目名> --go")
     try:
         _registered = project_router.load_registry()
     except Exception:
@@ -5566,7 +5790,9 @@ def cmd_tick(args):
     _stage(2, "refresh project status")
     _truth("snapshot")
     _stage(3, "synthesize product mainline")
-    _truth("synthesize")
+    # 常驻自追踪每拍都会到这里。内容没变时不重写生成时间，避免共享主干被
+    # 「看起来更新了、实际什么都没发生」的假进展反复弄脏。
+    _truth("synthesize", "--if-changed")
 
     if os.environ.get("KG_TICK_LIGHT") == "1":
         rows = []
@@ -5812,7 +6038,8 @@ def cmd_doctor(args):
 
 
 CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route,
-        "route-preview": cmd_route_preview, "suggest": cmd_suggest,
+        "route-preview": cmd_route_preview, "route-inbox": cmd_route_inbox,
+        "suggest": cmd_suggest,
         "projects": cmd_projects,
         "matrix": cmd_matrix, "queue": cmd_queue, "gate": cmd_gate, "converge": cmd_converge,
         "replan": cmd_replan,

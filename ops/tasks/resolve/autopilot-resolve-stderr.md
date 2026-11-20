@@ -4,7 +4,7 @@
 - 执行分支：`codex/resolve-autopilot-resolve-stderr`
 - 工作树：`/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-resolve-stderr`
 - 基于：`acc08f24f10a`（origin/main）
-- 状态：`needs_agent`
+- 状态：`gate_fail`
 
 ## 要解的冲突文件（保留的 marker）
 - `ops/kgctl.py`

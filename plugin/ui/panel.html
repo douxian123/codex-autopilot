@@ -6,17 +6,17 @@
 <title>Codex 自动挡</title>
 <style>
   :root{
-    /* 主题：优先读宿主（Codex）注入的 CSS 变量，取不到才回落到自带浅色。
-       面板因此和 Codex 同底色、同字色、同描边、同圆角，不再是一块风格
-       独立的外挂网页；在普通浏览器里也有一套完整的兜底。 */
-    --bg:var(--color-background-secondary,#F3F4F8);
-    --surface:var(--color-background-primary,#FFFFFF);
-    --surface-2:var(--color-background-secondary,#F8F9FC);
-    --surface-3:var(--color-background-tertiary,#EDEFF5);
-    --ink:var(--color-text-primary,#111420);
+    /* 主题：先读 @openai/apps-sdk-ui / Codex 宿主注入的官方语义 token，
+       再读旧宿主变量，最后才是独立浏览器里的兜底色。这样插件在宿主里
+       跟原生容器同一套底色、字色和描边，离开宿主也不会变成一块黑底外挂。 */
+    --bg:var(--color-surface-secondary,var(--color-background-secondary,#F3F4F8));
+    --surface:var(--color-surface,var(--color-background-primary,#FFFFFF));
+    --surface-2:var(--color-surface-secondary,var(--color-background-secondary,#F8F9FC));
+    --surface-3:var(--color-surface-tertiary,var(--color-background-tertiary,#EDEFF5));
+    --ink:var(--color-text,var(--color-text-primary,#111420));
     --ink-2:var(--color-text-secondary,#4C5464);
     --ink-3:var(--color-text-tertiary,#737B8C);
-    --line:var(--color-border-primary,#E6E9F0);
+    --line:var(--color-border,var(--color-border-primary,#E6E9F0));
     --line-2:var(--color-border-subtle,#EEF1F6);
 
     /* brand · OpenAI 绿 */
@@ -34,14 +34,14 @@
 
     /* semantic · 同样优先宿主语义色 */
     --ok:var(--color-text-success,#0E7A57);
-    --ok-soft:var(--color-background-success,#E7F4EE);
-    --ok-line:var(--color-border-success,#CDE8DD);
+    --ok-soft:var(--color-background-success-surface,var(--color-background-success,#E7F4EE));
+    --ok-line:var(--color-border-success-surface,var(--color-border-success,#CDE8DD));
     --warn:var(--color-text-warning,#8F5F0B);
-    --warn-soft:var(--color-background-warning,#FAF2E1);
-    --warn-line:var(--color-border-warning,#EFDDBB);
+    --warn-soft:var(--color-background-warning-surface,var(--color-background-warning,#FAF2E1));
+    --warn-line:var(--color-border-warning-surface,var(--color-border-warning,#EFDDBB));
     --err:var(--color-text-danger,#B93A31);
-    --err-soft:var(--color-background-danger,#FAEBE9);
-    --err-line:var(--color-border-danger,#F0D1CD);
+    --err-soft:var(--color-background-danger-surface,var(--color-background-danger,#FAEBE9));
+    --err-line:var(--color-border-danger-surface,var(--color-border-danger,#F0D1CD));
     --neutral:var(--color-text-secondary,#69707E);
     --neutral-soft:var(--surface-3);
     --neutral-line:var(--line);
@@ -80,6 +80,10 @@
   .iconbtn svg{width:15px;height:15px}
   body.adv .iconbtn.adv{background:var(--brand-50);border-color:var(--brand-200);color:var(--brand-700)}
 
+  /* 入口说明：常驻但不抢三问的注意力。只说用途，不暴露线程 ID 或内部术语。 */
+  .entrymap{display:flex;flex-wrap:wrap;gap:4px 14px;margin:-2px 0 12px;padding:8px 11px;background:var(--surface-2);border:1px solid var(--line-2);border-left:2px solid var(--brand-200);border-radius:var(--r-sm);font-size:11.5px;color:var(--ink-3)}
+  .entrymap b{color:var(--ink-2);font-weight:600}
+
   /* ---- hero ---- */
   .hero{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:var(--r);padding:16px 18px 15px;margin-bottom:11px;box-shadow:var(--shadow-2)}
   .hero-top{display:flex;align-items:center;gap:9px}
@@ -110,11 +114,14 @@
   .q .card .chead{margin-bottom:10px}
   .q .card + .card,.q .northstar,.q .sysline{margin-top:10px}
   .sysline{font-size:11.5px;color:var(--ink-3);line-height:1.6;overflow-wrap:anywhere}
-  /* 管家健康条：一行一个管家（含全局健康），浅色状态点 + 一行话。attention 才用警告色，
-     off（用户自己关的）用中性灰，绝不用红绿把人吓一跳。 */
-  .stewards{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);display:grid;gap:6px}
-  .steward{display:flex;align-items:baseline;gap:8px;font-size:11.5px;color:var(--ink-2);line-height:1.5;overflow-wrap:anywhere}
-  .steward .sdot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--ink-3);margin-top:4px;opacity:.55}
+  .need-evidence[hidden]{display:none}
+  /* 管家健康条：首屏只留一行摘要和短名状态条，完整解释走 title / aria-label。
+     attention 才用警告色；off 是用户自己关的，用中性灰，不冒充故障。 */
+  .stewards{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);display:flex;align-items:center;flex-wrap:wrap;gap:5px 10px}
+  .steward-summary{font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+  .steward-strip{display:flex;align-items:center;flex-wrap:wrap;gap:4px 9px}
+  .steward{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--ink-2);line-height:1.4;white-space:nowrap}
+  .steward .sdot{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:var(--ink-3);opacity:.55}
   .steward.s-ok .sdot{background:var(--ok);opacity:.85}
   .steward.s-attention .sdot{background:var(--warn);opacity:1}
   .steward.s-attention{color:var(--warn)}
@@ -416,11 +423,17 @@
   </header>
 
   <!-- 首屏只回答三件事，其余一律下沉。健康时不占空间。 -->
+  <div class="entrymap" id="entryMap" aria-label="入口说明">
+    <span><b>主入口</b>：当前 Codex 输入框，万法归一</span>
+    <span><b>执行入口</b>：后台任务窗口，只汇报状态</span>
+    <span><b>兜底入口</b>：高级区输入框</span>
+  </div>
+
   <section class="q" id="q1">
     <div class="qhead"><span class="qn">1</span><h2>有东西需要我吗？</h2><span class="qstate" id="q1State"></span></div>
     <div class="alert lv-ok" id="need">
       <span class="al-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/></svg></span>
-      <span class="al-tx">读取中…</span>
+      <span class="al-tx" id="needText">读取中…</span>
     </div>
     <section class="card" id="acceptCard">
       <div class="chead"><h2>需要你介入</h2><span class="count" id="accNote"></span></div>
@@ -456,6 +469,10 @@
     <div class="sysline" id="sysLine">正在读取常驻与调度…</div>
     <div class="stewards" id="stewardBar" aria-label="管家状态与全局健康"></div>
     <div class="sysline" id="autonomyLine" hidden></div>
+    <details class="card fold engineering-detail" id="systemEvidenceFold">
+      <summary>系统为什么这么判断</summary>
+      <div class="foldbody"><div class="sysline" id="systemDetail">正在读取运行指标…</div></div>
+    </details>
   </section>
 
   <section class="q" id="q3">
@@ -479,20 +496,15 @@
     <div class="d projline" id="projectLine">绑定项目：读取中…</div>
   </section>
 
-  <section class="intake">
-    <label for="intakeText">把问题交给自动挡</label>
-    <textarea id="intakeText" placeholder="说说你发现的问题或想完成的事"></textarea>
-    <div class="intake-route" id="intakeRoute" role="status" aria-live="polite">写一句话后显示它会落到哪个项目</div>
-    <div class="intake-actions">
-      <button class="btn primary" id="intakeSubmit">提交任务</button>
-      <span class="intake-state" id="intakeState" role="status" aria-live="polite"></span>
-    </div>
-  </section>
-
   <section class="card" id="folderCard">
     <div class="chead"><h2>项目文件夹</h2><span class="count" id="folderNote"></span></div>
     <div class="folders" id="folderBox"></div>
   </section>
+
+    <details class="card fold need-evidence" id="needEvidenceFold">
+      <summary>当前提醒的工程详情</summary>
+      <div class="foldbody"><div id="needEvidenceBox"></div></div>
+    </details>
 
   <section class="orientation" id="routeOverview">
     <div class="orientation-head">
@@ -598,6 +610,21 @@
   </details>
 
   <div id="advanced">
+    <details class="card fold">
+      <summary>把问题交给自动挡</summary>
+      <div class="foldbody">
+        <section class="intake">
+          <label for="intakeText">写给自动挡的一句话</label>
+          <textarea id="intakeText" placeholder="说说你发现的问题或想完成的事"></textarea>
+          <div class="intake-route" id="intakeRoute" role="status" aria-live="polite">写一句话后显示它会落到哪个项目</div>
+          <div class="intake-actions">
+            <button class="btn primary" id="intakeSubmit">提交任务</button>
+            <span class="intake-state" id="intakeState" role="status" aria-live="polite"></span>
+          </div>
+        </section>
+      </div>
+    </details>
+
     <details class="card fold" open>
       <summary>自动动作</summary>
       <div class="foldbody">
@@ -625,7 +652,7 @@
     </details>
 
     <details class="card fold">
-      <summary>运行信息</summary>
+      <summary>运行状态</summary>
       <div class="foldbody">
         <div class="grid2">
           <div class="kv"><div class="l">后台常驻进程</div><div class="v" id="daemonLive">—</div></div>
@@ -643,8 +670,13 @@
       <div class="foldbody"><div id="pmBriefingBox"></div></div>
     </details>
 
+    <details class="card fold" id="contextArchiveFold">
+      <summary>上下文档案 · 自动收录与确认去向</summary>
+      <div class="foldbody"><div id="contextArchiveBox"></div></div>
+    </details>
+
     <details class="card fold" id="relationshipGoalsFold">
-      <summary>关系层 · 跨项目长期目标</summary>
+      <summary>关系目标 · 跨项目长期目标</summary>
       <div class="foldbody"><div id="relationshipGoalsBox"></div></div>
     </details>
 
@@ -669,17 +701,17 @@
     </details>
 
     <details class="card fold">
-      <summary>最近一次自验证 · 真跑真写真拦</summary>
+      <summary>验收台账 · 最近一次自验证</summary>
       <div class="foldbody"><div id="verifyBox"></div></div>
     </details>
 
     <details class="card fold">
-      <summary>需要你拍板 / 异常</summary>
+      <summary>需要你验收 / 拍板 / 异常</summary>
       <div class="foldbody"><ul class="list" id="blockedList"></ul></div>
     </details>
 
     <details class="card fold">
-      <summary>最近发生了什么</summary>
+      <summary>执行记录</summary>
       <div class="foldbody">
         <ul class="list" id="eventList"></ul>
         <p class="tiny" style="margin-top:10px">完整日志：<span id="logPath">~/.codex-autopilot/daemon.log</span></p>
@@ -801,6 +833,7 @@
     var box = el("need"); if(!box) return;
     var lv = "lv-brand", ic = IC_INFO;
     var txt = s.need_action || "—";
+    var detail = s.need_action_detail || "";
     var quiet = /不需要|无需|不用你/.test(txt);
     if (s.state === "error") { lv = "lv-err"; ic = IC_WARN; }
     else if (s.state === "blocked") { lv = "lv-warn"; ic = IC_WARN; }
@@ -808,6 +841,17 @@
     box.className = "alert " + lv;
     var icn = box.querySelector(".al-ic"); if (icn) icn.innerHTML = ic;
     var tx = box.querySelector(".al-tx"); if (tx) tx.textContent = txt;
+    if (txt) box.title = detail || txt;
+    box.setAttribute("aria-label", detail ? (txt + "。详情：" + detail) : txt);
+    renderNeedEvidence(detail);
+  }
+
+  // 工程路径、PID、修复命令只进折叠区和可访问属性；首屏保留用户结论。
+  function renderNeedEvidence(detail){
+    var fold = el("needEvidenceFold"); if (!fold) return;
+    var box = el("needEvidenceBox");
+    if (box) box.textContent = detail || "";
+    fold.hidden = !detail;
   }
 
   function render(s){
@@ -890,7 +934,8 @@
     renderFolders(s.project_folders || {}, s);
     renderOrientation(s);
     renderAcceptance(humanAcc, s.machine_verified || []);
-    renderPmBriefing(s.pm_briefing);
+    renderPmBriefing(s.pm_briefing, s.authorized_followups);
+    renderContextArchive(s.context_archive);
     renderRelationshipGoals(s.relationship_goals);
     renderOutcomeScore(s.outcome_score);
     renderRecent(s.recent_completed || []);
@@ -907,8 +952,23 @@
   // 不重复正文，也不在健康时制造噪音。
   function renderThreeQuestions(s, human, doing, stuckN){
     var need = human.length + stuckN;
-    setText("q1State", human.length ? (human.length + " 项等你") : (stuckN ? (stuckN + " 个卡点") : "不用你"));
-    var q1 = el("q1"); if (q1) q1.className = "q" + (need ? " has-need" : "");
+    var action = String(s.need_action || "");
+    var actionQuiet = /不需要|无需|不用你/.test(action);
+    var needAttention = need > 0 || (!actionQuiet && !!action);
+    var q1Lead = "";
+    if (/验收/.test(action)) q1Lead = "要你验收";
+    else if (/拍板|决定/.test(action)) q1Lead = "要你拍板";
+    else if (/说一句|不知道|判不清|归属/.test(action)) q1Lead = "要说一句";
+    else if (/服务别的项目|轮次|常驻|守护/.test(action)) q1Lead = "等自己的轮次";
+    else if (human.length) q1Lead = "要你验收";
+    var q1Hint = q1Lead || "需关注";
+    var q1State = human.length
+      ? (q1Lead ? q1Lead + " · " + human.length + " 项等你" : human.length + " 项等你")
+      : stuckN
+        ? ((q1Lead && q1Lead !== "需关注" ? q1Lead + " · " : "") + stuckN + " 个卡点")
+        : (needAttention ? q1Hint : "不用你");
+    setText("q1State", q1State);
+    var q1 = el("q1"); if (q1) q1.className = "q" + (needAttention ? " has-need" : "");
 
     var d = s.daemon || {};
     var busy = doing.length + (s.exec_now ? 1 : 0);
@@ -920,18 +980,29 @@
     var bits = [];
     bits.push(d.live ? ("常驻运行中" + (d.pid ? " #" + d.pid : "")) : "常驻未运行");
     if (d.last_cycle) bits.push("上一轮 " + fmtTime(d.last_cycle));
-    bits.push("可落盘 " + (q.clean == null ? 0 : q.clean) + " / 冲突 " + (q.conflict == null ? 0 : q.conflict));
+    var cleanText = q.clean == null ? "取不到" : q.clean;
+    var conflictText = q.conflict == null ? "取不到" : q.conflict;
+    bits.push("可落盘 " + cleanText + " / 冲突 " + conflictText);
     if (!s.enabled) bits.push("自动动作已关闭");
     else if (s.paused) bits.push("已暂停推进");
     var hh = s.harness_health || {};
-    if (hh.status === "ok") bits.push(hh.headline || "上下文健康：正常");
-    else bits.push("上下文健康：" + (hh.reason || "取不到"));
+    var healthText = hh.status === "ok"
+      ? (hh.headline || "上下文健康：正常")
+      : ("上下文健康：" + (hh.reason || "取不到"));
+    bits.push(healthText);
     var sl = el("sysLine");
     if (sl) {
-      sl.textContent = bits.join(" · ");
-      sl.title = (hh.reasons && hh.reasons.length) ? hh.reasons.join("；") : "";
+      // 首屏只留用户结论：系统现在是否值得信任、要不要行动。
+      // 队列/守护/逐条原因属于工程证据，放进折叠区，不占首屏注意力。
+      sl.textContent = healthText;
+      sl.title = bits.join("；");
     }
-    // 自治分级：只在这一轮真跑过工序时出现，说明哪些已明确授权、多少还在观察、
+    var detail = el("systemDetail");
+    if (detail) {
+      detail.textContent = bits.join(" · ");
+      detail.title = (hh.reasons && hh.reasons.length) ? hh.reasons.join("；") : bits.join("；");
+    }
+    // 授权情况：只在这一轮真跑过工序时出现，说明哪些已明确授权、多少还在观察、
     // 多少等你转正。取不到就明确说取不到，不印「0 条」假装正常。
     var au = s.autonomy || {};
     var al = el("autonomyLine");
@@ -941,7 +1012,7 @@
         al.title = "逐条授权来源见工程详情与证据";
         al.hidden = false;
       } else if (au.status === "unknown") {
-        al.textContent = au.label || "自治分级：本轮工序记录取不到";
+        al.textContent = au.label || "授权情况：本轮记录取不到";
         al.title = "逐条授权来源取不到";
         al.hidden = false;
       } else {
@@ -986,32 +1057,52 @@
 
   var LANE_LABEL = {design:"体验 / 视觉", bug:"Bug", arch:"架构", gate:"门禁", reprocess:"待重排"};
   function laneLabel(lane){ return LANE_LABEL[lane] || lane || "未分泳道"; }
-  // 管家健康条：一行一个管家（末行是全局项目健康）。四态各有含义——ok 正常、attention 需要人或需要修、
-  // off 是用户自己关的（不是故障）、unknown 是取不到（不冒充正常）。排序由后台给
-  // 好（需要介入的排前面），面板照抄，不自己重排判据。
+  // 管家健康条：首屏只显示摘要和短名状态条；完整解释放在 title / aria-label，
+  // 鼠标悬停或读屏器可以拿到，但不占用户默认注意力。四态语义仍由控制层给出，
+  // 面板照抄顺序，不自己重排判据。
+  var STEWARD_SHORT = {context:"上下文", route:"路由", merge:"合并", tune:"状态",
+    exec:"实现", pm:"项目", accept:"验收", health:"全局健康"};
+  var STEWARD_STATE = {ok:"正常", attention:"需关注", off:"已关闭", unknown:"取不到"};
   function renderStewards(st){
     var box = el("stewardBar"); if (!box) return;
     box.innerHTML = "";
     var rows = (st && st.rows) || [];
     if (!rows.length){
       var empty = document.createElement("div");
-      empty.className = "steward s-unknown";
-      var edot = document.createElement("span"); edot.className = "sdot";
-      var etx = document.createElement("span"); etx.textContent = "管家状态取不到";
-      empty.appendChild(edot); empty.appendChild(etx); box.appendChild(empty);
+      empty.className = "steward-summary"; empty.textContent = "管家状态取不到";
+      box.appendChild(empty);
       return;
     }
-    rows.forEach(function(r){
-      var li = document.createElement("div");
-      li.className = "steward s-" + (r.state || "unknown");
-      var dot = document.createElement("span"); dot.className = "sdot";
-      var tx = document.createElement("span"); tx.textContent = r.label || "";
-      li.appendChild(dot); li.appendChild(tx); box.appendChild(li);
+    var summary = document.createElement("div");
+    summary.className = "steward-summary";
+    var counts = (st && st.counts) || {};
+    var order = ["attention", "unknown", "off", "ok"];
+    var parts = [];
+    order.forEach(function(key){
+      var n = counts[key];
+      if (typeof n === "number") parts.push(n + " " + (STEWARD_STATE[key] || key));
     });
+    summary.textContent = "管家状态：" + (parts.length ? parts.join(" · ") : "取不到");
+    box.appendChild(summary);
+    var strip = document.createElement("div"); strip.className = "steward-strip";
+    rows.forEach(function(r){
+      var li = document.createElement("span");
+      li.className = "steward s-" + (r.state || "unknown");
+      var full = (r.label || "") + "（" + (STEWARD_STATE[r.state] || (r.state || "取不到")) + "）";
+      li.title = full;
+      li.setAttribute("aria-label", full);
+      li.setAttribute("data-key", r.key || "");
+      var dot = document.createElement("span"); dot.className = "sdot";
+      var tx = document.createElement("span");
+      tx.className = "sname";
+      tx.textContent = STEWARD_SHORT[r.key] || (r.label || "").split("：")[0];
+      li.appendChild(dot); li.appendChild(tx); strip.appendChild(li);
+    });
+    box.appendChild(strip);
   }
 
-  // PM 简报：预期磨到哪、谁给谁让路、哪条该追进度。只照抄控制层结论，
-  // 不在面板重算、也不自动发任何追问。取不到就写「取不到」，不拿 0 冒充正常。
+  // PM 简报：预期磨到哪、谁给谁让路、哪条该追进度。候选只照抄控制层结论；
+  // 只有人在这里逐项点头才写授权账本，守护发送前还会再校验。取不到就说取不到。
   function pmCount(value){
     return (value === undefined || value === null) ? "取不到" : String(value);
   }
@@ -1021,7 +1112,7 @@
     var grow = document.createElement("span"); grow.className = "grow"; grow.textContent = text;
     li.appendChild(tag); li.appendChild(grow); list.appendChild(li);
   }
-  function renderPmBriefing(pb){
+  function renderPmBriefing(pb, authSummary){
     var box = el("pmBriefingBox"); if (!box) return; box.innerHTML = "";
     if (!pb){
       box.innerHTML = '<div class="empty">PM 简报取不到；不把不知道当成正常。</div>';
@@ -1031,11 +1122,29 @@
     var ac = pb.acceptance_criteria || {};
     var hold = pb.overlap_holds || {};
     var follow = pb.follow_up_candidates || {};
+    var closure = pb.closure || {};
+    var auth = authSummary || {};
+    var authCounts = auth.counts || {};
+    var approvedByTicket = {};
+    ((auth.status === "ok" && auth.items) || []).forEach(function(a){
+      if (a.state === "approved" && a.ticket_id) approvedByTicket[a.ticket_id] = a;
+    });
     var list = document.createElement("ul"); list.className = "list";
     var expText = "待确认：" + pmCount(exp.pending_count) + " 条 · 已生效："
       + pmCount(exp.active_count) + " 条";
     if (exp.mainline_stage) expText += " · 主线阶段：" + exp.mainline_stage;
     pmRow(list, "预期", expText);
+    var closurePaths = closure.paths || [];
+    pmRow(list, "施工路径", pmCount(closure.status === "unknown" ? null : closurePaths.length)
+      + " 条 · " + (closure.status === "unknown"
+        ? "施工路径取不到，不把不知道当成 0 条。"
+        : "原话到施工、依赖、路线、追问、关闭只做只读投影"));
+    closurePaths.slice(0, 2).forEach(function(r){
+      var w = r.work_item || {};
+      pmRow(list, w.id || "施工", (w.title || "未命名施工项")
+        + " · " + (w.status || "unknown")
+        + " · 文件占地" + (w.occupancy === "unknown" ? "取不到" : "已声明"));
+    });
     (exp.pending || []).slice(0, 2).forEach(function(r){
       pmRow(list, "待确认", r.text || r.id || "（无文案）");
     });
@@ -1057,9 +1166,59 @@
     var followItems = follow.items || [];
     pmRow(list, "追问", pmCount(follow.status === "ok" ? followItems.length : null)
       + " 条候选 · " + (follow.note || "追问候选取不到"));
+    pmRow(list, "追问授权", pmCount(auth.status === "ok" ? authCounts.approved : null)
+      + " 条待发 · " + (auth.note || "追问授权账本取不到"));
     followItems.slice(0, 2).forEach(function(r){
-      pmRow(list, r.id || "候选", "空闲 " + pmCount(r.idle_minutes) + " 分钟 · "
-        + (r.thread_id || "无窗口绑定"));
+      var li = document.createElement("li");
+      var tag = document.createElement("span"); tag.className = "tag"; tag.textContent = r.id || "候选";
+      var grow = document.createElement("span"); grow.className = "grow";
+      grow.textContent = "空闲 " + pmCount(r.idle_minutes) + " 分钟 · "
+        + (r.thread_id || "无窗口绑定");
+      li.appendChild(tag); li.appendChild(grow);
+      if (r.thread_id && follow.status === "ok") {
+        var ring = document.createElement("span"); ring.className = "accbtns";
+        var authorize = document.createElement("button");
+        authorize.className = "btn"; authorize.type = "button"; authorize.textContent = "授权追问";
+        var prompt = r.suggested_prompt
+          || ("继续处理 " + (r.id || "工作项") + "：回报当前卡点和下一步。");
+        authorize.addEventListener("click", function(){
+          authorize.disabled = true;
+          var was = authorize.textContent; authorize.textContent = "正在登记…";
+          callTool("followup_authorize", {
+            ticket_id: r.id, thread_id: r.thread_id, prompt: prompt,
+            reason: "面板：用户明确同意追问", confirm: true,
+          }).then(function(){
+            toast("已登记逐项授权；发送前还会再校验。", "ok");
+            return loadStatus(false);
+          }).catch(function(e){
+            toast("操作没成功：" + (e && e.message || e), "err");
+            authorize.disabled = false; authorize.textContent = was;
+          });
+        });
+        ring.appendChild(authorize);
+        var approved = approvedByTicket[r.id];
+        if (approved) {
+          var cancel = document.createElement("button");
+          cancel.className = "btn ghost"; cancel.type = "button"; cancel.textContent = "撤销授权";
+          cancel.addEventListener("click", function(){
+            cancel.disabled = true;
+            var was = cancel.textContent; cancel.textContent = "正在撤销…";
+            callTool("followup_cancel", {
+              request_id: approved.request_id,
+              reason: "面板：用户撤销未发送的追问",
+            }).then(function(){
+              toast("已撤销未发送的授权；历史记录保留。", "ok");
+              return loadStatus(false);
+            }).catch(function(e){
+              toast("操作没成功：" + (e && e.message || e), "err");
+              cancel.disabled = false; cancel.textContent = was;
+            });
+          });
+          ring.appendChild(cancel);
+        }
+        li.appendChild(ring);
+      }
+      list.appendChild(li);
     });
     box.appendChild(list);
     var missing = (exp.missing || []).concat(follow.missing || []);
@@ -1068,6 +1227,46 @@
       meta.textContent = "取不到：" + missing.join("、") + "；这些项不计入正常。";
       box.appendChild(meta);
     }
+  }
+
+  // 上下文档案：只读展示自动收录、已确认、已驳回和生效记录。确认动作只在
+  // 「需要你拍板 / 异常」区出现，避免同一条候选有两套互相打架的按钮。
+  function renderContextArchive(ca){
+    var box = el("contextArchiveBox"); if (!box) return; box.innerHTML = "";
+    if (!ca || ca.status !== "ok"){
+      var why = (ca && (ca.reason || (ca.unknown || []).join("、")))
+        || "上下文档案取不到";
+      if (why.indexOf("不把不知道当成 0 条") < 0) why += "；不把不知道当成 0 条。";
+      box.innerHTML = '<div class="empty">' + why + '</div>';
+      return;
+    }
+    var list = document.createElement("ul"); list.className = "list";
+    var c = ca.counts || {};
+    pmRow(list, "已收录", "待确认 " + pmCount(c.proposed) + " · 已确认 "
+      + pmCount(c.promoted) + " · 已驳回 " + pmCount(c.dismissed)
+      + " · 生效 " + pmCount(c.active));
+    (ca.items || []).forEach(function(x){
+      var source = x.source === "context_learning"
+        ? "自学习：同一诉求出现 " + pmCount(x.mentions) + " 次 / 跨 "
+          + pmCount(x.threads) + " 个会话"
+        : "入口原话" + ((x.signals && x.signals.length)
+          ? " · 命中 " + x.signals.join("、") : "");
+      var detail = (x.id || "") + " · " + (x.text || x.title || "") + " · " + source;
+      if (x.evidence && x.evidence.length){
+        var ev = x.evidence[0];
+        detail += " · 证据：" + ((ev.thread) ? ev.thread + "：" : "") + (ev.text || "");
+      }
+      if (x.constraint_id) detail += " · 已落成 " + x.constraint_id;
+      if (x.reason) detail += " · 驳回原因：" + x.reason;
+      pmRow(list, x.status === "proposed" ? "待确认"
+        : x.status === "promoted" ? "已确认"
+        : x.status === "dismissed" ? "已驳回" : "生效", detail);
+    });
+    (ca.unknown || []).forEach(function(x){ pmRow(list, "取不到", x); });
+    box.appendChild(list);
+    var meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = ca.note || "自动收录只生成候选，不自动生效。";
+    box.appendChild(meta);
   }
 
   // 关系层：只照抄显式登记的目标摘要。它不自动派活，也不把「需要人」变成追问动作。
@@ -1163,9 +1362,10 @@
       var step = document.createElement("div"); step.className = "folder-step";
       step.textContent = "当前步骤：" + (f.current_step || "路线待拆解");
       var source = document.createElement("div"); source.className = "folder-source";
-      var sourceThread = f.source_thread_id || "";
-      source.textContent = "来源对话 " + (sourceThread ? sourceThread.slice(0, 12) : "未标注来源") +
-        " · 路线 " + (f.current_step || "待拆解");
+      source.textContent = "路线 " + (f.current_step || "待拆解");
+      source.title = f.source_thread_id
+        ? "来源对话 " + f.source_thread_id
+        : "未标注来源";
       info.appendChild(title); info.appendChild(meta); info.appendChild(step); info.appendChild(source);
       if (f.readable === false){
         var err = document.createElement("div"); err.className = "folder-error";
@@ -1238,12 +1438,14 @@
       } else {
         rows.slice(0, 4).forEach(function(row){
           var line = document.createElement("div"); line.className = "folder-work-row";
-          var id = document.createElement("span"); id.className = "id"; id.textContent = row.x.id || "";
           var name = document.createElement("span"); name.className = "name";
-          name.textContent = (laneLabel(row.x.lane || row.x.kind)) + " · " + (row.x.title || row.x.detail || "未命名工作项") +
-            (row.x.source_thread_id ? " · 来自对话 " + String(row.x.source_thread_id).slice(0, 12) : "");
+          name.textContent = (laneLabel(row.x.lane || row.x.kind)) + " · " + (row.x.title || row.x.detail || "未命名工作项");
+          line.title = [
+            row.x.id ? "工作项 " + row.x.id : "",
+            row.x.source_thread_id ? "来源对话 " + row.x.source_thread_id : "",
+          ].filter(Boolean).join(" · ");
           var state = document.createElement("span"); state.className = "state"; state.textContent = row.state;
-          line.appendChild(id); line.appendChild(name); line.appendChild(state); work.appendChild(line);
+          line.appendChild(name); line.appendChild(state); work.appendChild(line);
         });
       }
       card.appendChild(work); box.appendChild(card);
@@ -1683,14 +1885,44 @@
     var box = el("recentBox"); if (!box) return; box.innerHTML = "";
     var note = el("recentNote");
     list = list || [];
-    if (note) note.textContent = list.length ? (list.length + " 项") : "";
+    if (note) note.textContent = list.length ? ("最近 " + Math.min(list.length, 3) + " 项") : "";
     if (!list.length){
       box.innerHTML = '<div class="empty">还没有收口记录。走完一次「修复 → 验证 → 关闭台账」后会出现在这里。</div>';
       return;
     }
+    function humanText(raw){
+      var s = String(raw || "").trim();
+      s = s.replace(/^[A-Z]+-\d+\s+已收口：\s*/, "").replace(/^已收口：\s*/, "");
+      if (/已合入$/.test(s)) return "代码已合入";
+      var topicBox = s.match(/^【([^】]+)】/);
+      var topic = topicBox ? topicBox[1] : "";
+      var rest = topicBox ? s.slice(topicBox[0].length) : s;
+      var shortTopic = topic.split("·").pop() || topic;
+      if (/面板首屏|首屏只回答/.test(topic + rest)) {
+        return "面板首屏：改为只看三问";
+      }
+      if (/防丢失|真相镜像/.test(topic + rest)) {
+        return "防丢失：落盘状态已和主干同步";
+      }
+      if (/门禁环境/.test(topic + rest)) {
+        return "门禁环境：可直接验证发布目录";
+      }
+      rest = rest.replace(/(?:~|\/Users\/|\/private\/|\/var\/folders\/)[^\s，,；;]+/g, "")
+        .replace(/kgctl\s+land/gi, "落盘")
+        .replace(/progress\.json\s*\/\s*acceptance\.json/gi, "状态台账")
+        .replace(/\bmain\b/gi, "主干")
+        .replace(/\s+/g, " ")
+        .replace(/^[：:\s]+|[：:\s]+$/g, "");
+      if (shortTopic && rest) return shortTopic + "：" + rest;
+      if (shortTopic) return shortTopic + "：已完成";
+      return rest.length > 42 ? (rest.slice(0, 42) + "…") : (rest || "一项工作已完成");
+    }
     var ul = document.createElement("ul"); ul.className = "list";
-    list.slice(0,5).forEach(function(text){
+    list.slice(0,3).forEach(function(raw){
       var li = document.createElement("li");
+      var text = humanText(raw);
+      li.setAttribute("title", String(raw || ""));
+      li.setAttribute("aria-label", "收口详情：" + String(raw || ""));
       var g = document.createElement("span"); g.className = "grow"; g.textContent = text;
       li.appendChild(g); ul.appendChild(li);
     });
@@ -1894,10 +2126,13 @@
     (cc.items || []).forEach(function(x){
       var scope = (x.scope && x.scope.length) ? x.scope.join("、") : "全局";
       var sig = (x.signals && x.signals.length) ? x.signals.join("、") : "规范措辞";
+      var src = x.source === "context_learning"
+        ? "自学习：同一诉求出现 " + (x.mentions || 0) + " 次 / 跨 " + (x.threads || 0) + " 个会话；"
+        : "命中信号：" + sig + "；";
       items.push({tag:"待你确认", cls:"warn",
         text:(x.id||"") + " · " + (x.text||x.title||""),
         act:"constraint", id:x.id,
-        why:"命中信号：" + sig + "；适用范围：" + scope +
+        why:src + "适用范围：" + scope +
           "。点「算」会把它收进项目规范，之后落盘门禁与执行者都按它办事；点「不算」这条不再出现，什么都不生效。"});
     });
     // 验收管家提出的验收标准候选：先把“怎么算完成”编译成可判定标准，但确认前

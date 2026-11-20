@@ -67,7 +67,7 @@ PANEL_ROWS = (
          lambda f: int(f.get("blocked_count") or 0) > 0),
     _row("person/review", UI_BLOCKED, "需要你验收", "person",
          lambda f: int(f.get("review_count") or 0) > 0),
-    _row("person/answer", UI_BLOCKED, "有需求判不清归属，需要你说一句", "person",
+    _row("person/answer", UI_BLOCKED, "有新需求还不知道归到哪个项目，需要你说一句", "person",
          lambda f: int(f.get("answer_count") or 0) > 0),
     # daemon_live 缺项 = 不知道，**不命中**：宁可落到下一行，也不要凭空报一句
     # 「常驻未开」把没事的现场说成有事。只有明确读到 False 才判这一条。

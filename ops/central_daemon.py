@@ -97,6 +97,7 @@ def _live_ops() -> Path:
 
 import central_config  # noqa: E402
 import control_state  # noqa: E402
+import codex_native  # noqa: E402
 import pass_registry  # noqa: E402
 from pass_registry import (
     AUTH_EXPLICIT,
@@ -111,7 +112,10 @@ import constraints as constraints_mod  # noqa: E402
 import acceptance_criteria_compiler  # noqa: E402
 import exec_overlap  # noqa: E402
 import exec_lifecycle  # noqa: E402
+import route_health_runtime  # noqa: E402
+import route_review  # noqa: E402
 import wake_resume  # noqa: E402
+import authorized_followup  # noqa: E402
 import daemon_liveness  # noqa: E402
 import live_guard  # noqa: E402
 import workspace_guard  # noqa: E402
@@ -2998,7 +3002,7 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
                 continue
             job["item"] = item
         ledger_status = str((job.get("item") or {}).get("status") or "")
-        if ledger_status in ("done", "closed", "cancelled", "superseded"):
+        if ledger_status in TERMINAL_LEDGER_STATUSES:
             jobs.pop(rid, None)
             continue
         # 台账里这条已经 done/closed 时，job["item"] 可能是上一轮缓存下来的旧
@@ -3007,16 +3011,14 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
         # 真正要跑模型的位置只剩 1 个。
         try:
             _lts = open_items.get(rid)
-            if _lts is not None and str(_lts.get("status") or "") in (
-                    "done", "closed", "cancelled", "superseded"):
+            if _lts is not None and str(_lts.get("status") or "") in TERMINAL_LEDGER_STATUSES:
                 jobs.pop(rid, None)
                 continue
         except Exception:
             pass
         try:
             _live_status = (_ledger_latest() or {}).get(rid, {}).get("status")
-            if str(_live_status or "") in ("done", "closed", "cancelled",
-                                           "superseded"):
+            if str(_live_status or "") in TERMINAL_LEDGER_STATUSES:
                 jobs.pop(rid, None)
                 continue
         except Exception:
@@ -3154,6 +3156,11 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
             break
     return results
 
+
+# 台账里这些状态代表「不需要机器再动手」：留着并发槽位只会挤掉真正要跑的任务。
+# awaiting_human = 代码已落盘、等用户确认视觉/手感，机器这边已经收工。
+TERMINAL_LEDGER_STATUSES = ("done", "closed", "cancelled", "superseded",
+                            "awaiting_human")
 
 EXEC_REPEAT_CAP = 3            # 同一需求在窗口内最多派 3 次
 EXEC_REPEAT_WINDOW = 6 * 3600  # 6 小时
@@ -4520,6 +4527,7 @@ def _new_cycle_ctx(dry: bool, max_land: int, deadline) -> dict:
         "deadline": deadline,
         "passes": [],
         "wake": {},
+        "followup": {},
         "route_rc": 0,
         "route_out": "",
         "exec_cfg": {},
@@ -4587,6 +4595,102 @@ def _pass_wake(ctx: dict) -> dict:
             failures.append({"id": rid, "error": result.get("last_error", "")})
     ctx["wake"] = {"fired": fired, "failures": failures}
     return {"fired": len(fired), "failed": len(failures)}
+
+
+def _followup_ledger_rows(root: Path | None = None) -> list[dict]:
+    """追问资格校验用的问题台账快照；读不到返回空列表，不把 unknown 当成通过。"""
+    repo = Path(root) if root else _state_repo()
+    if not repo:
+        return []
+    path = repo / "ops" / "truth" / "ledger.jsonl"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    rows = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _followup_native_bindings(root: Path | None = None) -> dict[str, dict]:
+    """每个工作项最近一次原生窗口绑定。绑定台账可缺失，那是「0 条绑定」。"""
+    repo = Path(root) if root else _state_repo()
+    if not repo:
+        return {}
+    path = repo / "ops" / "truth" / "native_routes.jsonl"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    latest = {}
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        ledger_id = (row or {}).get("ledger_id") if isinstance(row, dict) else None
+        if ledger_id:
+            latest[str(ledger_id)] = row
+    return latest
+
+
+def _followup_is_eligible(spec: dict, root: Path | None = None) -> bool:
+    """发送前再确认工作项还活着，且 thread 绑定仍是用户点头的那一个。
+
+    授权发生在面板点击时；从点击到守护下一拍之间，工作项可能收口、窗口可能重绑。
+    这里重新读真相层，避免把过期授权投递到新窗口或一个已完成的任务里。
+    """
+    ticket_id = str(spec.get("ticket_id") or "")
+    thread_id = str(spec.get("thread_id") or "")
+    if not ticket_id or not thread_id:
+        return False
+    item = latest_ledger_by_id(_followup_ledger_rows(root)).get(ticket_id)
+    if not item or item.get("status") not in ("open", "doing", "todo", "wip", "blocked"):
+        return False
+    binding = _followup_native_bindings(root).get(ticket_id) or {}
+    bound = binding.get("thread_id") or item.get("thread_id")
+    return str(bound or "") == thread_id
+
+
+def _pass_followup(ctx: dict) -> dict:
+    """投递逐项授权且发送前仍合格的进度追问；无授权时不碰宿主。"""
+    if ctx["dry"]:
+        return {"dry": True}
+    root = _state_repo()
+    if not root:
+        return {"skipped": "没有状态根，不发送任何追问"}
+    pending = authorized_followup.pending(root)
+    if not pending:
+        return {"approved": 0}
+    by_id = {row["request_id"]: row for row in pending}
+
+    def sender(request_id: str, prompt: str):
+        spec = by_id.get(request_id) or {}
+        thread_id = str(spec.get("thread_id") or "")
+        if not thread_id:
+            raise RuntimeError("授权记录缺少 thread 绑定")
+        result, error = codex_native.follow_up(thread_id, prompt)
+        if error:
+            raise RuntimeError(str(error))
+        return result
+
+    result = authorized_followup.deliver_approved(
+        sender,
+        is_eligible=lambda spec: _followup_is_eligible(spec, root),
+        root=root,
+    )
+    ctx["followup"] = result
+    return result
 
 
 def _pass_route(ctx: dict) -> dict:
@@ -4669,6 +4773,68 @@ def _pass_checkpoint(ctx: dict) -> dict:
         log(f"[exec] 工作槽状态提前落盘失败（继续）：{exc!r}")
         return {"error": repr(exc)}
     return {"ok": True}
+
+
+def _route_health_exec_payloads(ctx: dict) -> list[dict]:
+    """把本拍仍在跑的实现槽位投影成巡检判据；不探测、不重派、不改 worker。"""
+    payloads = []
+    for rid, job in ((ctx.get("exec_workers") or {}).get("exec_jobs") or {}).items():
+        if not isinstance(job, dict) or job.get("partial") or job.get("recover"):
+            continue
+        if not _worker_alive(job.get("pid")):
+            continue
+        worktree = str(job.get("worktree") or "")
+        if not worktree or not Path(worktree).is_dir():
+            continue
+        payloads.append({"exec_now": {"id": rid, "worktree": worktree}})
+    return payloads
+
+
+def _pass_route_health(ctx: dict) -> dict:
+    """每拍只读检查路线与效用比：状态签名变化才留账/提示，不自动纠偏。"""
+    prior = route_health_runtime.last_summary(RUNTIME)
+    payloads = _route_health_exec_payloads(ctx)
+    route_state = {
+        "exec_workers": ctx.get("exec_workers") or {},
+        # 面板投影会丢掉 exec_blocked.ts；巡检必须读 daemon 原始记录，
+        # 否则「已经卡了多久」永远取不到，只能诚实报 unknown。
+        "exec_blocked": ctx.get("exec_blocked") or {},
+    }
+    summary = route_health_runtime.summarize_many(
+        payloads, state=route_state, runtime=RUNTIME)
+    exec_ids = sorted(
+        str(p.get("exec_now", {}).get("id") or "") for p in payloads)
+    written = route_health_runtime.append_if_changed(
+        RUNTIME, summary, prior=prior, exec_id=",".join(exec_ids))
+    record = dict(summary)
+    record["signature"] = written.get("signature")
+    # 复核状态机只追加「发现异常 → 复测仍异常/恢复」；它不改 worker、路线或配置。
+    # 状态签名变化才通知用户，问题键用来合并同一问题的分钟数增长。
+    level = str(summary.get("level") or "unknown")
+    owner = str(summary.get("issue_owner") or ",".join(exec_ids))
+    issue_keys = [str(x) for x in (summary.get("issue_keys") or []) if str(x).strip()]
+    issue_key = ""
+    if level == "attention":
+        if not issue_keys:
+            issue_key = route_health_runtime.issue_signature(summary, owner)
+    review = route_review.sync(
+        summary, written.get("signature"), issue_keys=issue_keys,
+        issue_key=issue_key,
+        observed_owners=summary.get("observed_owners"),
+        owner_levels=summary.get("owner_levels"),
+        root=RUNTIME)
+    record["review"] = review
+    ctx["route_health"] = record
+    if written.get("written") and level == "attention":
+        notify("自动挡：路线与效能需复核",
+               f"{summary.get('headline') or '发现路线偏离或低效空转'}"
+               "（只提复核；不会自动停 worker、改路线或改配置）")
+    elif written.get("written") and prior.get("level") == "attention":
+        notify("自动挡：路线与效能已恢复",
+               "上一轮的路线/效能复核信号已消失；判据与留账见 route_health.jsonl")
+    log(f"[route-health] level={level} action={summary.get('action')} "
+        f"headline={summary.get('headline')} written={written.get('written')}")
+    return record
 
 
 def _pass_tick(ctx: dict) -> dict:
@@ -4887,7 +5053,7 @@ def _build_cycle_registry(ctx: dict):
     注册顺序 = 执行顺序（见文件头注释）。
 
     pass_registry 现在默认 `observe`：**没写 level 的 pass 只会观察，不执行副作用**。
-    下面这十一条是既有自动挡工序，逐条显式转正 —— 每条都声明 `level=auto` 加
+    下面这十二条是既有自动挡工序，逐条显式转正 —— 每条都声明 `level=auto` 加
     `authorization=explicit`，表示「人已经授权这条工序自动跑」，不是系统自行升权。
     这样新加的 pass 不会因为忘记声明就悄悄执行（fail-closed），而既有行为保持原样。
     `effect` 区分可逆与破坏性：`route/checkpoint/tick/tick-post` 只改控制面与账本
@@ -4898,6 +5064,10 @@ def _build_cycle_registry(ctx: dict):
     reg = Registry(log=log,
                    over_budget=lambda step: _over_budget(ctx["deadline"], step))
     reg.register(Pass("wake", lambda: _pass_wake(ctx), title="到期唤醒写回唯一入口",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("followup", lambda: _pass_followup(ctx),
+                      title="投递已逐项授权的进度追问",
                       level=MODE_AUTO, authorization=AUTH_EXPLICIT,
                       effect=EFFECT_REVERSIBLE))
     reg.register(Pass("route", lambda: _pass_route(ctx), title="路由新收需求",
@@ -4911,6 +5081,10 @@ def _build_cycle_registry(ctx: dict):
                       effect=EFFECT_DESTRUCTIVE))
     reg.register(Pass("checkpoint", lambda: _pass_checkpoint(ctx),
                       title="工作槽状态提前落盘",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("route-health", lambda: _pass_route_health(ctx),
+                      title="每拍只读巡检路线与效用比",
                       level=MODE_AUTO, authorization=AUTH_EXPLICIT,
                       effect=EFFECT_REVERSIBLE))
     reg.register(Pass("tick", lambda: _pass_tick(ctx), title="刷新真相层",
@@ -5097,6 +5271,9 @@ def _run_cycle(dry: bool, max_land: int, deadline: float = None,
     # 这一拍跑了哪些 pass、各自什么状态、花了多久：出问题时第一眼要看的东西。
     state["last_passes"] = ctx["passes"]
     state["last_pass_counts"] = counts
+    # pass 被关闭 / observe / 超预算时这一拍没有新摘要，不能把上一拍的巡检结论抹成 None。
+    if ctx.get("route_health") is not None:
+        state["route_health"] = ctx["route_health"]
     save_state(state)
 
     log(f"--- cycle done: landed={len(landed)} failures={len(failures)} "
@@ -5624,6 +5801,13 @@ def loop(interval_min: int, max_land: int, dry: bool,
                 constraint_candidates.daemon_hook(dry=dry, log_fn=log)
             except Exception as exc:
                 log(f"[constraint] 提名跳过（fail-open）：{exc!r}")
+            # 上下文管家自学习（fail-open）：跨会话找反复出现的共性诉求，只出候选。
+            # 不自动追问、不写生效约束；人确认后才进现有 constraint 候选闸。
+            try:
+                import context_learning
+                context_learning.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[context-learning] 学习跳过（fail-open）：{exc!r}")
             # 验收管家（fail-open）：把已路由的「怎么算完成」原话提名成验收标准候选。
             # 这里只提名、绝不登记验收项：promote 必须人显式确认，且不得伪造证据。
             # 顺序放在上下文候选之后，两个候选来源彼此独立；异常一律吞掉。
