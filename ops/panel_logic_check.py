@@ -873,6 +873,11 @@ def main(argv):
         route_unknown["harness_tune"] = {"status": "ok", "count": 0, "items": []}
         route_unknown["harness_health"] = {"status": "ok", "level": "ok",
                                            "headline": "上下文健康：正常（测试夹具）"}
+        # 这条夹具只验证路线判据。默认 payload 里的运行态新鲜度可能同时报 attention，
+        # 那会先占住状态管家唯一的一行，让这里看不到路线结论；不是放宽断言，而是
+        # 把无关信号显式置为正常，让被测信号单独可判定。
+        route_unknown["runtime_freshness"] = {"status": "ok", "level": "ok",
+                                              "headline": "运行态新鲜度正常（测试夹具）"}
         route_unknown["route_health"] = {
             "status": "ok", "level": "unknown",
             "headline": "路线与效能判据取不到：scope 外改动数取不到",

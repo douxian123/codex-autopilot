@@ -27,6 +27,9 @@ from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
 REPO = OPS.parent
+PANEL = REPO / "ui" / "panel.html"
+if not PANEL.exists():
+    PANEL = REPO / "plugin" / "ui" / "panel.html"
 
 REAL_INPUTS = [
     ("L-0001", "自动挡不是脚手架，是项目运行层", "arch", ["ops/kgctl.py"]),
@@ -324,7 +327,7 @@ def main() -> int:
                closed_by_text["发布动作必须由用户拍板"]["close"]))
 
         # 8. 面板与合同：用户可见入口、职责边界与发布拍板口不能漂移。
-        panel = (REPO / "plugin" / "ui" / "panel.html").read_text(encoding="utf-8")
+        panel = PANEL.read_text(encoding="utf-8")
         check("首屏区分三类入口",
               all(word in panel for word in (
                   "id=\"entryMap\"", "主入口", "当前 Codex 输入框", "万法归一",
