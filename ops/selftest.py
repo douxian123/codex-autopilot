@@ -15,6 +15,9 @@ import subprocess
 import sys
 import tempfile
 import time as _time
+from contextlib import redirect_stdout
+from importlib.util import module_from_spec, spec_from_file_location
+from io import StringIO
 from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
@@ -298,6 +301,8 @@ def main():
         # 「判不清时悄悄猜」——插件 .mcp.json 写死一个 KG_REPO，于是用户在 A 项目
         # 窗口里说 B 项目的事，记录照样落进 A（2026-11-16 用户实测的 bug）。
         # 这条门禁锁住：分层证据有序、近似并列不猜、判不清时任何项目账本都不许写。
+        run([sys.executable, str(OPS / "test-request-context.py")],
+            cwd=str(OPS.parent), check=True)
         run([sys.executable, str(OPS / "test-project-router.py")],
             cwd=str(OPS.parent), check=True,
             env={**os.environ, "KG_AUTOPILOT_HOME": str(root / "autopilot-home")})
@@ -451,6 +456,17 @@ def main():
         land = kgctl(repo, trunk, "land", "codex/bad", "--dry")
         if land.returncode != 0 or "拒绝自动 land" not in land.stdout:
             raise AssertionError(f"land 没有拒绝坏分支:\n{land.stdout}\n{land.stderr}")
+
+        # Regression: network errors are classified as transport failures;
+        # authentication failures stay fatal. The full land path below covers
+        # the actual local-main advance.
+        sys.path.insert(0, str(OPS))
+        import kgctl as _kgctl
+        if not _kgctl._is_network_unreachable(
+                "fatal: unable to access: Failed to connect to 127.0.0.1 port 9674"):
+            raise AssertionError("网络不可达没有被识别为可离线收口")
+        if _kgctl._is_network_unreachable("fatal: Authentication failed for repository"):
+            raise AssertionError("认证失败被错误地识别为网络抖动")
 
         good = kgctl(repo, trunk, "land", "codex/good", "--dry")
         if good.returncode != 0 or "无冲突" not in good.stdout:
@@ -905,6 +921,47 @@ def _test_resolve(root):
             raise AssertionError(f"KG_RESOLVE_SKIP 没跳过指定分支:\n{skipped.stdout}")
         if (root / "state-resolve-skipme").exists():
             raise AssertionError("KG_RESOLVE_SKIP 还是建了 worktree")
+
+
+def test_resolve_gate_failure_surfaces_stderr():
+    """land 把真实失败写在 stderr 时，resolve 任务不能再留下空门禁结果。"""
+    spec = spec_from_file_location("kgctl_under_test", KGCTL)
+    kgctl_module = module_from_spec(spec)
+    spec.loader.exec_module(kgctl_module)
+    rec = {
+        "slug": "stderr-surface",
+        "branch": "codex/stderr-surface",
+        "resolve_branch": "codex/resolve-stderr-surface",
+        "worktree": "/tmp/codex-autopilot-resolve-stderr-surface",
+    }
+    real_run = kgctl_module.proc_run
+    real_write_record = kgctl_module._write_resolve_record
+    real_write_task_md = kgctl_module._write_resolve_task_md
+    stdout = StringIO()
+    try:
+        kgctl_module.proc_run = lambda *args, **kwargs: subprocess.CompletedProcess(
+            args=args[0],
+            returncode=1,
+            stdout="partial land output\n",
+            stderr="fatal: another land operation owns the lock\n",
+        )
+        kgctl_module._write_resolve_record = lambda record: None
+        kgctl_module._write_resolve_task_md = lambda record: None
+        with redirect_stdout(stdout):
+            kgctl_module._resolve_land(rec, Path(rec["worktree"]))
+    finally:
+        kgctl_module.proc_run = real_run
+        kgctl_module._write_resolve_record = real_write_record
+        kgctl_module._write_resolve_task_md = real_write_task_md
+
+    combined = stdout.getvalue() + rec.get("gate_output", "")
+    if rec.get("status") != "gate_fail":
+        raise AssertionError(f"模拟失败后状态不对: {rec.get('status')}")
+    for expected in ("partial land output", "fatal: another land operation owns the lock"):
+        if expected not in combined:
+            raise AssertionError(f"resolve 门禁结果漏掉 {expected!r}: {combined!r}")
+
+    print("selftest ok: resolve 落盘失败会同时保留 stdout/stderr，不再留下空门禁原因。")
 
 
 def test_reset_trunk_truth_conflict():
@@ -7936,6 +7993,7 @@ if __name__ == "__main__":
     main()
     test_replan()
     test_resolve()
+    test_resolve_gate_failure_surfaces_stderr()
     test_resolve_exec_parallel()
     test_collect_exec_keeps_reaping_after_nonlanding_failure()
     test_resolve_gate_fail_auto_retry()

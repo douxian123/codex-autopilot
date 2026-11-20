@@ -808,11 +808,30 @@ def truthctl(*args, extra_env=None):
     return _run([str(_live_ops() / "truthctl.py"), *args], extra_env)
 
 
+def _request_env(args, *, required=False):
+    """Resolve per-call project context without guessing across projects."""
+    args = args or {}
+    if not args.get("project") and not args.get("cwd"):
+        if required:
+            raise RequestContextError(
+                "当前入口缺少项目归属；请传入 project 或 cwd，未写入任何项目账本")
+        return {}
+    try:
+        repo = resolve_project(project=args.get("project"), cwd=args.get("cwd"),
+                               bound=os.environ.get("KG_REPO"))
+    except RequestContextError as exc:
+        raise exc
+    return {"KG_REPO": str(repo)}
+
+
 TOOLS = [
     {
         "name": "project_status",
         "description": "一屏看清项目到哪了：状态根、主干、待路由输入、分支可合并/冲突数、共享检出脏度。用户问“现在到哪了 / 还有什么没做”时先用它。",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "inputSchema": {"type": "object", "properties": {
+            "project": {"type": "string", "description": "当前项目状态根绝对路径"},
+            "cwd": {"type": "string", "description": "当前 Codex 工作目录"},
+        }, "additionalProperties": False},
     },
     {
         "name": "capture_request",

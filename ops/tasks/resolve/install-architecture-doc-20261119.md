@@ -4,7 +4,7 @@
 - 执行分支：`codex/resolve-install-architecture-doc-20261119`
 - 工作树：`/Users/danta/.newmax/workspace/codex-autopilot-resolve-install-architecture-doc-20261119`
 - 基于：`e1e5e5d17df7`（origin/main）
-- 状态：`gate_fail`
+- 状态：`needs_agent`
 
 ## 要解的冲突文件（保留的 marker）
 - `ops/tasks/conflict_burden.json`

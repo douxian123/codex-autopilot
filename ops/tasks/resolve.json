@@ -1,17 +1,144 @@
 {
  "tasks": [
   {
-   "slug": "snapshot-budget-archive-20261113",
-   "branch": "codex/snapshot-budget-archive-20261113",
-   "resolve_branch": "codex/resolve-snapshot-budget-archive-20261113",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-snapshot-budget-archive-20261113",
+   "slug": "resource-admission-verify-narrowing-20261115",
+   "branch": "codex/resource-admission-verify-narrowing-20261115",
+   "resolve_branch": "codex/resolve-resource-admission-verify-narrowing-20261115",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-resource-admission-verify-narrowing-20261115",
    "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
-   "source_head": "ad220fb88c2b2546a3c807dd4229971473f806c7",
+   "source_head": "cf6e7668f10ac03ac42ccf258192d39fa0c15666",
    "source_commits": [
-    "2ac1fa10624c491adac90a6175f495bc77597cac"
+    "2ac1fa10624c491adac90a6175f495bc77597cac",
+    "cf6e7668f10ac03ac42ccf258192d39fa0c15666"
    ],
-   "created": "2026-11-17 19:29:23",
-   "updated": "2026-11-20 08:07:49",
+   "created": "2026-11-17 19:41:58",
+   "updated": "2026-11-20 12:47:36",
+   "conflict_files": [
+    "ops/guards/resource-admission.py",
+    "ops/tasks/conflict_burden.json"
+   ],
+   "unresolved_files": [
+    "ops/guards/resource-admission.py",
+    "ops/tasks/conflict_burden.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "landed"
+  },
+  {
+   "slug": "eval-loop-judge-20261110",
+   "branch": "codex/eval-loop-judge-20261110",
+   "resolve_branch": "codex/resolve-eval-loop-judge-20261110",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-eval-loop-judge-20261110",
+   "base_main": "02ad0ab72ec3f4137659949f29a8385c68668520",
+   "source_head": "dcda93832dda979d88c2dbe5975e95b1171e227c",
+   "source_commits": [
+    "903966e43db706f3c947ecb88d1fdd9aaa7787b2",
+    "dcda93832dda979d88c2dbe5975e95b1171e227c"
+   ],
+   "created": "2026-11-20 11:51:13",
+   "updated": "2026-11-20 12:36:34",
+   "conflict_files": [
+    "docs/PRODUCT_MAINLINE.md",
+    "ops/product_eval.py",
+    "ops/selftest.py",
+    "ops/truth/product_state.json"
+   ],
+   "unresolved_files": [
+    "docs/PRODUCT_MAINLINE.md",
+    "ops/product_eval.py",
+    "ops/selftest.py",
+    "ops/truth/product_state.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "landed"
+  },
+  {
+   "slug": "autopilot-routing-context-20261119",
+   "branch": "codex/autopilot-routing-context-20261119",
+   "resolve_branch": "codex/resolve-autopilot-routing-context-20261119",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-routing-context-20261119",
+   "base_main": "ac0efe238cee99065e011832459a44eefafa97d1",
+   "source_head": "e30a2cce1de1db5c60db0b7f8a0b647482575496",
+   "source_commits": [
+    "ac703282c685914743f907f25a52f9c5ecb01ae5",
+    "e30a2cce1de1db5c60db0b7f8a0b647482575496"
+   ],
+   "created": "2026-11-20 07:13:56",
+   "updated": "2026-11-20 12:28:36",
+   "conflict_files": [
+    "ops/central_mcp.py",
+    "plugin/skills/central-command/SKILL.md"
+   ],
+   "unresolved_files": [
+    "ops/central_mcp.py",
+    "plugin/skills/central-command/SKILL.md"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "landed",
+   "gate_output": "→ codex/resolve-autopilot-routing-context-20261119: 4 提交、落后 112、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n  已把 51 个真相层文件从切换前状态写回（路由/台账不丢）\n  JSONL 台账 ops/truth/acceptance.jsonl 已与 HEAD 并集对齐（防旧状态根覆盖）\n  JSONL 台账 ops/truth/ledger.jsonl 已与 HEAD 并集对齐（防旧状态根覆盖）\n  JSONL 台账 ops/truth/progress.jsonl 已与 HEAD 并集对齐（防旧状态根覆盖）\n  跳过 1 个备份/临时副本（留在磁盘，不进版本库）：ops/tasks/inbox.jsonl.bak-route-smoke-20261116-235548\n  真相层 5 个文件已提交（chore(truth): sync state before landing）\n  merge ok（main 未动）\n  验证门禁 × 失败 → 丢弃，main 不动\n有「工作项走到哪了」区块\n  PASS  有「工程详情与证据」区块\n  PASS  项目文件夹显示 19 层工程进度\n  PASS  项目文件夹显示工程快照日期\n  PASS  项目文件夹显示工程下一步\n  PASS  项目文件夹显示工程卡点\n  PASS  项目文件夹显示独立质量门禁状态\n  PASS  项目文件夹显示当前步骤\n  PASS  路线里显示下一步\n  PASS  首屏明示主入口、执行入口与兜底入口\n  PASS  面板输入框收进高级区\n  PASS  默认首屏看不到面板输入框\n  PASS  系统判据详情默认折叠\n  PASS  系统判据详情仍可查\n  PASS  系统首屏不铺开队列读数\n  PASS  系统首屏不说 automation 黑话\n  PASS  系统首屏不说越线黑话\n  PASS  输入落点预览显示判不清落点\n  PASS  输入落点预览显示默认落点\nCodex 自动挡 高级区渲染检查\n  PASS  高级区由 ?adv=1 打开\n  PASS  PM 简报折叠区实际展开\n  PASS  PM 简报上屏：待确认预期\n  PASS  PM 简报上屏：验收标准候选\n  PASS  PM 简报上屏：让路与追问候选\n  PASS  PM 简报上屏：追问授权摘要与可撤销授权\n  PASS  PM 简报上屏：施工路径只读投影\n  PASS  上下文档案折叠区实际展开\n  PASS  上下文档案上屏：四类状态与来源证据\n  PASS  上下文档案说明唯一确认入口\n  PASS  关系层上屏：跨项目目标与需要人的原因\n  PASS  关系层上屏：北极星与关联工作项\n  PASS  关系层上屏：来源窗口\n  PASS  关系层明示不会自动派活\n  PASS  结果代理分上屏：总分、判据与边界\n  PASS  人工验收上屏：复核截图与补图按钮\n\n结果：全部通过\n\n  main 仍是 f3e76ce1a1，源分支 codex/resolve-autopilot-routing-context-20261119 未受影响"
+  },
+  {
+   "slug": "daemon-liveness-20261110",
+   "branch": "codex/daemon-liveness-20261110",
+   "resolve_branch": "codex/resolve-daemon-liveness-20261110",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-daemon-liveness-20261110",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "fc8773ee4dd038ebabf552769f1f755e5a7b6c52",
+   "source_commits": [
+    "fc8773ee4dd038ebabf552769f1f755e5a7b6c52"
+   ],
+   "created": "2026-11-17 19:46:52",
+   "updated": "2026-11-20 11:28:08",
+   "conflict_files": [
+    "ops/central_mcp.py",
+    "ops/kgctl.py",
+    "ops/selftest.py"
+   ],
+   "unresolved_files": [
+    "ops/central_mcp.py",
+    "ops/kgctl.py",
+    "ops/selftest.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "gate_fail",
+   "gate_output": "× codex/resolve-daemon-liveness-20261110 与 main 有 1 个冲突文件，拒绝自动 land：\n    ops/central_mcp.py\n  这是需要归属裁决的信号（kgctl matrix 的 C 组）。"
+  },
+  {
+   "slug": "autopilot-health-20261019",
+   "branch": "codex/autopilot-health-20261019",
+   "resolve_branch": "codex/resolve-autopilot-health-20261019",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-health-20261019",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "c711255000695f1773b9573a46d51966131a2b16",
+   "source_commits": [
+    "c711255000695f1773b9573a46d51966131a2b16"
+   ],
+   "created": "2026-11-17 19:31:45",
+   "updated": "2026-11-20 11:07:56",
+   "conflict_files": [
+    "ops/budget_gate.py"
+   ],
+   "unresolved_files": [
+    "ops/budget_gate.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "gate_fail",
+   "gate_output": "× codex/resolve-autopilot-health-20261019 与 main 有 3 个冲突文件，拒绝自动 land：\n    ops/panel_logic_check.py\n    ops/selftest.py\n    ops/tasks/conflict_burden.json\n  这是需要归属裁决的信号（kgctl matrix 的 C 组）。"
+  },
+  {
+   "slug": "runtime-freshness-20261119b",
+   "branch": "codex/runtime-freshness-20261119b",
+   "resolve_branch": "codex/resolve-runtime-freshness-20261119b",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-runtime-freshness-20261119b",
+   "base_main": "0236f861a0d09b8b7891ce76b96c53199c6039ce",
+   "source_head": "0919a111ad2b9ff9e1cb322fab272bc0d15ad37f",
+   "source_commits": [
+    "e3a19b93ad2f0036cf1acebcac7c108304a39540",
+    "139e528e64005b4e4654dd0ff0019bed45210191",
+    "0919a111ad2b9ff9e1cb322fab272bc0d15ad37f"
+   ],
+   "created": "2026-11-19 23:03:49",
+   "updated": "2026-11-19 23:03:49",
    "conflict_files": [
     "ops/tasks/conflict_burden.json"
    ],
@@ -19,8 +146,7 @@
     "ops/tasks/conflict_burden.json"
    ],
    "auto_resolved_jsonl": [],
-   "status": "gate_fail",
-   "gate_output": "× codex/resolve-snapshot-budget-archive-20261113 与 main 有 1 个冲突文件，拒绝自动 land：\n    ops/tasks/conflict_burden.json\n  这是需要归属裁决的信号（kgctl matrix 的 C 组）。"
+   "status": "needs_agent"
   },
   {
    "slug": "install-architecture-doc-20261119",
@@ -36,7 +162,7 @@
     "a05ac9e229b83f9a44791d3918cb0b241b8bf30e"
    ],
    "created": "2026-11-19 22:23:44",
-   "updated": "2026-11-20 08:00:47",
+   "updated": "2026-11-19 22:23:44",
    "conflict_files": [
     "ops/tasks/conflict_burden.json"
    ],
@@ -44,31 +170,7 @@
     "ops/tasks/conflict_burden.json"
    ],
    "auto_resolved_jsonl": [],
-   "status": "landed",
-   "gate_output": "× codex/resolve-install-architecture-doc-20261119 与 main 有 1 个冲突文件，拒绝自动 land：\n    ops/tasks/conflict_burden.json\n  这是需要归属裁决的信号（kgctl matrix 的 C 组）。"
-  },
-  {
-   "slug": "runtime-freshness-20261119b",
-   "branch": "codex/runtime-freshness-20261119b",
-   "resolve_branch": "codex/resolve-runtime-freshness-20261119b",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-runtime-freshness-20261119b",
-   "base_main": "0236f861a0d09b8b7891ce76b96c53199c6039ce",
-   "source_head": "0919a111ad2b9ff9e1cb322fab272bc0d15ad37f",
-   "source_commits": [
-    "e3a19b93ad2f0036cf1acebcac7c108304a39540",
-    "139e528e64005b4e4654dd0ff0019bed45210191",
-    "0919a111ad2b9ff9e1cb322fab272bc0d15ad37f"
-   ],
-   "created": "2026-11-19 23:03:49",
-   "updated": "2026-11-20 07:54:03",
-   "conflict_files": [
-    "ops/tasks/conflict_burden.json"
-   ],
-   "unresolved_files": [
-    "ops/tasks/conflict_burden.json"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "landed"
+   "status": "needs_agent"
   },
   {
    "slug": "route-review-20261119",
@@ -111,6 +213,28 @@
    ],
    "auto_resolved_jsonl": [],
    "status": "needs_agent"
+  },
+  {
+   "slug": "snapshot-budget-archive-20261113",
+   "branch": "codex/snapshot-budget-archive-20261113",
+   "resolve_branch": "codex/resolve-snapshot-budget-archive-20261113",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-snapshot-budget-archive-20261113",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "ad220fb88c2b2546a3c807dd4229971473f806c7",
+   "source_commits": [
+    "2ac1fa10624c491adac90a6175f495bc77597cac"
+   ],
+   "created": "2026-11-17 19:29:23",
+   "updated": "2026-11-19 12:49:54",
+   "conflict_files": [
+    "ops/tasks/conflict_burden.json"
+   ],
+   "unresolved_files": [
+    "ops/tasks/conflict_burden.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "gate_fail",
+   "gate_output": "→ codex/resolve-snapshot-budget-archive-20261113: 6 提交、落后 233、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n  保留主干工作树上 14 条真相提交并同步 origin/main\n  真相层 5 个文件已提交（chore(truth): sync state before landing）\n  merge ok（main 未动）\n  验证门禁 × 失败 → 丢弃，main 不动\n PASS  首屏显示总状态文案\n  PASS  首屏显示上下文健康结论\n  PASS  首屏显示正在做什么\n  PASS  首屏显示原生直连结论\n  PASS  有「项目文件夹」区块\n  PASS  有「需要你介入」区块\n  PASS  有「工作项走到哪了」区块\n  PASS  有「工程详情与证据」区块\n  PASS  项目文件夹显示 19 层工程进度\n  PASS  项目文件夹显示工程快照日期\n  PASS  项目文件夹显示工程下一步\n  PASS  项目文件夹显示工程卡点\n  PASS  项目文件夹显示独立质量门禁状态\n  PASS  项目文件夹显示当前步骤\n  PASS  路线里显示下一步\n  PASS  面板输入框收进高级区\n  PASS  默认首屏看不到面板输入框\n  PASS  系统判据详情默认折叠\n  PASS  系统判据详情仍可查\n  PASS  系统首屏不铺开队列读数\n  PASS  系统首屏不说 automation 黑话\n  PASS  系统首屏不说越线黑话\n  PASS  输入落点预览显示判不清落点\n  PASS  输入落点预览显示默认落点\nCodex 自动挡 高级区渲染检查\n  PASS  高级区由 ?adv=1 打开\n  PASS  PM 简报折叠区实际展开\n  PASS  PM 简报上屏：待确认预期\n  PASS  PM 简报上屏：验收标准候选\n  PASS  PM 简报上屏：让路与追问候选\n  PASS  PM 简报上屏：追问授权摘要与可撤销授权\n  PASS  关系层上屏：跨项目目标与需要人的原因\n  PASS  关系层上屏：北极星与关联工作项\n  PASS  关系层上屏：来源窗口\n  PASS  关系层明示不会自动派活\n  PASS  结果代理分上屏：总分、判据与边界\n  PASS  人工验收上屏：复核截图与补图按钮\n\n结果：全部通过\n\n  main 仍是 6be96356ab，源分支 codex/resolve-snapshot-budget-archive-20261113 未受影响"
   },
   {
    "slug": "disk-production-admission-20261112",
@@ -248,28 +372,6 @@
    "reason": "source branch net-zero; content already landed in main"
   },
   {
-   "slug": "autopilot-health-20261019",
-   "branch": "codex/autopilot-health-20261019",
-   "resolve_branch": "codex/resolve-autopilot-health-20261019",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-health-20261019",
-   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
-   "source_head": "c711255000695f1773b9573a46d51966131a2b16",
-   "source_commits": [
-    "c711255000695f1773b9573a46d51966131a2b16"
-   ],
-   "created": "2026-11-17 19:31:45",
-   "updated": "2026-11-19 10:20:55",
-   "conflict_files": [
-    "ops/budget_gate.py"
-   ],
-   "unresolved_files": [
-    "ops/budget_gate.py"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "gate_fail",
-   "gate_output": "第 2 次失败，3s 后重试：fatal: unable to access 'https://github.com/douxian123/codex-autopilot.git/': Failed to connect to github.com port 443 after 7778 ms: Couldn't connect to server\n  ! fetch origin/main 第 3 次失败，3s 后重试：fatal: unable to access 'https://github.com/douxian123/codex-autopilot.git/': Failed to connect to github.com port 443 after 7787 ms: Couldn't connect to server\n  fetch origin/main 第 4 次成功（前 3 次为暂态失败）\n  已把 43 个真相层文件从切换前状态写回（路由/台账不丢）\n  跳过 1 个备份/临时副本（留在磁盘，不进版本库）：ops/tasks/inbox.jsonl.bak-route-smoke-20261116-235548\n  真相层 16 个文件已提交（chore(truth): sync state before landing）\n  merge ok（main 未动）\n  验证门禁 × 失败 → 丢弃，main 不动\n PASS  首屏显示总状态文案\n  PASS  首屏显示上下文健康结论\n  PASS  首屏显示正在做什么\n  PASS  首屏显示原生直连结论\n  PASS  有「项目文件夹」区块\n  PASS  有「需要你介入」区块\n  PASS  有「工作项走到哪了」区块\n  PASS  有「工程详情与证据」区块\n  PASS  项目文件夹显示 19 层工程进度\n  PASS  项目文件夹显示工程快照日期\n  PASS  项目文件夹显示工程下一步\n  PASS  项目文件夹显示工程卡点\n  PASS  项目文件夹显示独立质量门禁状态\n  PASS  项目文件夹显示当前步骤\n  PASS  路线里显示下一步\n  PASS  面板输入框收进高级区\n  PASS  默认首屏看不到面板输入框\n  PASS  系统判据详情默认折叠\n  PASS  系统判据详情仍可查\n  PASS  系统首屏不铺开队列读数\n  PASS  系统首屏不说 automation 黑话\n  PASS  系统首屏不说越线黑话\n  PASS  输入落点预览显示判不清落点\n  PASS  输入落点预览显示默认落点\nCodex 自动挡 高级区渲染检查\n  PASS  高级区由 ?adv=1 打开\n  PASS  PM 简报折叠区实际展开\n  PASS  PM 简报上屏：待确认预期\n  PASS  PM 简报上屏：验收标准候选\n  PASS  PM 简报上屏：让路与追问候选\n  PASS  PM 简报上屏：追问授权摘要与可撤销授权\n  PASS  关系层上屏：跨项目目标与需要人的原因\n  PASS  关系层上屏：北极星与关联工作项\n  PASS  关系层上屏：来源窗口\n  PASS  关系层明示不会自动派活\n  PASS  结果代理分上屏：总分、判据与边界\n  PASS  人工验收上屏：复核截图与补图按钮\n\n结果：全部通过\n\n  main 仍是 c0a5b914e9，源分支 codex/resolve-autopilot-health-20261019 未受影响"
-  },
-  {
    "slug": "guard-release-version-20261119",
    "branch": "codex/guard-release-version-20261119",
    "resolve_branch": "codex/resolve-guard-release-version-20261119",
@@ -317,31 +419,6 @@
    "gate_output": "→ codex/resolve-acceptance-criteria-compiler-20261118: 4 提交、落后 0、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n已有 land 在进行（/Users/danta/.newmax/workspace/codex-autopilot/.git/kgctl-land.lock）"
   },
   {
-   "slug": "daemon-liveness-20261110",
-   "branch": "codex/daemon-liveness-20261110",
-   "resolve_branch": "codex/resolve-daemon-liveness-20261110",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-daemon-liveness-20261110",
-   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
-   "source_head": "fc8773ee4dd038ebabf552769f1f755e5a7b6c52",
-   "source_commits": [
-    "fc8773ee4dd038ebabf552769f1f755e5a7b6c52"
-   ],
-   "created": "2026-11-17 19:46:52",
-   "updated": "2026-11-17 19:46:52",
-   "conflict_files": [
-    "ops/central_mcp.py",
-    "ops/kgctl.py",
-    "ops/selftest.py"
-   ],
-   "unresolved_files": [
-    "ops/central_mcp.py",
-    "ops/kgctl.py",
-    "ops/selftest.py"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
-  },
-  {
    "slug": "autopilot-exec-recover-min-20261020",
    "branch": "codex/autopilot-exec-recover-min-20261020",
    "resolve_branch": "codex/resolve-autopilot-exec-recover-min-20261020",
@@ -362,30 +439,6 @@
    "unresolved_files": [
     "ops/central_daemon.py",
     "ops/selftest.py"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
-  },
-  {
-   "slug": "resource-admission-verify-narrowing-20261115",
-   "branch": "codex/resource-admission-verify-narrowing-20261115",
-   "resolve_branch": "codex/resolve-resource-admission-verify-narrowing-20261115",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-resource-admission-verify-narrowing-20261115",
-   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
-   "source_head": "cf6e7668f10ac03ac42ccf258192d39fa0c15666",
-   "source_commits": [
-    "2ac1fa10624c491adac90a6175f495bc77597cac",
-    "cf6e7668f10ac03ac42ccf258192d39fa0c15666"
-   ],
-   "created": "2026-11-17 19:41:58",
-   "updated": "2026-11-17 19:41:58",
-   "conflict_files": [
-    "ops/guards/resource-admission.py",
-    "ops/tasks/conflict_burden.json"
-   ],
-   "unresolved_files": [
-    "ops/guards/resource-admission.py",
-    "ops/tasks/conflict_burden.json"
    ],
    "auto_resolved_jsonl": [],
    "status": "needs_agent"
@@ -506,5 +559,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-20 08:07:49"
+ "updated": "2026-11-20 12:47:36"
 }
