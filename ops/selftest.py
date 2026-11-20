@@ -301,6 +301,8 @@ def main():
         # 「判不清时悄悄猜」——插件 .mcp.json 写死一个 KG_REPO，于是用户在 A 项目
         # 窗口里说 B 项目的事，记录照样落进 A（2026-11-16 用户实测的 bug）。
         # 这条门禁锁住：分层证据有序、近似并列不猜、判不清时任何项目账本都不许写。
+        run([sys.executable, str(OPS / "test-request-context.py")],
+            cwd=str(OPS.parent), check=True)
         run([sys.executable, str(OPS / "test-project-router.py")],
             cwd=str(OPS.parent), check=True,
             env={**os.environ, "KG_AUTOPILOT_HOME": str(root / "autopilot-home")})
