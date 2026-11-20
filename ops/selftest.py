@@ -849,10 +849,15 @@ def _test_resolve(root):
         data["tasks"].append({"slug": "light-stale", "branch": "codex/light",
                               "resolve_branch": "codex/resolve-light", "worktree": str(wt),
                               "status": "needs_agent", "updated": "2000-01-01 00:00:00"})
+        data["tasks"].append({"slug": "light", "branch": "codex/light-stale-branch",
+                              "resolve_branch": "codex/resolve-light-stale", "worktree": str(wt),
+                              "status": "gate_fail", "updated": "1999-01-01 00:00:00"})
         (repo / "ops" / "tasks" / "resolve.json").write_text(
             _json.dumps(data, ensure_ascii=False), encoding="utf-8")
         listed = kgctl(repo, trunk, "resolve", "--list")
-        if "light-stale" in listed.stdout or "[needs_agent] light " in listed.stdout:
+        if ("light-stale" in listed.stdout
+                or "[needs_agent] light " in listed.stdout
+                or "[gate_fail] light " in listed.stdout):
             raise AssertionError(f"已落盘分支仍被列成开放任务:\n{listed.stdout}")
         # codex/light 已进 main（不再是冲突分支），landed 记录应直接挡住重拆。
         landed_again = kgctl(repo, trunk, "resolve", "codex/light", "--go")
