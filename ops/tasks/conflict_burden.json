@@ -1,19 +1,13 @@
 {
- "main": "02ad0ab72ec3f4137659949f29a8385c68668520",
+ "main": "bf862e9b0e0e4805fd0146feda52a35c48865ddc",
  "branches": [
-  "codex/autopilot-exec-recover-min-20261020",
-  "codex/autopilot-routing-context-20261119",
   "codex/autopilot-truth-sync-failclosed",
-  "codex/eval-loop-judge-20261110",
   "codex/guard-release-version-20261119",
   "codex/reap-branch-preserve-20261111",
   "codex/resource-admission-verify-narrowing-20261115"
  ],
  "burden": {
-  "codex/autopilot-exec-recover-min-20261020": 2,
-  "codex/autopilot-routing-context-20261119": 2,
   "codex/autopilot-truth-sync-failclosed": 2,
-  "codex/eval-loop-judge-20261110": 4,
   "codex/guard-release-version-20261119": 1,
   "codex/reap-branch-preserve-20261111": 2,
   "codex/resource-admission-verify-narrowing-20261115": 1

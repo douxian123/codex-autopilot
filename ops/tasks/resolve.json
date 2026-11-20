@@ -1,6 +1,58 @@
 {
  "tasks": [
   {
+   "slug": "resource-admission-verify-narrowing-20261115",
+   "branch": "codex/resource-admission-verify-narrowing-20261115",
+   "resolve_branch": "codex/resolve-resource-admission-verify-narrowing-20261115",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-resource-admission-verify-narrowing-20261115",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "cf6e7668f10ac03ac42ccf258192d39fa0c15666",
+   "source_commits": [
+    "2ac1fa10624c491adac90a6175f495bc77597cac",
+    "cf6e7668f10ac03ac42ccf258192d39fa0c15666"
+   ],
+   "created": "2026-11-17 19:41:58",
+   "updated": "2026-11-20 12:47:36",
+   "conflict_files": [
+    "ops/guards/resource-admission.py",
+    "ops/tasks/conflict_burden.json"
+   ],
+   "unresolved_files": [
+    "ops/guards/resource-admission.py",
+    "ops/tasks/conflict_burden.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "landed"
+  },
+  {
+   "slug": "eval-loop-judge-20261110",
+   "branch": "codex/eval-loop-judge-20261110",
+   "resolve_branch": "codex/resolve-eval-loop-judge-20261110",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-eval-loop-judge-20261110",
+   "base_main": "02ad0ab72ec3f4137659949f29a8385c68668520",
+   "source_head": "dcda93832dda979d88c2dbe5975e95b1171e227c",
+   "source_commits": [
+    "903966e43db706f3c947ecb88d1fdd9aaa7787b2",
+    "dcda93832dda979d88c2dbe5975e95b1171e227c"
+   ],
+   "created": "2026-11-20 11:51:13",
+   "updated": "2026-11-20 12:36:34",
+   "conflict_files": [
+    "docs/PRODUCT_MAINLINE.md",
+    "ops/product_eval.py",
+    "ops/selftest.py",
+    "ops/truth/product_state.json"
+   ],
+   "unresolved_files": [
+    "docs/PRODUCT_MAINLINE.md",
+    "ops/product_eval.py",
+    "ops/selftest.py",
+    "ops/truth/product_state.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "landed"
+  },
+  {
    "slug": "autopilot-routing-context-20261119",
    "branch": "codex/autopilot-routing-context-20261119",
    "resolve_branch": "codex/resolve-autopilot-routing-context-20261119",
@@ -24,34 +76,6 @@
    "auto_resolved_jsonl": [],
    "status": "landed",
    "gate_output": "→ codex/resolve-autopilot-routing-context-20261119: 4 提交、落后 112、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n  已把 51 个真相层文件从切换前状态写回（路由/台账不丢）\n  JSONL 台账 ops/truth/acceptance.jsonl 已与 HEAD 并集对齐（防旧状态根覆盖）\n  JSONL 台账 ops/truth/ledger.jsonl 已与 HEAD 并集对齐（防旧状态根覆盖）\n  JSONL 台账 ops/truth/progress.jsonl 已与 HEAD 并集对齐（防旧状态根覆盖）\n  跳过 1 个备份/临时副本（留在磁盘，不进版本库）：ops/tasks/inbox.jsonl.bak-route-smoke-20261116-235548\n  真相层 5 个文件已提交（chore(truth): sync state before landing）\n  merge ok（main 未动）\n  验证门禁 × 失败 → 丢弃，main 不动\n有「工作项走到哪了」区块\n  PASS  有「工程详情与证据」区块\n  PASS  项目文件夹显示 19 层工程进度\n  PASS  项目文件夹显示工程快照日期\n  PASS  项目文件夹显示工程下一步\n  PASS  项目文件夹显示工程卡点\n  PASS  项目文件夹显示独立质量门禁状态\n  PASS  项目文件夹显示当前步骤\n  PASS  路线里显示下一步\n  PASS  首屏明示主入口、执行入口与兜底入口\n  PASS  面板输入框收进高级区\n  PASS  默认首屏看不到面板输入框\n  PASS  系统判据详情默认折叠\n  PASS  系统判据详情仍可查\n  PASS  系统首屏不铺开队列读数\n  PASS  系统首屏不说 automation 黑话\n  PASS  系统首屏不说越线黑话\n  PASS  输入落点预览显示判不清落点\n  PASS  输入落点预览显示默认落点\nCodex 自动挡 高级区渲染检查\n  PASS  高级区由 ?adv=1 打开\n  PASS  PM 简报折叠区实际展开\n  PASS  PM 简报上屏：待确认预期\n  PASS  PM 简报上屏：验收标准候选\n  PASS  PM 简报上屏：让路与追问候选\n  PASS  PM 简报上屏：追问授权摘要与可撤销授权\n  PASS  PM 简报上屏：施工路径只读投影\n  PASS  上下文档案折叠区实际展开\n  PASS  上下文档案上屏：四类状态与来源证据\n  PASS  上下文档案说明唯一确认入口\n  PASS  关系层上屏：跨项目目标与需要人的原因\n  PASS  关系层上屏：北极星与关联工作项\n  PASS  关系层上屏：来源窗口\n  PASS  关系层明示不会自动派活\n  PASS  结果代理分上屏：总分、判据与边界\n  PASS  人工验收上屏：复核截图与补图按钮\n\n结果：全部通过\n\n  main 仍是 f3e76ce1a1，源分支 codex/resolve-autopilot-routing-context-20261119 未受影响"
-  },
-  {
-   "slug": "eval-loop-judge-20261110",
-   "branch": "codex/eval-loop-judge-20261110",
-   "resolve_branch": "codex/resolve-eval-loop-judge-20261110",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-eval-loop-judge-20261110",
-   "base_main": "02ad0ab72ec3f4137659949f29a8385c68668520",
-   "source_head": "dcda93832dda979d88c2dbe5975e95b1171e227c",
-   "source_commits": [
-    "903966e43db706f3c947ecb88d1fdd9aaa7787b2",
-    "dcda93832dda979d88c2dbe5975e95b1171e227c"
-   ],
-   "created": "2026-11-20 11:51:13",
-   "updated": "2026-11-20 11:51:13",
-   "conflict_files": [
-    "docs/PRODUCT_MAINLINE.md",
-    "ops/product_eval.py",
-    "ops/selftest.py",
-    "ops/truth/product_state.json"
-   ],
-   "unresolved_files": [
-    "docs/PRODUCT_MAINLINE.md",
-    "ops/product_eval.py",
-    "ops/selftest.py",
-    "ops/truth/product_state.json"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
   },
   {
    "slug": "daemon-liveness-20261110",
@@ -420,30 +444,6 @@
    "status": "needs_agent"
   },
   {
-   "slug": "resource-admission-verify-narrowing-20261115",
-   "branch": "codex/resource-admission-verify-narrowing-20261115",
-   "resolve_branch": "codex/resolve-resource-admission-verify-narrowing-20261115",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-resource-admission-verify-narrowing-20261115",
-   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
-   "source_head": "cf6e7668f10ac03ac42ccf258192d39fa0c15666",
-   "source_commits": [
-    "2ac1fa10624c491adac90a6175f495bc77597cac",
-    "cf6e7668f10ac03ac42ccf258192d39fa0c15666"
-   ],
-   "created": "2026-11-17 19:41:58",
-   "updated": "2026-11-17 19:41:58",
-   "conflict_files": [
-    "ops/guards/resource-admission.py",
-    "ops/tasks/conflict_burden.json"
-   ],
-   "unresolved_files": [
-    "ops/guards/resource-admission.py",
-    "ops/tasks/conflict_burden.json"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
-  },
-  {
    "slug": "reap-branch-preserve-20261111",
    "branch": "codex/reap-branch-preserve-20261111",
    "resolve_branch": "codex/resolve-reap-branch-preserve-20261111",
@@ -559,5 +559,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-20 12:28:36"
+ "updated": "2026-11-20 12:47:36"
 }
