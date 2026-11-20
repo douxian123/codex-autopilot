@@ -755,13 +755,9 @@ def _server_version() -> str:
 SERVER_VERSION = _server_version()
 
 import control_state  # noqa: E402
-<<<<<<< HEAD
 import codex_native  # noqa: E402
 import acceptance_criteria  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
-=======
-from request_context import RequestContextError, resolve_project  # noqa: E402
->>>>>>> codex/autopilot-routing-context-20261119
 
 try:
     import exec_status  # noqa: E402
@@ -848,7 +844,6 @@ TOOLS = [
                           "description": "相关文件路径（可选，帮助路由到既有泳道）"},
                 "kind": {"type": "string", "enum": ["visual", "ux", "bug", "arch", "gate", "unknown"],
                          "description": "粗分类，拿不准就用 unknown"},
-<<<<<<< HEAD
                 "cwd": {"type": "string",
                         "description": "当前会话所在目录（强烈建议带上）。归属判定靠它区分不同项目；不带就可能判不清，记录会进全局待路由箱而不是某个项目账本"},
                 "project": {"type": "string",
@@ -871,10 +866,6 @@ TOOLS = [
                         "description": "当前会话所在目录（可选；调用方知道时带上）"},
                 "project": {"type": "string",
                             "description": "明确指定的项目名或状态根（可选）"},
-=======
-                "project": {"type": "string", "description": "当前项目状态根绝对路径；跨项目发言时优先传入"},
-                "cwd": {"type": "string", "description": "当前 Codex 工作目录；未传 project 时用于归属判定"},
->>>>>>> codex/autopilot-routing-context-20261119
             },
             "required": ["text"],
             "additionalProperties": False,
@@ -1077,15 +1068,10 @@ TOOLS = [
                           "description": "相关文件路径（可选，帮助路由到既有泳道）"},
                 "kind": {"type": "string", "enum": ["visual", "ux", "bug", "arch", "gate", "unknown"],
                          "description": "粗分类，拿不准就用 unknown"},
-<<<<<<< HEAD
                 "cwd": {"type": "string",
                         "description": "当前会话所在目录（强烈建议带上）。归属判定靠它区分不同项目；不带就可能判不清，记录会进全局待路由箱而不是某个项目账本"},
                 "project": {"type": "string",
                             "description": "明确指定项目名或状态根（用户说了是哪个项目时带上）"},
-=======
-                "project": {"type": "string", "description": "当前项目状态根绝对路径；跨项目发言时优先传入"},
-                "cwd": {"type": "string", "description": "当前 Codex 工作目录；未传 project 时用于归属判定"},
->>>>>>> codex/autopilot-routing-context-20261119
             },
             "required": ["text"],
             "additionalProperties": False,
@@ -3235,7 +3221,6 @@ def call_tool(name, args):
         if guard:
             return guard, 2
     if name == "project_status":
-<<<<<<< HEAD
         return kgctl("status")
     if name == "codex_native_threads":
         return codex_native.snapshot()
@@ -3245,13 +3230,6 @@ def call_tool(name, args):
         result = codex_native.probe()
         codex_native.record_probe(result)
         return result
-=======
-        try:
-            env = _request_env(args)
-        except RequestContextError as exc:
-            return str(exc), 2
-        return kgctl("status", extra_env=env)
->>>>>>> codex/autopilot-routing-context-20261119
     if name == "capture_request":
         guard = control_state.mutation_guard()
         if guard:
@@ -3261,17 +3239,9 @@ def call_tool(name, args):
             return "capture_request 需要 text", 2
         files = args.get("files") or []
         env = {"KG_INBOX_FILES": ":".join(files) if files else None,
-<<<<<<< HEAD
                "KG_INBOX_KIND": args.get("kind") or "unknown",
                "KG_INBOX_CWD": (args.get("cwd") or "").strip() or None,
                "KG_INBOX_PROJECT": (args.get("project") or "").strip() or None}
-=======
-               "KG_INBOX_KIND": args.get("kind") or "unknown"}
-        try:
-            env.update(_request_env(args, required=True))
-        except RequestContextError as exc:
-            return str(exc), 2
->>>>>>> codex/autopilot-routing-context-20261119
         return kgctl("inbox", text, extra_env=env)
     if name == "sync_control_plane":
         guard = control_state.mutation_guard()
@@ -3549,17 +3519,9 @@ def call_tool(name, args):
             return "intake_request 需要 text", 2
         files = args.get("files") or []
         env = {"KG_INBOX_FILES": ":".join(files) if files else None,
-<<<<<<< HEAD
                "KG_INBOX_KIND": args.get("kind") or "unknown",
                "KG_INBOX_CWD": (args.get("cwd") or "").strip() or None,
                "KG_INBOX_PROJECT": (args.get("project") or "").strip() or None}
-=======
-               "KG_INBOX_KIND": args.get("kind") or "unknown"}
-        try:
-            env.update(_request_env(args, required=True))
-        except RequestContextError as exc:
-            return str(exc), 2
->>>>>>> codex/autopilot-routing-context-20261119
         return kgctl("intake", text, extra_env=env)
     if name == "convergence_plan":
         argv = ["converge"]

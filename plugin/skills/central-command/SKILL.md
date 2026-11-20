@@ -77,7 +77,6 @@ description: Codex 自动挡。当用户在同一项目里提出零散、即时�
   `generate_context`、`dashboard`、`capture_request`（只追加）、`suggest_branch`、
   `product_state` / `product_update`（产品状态）、`distill_review` / `distill_add`（判断逻辑蒸馏）、
   `synthesize_mainline`（综合成产品主线）、`register_acceptance`（登记验收，分人验收/机器自证）、`close_item` / `reopen_item`（问题收口）。
-<<<<<<< HEAD
 
   **调用 `intake_request` / `capture_request` 时务必带上 `cwd`（当前会话所在目录）。**
   插件安装时只绑定了一个项目，MCP 进程又是全局单例、看不到是哪个窗口在调用；归属
@@ -85,9 +84,6 @@ description: Codex 自动挡。当用户在同一项目里提出零散、即时�
   不带就可能判不清，那时系统会把它放进全局待路由箱（`~/.codex-autopilot/routing/inbox.jsonl`）
   并在 `project_status` 里列出来，**不会**硬塞进某个项目账本。用户明说了是哪个项目，
   就再带一个 `project`（项目名或状态根路径）。
-=======
-- 调用 `intake_request` / `capture_request` 时务必带上 `cwd`（当前会话所在目录），或在用户明确说出项目时带上 `project`（项目状态根绝对路径）。MCP 进程是全局单例，安装时的 `KG_REPO` 只是兼容旧调用的默认值，不能用它推断一次跨项目发言的归属；`cwd` / `project` 无法定位有效状态根时必须报错并停止写账，不得回退到另一个项目。
->>>>>>> codex/autopilot-routing-context-20261119
 - 否则走 CLI。运行时代码在插件里（自包含安装：`~/plugins/codex-autopilot/ops/`），
   项目里只留账本；手敲时先设 `KG_REPO` 指到项目（MCP 调用时插件已自动注入）：
 
