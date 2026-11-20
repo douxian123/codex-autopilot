@@ -1,6 +1,28 @@
 {
  "tasks": [
   {
+   "slug": "guard-release-version-20261119",
+   "branch": "codex/guard-release-version-20261119",
+   "resolve_branch": "codex/resolve-guard-release-version-20261119",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-guard-release-version-20261119",
+   "base_main": "7ef93627729fb390b5d62d11616ecee275474dcb",
+   "source_head": "fe5cd24406e9d127a68f9354bf9f15f938e11650",
+   "source_commits": [
+    "fe5cd24406e9d127a68f9354bf9f15f938e11650"
+   ],
+   "created": "2026-11-19 04:53:21",
+   "updated": "2026-11-20 11:18:31",
+   "conflict_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "unresolved_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "gate_fail",
+   "gate_output": "→ codex/resolve-guard-release-version-20261119: 4 提交、落后 0、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n  已把 44 个真相层文件从切换前状态写回（路由/台账不丢）\n  merge ok（main 未动）\n  验证门禁 × 失败 → 丢弃，main 不动\n有「工作项走到哪了」区块\n  PASS  有「工程详情与证据」区块\n  PASS  项目文件夹显示 19 层工程进度\n  PASS  项目文件夹显示工程快照日期\n  PASS  项目文件夹显示工程下一步\n  PASS  项目文件夹显示工程卡点\n  PASS  项目文件夹显示独立质量门禁状态\n  PASS  项目文件夹显示当前步骤\n  PASS  路线里显示下一步\n  PASS  首屏明示主入口、执行入口与兜底入口\n  PASS  面板输入框收进高级区\n  PASS  默认首屏看不到面板输入框\n  PASS  系统判据详情默认折叠\n  PASS  系统判据详情仍可查\n  PASS  系统首屏不铺开队列读数\n  PASS  系统首屏不说 automation 黑话\n  PASS  系统首屏不说越线黑话\n  PASS  输入落点预览显示判不清落点\n  PASS  输入落点预览显示默认落点\nCodex 自动挡 高级区渲染检查\n  PASS  高级区由 ?adv=1 打开\n  PASS  PM 简报折叠区实际展开\n  PASS  PM 简报上屏：待确认预期\n  PASS  PM 简报上屏：验收标准候选\n  PASS  PM 简报上屏：让路与追问候选\n  PASS  PM 简报上屏：追问授权摘要与可撤销授权\n  PASS  PM 简报上屏：施工路径只读投影\n  PASS  上下文档案折叠区实际展开\n  PASS  上下文档案上屏：四类状态与来源证据\n  PASS  上下文档案说明唯一确认入口\n  PASS  关系层上屏：跨项目目标与需要人的原因\n  PASS  关系层上屏：北极星与关联工作项\n  PASS  关系层上屏：来源窗口\n  PASS  关系层明示不会自动派活\n  PASS  结果代理分上屏：总分、判据与边界\n  PASS  人工验收上屏：复核截图与补图按钮\n\n结果：全部通过\n\n  main 仍是 274bd40ba3，源分支 codex/resolve-guard-release-version-20261119 未受影响"
+  },
+  {
    "slug": "autopilot-resolve-stderr",
    "branch": "codex/autopilot-resolve-stderr",
    "resolve_branch": "codex/resolve-autopilot-resolve-stderr",
@@ -341,27 +363,6 @@
    "gate_output": "第 2 次失败，3s 后重试：fatal: unable to access 'https://github.com/douxian123/codex-autopilot.git/': Failed to connect to github.com port 443 after 7778 ms: Couldn't connect to server\n  ! fetch origin/main 第 3 次失败，3s 后重试：fatal: unable to access 'https://github.com/douxian123/codex-autopilot.git/': Failed to connect to github.com port 443 after 7787 ms: Couldn't connect to server\n  fetch origin/main 第 4 次成功（前 3 次为暂态失败）\n  已把 43 个真相层文件从切换前状态写回（路由/台账不丢）\n  跳过 1 个备份/临时副本（留在磁盘，不进版本库）：ops/tasks/inbox.jsonl.bak-route-smoke-20261116-235548\n  真相层 16 个文件已提交（chore(truth): sync state before landing）\n  merge ok（main 未动）\n  验证门禁 × 失败 → 丢弃，main 不动\n PASS  首屏显示总状态文案\n  PASS  首屏显示上下文健康结论\n  PASS  首屏显示正在做什么\n  PASS  首屏显示原生直连结论\n  PASS  有「项目文件夹」区块\n  PASS  有「需要你介入」区块\n  PASS  有「工作项走到哪了」区块\n  PASS  有「工程详情与证据」区块\n  PASS  项目文件夹显示 19 层工程进度\n  PASS  项目文件夹显示工程快照日期\n  PASS  项目文件夹显示工程下一步\n  PASS  项目文件夹显示工程卡点\n  PASS  项目文件夹显示独立质量门禁状态\n  PASS  项目文件夹显示当前步骤\n  PASS  路线里显示下一步\n  PASS  面板输入框收进高级区\n  PASS  默认首屏看不到面板输入框\n  PASS  系统判据详情默认折叠\n  PASS  系统判据详情仍可查\n  PASS  系统首屏不铺开队列读数\n  PASS  系统首屏不说 automation 黑话\n  PASS  系统首屏不说越线黑话\n  PASS  输入落点预览显示判不清落点\n  PASS  输入落点预览显示默认落点\nCodex 自动挡 高级区渲染检查\n  PASS  高级区由 ?adv=1 打开\n  PASS  PM 简报折叠区实际展开\n  PASS  PM 简报上屏：待确认预期\n  PASS  PM 简报上屏：验收标准候选\n  PASS  PM 简报上屏：让路与追问候选\n  PASS  PM 简报上屏：追问授权摘要与可撤销授权\n  PASS  关系层上屏：跨项目目标与需要人的原因\n  PASS  关系层上屏：北极星与关联工作项\n  PASS  关系层上屏：来源窗口\n  PASS  关系层明示不会自动派活\n  PASS  结果代理分上屏：总分、判据与边界\n  PASS  人工验收上屏：复核截图与补图按钮\n\n结果：全部通过\n\n  main 仍是 c0a5b914e9，源分支 codex/resolve-autopilot-health-20261019 未受影响"
   },
   {
-   "slug": "guard-release-version-20261119",
-   "branch": "codex/guard-release-version-20261119",
-   "resolve_branch": "codex/resolve-guard-release-version-20261119",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-guard-release-version-20261119",
-   "base_main": "7ef93627729fb390b5d62d11616ecee275474dcb",
-   "source_head": "fe5cd24406e9d127a68f9354bf9f15f938e11650",
-   "source_commits": [
-    "fe5cd24406e9d127a68f9354bf9f15f938e11650"
-   ],
-   "created": "2026-11-19 04:53:21",
-   "updated": "2026-11-19 04:53:21",
-   "conflict_files": [
-    "docs/PRODUCT_MAINLINE.md"
-   ],
-   "unresolved_files": [
-    "docs/PRODUCT_MAINLINE.md"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
-  },
-  {
    "slug": "acceptance-criteria-compiler-20261118",
    "branch": "codex/acceptance-criteria-compiler-20261118",
    "resolve_branch": "codex/resolve-acceptance-criteria-compiler-20261118",
@@ -508,5 +509,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-20 10:43:32"
+ "updated": "2026-11-20 11:18:31"
 }
