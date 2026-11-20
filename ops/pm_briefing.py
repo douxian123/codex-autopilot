@@ -39,6 +39,11 @@ try:
 except Exception:  # pragma: no cover
     candidates_mod = None
 
+try:
+    import acceptance_criteria as acceptance_mod
+except Exception:  # pragma: no cover
+    acceptance_mod = None
+
 
 DEFAULT_STALE_MINUTES = 30
 ACTIVE_STATUSES = ("open", "doing", "todo", "wip", "blocked")
@@ -105,7 +110,10 @@ def _expectations(truth):
     constraints_path = truth / "constraints.jsonl"
     candidates_path = truth / "constraint_candidates.jsonl"
     mainline_path = truth / "mainline.json"
-    missing = [p.name for p in (constraints_path, candidates_path, mainline_path)
+    # constraint_candidates.jsonl 是守护扫到候选才生成的可选运行台账。干净项目
+    # 首装没有它，等于「0 条待确认」，不是探针坏了；constraints / mainline 缺失
+    # 才是真相取不到，必须继续报 unknown。
+    missing = [p.name for p in (constraints_path, mainline_path)
                if not p.exists()]
 
     active = []
@@ -140,7 +148,7 @@ def _expectations(truth):
             "text": _text(r.get("text") or r.get("statement") or r.get("title")),
             "kind": r.get("kind") or "",
         } for r in pending[:6]],
-        "pending_count": len(pending) if candidates_path.exists() else None,
+        "pending_count": len(pending),
         "active_count": len(active) if constraints_path.exists() else None,
         "active": [{
             "id": r.get("id"),
@@ -150,6 +158,33 @@ def _expectations(truth):
         "mainline_stage": _text((ml or {}).get("stage")) if ml else "",
         "focus": focus_rows,
     }
+
+
+def _acceptance_criteria(truth):
+    """验收标准候选：从预期编译成标准，确认前不进验收台账。
+
+    这是可选运行台账，从未提名时缺文件等于「0 条候选」，不冒充探针坏掉；
+    读到了坏 JSON 才报 unknown。机器建议项仍需真门禁证据，候选不自动 verified。
+    """
+    path = truth / "acceptance_criteria_candidates.jsonl"
+    if not path.exists():
+        return {"status": "ok", "items": [], "pending_count": 0,
+                "note": "确认后才登记验收项；机器项仍需真门禁证据。"}
+    try:
+        rows = _latest(_read_jsonl(path))
+        pending = [r for r in rows.values() if r.get("status") == "proposed"]
+    except Exception:
+        return {"status": "unknown", "items": [], "pending_count": None,
+                "note": "验收标准候选取不到；不拿 0 冒充正常。"}
+    items = [{
+        "id": r.get("id"),
+        "text": _text(r.get("text") or r.get("title")),
+        "needs_human": bool(r.get("needs_human")),
+        "signals": r.get("signals") or [],
+        "files": [str(f) for f in (r.get("files") or [])][:6],
+    } for r in pending[:6]]
+    return {"status": "ok", "items": items, "pending_count": len(pending),
+            "note": "确认后才登记验收项；机器项仍需真门禁证据。"}
 
 
 def _overlap_holds(runtime):
@@ -180,7 +215,10 @@ def _overlap_holds(runtime):
 def _native_bindings(truth):
     path = truth / "native_routes.jsonl"
     if not path.exists():
-        return None
+        # 原生路由是可选的运行台账：从未派过活的干净项目本来就不会有它。
+        # 这里返回空绑定，表达「0 条窗口绑定」，不能冒充成探针取不到；
+        # 问题台账 ledger.jsonl 缺失仍然是 unknown，两者语义不同。
+        return {}
     latest = {}
     for row in _read_jsonl(path):
         lid = row.get("ledger_id")
@@ -192,12 +230,10 @@ def _native_bindings(truth):
 def _follow_up(runtime, truth, now, stale_minutes):
     ledger_path = truth / "ledger.jsonl"
     bindings = _native_bindings(truth)
-    if not ledger_path.exists() or bindings is None:
+    if not ledger_path.exists():
         missing = []
         if not ledger_path.exists():
             missing.append("ledger.jsonl")
-        if bindings is None:
-            missing.append("native_routes.jsonl")
         return {"status": "unknown", "items": [], "missing": missing,
                 "note": "追问候选取不到；不自动向任何窗口发消息。"}
 
@@ -236,21 +272,33 @@ def compute(repo, runtime=None, now=None, stale_minutes=DEFAULT_STALE_MINUTES):
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
     expectations = _expectations(truth)
+    acceptance = _acceptance_criteria(truth)
     overlap = _overlap_holds(runtime)
     follow_up = _follow_up(runtime, truth, now, stale_minutes)
-    statuses = [expectations["status"], overlap["status"], follow_up["status"]]
+    try:
+        import pm_closure_loop
+        closure = pm_closure_loop.compute(repo, runtime=runtime, now=now,
+                                          stale_minutes=stale_minutes)
+    except Exception as exc:
+        closure = {"status": "unknown", "paths": [], "missing": [str(exc)],
+                   "source": "施工路径算不出来；不把不知道当成 0 条。"}
+    statuses = [expectations["status"], acceptance["status"],
+                overlap["status"], follow_up["status"], closure["status"]]
     if "unknown" in statuses:
         overall = "unknown"
-    elif expectations["pending_count"] or follow_up["items"]:
+    elif (expectations["pending_count"] or acceptance["pending_count"]
+          or follow_up["items"]):
         overall = "attention"
     else:
         overall = "ok"
     return {
         "status": overall,
         "expectations": expectations,
+        "acceptance_criteria": acceptance,
         "overlap_holds": overlap,
         "follow_up_candidates": follow_up,
-        "source": "只读聚合：constraints / candidates / mainline / ledger / native_routes / 运行面",
+        "closure": closure,
+        "source": "只读聚合：constraints / candidates / acceptance_criteria / mainline / ledger / native_routes / 运行面",
     }
 
 

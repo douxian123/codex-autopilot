@@ -40,6 +40,14 @@ from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
 
+# 与 hyapi_secrets.py 同目录：脚本直跑、importlib 加载两种方式都能找到。
+try:
+    if str(OPS) not in sys.path:
+        sys.path.insert(0, str(OPS))
+    import hyapi_secrets as _hyapi_secrets  # type: ignore
+except Exception:  # 旧版本没有这个文件时要能给出明确失败，而不是 import 崩溃
+    _hyapi_secrets = None
+
 
 def _home() -> Path:
     """允许门禁/单测用假的 HOME，避免碰到真实 launchd。"""
@@ -51,6 +59,25 @@ def _registry_path() -> Path:
     """registry.json 的位置。单测可用环境变量指到临时目录。"""
     raw = os.environ.get("KG_GUARD_REGISTRY")
     return Path(raw).expanduser() if raw else OPS / "registry.json"
+
+
+def _missing_secrets(entry: dict) -> list[str]:
+    """返回这条任务缺少的密钥名；只查有无，绝不回显值。"""
+    required = entry.get("requires_secrets") or []
+    if not required:
+        return []
+    missing: list[str] = []
+    for raw in required:
+        name = str(raw)
+        value = ""
+        if _hyapi_secrets is not None:
+            try:
+                value = _hyapi_secrets.resolve_secret(name)
+            except Exception:
+                value = ""
+        if not value:
+            missing.append(name)
+    return missing
 
 
 def _script_base() -> Path:
@@ -207,7 +234,8 @@ def plan(home: Path, only: list[str] | None = None) -> list[dict]:
         row = {"label": label, "plist": plist_path, "script": script,
                "class": entry.get("class", "managed"),
                "state": "absent", "current": [], "desired": [],
-               "current_interval": None, "desired_interval": None}
+               "current_interval": None, "desired_interval": None,
+               "missing_secrets": []}
         if not plist_path.exists():
             rows.append(row)
             continue
@@ -232,6 +260,7 @@ def plan(home: Path, only: list[str] | None = None) -> list[dict]:
             row["state"] = "missing-script"
             rows.append(row)
             continue
+        row["missing_secrets"] = _missing_secrets(entry)
         row["desired"] = desired_program_args(script, row["current"])
         desired_interval = int(entry.get("interval_s") or 0)
         if desired_interval > 0:
@@ -248,6 +277,10 @@ def plan(home: Path, only: list[str] | None = None) -> list[dict]:
             or row["current_interval"] == row["desired_interval"]
         )
         row["state"] = "ok" if args_ok and interval_ok else "stale"
+        if row["state"] == "stale" and row["missing_secrets"]:
+            # 只在真的要改指时才拦：已经指向版本目录的任务不该因为密钥
+            # 暂缺而被误报成 freshness 红灯。
+            row["state"] = "missing-secrets"
         rows.append(row)
     return rows
 
@@ -264,6 +297,10 @@ def check(home: Path, only: list[str] | None = None) -> int:
         bad += 1
         if row["state"] == "missing-script":
             print(f"  FAIL     {row['label']} 指向的脚本不在版本目录：{row['script']}")
+        elif row["state"] == "missing-secrets":
+            print(f"  FAIL     {row['label']} 缺少密钥：{', '.join(row['missing_secrets'])}")
+            print("           先运行：python3 "
+                  "$(当前安装版本)/ops/guards/hyapi_secrets.py --migrate")
         else:
             print(f"  FAIL     {row['label']} 未跟上当前配置：")
             print(f"           当前：{row['current']} interval={row['current_interval']}")
@@ -284,6 +321,14 @@ def install(home: Path, only: list[str] | None = None,
     changed = 0
     for row in plan(home, only):
         if row["state"] in ("absent", "ok"):
+            continue
+        if row["state"] == "missing-secrets":
+            print(f"× {row['label']}：本地缺少 {', '.join(row['missing_secrets'])}；"
+                  "不改写 plist、不 reload。")
+            print("  先迁移密钥：python3 "
+                  "$(当前安装版本)/ops/guards/hyapi_secrets.py --migrate"
+                  "（只写本地 secrets.env，不回显值）")
+            bad += 1
             continue
         if row["state"] == "missing-script":
             print(f"× {row['label']}：版本目录里没有 {row['script']}，先修打包再装。")

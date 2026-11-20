@@ -305,6 +305,58 @@ def main():
         out = p.stdout + p.stderr
         check("重名项目做显式指派 → 停在待路由箱，不写任何项目账本",
               "没写进任何项目账本" in out, out[:300])
+
+        # ---- 15. 落点预览：只读；默认落点明说；判不清不硬给项目 ----
+        # 面板每敲一个字都会预演，所以预演既不能偷偷写注册表，也不能和真实提交
+        # 说两套话。这里锁住三种真实分支：点名 → resolved、单项目无线索 → 明说
+        # 默认落点、多项目无线索 → 停在「判不清」，和 cmd_inbox 的落账规则一致。
+        one_project_registry = base / "preview-one-project.json"
+        both_projects_registry = base / "preview-both-projects.json"
+        alpha_rows = [dict(r) for r in pr.load_registry(home / "projects.json")
+                      if r.get("name") == "alpha"]
+        pr.save_registry(alpha_rows, one_project_registry)
+        pr.save_registry(registry, both_projects_registry)
+        reg_before = both_projects_registry.read_text(encoding="utf-8")
+        alpha_before = (alpha / "ops" / "tasks" / "inbox.jsonl").read_text(
+            encoding="utf-8")
+        beta_before = (beta / "ops" / "tasks" / "inbox.jsonl").read_text(
+            encoding="utf-8")
+
+        def preview_json(proc):
+            lines = [ln for ln in proc.stdout.splitlines() if ln.strip()]
+            return json.loads(lines[-1])
+
+        p = run_kgctl(alpha, base / "stateA-trunk", "route-preview",
+                      "beta项目要改缓存",
+                      extra_env={"KG_PROJECTS_REGISTRY": str(both_projects_registry)})
+        got = preview_json(p)
+        check("预览点名 beta → 解析到 beta",
+              got.get("decision") == "resolved" and got.get("project") == "beta", got)
+        check("预览不写注册表",
+              both_projects_registry.read_text(encoding="utf-8") == reg_before)
+        check("预览不写任何项目账本",
+              (alpha / "ops" / "tasks" / "inbox.jsonl").read_text(
+                  encoding="utf-8") == alpha_before
+              and (beta / "ops" / "tasks" / "inbox.jsonl").read_text(
+                  encoding="utf-8") == beta_before)
+
+        p = run_kgctl(alpha, base / "stateA-trunk", "route-preview",
+                      "随口说一句",
+                      extra_env={"KG_PROJECTS_REGISTRY": str(one_project_registry)})
+        got = preview_json(p)
+        check("单项目无线索 → 明说默认落到当前绑定项目",
+              got.get("decision") == "none", got)
+        check("单项目无线索 → 默认落点名与真实提交一致",
+              got.get("project") == alpha.name, (got, alpha.name))
+        check("单项目无线索 → 理由里明说默认落账",
+              "默认" in "".join(got.get("reasons") or []), got)
+
+        p = run_kgctl(alpha, base / "stateA-trunk", "route-preview",
+                      "把按钮往左挪 8 像素",
+                      extra_env={"KG_PROJECTS_REGISTRY": str(both_projects_registry)})
+        got = preview_json(p)
+        check("多项目无线索 → 停在判不清，不硬塞默认项目",
+              got.get("decision") == "ambiguous" and not got.get("project"), got)
     finally:
         shutil.rmtree(base, ignore_errors=True)
         os.environ.pop("KG_AUTOPILOT_HOME", None)
