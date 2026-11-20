@@ -127,3 +127,31 @@ def liveness_problem(state: dict, daemon_enabled=None):
                 "自动挡当前不在动。")
     return ("④ 常驻守护进程：拿不到 launchctl 信息，无法判断它是否在跑 - "
             "这不是「正常」，是「看不清」。")
+
+
+def liveness_need_action(state: dict, daemon_enabled=None):
+    """把 doctor 判据拆成「首屏一句话 + 工程详情」，避免长路径占用户的注意力。
+
+    首屏只回答「要不要人 / 不点会怎样」；绑定路径、PID 和命令放在详情里，
+    供 title/aria-label 与工程详情区取用。没有问题时返回 (None, None)。
+    """
+    problem = liveness_problem(state, daemon_enabled)
+    if not problem:
+        return None, None
+
+    st = state.get("status")
+    if st == "running" and state.get("matches_repo") is False:
+        headline = "后台现在在服务别的项目；当前项目要等自己的轮次。"
+        detail = (problem + " 当前项目：" + str(state.get("repo") or "取不到")
+                  + "；守护绑定：" + str(state.get("bound_repo") or "取不到")
+                  + "。需要精确修复时看工程详情，不会自动改绑定。")
+    elif st == "not_installed":
+        headline = "常驻没接上；自动推进、落盘和收口现在都不会发生。"
+        detail = problem
+    elif st == "loaded_not_running":
+        headline = "常驻进程没起来；自动推进现在停着。"
+        detail = problem
+    else:
+        headline = "常驻状态看不清；不能当成正常。"
+        detail = problem
+    return headline, detail

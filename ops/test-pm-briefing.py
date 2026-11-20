@@ -62,7 +62,8 @@ def main():
         check("台账缺失时整体 unknown", blank["status"] == "unknown", blank)
         check("台账缺失时预期 unknown",
               blank["expectations"]["status"] == "unknown"
-              and blank["expectations"]["pending_count"] is None,
+              and "constraints.jsonl" in blank["expectations"]["missing"]
+              and "mainline.json" in blank["expectations"]["missing"],
               blank["expectations"])
         check("台账缺失时追问 unknown",
               blank["follow_up_candidates"]["status"] == "unknown",
@@ -72,6 +73,46 @@ def main():
               and "取不到" in blank["overlap_holds"]["note"],
               blank["overlap_holds"])
 
+        # native_routes.jsonl 是「派过活才有」的可选运行台账：从未派活的
+        # 干净项目本来就没有它。它缺失时应是 0 条绑定，不是探针坏掉；
+        # ledger.jsonl 缺失才继续保持 unknown，两者语义不同。
+        write_jsonl(truth / "ledger.jsonl", [])
+        seeded = pm_briefing.compute(repo, now=now)
+        check("只有原生路由台账缺失时追问为零条候选",
+              seeded["follow_up_candidates"]["status"] == "ok"
+              and seeded["follow_up_candidates"]["items"] == []
+              and "native_routes.jsonl" not in seeded["follow_up_candidates"]["missing"],
+              seeded["follow_up_candidates"])
+        write_jsonl(truth / "native_routes.jsonl", [])
+        seeded = pm_briefing.compute(repo, now=now)
+        check("空原生路由台账是零条候选",
+              seeded["follow_up_candidates"]["status"] == "ok"
+              and seeded["follow_up_candidates"]["items"] == [],
+              seeded["follow_up_candidates"])
+
+        # 候选台账同样只在守护扫到候选后才出现：首装缺它应是 0 条待确认，
+        # 不能因为「没生成过」就把 PM 简报整体压成 unknown。
+        write_jsonl(truth / "constraints.jsonl", [])
+        (truth / "mainline.json").write_text(json.dumps({
+            "stage": "首装", "current_focus": [],
+        }, ensure_ascii=False), encoding="utf-8")
+        no_candidates = pm_briefing.compute(repo, now=now)
+        check("候选台账缺失是零条待确认",
+              no_candidates["expectations"]["status"] == "ok"
+              and no_candidates["expectations"]["pending_count"] == 0
+              and "constraint_candidates.jsonl" not in no_candidates["expectations"]["missing"],
+              no_candidates["expectations"])
+        check("验收标准候选缺失是零条待确认",
+              no_candidates["acceptance_criteria"]["status"] == "ok"
+              and no_candidates["acceptance_criteria"]["pending_count"] == 0,
+              no_candidates["acceptance_criteria"])
+        write_jsonl(truth / "constraint_candidates.jsonl", [])
+        empty_candidates = pm_briefing.compute(repo, now=now)
+        check("空候选台账是零条待确认",
+              empty_candidates["expectations"]["status"] == "ok"
+              and empty_candidates["expectations"]["pending_count"] == 0,
+              empty_candidates["expectations"])
+
         write_jsonl(truth / "constraints.jsonl", [{
             "id": "C-0001", "status": "active",
             "statement": "验收前必须先自验", "scope": ["ops/central_mcp.py"],
@@ -79,6 +120,11 @@ def main():
         write_jsonl(truth / "constraint_candidates.jsonl", [{
             "id": "CC-0001", "status": "proposed", "kind": "taboo",
             "text": "绝不影响用户正在用的服务",
+        }])
+        write_jsonl(truth / "acceptance_criteria_candidates.jsonl", [{
+            "id": "AC-0001", "status": "proposed", "needs_human": True,
+            "text": "落盘后必须能在面板看到闭环结果",
+            "signals": ["必须能", "看到"], "files": ["ops/kgctl.py"],
         }])
         (truth / "mainline.json").write_text(json.dumps({
             "stage": "架构闭环", "current_focus": ["PM 简报", "验收截图"],
@@ -109,6 +155,11 @@ def main():
               and "先自验" in exp["active"][0]["text"], exp)
         check("主线阶段进简报", exp["mainline_stage"] == "架构闭环", exp)
         check("PM 感知到待确认预期", brief["status"] == "attention", brief)
+        acc = brief["acceptance_criteria"]
+        check("验收标准候选进简报", acc["status"] == "ok"
+              and acc["pending_count"] == 1
+              and "闭环结果" in acc["items"][0]["text"], acc)
+        check("验收标准候选明示确认边界", "确认后才登记验收项" in acc["note"], acc)
 
         hold = brief["overlap_holds"]
         check("让路信号进简报", hold["status"] == "ok" and len(hold["items"]) == 1, hold)

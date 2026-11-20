@@ -11,6 +11,7 @@ from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
 HELPER = OPS / "guards/snapshot_prune.py"
+SYSTEM_PYTHON = "/usr/bin/python3"
 failures = []
 
 
@@ -34,13 +35,47 @@ def write(path: Path, data: bytes):
     path.write_bytes(data)
 
 
+def py39_import(path: Path):
+    """用守护脚本固定的系统解释器真正导入模块，而不只是编译。"""
+    probe = (
+        "import importlib.util, sys\n"
+        "path = sys.argv[1]\n"
+        "spec = importlib.util.spec_from_file_location("
+        "'snapshot_prune_probe', path)\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+    )
+    return subprocess.run(
+        [SYSTEM_PYTHON, "-c", probe, str(path)],
+        capture_output=True, text=True)
+
+
 def main():
     toolchain = subprocess.run(
-        ["/usr/bin/python3", "-m", "py_compile", str(HELPER)],
+        [SYSTEM_PYTHON, "-m", "py_compile", str(HELPER)],
         capture_output=True, text=True)
     check("淘汰器能用守护脚本的系统 Python 3.9 编译",
           toolchain.returncode == 0,
           (toolchain.stdout + toolchain.stderr).strip())
+    runtime = py39_import(HELPER)
+    check("淘汰器能被守护脚本的系统 Python 3.9 真正导入",
+          runtime.returncode == 0,
+          (runtime.stdout + runtime.stderr).strip())
+    with tempfile.TemporaryDirectory(prefix="snapshot-prune-py39-") as tmp:
+        legacy = Path(tmp) / "legacy_union.py"
+        legacy.write_text(
+            "from pathlib import Path\n"
+            "def covering(candidate: Path) -> Path | None:\n"
+            "    return None\n",
+            encoding="utf-8")
+        negative = py39_import(legacy)
+        check("系统 Python 3.9 导入门禁能抓回联合类型注解",
+              negative.returncode != 0
+              and "TypeError" in negative.stderr
+              and "unsupported operand type(s) for |" in negative.stderr,
+              repr((negative.returncode,
+                    negative.stdout.strip(),
+                    negative.stderr.strip())))
 
     mod = load_helper()
     with tempfile.TemporaryDirectory(prefix="snapshot-prune-") as tmp:

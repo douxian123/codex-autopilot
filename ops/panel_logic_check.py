@@ -198,6 +198,10 @@ if (followCancelButton) {
 const read = function (id) { return document.getElementById(id).textContent; };
 console.log(JSON.stringify({
   ok: true,
+  entryMap: (function () {
+    var m = html.match(/<div[^>]*id="entryMap"[^>]*>([\s\S]*?)<\/div>/);
+    return m ? m[1].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() : "";
+  })(),
   captureToolName: (toolCalls.find(function (c) {
     return c.name === "capture_acceptance_screenshot";
   }) || {}).name || "",
@@ -265,6 +269,8 @@ console.log(JSON.stringify({
   autonomyLine: read("autonomyLine"),
   autonomyAudit: read("autonomyAudit"),
   pmBriefingBox: read("pmBriefingBox") + " " + document.getElementById("pmBriefingBox").innerHTML,
+  contextArchiveBox: read("contextArchiveBox") + " " + document.getElementById("contextArchiveBox").innerHTML,
+  contextArchiveFoldOpen: (function(){ var n = document.getElementById("contextArchiveFold"); return n && (n.open || n.hasAttribute("open")) ? "1" : "0"; })(),
   relationshipGoalsBox: read("relationshipGoalsBox") + " "
     + document.getElementById("relationshipGoalsBox").innerHTML,
   outcomeScoreBox: read("outcomeScoreBox") + " "
@@ -392,6 +398,9 @@ def main(argv):
         fails = 0
         if not quiet:
             print("Codex 自动挡 面板首屏逻辑检查")
+        fails += has("首屏区分主入口、执行入口与兜底入口", out["entryMap"],
+                     "主入口", "当前 Codex 输入框", "万法归一",
+                     "执行入口", "后台任务窗口", "兜底入口", "高级区输入框")
         fails += has("首屏显示绑定项目（名字+路径）", out["projectLine"],
                      project.get("name"), project.get("path"))
         fails += has("绑定项目路径进了 title（悬停可看全）", out["projectTitle"], project.get("path"))
@@ -552,6 +561,14 @@ def main(argv):
         clean.update({
             "need_action": "不需要你做什么，继续照常提需求就行",
             "need_action_detail": "",
+            "blocked": {"failures": [], "resolve": [], "exec": [], "port": []},
+            "error": None,
+            # Q1 优先消费控制层 counts.stuck；现场有 17 条冲突时，只清 blocked
+            # 仍会被计数污染成「17 个卡点」。空态夹具必须把计数也归零。
+            "counts": {"doing": 0, "todo": 0, "review": 0, "stuck": 0},
+            "harness_tune": {"status": "ok", "count": 0, "items": []},
+            "constraint_candidates": {"status": "ok", "count": 0, "items": []},
+            "acceptance_criteria": {"status": "ok", "count": 0, "items": []},
         })
         clean_out = run_once(clean)
         fails += has("无需处理时第一问摘要写不用你", clean_out["q1State"], "不用你")
@@ -643,6 +660,7 @@ def main(argv):
             # 上一次 land 因此在 trunk 上假红。逐项清空后才是确定性的空态夹具。
             "harness_tune": {"status": "ok", "count": 0, "items": []},
             "constraint_candidates": {"status": "ok", "count": 0, "items": []},
+            "acceptance_criteria": {"status": "ok", "count": 0, "items": []},
         })
         beout = run_once(bempty)
         fails += has("没有卡点时给出空态说明",
@@ -885,6 +903,51 @@ def main(argv):
                                 + str(ratt_out.get("stewardHtml") or ""))
         fails += has("路线异常时提示复核", route_attention_view,
                      "路线与效能需复核（只提复核，不自动纠偏）")
+
+        # 运行态新鲜度是状态管家内部的只读判据：源码进了 main 不代表现场吃到。
+        # 它必须落在 tune 节点上、写清需受控换代/重载，且绝不暗示自动重启。
+        freshness = dict(route_unknown)
+        freshness["runtime_freshness"] = {
+            "status": "ok", "level": "attention",
+            "headline": "已装版本落后于主干源码，源码改动还没进入运行态",
+            "unknown": [],
+            "reasons": ["需要受控换代或重载后才能现场生效"],
+            "action": "recommend_stable_upgrade",
+        }
+        freshness["stewards"] = central_mcp._steward_health(freshness)
+        fresh_out = run_once(freshness)
+        fresh_view = (str(fresh_out["stewardBar"]) + " "
+                      + str(fresh_out.get("stewardHtml") or ""))
+        fails += has("源码已装不同代时如实提示", fresh_view,
+                     "已装版本落后于主干源码")
+        fails += has("运行态提示写清不会自动重启", fresh_view, "不会自动重启")
+        daemon_fresh = dict(freshness)
+        daemon_fresh["runtime_freshness"] = {
+            "status": "ok", "level": "attention",
+            "headline": "运行代码尚未跟上已装版本，源码改动需要受控换代后才会现场生效",
+            "unknown": [],
+            "reasons": ["daemon 正在服务别的账本；需受控重载，不会自动改绑定"],
+            "action": "recommend_stable_reload",
+        }
+        daemon_fresh["stewards"] = central_mcp._steward_health(daemon_fresh)
+        daemon_out = run_once(daemon_fresh)
+        daemon_view = (str(daemon_out["stewardBar"]) + " "
+                       + str(daemon_out.get("stewardHtml") or ""))
+        fails += has("daemon 绑定/代际不一致时如实提示", daemon_view,
+                     "运行代码尚未跟上已装版本")
+        fails += has("daemon 提示写清不会自动重启", daemon_view, "不会自动重启")
+        if 'data-key="tune"' not in str(fresh_out.get("stewardHtml") or ""):
+            fails += 1
+            print("  FAIL  运行态提示没有落在状态管家节点上")
+        else:
+            print("  PASS  运行态提示落在状态管家节点上")
+        fresh_keys = {r.get("key") for r in (freshness["stewards"].get("rows") or [])
+                      if r.get("key") != "health"}
+        if len(fresh_keys) != 7:
+            fails += 1
+            print(f"  FAIL  运行态提示把管家扩成 {len(fresh_keys)} 个")
+        else:
+            print("  PASS  运行态提示没有新增第八个管家")
         # 内部空值不得泄漏到读者面。实测缺陷（2026-11-17）：守护没跑时合并管家那行
         # 直接印出「可合 None · 冲突 None」。None/True/False 这类 Python 字面量
         # 一旦上屏就是没交付——这是本项目硬规则（内部读数不上读者面）。
@@ -973,6 +1036,13 @@ def main(argv):
                 "note": "只生成候选，不会自动追问；你点头才会发消息。",
                 "missing": [],
             },
+            "closure": {
+                "status": "ok",
+                "paths": [{
+                    "work_item": {"id": "L-0030", "title": "施工路径上屏",
+                                  "status": "doing", "occupancy": "known"},
+                }],
+            },
         }
         # 授权账本是顶层状态，不属于 PM 简报子对象；面板按这个契约读取。
         pm_payload["authorized_followups"] = {
@@ -995,6 +1065,8 @@ def main(argv):
                      "90 分钟", "thread-abc", "不会自动追问")
         fails += has("PM 简报上屏：追问授权摘要", pm_out["pmBriefingBox"],
                      "追问授权", "1 条待发")
+        fails += has("PM 简报上屏：施工路径只读投影", pm_out["pmBriefingBox"],
+                     "施工路径", "L-0030", "施工路径上屏")
         authorize_calls = pm_out.get("followupAuthorizeCalls") or []
         if len(authorize_calls) != 1 or authorize_calls[0].get("confirm") is not True \
            or authorize_calls[0].get("ticket_id") != "L-0021" \
@@ -1018,6 +1090,39 @@ def main(argv):
         pm_missing = run_once(dict(payload, pm_briefing=None))
         fails += has("PM 简报缺失时如实说取不到",
                      pm_missing["pmBriefingBox"], "取不到")
+
+        # 上下文档案是高级区的只读次入口：用户要能看见自动收了什么、来源是什么、
+        # 停在待确认/已确认/已驳回/生效哪一类；确认按钮仍只在唯一决策区。
+        archive_payload = dict(payload)
+        archive_payload["context_archive"] = {
+            "status": "ok", "counts": {"proposed": 1, "promoted": 1,
+                                       "dismissed": 1, "active": 1},
+            "items": [{
+                "id": "CC-9001", "status": "proposed", "text": "以后不要做破坏性修改",
+                "source": "intake", "signals": ["以后", "不要"],
+                "evidence": [{"thread": "thread-ca", "text": "以后不要做破坏性修改"}],
+            }, {
+                "id": "CC-9002", "status": "promoted", "text": "面板只展示值得关注的信息",
+                "source": "context_learning", "mentions": 5, "threads": 3,
+                "constraint_id": "C-9002",
+            }],
+            "unknown": [],
+            "note": "自动收录只生成候选，不自动生效；待确认项在「需要你决策」区逐条点「算 / 不算」。",
+        }
+        caout = run_once(archive_payload)
+        fails += has("上下文档案上屏：四类状态与数量", caout["contextArchiveBox"],
+                     "待确认 1", "已确认 1", "已驳回 1", "生效 1")
+        fails += has("上下文档案上屏：原话与来源", caout["contextArchiveBox"],
+                     "以后不要做破坏性修改", "入口原话", "thread-ca",
+                     "自学习：同一诉求出现 5 次 / 跨 3 个会话")
+        fails += has("上下文档案说明唯一确认入口", caout["contextArchiveBox"],
+                     "需要你决策", "不自动生效")
+        archive_missing = run_once(dict(payload, context_archive={
+            "status": "unknown", "reason": "档案目录读不到", "counts": {},
+            "items": [], "unknown": ["档案目录读不到"],
+        }))
+        fails += has("上下文档案取不到时如实说明", archive_missing["contextArchiveBox"],
+                     "档案目录读不到", "不把不知道当成 0 条")
 
         # 关系层：跨项目长期目标在高级区折叠展示。它必须照抄控制层摘要，
         # 缺失时说取不到，不能把 G-id / 优先级 / 需要人的原因藏在首屏。
