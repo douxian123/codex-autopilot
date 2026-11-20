@@ -4,7 +4,7 @@
 - 执行分支：`codex/resolve-autopilot-routing-context-20261119`
 - 工作树：`/Users/danta/.newmax/workspace/codex-autopilot-resolve-autopilot-routing-context-20261119`
 - 基于：`ac0efe238cee`（origin/main）
-- 状态：`needs_agent`
+- 状态：`gate_fail`
 
 ## 要解的冲突文件（保留的 marker）
 - `ops/central_mcp.py`
