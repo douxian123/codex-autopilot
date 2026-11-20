@@ -3940,6 +3940,18 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
         return all_ok, results, "\n".join(chunks)
 
 
+def _pm_gate_for_branch(wt: Path, branch: str) -> tuple:
+    """合流前检查 PM 产品决策门；旧工作项没有研究挂钩时保持兼容放行。"""
+    try:
+        import pm_decision
+        result = pm_decision.execution_gate_for_branch(wt, branch=branch)
+    except Exception as exc:
+        return False, {"status": "unknown", "reason": "PM 决策门读取失败：%s" % exc}
+    if result.get("status") == "pass":
+        return True, result
+    return False, result
+
+
 @contextmanager
 def _verification_gate_lock():
     """跨进程串行执行重验证，不让一个坏进程留下永久锁。
@@ -5526,6 +5538,12 @@ def cmd_land(args):
             print("\n".join(dirty[:20])[:800])
             sys.exit(1)
         sync_trunk_truth(wt, "sync state before landing")
+        pm_ok, pm_result = _pm_gate_for_branch(REPO, branch)
+        if not pm_ok:
+            print("× PM 产品决策门未通过，未执行主干 merge，源分支与 main 不动：")
+            print(json.dumps(pm_result, ensure_ascii=False, indent=2)[:3000])
+            sys.exit(1)
+        print("  PM 产品决策门 ok")
         m = proc_run(["git", "-C", str(wt), "merge", "--no-ff", branch,
                             "-m", f"train: merge {branch}"], capture_output=True, text=True)
         if m.returncode != 0:

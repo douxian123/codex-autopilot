@@ -282,12 +282,19 @@ def compute(repo, runtime=None, now=None, stale_minutes=DEFAULT_STALE_MINUTES):
     except Exception as exc:
         closure = {"status": "unknown", "paths": [], "missing": [str(exc)],
                    "source": "施工路径算不出来；不把不知道当成 0 条。"}
+    try:
+        import pm_decision
+        research = pm_decision.brief(repo)
+    except Exception as exc:
+        research = {"status": "unknown", "count": 0, "items": [],
+                    "reason": "PM 研究状态取不到：%s" % exc}
     statuses = [expectations["status"], acceptance["status"],
-                overlap["status"], follow_up["status"], closure["status"]]
+                overlap["status"], follow_up["status"], closure["status"],
+                research["status"]]
     if "unknown" in statuses:
         overall = "unknown"
     elif (expectations["pending_count"] or acceptance["pending_count"]
-          or follow_up["items"]):
+          or follow_up["items"] or research.get("attention_count")):
         overall = "attention"
     else:
         overall = "ok"
@@ -298,7 +305,8 @@ def compute(repo, runtime=None, now=None, stale_minutes=DEFAULT_STALE_MINUTES):
         "overlap_holds": overlap,
         "follow_up_candidates": follow_up,
         "closure": closure,
-        "source": "只读聚合：constraints / candidates / acceptance_criteria / mainline / ledger / native_routes / 运行面",
+        "research": research,
+        "source": "只读聚合：constraints / candidates / acceptance_criteria / research / mainline / ledger / native_routes / 运行面",
     }
 
 
