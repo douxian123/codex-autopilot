@@ -1,6 +1,30 @@
 {
  "tasks": [
   {
+   "slug": "resource-admission-verify-narrowing-20261115",
+   "branch": "codex/resource-admission-verify-narrowing-20261115",
+   "resolve_branch": "codex/resolve-resource-admission-verify-narrowing-20261115",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-resource-admission-verify-narrowing-20261115",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "cf6e7668f10ac03ac42ccf258192d39fa0c15666",
+   "source_commits": [
+    "2ac1fa10624c491adac90a6175f495bc77597cac",
+    "cf6e7668f10ac03ac42ccf258192d39fa0c15666"
+   ],
+   "created": "2026-11-17 19:41:58",
+   "updated": "2026-11-20 12:47:36",
+   "conflict_files": [
+    "ops/guards/resource-admission.py",
+    "ops/tasks/conflict_burden.json"
+   ],
+   "unresolved_files": [
+    "ops/guards/resource-admission.py",
+    "ops/tasks/conflict_burden.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "landed"
+  },
+  {
    "slug": "eval-loop-judge-20261110",
    "branch": "codex/eval-loop-judge-20261110",
    "resolve_branch": "codex/resolve-eval-loop-judge-20261110",
@@ -420,30 +444,6 @@
    "status": "needs_agent"
   },
   {
-   "slug": "resource-admission-verify-narrowing-20261115",
-   "branch": "codex/resource-admission-verify-narrowing-20261115",
-   "resolve_branch": "codex/resolve-resource-admission-verify-narrowing-20261115",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-resource-admission-verify-narrowing-20261115",
-   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
-   "source_head": "cf6e7668f10ac03ac42ccf258192d39fa0c15666",
-   "source_commits": [
-    "2ac1fa10624c491adac90a6175f495bc77597cac",
-    "cf6e7668f10ac03ac42ccf258192d39fa0c15666"
-   ],
-   "created": "2026-11-17 19:41:58",
-   "updated": "2026-11-17 19:41:58",
-   "conflict_files": [
-    "ops/guards/resource-admission.py",
-    "ops/tasks/conflict_burden.json"
-   ],
-   "unresolved_files": [
-    "ops/guards/resource-admission.py",
-    "ops/tasks/conflict_burden.json"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
-  },
-  {
    "slug": "reap-branch-preserve-20261111",
    "branch": "codex/reap-branch-preserve-20261111",
    "resolve_branch": "codex/resolve-reap-branch-preserve-20261111",
@@ -559,5 +559,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-20 12:36:34"
+ "updated": "2026-11-20 12:47:36"
 }
