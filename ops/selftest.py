@@ -1664,6 +1664,13 @@ def test_installer_shell_portability():
         assert result.returncode == 0, f"完整安装路径没跑完:\n{combined}"
         assert (home / "plugins" / "codex-autopilot" / "releases" / installed_version
                 / "ops" / "central_mcp.py").is_file()
+        release_config = (home / "plugins" / "codex-autopilot" / "releases"
+                          / installed_version / "ops" / "central.config.json")
+        assert release_config.is_file(), "版本目录缺 ops/central.config.json"
+        release_cfg = json.loads(release_config.read_text(encoding="utf-8"))
+        assert release_cfg.get("trunk_dir") == str(trunk), (
+            "显式 --trunk 没写进版本内 central.config.json，"
+            "product_eval 会回退到陈旧 -trunk：%r" % release_cfg.get("trunk_dir"))
         # 同一份安装不带 Companion 时也必须照样成功。
         result2 = run(["bash", str(source / "install.sh"), "--trunk", str(trunk),
                        "--no-seed", "--no-marketplace", "--no-companion", str(source)],

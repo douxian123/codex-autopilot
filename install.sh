@@ -326,7 +326,8 @@ done
 
 # 3) .mcp.json：运行时代码走插件自己的 ops/，状态写回目标项目。
 "$PY" - "$STAGE/.mcp.json" "$PY" "$PROJECT" "$TRUNK" <<'PYEOF'
-import json, sys
+import json, os, sys, tempfile
+from pathlib import Path
 path, python, project, trunk = sys.argv[1:5]
 env = {"KG_REPO": project}
 if trunk:
@@ -340,11 +341,35 @@ data = {"mcpServers": {"codex-autopilot": {
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(data, fh, ensure_ascii=False, indent=2)
     fh.write("\n")
+# 显式 --trunk 必须同时写进版本自带的 central.config.json。否则 product_eval
+# 判据 5 只能回退到旧的同级 -trunk 目录：发布提交明明已在 origin/main，
+# 现场评估却一直拿陈旧主干做祖先比较，出现只靠手改安装目录才转绿的假闭环。
+ops_config = Path(path).parent / "ops" / "central.config.json"
+if trunk and ops_config.is_file():
+    with ops_config.open(encoding="utf-8") as fh:
+        cfg = json.load(fh)
+    cfg["trunk_dir"] = trunk
+    fd, tmp = tempfile.mkstemp(prefix=".central-config-", dir=str(ops_config.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, str(ops_config))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 print(f"已写 {path}")
 print(f"  运行时代码 = {path.rsplit('/', 1)[0]}/ops/central_mcp.py")
 print(f"  状态根     = {project}")
 if trunk:
     print(f"  落盘主干   = {trunk}")
+    if ops_config.is_file():
+        print(f"  发布评估主干配置 = {ops_config}")
 PYEOF
 if ! "$PY" -m py_compile "$STAGE"/ops/*.py; then
   echo "× 新版本 Python 预检失败，当前安装入口未更改。" >&2
