@@ -3220,7 +3220,7 @@ def _push_main_with_offline_fallback(wt: Path) -> str:
             raise
         if not git("rev-parse", "--verify", new):
             raise RuntimeError("离线落盘无法读取合并提交")
-        cas = subprocess.run(
+        cas = proc_run(
             ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}", new, pre],
             capture_output=True, text=True)
         if cas.returncode != 0:
@@ -3248,12 +3248,12 @@ def _align_main():
         return
 
     # 本地领先：纯真相提交可以快照后安全重置引用；产品提交绝不自动丢弃。
-    rev = subprocess.run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
+    rev = proc_run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
                           remote, local], capture_output=True, text=True)
     if rev.returncode == 0:
         if trunk_head_is_truth_only(REPO, remote):
             snap = _snapshot_truth_files(REPO)
-            subprocess.run(
+            proc_run(
                 ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
                  remote, local], check=True)
             _restore_truth_files(REPO, snap)
@@ -3264,11 +3264,11 @@ def _align_main():
             f"local={local[:10]} remote={remote[:10]}；先推送或人工合并")
 
     # 真正的分叉：内容等价只移动引用；否则在临时 worktree 重放，绝不切用户检出。
-    local_delta = subprocess.run(
+    local_delta = proc_run(
         ["git", "-C", str(REPO), "diff", "--quiet", local, remote, "--"],
         capture_output=True, text=True)
     if local_delta.returncode == 0:
-        subprocess.run(
+        proc_run(
             ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
              remote, local], check=True)
         print(f"  {MAIN} 本地分叉内容已在 origin/{MAIN}，引用已安全对齐")
@@ -3277,10 +3277,10 @@ def _align_main():
     wt = _trunk_worktree()
     replay_temp = Path(tempfile.mkdtemp(prefix="kg-replay-", dir="/private/tmp"))
     tmp = f"refs/kgctl/replay/{os.getpid()}"
-    subprocess.run(["git", "-C", str(REPO), "update-ref", tmp, remote],
+    proc_run(["git", "-C", str(REPO), "update-ref", tmp, remote],
                    check=True)
     try:
-        added = subprocess.run(
+        added = proc_run(
             ["git", "-C", str(REPO), "worktree", "add", "--detach",
              str(replay_temp), tmp],
             capture_output=True, text=True)
@@ -3288,26 +3288,26 @@ def _align_main():
             raise RuntimeError(
                 "安全重放准备失败，无法创建临时 worktree："
                 f"{(added.stdout + added.stderr).strip()[:500]}")
-        replayed = subprocess.run(
+        replayed = proc_run(
             ["git", "-C", str(replay_temp), "merge", "--no-ff", local,
              "-m", f"train: replay local {MAIN} over origin/{MAIN}"],
             capture_output=True, text=True)
         if replayed.returncode != 0:
-            subprocess.run(["git", "-C", str(replay_temp), "merge", "--abort"],
+            proc_run(["git", "-C", str(replay_temp), "merge", "--abort"],
                            capture_output=True, text=True)
             raise RuntimeError(
                 f"本地 {MAIN} 与 origin/{MAIN} 分叉且重放冲突，"
                 "已放弃并保持 main 不动；需人工裁决")
         replay_head = git("-C", str(replay_temp), "rev-parse", "HEAD")
-        subprocess.run(
+        proc_run(
             ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
              replay_head, local], check=True)
         print(f"  {MAIN} 本地分叉已安全重放到 origin/{MAIN}："
               f"{local[:8]} + {remote[:8]} -> {replay_head[:8]}（尚未推送）")
     finally:
-        subprocess.run(["git", "-C", str(REPO), "worktree", "remove", "--force",
+        proc_run(["git", "-C", str(REPO), "worktree", "remove", "--force",
                         str(replay_temp)], capture_output=True, text=True)
-        subprocess.run(["git", "-C", str(REPO), "update-ref", "-d", tmp],
+        proc_run(["git", "-C", str(REPO), "update-ref", "-d", tmp],
                        check=False)
         shutil.rmtree(replay_temp, ignore_errors=True)
 
