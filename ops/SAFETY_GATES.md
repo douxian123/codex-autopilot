@@ -5,6 +5,10 @@
 | 闸门 | 函数 | 作用 | 关闭方式 |
 |---|---|---|---|
 | 防重复派发 | `_live_exec_slugs()` | 同一工作区已有 `codex exec` 时不派第二个 | 无常驻开关，只在日志留痕 |
+| worker 生命周期 | `ops/worker_lifecycle.py` | append-only 账本锁住 `start/status/stop/event/handback/resume`、generation、授权与 fail-closed；`ops/exec_lifecycle.py` 已接管真实派发 | `KG_WORKER_LIFECYCLE_ROOT` 指定账本根 |
+| worker 资源/工具白名单 | `ops/worker_lifecycle.py` 的 `normalize_spec()` | worker 请求的 `resources` / `tools` 必须落在工单 `allowed_resources` / `allowed_tools` 内；越界在 `Popen` 前抛 `AuthorizationError`，不落 running 账本，也不占并发槽位 | `KG_WORKER_LIFECYCLE_ROOT` 指定账本根 |
+| 逐 pass 授权审计 | `ops/central_mcp.py` 的 `_autonomy_summary()` | 把本轮 `last_passes` 的模式、授权来源、副作用和状态投影到面板工程详情；取不到写 `unknown`，不伪造正常 | 无需开关，只读已有工序记录 |
+| 定时唤醒 / 跨工单恢复 | `ops/wake_resume.py` | append-only 账本锁住到期、投递、失败退避与显式授权；只写回唯一入口，不启动 worker，旧 worker 活跃时必须走 lifecycle resume | `KG_WAKE_RESUME_ROOT` 指定账本根，`KG_WAKE_RETRY_SECONDS` / `KG_WAKE_MAX_ATTEMPTS` 调退避和上限 |
 | 派发上限 | `_exec_attempt_gate()` | 6h 窗口内同一需求最多派 3 次，超限进 blocked | 调 `EXEC_REPEAT_CAP` |
 | 冲突停手 | `_escalate_conflict_block()` | 同一组冲突文件连续撞 2 次后停手等待裁决 | 面板 blocked 人工放行 |
 | 磁盘准入 | `_disk_pressure()` | 可用空间低于 6GB 时只停新 worker；恢复到 10GB 才放行 | `KG_EXEC_DISK_STOP_FREE_GB` / `KG_EXEC_DISK_RESUME_FREE_GB` |
@@ -55,6 +59,30 @@ tick 总时长 37.6s。门禁 `test_context_packs_are_cached_and_budgeted`。
 并发上限由 `ops/central.config.json` 的 `auto_exec.max_workers` 决定；磁盘准入
 决定是否允许启动新 worker。低于停止线时不启动新任务，但已运行任务继续收尾；
 达到恢复线后自动放行，避免反复清盘和边界抖动。
+
+## 真实派发必须经过 worker 生命周期账本（2026-11-18）
+
+`central_daemon` 的首次派发、在途现场恢复、基础设施重试、模型降级重派和无改动
+重派，都必须先由 `ops/exec_lifecycle.py` 在 `ops/worker_lifecycle.py` 的
+append-only 账本里声明，再由生命周期层调用 `Popen`。账本损坏、授权冲突或状态
+不合法时不启动进程、不占用并发槽位；若进程已经拉起但后续落账失败，立即回收
+整个进程组，绝不留无账本孤儿。
+
+worker 的 PID 写入账本 `external_ref`，回收结果回写 `completed` / `failed` /
+`handed_back`；终态后同一 ticket 重派必须生成新 worker，不能复用已结束账本。
+门禁 `ops/test-exec-lifecycle.py` 锁住这些失败路径，并已登记进 `selftest.py`。
+
+## timer 唤醒不能直接派发（2026-11-18）
+
+`central_daemon` 的 `wake` pass 扫描 `ops/wake_resume.py` 的到期请求，只把带幂等
+marker 的消息写回 `kgctl inbox`；同一拍再由 `route` 路由、`exec` 按 worker 生命周期
+账本决定是否派发。timer 不接受 `inferred` 授权，不能开 worker、改分支或合流。
+
+送达成功后账本落 `delivered`，重复到期不再打扰入口；投递失败落 `failed` 并按退避
+重试，超过上限即停。账本 seq 断裂、非法状态跳转或 JSON 损坏时 fail-closed。跨工单
+恢复必须声明 `resume_from`，旧 worker 处于 active、resumable 或 absent 时一律拒绝，
+要求调用方回到 `worker_lifecycle.resume`。门禁 `ops/test-wake-resume.py` 锁住这些
+失败路径，并已登记进 `selftest.py`。
 
 ## 设计纪律
 

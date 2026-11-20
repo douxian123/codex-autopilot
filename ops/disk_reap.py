@@ -98,8 +98,15 @@ DRY = "--dry-run" in sys.argv
 
 # 只清 kg 自动挡/门禁自己生成的前缀，绝不碰用户的 /private/tmp。
 KG_TMP_RE = re.compile(r"^kg(?:-|_|\.)")
+# 崩溃残留的 gate worktree 必须带自动挡 sidecar 才回收。历史无标记目录
+# （可能是别人手工创建、也可能是旧版本留下的现场）一律保持原样。
+KG_GATE_TMP_RE = re.compile(r"^kg-gate-")
 # 闲置多久算可清：默认 6 小时，避免清掉正在跑的现场；压力可收紧。
 KG_TMP_AGE_H = float(os.environ.get("KG_TMP_AGE_H", "6"))
+# 归属标记的额外创建宽限期：默认值独立于压力模式，压力只能收紧目录闲置门槛，
+# 不能让一个刚建好、还没来得及被会话引用的 gate 工作树提前进入回收。
+KG_GATE_OWNER_CREATE_GRACE_H = float(
+    os.environ.get("KG_GATE_OWNER_CREATE_GRACE_H", "6"))
 # 低磁盘时只缩短闲置时间，不绕过进程引用和 worktree 守卫。
 KG_TMP_AGE_PRESSURE_H = float(
     os.environ.get("KG_TMP_AGE_PRESSURE_H", "1"))
@@ -703,6 +710,23 @@ def _reap_kg_tmp(dry: bool = False, guard=None,
     for child in sorted(tmp.iterdir()):
         if not KG_TMP_RE.match(child.name):
             continue
+        if KG_GATE_TMP_RE.match(child.name):
+            try:
+                import gate_owner
+                marker = gate_owner.read_marker(child)
+            except Exception:
+                marker = None
+            # No valid sidecar: never claim someone else's kg-gate-* directory.
+            if marker is None:
+                continue
+            # A just-created tree may not have had time to start a session;
+            # grace is additional protection and never shortens the idle gate.
+            try:
+                created = float(marker["created"])
+                if time.time() - created < KG_GATE_OWNER_CREATE_GRACE_H * 3600:
+                    continue
+            except Exception:
+                continue
         try:
             age = child.stat().st_mtime
         except OSError:
@@ -714,7 +738,13 @@ def _reap_kg_tmp(dry: bool = False, guard=None,
             if not _referenced(child, procs):
                 removed += 1
             continue
-        if _remove_one_kg_tmp(child, procs, guard=guard):
+        removed_here = _remove_one_kg_tmp(child, procs, guard=guard)
+        if removed_here:
+            try:
+                import gate_owner
+                gate_owner.remove_marker(child)
+            except Exception:
+                pass
             removed += 1
     return removed
 
