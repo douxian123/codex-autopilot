@@ -97,6 +97,7 @@ def _live_ops() -> Path:
 
 import central_config  # noqa: E402
 import control_state  # noqa: E402
+import codex_native  # noqa: E402
 import pass_registry  # noqa: E402
 from pass_registry import (
     AUTH_EXPLICIT,
@@ -108,7 +109,14 @@ from pass_registry import (
 )  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
 import constraints as constraints_mod  # noqa: E402
+import acceptance_criteria_compiler  # noqa: E402
 import exec_overlap  # noqa: E402
+import exec_lifecycle  # noqa: E402
+import route_health_runtime  # noqa: E402
+import route_review  # noqa: E402
+import wake_resume  # noqa: E402
+import authorized_followup  # noqa: E402
+import daemon_liveness  # noqa: E402
 import live_guard  # noqa: E402
 import workspace_guard  # noqa: E402
 
@@ -1290,6 +1298,12 @@ def _exec_prompt(item: dict) -> str:
     if _constraints:
         lines += ["", "本项目已确认的约束（用户说过一次，必须遵守）："]
         lines += [constraints_mod.render_line(r) for r in _constraints]
+    # 规划层已经在路由时把验收标准编译进 ledger；执行器只读这份结果，不在这里
+    # 重新编译，避免 worker 自己解释「怎么算完成」。没有 plan 时不写「无标准」，
+    # 因为取不到不等于没有。
+    _acceptance_plan = item.get("acceptance_plan")
+    if isinstance(_acceptance_plan, dict):
+        lines += acceptance_criteria_compiler.render_for_prompt(_acceptance_plan)
     lines += [
         "",
         "硬规则（必须遵守）：",
@@ -2119,11 +2133,71 @@ def _exec_command(job: dict) -> list:
     return cmd
 
 
+def _abort_launched(launched: dict, err: str) -> None:
+    """生命周期落账失败后，绝不留一个没有账本的活进程。"""
+    proc = launched.get("proc")
+    if proc is not None:
+        try:
+            if proc.poll() is None:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except OSError:
+                    proc.kill()
+        except Exception as exc:
+            log(f"[exec] 回收未落账 worker 失败（继续报错）：{exc!r}")
+    fh = launched.get("fh")
+    if fh is not None:
+        try:
+            fh.close()
+        except OSError:
+            pass
+    log(f"[exec] 生命周期落账失败，已回收本次启动：{err}")
+
+
+def _spawn_with_lifecycle(job: dict, log_path: Path, note: str) -> tuple | None:
+    """重试/降级/无改动重派共用的启动口：先升 generation，再 Popen。"""
+    launched: dict[str, object] = {}
+
+    def launch() -> int:
+        fh = log_path.open("a", encoding="utf-8")
+        if note:
+            fh.write(note)
+            fh.flush()
+        try:
+            proc = subprocess.Popen(
+                _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
+                stderr=subprocess.STDOUT, cwd=str(job["worktree"]),
+                start_new_session=True)
+        except Exception:
+            fh.close()
+            raise
+        launched["fh"] = fh
+        launched["proc"] = proc
+        return proc.pid
+
+    _projection, err = exec_lifecycle.start_or_resume(
+        job, launch, runtime=RUNTIME, reason=note.strip() or "auto_exec 重试")
+    if err:
+        log(f"[exec] {job.get('id') or '?'} 重试启动被生命周期闸拦住：{err}")
+        _abort_launched(launched, err)
+        job["start_error"] = str(err)
+        return None
+    job.pop("start_error", None)
+    proc = launched["proc"]
+    job["proc"], job["fh"], job["pid"] = proc, launched["fh"], proc.pid
+    return proc, launched["fh"]
+
+
 def _start_exec(job: dict) -> dict | None:
     """Start one prepared Codex worker without waiting for it."""
     if job.get("recover"):
         # No new session is needed; make the existing branch immediately
         # reapable so the same supervisor performs add/commit/land.
+        _projection, err = exec_lifecycle.mark_recovered(job, runtime=RUNTIME)
+        if err:
+            log(f"[exec] {job.get('id') or '?'} 恢复现场生命周期落账失败：{err}")
+            job["start_error"] = str(err)
+            return None
         job["proc"] = _finished_proc()
         return job
     wt = Path(job["worktree"])
@@ -2131,19 +2205,34 @@ def _start_exec(job: dict) -> dict | None:
     cmd = _exec_command(job)
     log(f"[exec] 派发 {job['id']} -> {job['branch']}（worktree={wt}, "
         f"codex={job['codex'][0]}, model={job.get('model') or 'default'}）")
-    try:
+    launched: dict[str, object] = {}
+
+    def launch() -> int:
         fh = log_path.open("w", encoding="utf-8")
-        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=fh,
-                                stderr=subprocess.STDOUT, cwd=str(wt),
-                                start_new_session=True)
-    except OSError as exc:
-        log(f"[exec] 无法启动 codex: {exc}")
-        job["start_error"] = str(exc)
+        try:
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=fh,
+                                    stderr=subprocess.STDOUT, cwd=str(wt),
+                                    start_new_session=True)
+        except Exception:
+            fh.close()
+            raise
+        launched["fh"] = fh
+        launched["proc"] = proc
+        return proc.pid
+
+    # 账本先落 start.requested/worker.started，launch 只由 lifecycle 内部调用。
+    # 账本损坏、授权不合法或状态冲突时这里直接返回错误，绝不裸 Popen。
+    _projection, err = exec_lifecycle.start_or_resume(
+        job, launch, runtime=RUNTIME)
+    if err:
+        log(f"[exec] {job.get('id') or '?'} 无法启动 worker：{err}")
+        _abort_launched(launched, err)
+        job["start_error"] = str(err)
         return None
     job.pop("start_error", None)
-    job["proc"] = proc
-    job["fh"] = fh
-    job["pid"] = proc.pid
+    job["proc"] = launched["proc"]
+    job["fh"] = launched["fh"]
+    job["pid"] = int(launched["proc"].pid)
     return job
 
 
@@ -2185,28 +2274,22 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
                 return result
             log(f"[exec] {rid} {retry_note}"
                 f"（同一 worktree={wt}，日志 {log_path}）")
-            try:
-                fh = log_path.open("a", encoding="utf-8")
-                if job.get("model_fallback_used"):
-                    fh.write(f"\n===== auto_exec 模型通道额度失败，"
-                             f"切换到 slow_model 重试（{_now()}，"
-                             f"model={job.get('model') or 'default'}）=====\n")
-                elif job.get("no_change_retry"):
-                    fh.write(f"\n===== auto_exec 无改动重试 {attempt}/{total} 次"
-                             f"（{_now()}，上一次退出码={code}）=====\n")
-                else:
-                    fh.write(f"\n===== auto_exec 重试 第 {attempt}/{total} 次"
-                             f"（{_now()}，上一次退出码={code}，"
-                             f"判定为基础设施抖动）=====\n")
-                fh.flush()
-                proc = subprocess.Popen(
-                    _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
-                    stderr=subprocess.STDOUT, cwd=str(wt), start_new_session=True)
-            except OSError as exc:
-                log(f"[exec] 无法启动 codex: {exc}")
+            if job.get("model_fallback_used"):
+                note = (f"\n===== auto_exec 模型通道额度失败，"
+                        f"切换到 slow_model 重试（{_now()}，"
+                        f"model={job.get('model') or 'default'}）=====\n")
+            elif job.get("no_change_retry"):
+                note = (f"\n===== auto_exec 无改动重试 {attempt}/{total} 次"
+                        f"（{_now()}，上一次退出码={code}）=====\n")
+            else:
+                note = (f"\n===== auto_exec 重试 第 {attempt}/{total} 次"
+                        f"（{_now()}，上一次退出码={code}，"
+                        f"判定为基础设施抖动）=====\n")
+            spawned = _spawn_with_lifecycle(job, log_path, note)
+            if spawned is None:
                 code = 125
                 break
-            job["proc"], job["fh"] = proc, fh
+            job["proc"], job["fh"] = spawned
         try:
             code = job["proc"].wait(timeout=cfg["timeout"])
         except subprocess.TimeoutExpired:
@@ -2263,20 +2346,14 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
                                "retry_reason": "disk_held",
                                "model": job.get("model")})
                 return result
-            try:
-                fh = log_path.open("a", encoding="utf-8")
-                fh.write(
-                    "\n===== auto_exec 模型通道额度失败，切换到 slow_model 重试"
+            note = ("\n===== auto_exec 模型通道额度失败，切换到 slow_model 重试"
                     f"（{_now()}，model={job.get('model') or 'default'}）=====\n")
-                fh.flush()
-                proc = subprocess.Popen(
-                    _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
-                    stderr=subprocess.STDOUT, cwd=str(wt), start_new_session=True)
-            except OSError as exc:
-                job["start_error"] = str(exc)
+            spawned = _spawn_with_lifecycle(job, log_path, note)
+            if spawned is None:
                 code = 125
                 break
-            job["proc"], job["fh"], job["pid"] = proc, fh, proc.pid
+            job["proc"], job["fh"] = spawned
+            job["pid"] = job["proc"].pid
             job["detached"] = False
             job["relaunched_at"] = _now()
             job["attempts"] = attempt
@@ -2303,19 +2380,14 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
                     job["attempts"] = attempt
                     log(f"[exec] {rid} 退出 0 但无改动，异步重派 "
                         f"{tries + 1}/{no_change_retries}（工作区和槽位都保留）")
-                    try:
-                        fh = log_path.open("a", encoding="utf-8")
-                        fh.write(f"\n===== auto_exec 退出 0 但无改动，异步重派 "
-                                 f"{tries + 1}/{no_change_retries}（{_now()}）=====\n")
-                        fh.flush()
-                        proc = subprocess.Popen(
-                            _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
-                            stderr=subprocess.STDOUT, cwd=str(wt), start_new_session=True)
-                    except OSError as exc:
-                        job["start_error"] = str(exc)
+                    note = (f"\n===== auto_exec 退出 0 但无改动，异步重派 "
+                            f"{tries + 1}/{no_change_retries}（{_now()}）=====\n")
+                    spawned = _spawn_with_lifecycle(job, log_path, note)
+                    if spawned is None:
                         code = 125
                     else:
-                        job["proc"], job["fh"], job["pid"] = proc, fh, proc.pid
+                        job["proc"], job["fh"] = spawned
+                        job["pid"] = job["proc"].pid
                         job["relaunched_at"] = _now()
                         result.update({"attempts": attempt, "outcome": "relaunched",
                                        "retry_reason": "no_changes"})
@@ -2930,7 +3002,7 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
                 continue
             job["item"] = item
         ledger_status = str((job.get("item") or {}).get("status") or "")
-        if ledger_status in ("done", "closed", "cancelled", "superseded"):
+        if ledger_status in TERMINAL_LEDGER_STATUSES:
             jobs.pop(rid, None)
             continue
         # 台账里这条已经 done/closed 时，job["item"] 可能是上一轮缓存下来的旧
@@ -2939,16 +3011,14 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
         # 真正要跑模型的位置只剩 1 个。
         try:
             _lts = open_items.get(rid)
-            if _lts is not None and str(_lts.get("status") or "") in (
-                    "done", "closed", "cancelled", "superseded"):
+            if _lts is not None and str(_lts.get("status") or "") in TERMINAL_LEDGER_STATUSES:
                 jobs.pop(rid, None)
                 continue
         except Exception:
             pass
         try:
             _live_status = (_ledger_latest() or {}).get(rid, {}).get("status")
-            if str(_live_status or "") in ("done", "closed", "cancelled",
-                                           "superseded"):
+            if str(_live_status or "") in TERMINAL_LEDGER_STATUSES:
                 jobs.pop(rid, None)
                 continue
         except Exception:
@@ -3042,6 +3112,10 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
             continue
         result = _reap_exec(job, blocked)
         if result.get("outcome") == "relaunched":
+            _projection, _lifecycle_err = exec_lifecycle.report(
+                job, result, runtime=RUNTIME)
+            if _lifecycle_err:
+                log(f"[exec] {rid} 重试生命周期落账失败（继续回收）：{_lifecycle_err}")
             results.append(result)
             continue
         jobs.pop(rid, None)
@@ -3056,6 +3130,10 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
                                       Path(job["repo"]), Path(job["worktree"]),
                                       job["branch"], rid, result, blocked,
                                       Path(job["log"]))
+        _projection, _lifecycle_err = exec_lifecycle.report(
+            job, result, runtime=RUNTIME)
+        if _lifecycle_err:
+            log(f"[exec] {rid} 回收生命周期落账失败（结果不变）：{_lifecycle_err}")
         results.append(result)
         # One land per cycle; another completed worker is collected next
         # cycle. This keeps the critical section serial and auditable.
@@ -3078,6 +3156,11 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
             break
     return results
 
+
+# 台账里这些状态代表「不需要机器再动手」：留着并发槽位只会挤掉真正要跑的任务。
+# awaiting_human = 代码已落盘、等用户确认视觉/手感，机器这边已经收工。
+TERMINAL_LEDGER_STATUSES = ("done", "closed", "cancelled", "superseded",
+                            "awaiting_human")
 
 EXEC_REPEAT_CAP = 3            # 同一需求在窗口内最多派 3 次
 EXEC_REPEAT_WINDOW = 6 * 3600  # 6 小时
@@ -4355,8 +4438,14 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
             results.append({"id": rid, "outcome": "channel_unavailable",
                             "retry_next_cycle": True})
             continue
-        _start_exec(job)
-        jobs[rid] = job
+        started = _start_exec(job)
+        if started is None:
+            err = str(job.get("start_error") or "worker_start_fail")
+            blocked[rid] = {"reason": "worker_start_fail", "error": err,
+                            "ts": _now()}
+            results.append({"id": rid, "outcome": "start_fail", "error": err})
+            continue
+        jobs[rid] = started
         # 槽位只统计「需要跑 codex 会话」的工作。recover 槽位不需要模型
         # （只是等落盘门禁按序收口），把它们算进并发上限等于用一条不需要
         # 算力的队列项去挤占真正要跑模型的位置 —— 实测 4 个槽位里 3 个是
@@ -4437,6 +4526,8 @@ def _new_cycle_ctx(dry: bool, max_land: int, deadline) -> dict:
         "max_land": max_land,
         "deadline": deadline,
         "passes": [],
+        "wake": {},
+        "followup": {},
         "route_rc": 0,
         "route_out": "",
         "exec_cfg": {},
@@ -4460,6 +4551,146 @@ def _new_cycle_ctx(dry: bool, max_land: int, deadline) -> dict:
         "resolve_gate_fail": [],
         "resolve_blocked": {},
     }
+
+
+def _deliver_wake_to_inbox(text: str, spec: dict) -> str:
+    """把 timer / resume 请求写回唯一入口，不直接开 worker。"""
+    env_extra = {
+        "KG_INBOX_SOURCE": "timer" if spec.get("kind") == wake_resume.KIND_WAKE
+        else "resume",
+        "KG_INBOX_KIND": "unknown",
+    }
+    if spec.get("project"):
+        env_extra["KG_INBOX_PROJECT"] = str(spec["project"])
+    if spec.get("files"):
+        env_extra["KG_INBOX_FILES"] = ":".join(str(x) for x in spec["files"])
+    rc, out = run_kgctl(["inbox", text], timeout=TICK_TIMEOUT,
+                        env_extra=env_extra)
+    if rc != 0:
+        raise RuntimeError(f"kgctl inbox rc={rc}: {out.strip()[:500]}")
+    return out.strip()[-1000:]
+
+
+def _pass_wake(ctx: dict) -> dict:
+    """把到期的 timer / 显式恢复请求写回唯一入口。
+
+    放在 route 之前：这一拍刚写回的唤醒项应当立刻被同一拍路由，不必白等一轮。
+    这里只投递消息，不启动 worker、不改分支；worker 仍由 exec pass 按生命周期
+    账本派发。投递失败由 wake_resume 账本退避重试，坏账本 fail-closed。
+    """
+    if ctx["dry"]:
+        return {"dry": True}
+    service = wake_resume.WakeResume(RUNTIME)
+    fired: list[str] = []
+    failures: list[dict] = []
+    for projection in service.due():
+        rid = projection["request_id"]
+        result = service.fire(
+            rid,
+            lambda spec, current: wake_resume.deliver_to_inbox(
+                spec, current, _deliver_wake_to_inbox))
+        if result["state"] == wake_resume.STATE_DELIVERED:
+            fired.append(rid)
+        elif result["state"] == wake_resume.STATE_FAILED:
+            failures.append({"id": rid, "error": result.get("last_error", "")})
+    ctx["wake"] = {"fired": fired, "failures": failures}
+    return {"fired": len(fired), "failed": len(failures)}
+
+
+def _followup_ledger_rows(root: Path | None = None) -> list[dict]:
+    """追问资格校验用的问题台账快照；读不到返回空列表，不把 unknown 当成通过。"""
+    repo = Path(root) if root else _state_repo()
+    if not repo:
+        return []
+    path = repo / "ops" / "truth" / "ledger.jsonl"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    rows = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _followup_native_bindings(root: Path | None = None) -> dict[str, dict]:
+    """每个工作项最近一次原生窗口绑定。绑定台账可缺失，那是「0 条绑定」。"""
+    repo = Path(root) if root else _state_repo()
+    if not repo:
+        return {}
+    path = repo / "ops" / "truth" / "native_routes.jsonl"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    latest = {}
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        ledger_id = (row or {}).get("ledger_id") if isinstance(row, dict) else None
+        if ledger_id:
+            latest[str(ledger_id)] = row
+    return latest
+
+
+def _followup_is_eligible(spec: dict, root: Path | None = None) -> bool:
+    """发送前再确认工作项还活着，且 thread 绑定仍是用户点头的那一个。
+
+    授权发生在面板点击时；从点击到守护下一拍之间，工作项可能收口、窗口可能重绑。
+    这里重新读真相层，避免把过期授权投递到新窗口或一个已完成的任务里。
+    """
+    ticket_id = str(spec.get("ticket_id") or "")
+    thread_id = str(spec.get("thread_id") or "")
+    if not ticket_id or not thread_id:
+        return False
+    item = latest_ledger_by_id(_followup_ledger_rows(root)).get(ticket_id)
+    if not item or item.get("status") not in ("open", "doing", "todo", "wip", "blocked"):
+        return False
+    binding = _followup_native_bindings(root).get(ticket_id) or {}
+    bound = binding.get("thread_id") or item.get("thread_id")
+    return str(bound or "") == thread_id
+
+
+def _pass_followup(ctx: dict) -> dict:
+    """投递逐项授权且发送前仍合格的进度追问；无授权时不碰宿主。"""
+    if ctx["dry"]:
+        return {"dry": True}
+    root = _state_repo()
+    if not root:
+        return {"skipped": "没有状态根，不发送任何追问"}
+    pending = authorized_followup.pending(root)
+    if not pending:
+        return {"approved": 0}
+    by_id = {row["request_id"]: row for row in pending}
+
+    def sender(request_id: str, prompt: str):
+        spec = by_id.get(request_id) or {}
+        thread_id = str(spec.get("thread_id") or "")
+        if not thread_id:
+            raise RuntimeError("授权记录缺少 thread 绑定")
+        result, error = codex_native.follow_up(thread_id, prompt)
+        if error:
+            raise RuntimeError(str(error))
+        return result
+
+    result = authorized_followup.deliver_approved(
+        sender,
+        is_eligible=lambda spec: _followup_is_eligible(spec, root),
+        root=root,
+    )
+    ctx["followup"] = result
+    return result
 
 
 def _pass_route(ctx: dict) -> dict:
@@ -4542,6 +4773,68 @@ def _pass_checkpoint(ctx: dict) -> dict:
         log(f"[exec] 工作槽状态提前落盘失败（继续）：{exc!r}")
         return {"error": repr(exc)}
     return {"ok": True}
+
+
+def _route_health_exec_payloads(ctx: dict) -> list[dict]:
+    """把本拍仍在跑的实现槽位投影成巡检判据；不探测、不重派、不改 worker。"""
+    payloads = []
+    for rid, job in ((ctx.get("exec_workers") or {}).get("exec_jobs") or {}).items():
+        if not isinstance(job, dict) or job.get("partial") or job.get("recover"):
+            continue
+        if not _worker_alive(job.get("pid")):
+            continue
+        worktree = str(job.get("worktree") or "")
+        if not worktree or not Path(worktree).is_dir():
+            continue
+        payloads.append({"exec_now": {"id": rid, "worktree": worktree}})
+    return payloads
+
+
+def _pass_route_health(ctx: dict) -> dict:
+    """每拍只读检查路线与效用比：状态签名变化才留账/提示，不自动纠偏。"""
+    prior = route_health_runtime.last_summary(RUNTIME)
+    payloads = _route_health_exec_payloads(ctx)
+    route_state = {
+        "exec_workers": ctx.get("exec_workers") or {},
+        # 面板投影会丢掉 exec_blocked.ts；巡检必须读 daemon 原始记录，
+        # 否则「已经卡了多久」永远取不到，只能诚实报 unknown。
+        "exec_blocked": ctx.get("exec_blocked") or {},
+    }
+    summary = route_health_runtime.summarize_many(
+        payloads, state=route_state, runtime=RUNTIME)
+    exec_ids = sorted(
+        str(p.get("exec_now", {}).get("id") or "") for p in payloads)
+    written = route_health_runtime.append_if_changed(
+        RUNTIME, summary, prior=prior, exec_id=",".join(exec_ids))
+    record = dict(summary)
+    record["signature"] = written.get("signature")
+    # 复核状态机只追加「发现异常 → 复测仍异常/恢复」；它不改 worker、路线或配置。
+    # 状态签名变化才通知用户，问题键用来合并同一问题的分钟数增长。
+    level = str(summary.get("level") or "unknown")
+    owner = str(summary.get("issue_owner") or ",".join(exec_ids))
+    issue_keys = [str(x) for x in (summary.get("issue_keys") or []) if str(x).strip()]
+    issue_key = ""
+    if level == "attention":
+        if not issue_keys:
+            issue_key = route_health_runtime.issue_signature(summary, owner)
+    review = route_review.sync(
+        summary, written.get("signature"), issue_keys=issue_keys,
+        issue_key=issue_key,
+        observed_owners=summary.get("observed_owners"),
+        owner_levels=summary.get("owner_levels"),
+        root=RUNTIME)
+    record["review"] = review
+    ctx["route_health"] = record
+    if written.get("written") and level == "attention":
+        notify("自动挡：路线与效能需复核",
+               f"{summary.get('headline') or '发现路线偏离或低效空转'}"
+               "（只提复核；不会自动停 worker、改路线或改配置）")
+    elif written.get("written") and prior.get("level") == "attention":
+        notify("自动挡：路线与效能已恢复",
+               "上一轮的路线/效能复核信号已消失；判据与留账见 route_health.jsonl")
+    log(f"[route-health] level={level} action={summary.get('action')} "
+        f"headline={summary.get('headline')} written={written.get('written')}")
+    return record
 
 
 def _pass_tick(ctx: dict) -> dict:
@@ -4760,7 +5053,7 @@ def _build_cycle_registry(ctx: dict):
     注册顺序 = 执行顺序（见文件头注释）。
 
     pass_registry 现在默认 `observe`：**没写 level 的 pass 只会观察，不执行副作用**。
-    下面这十条是既有自动挡工序，逐条显式转正 —— 每条都声明 `level=auto` 加
+    下面这十二条是既有自动挡工序，逐条显式转正 —— 每条都声明 `level=auto` 加
     `authorization=explicit`，表示「人已经授权这条工序自动跑」，不是系统自行升权。
     这样新加的 pass 不会因为忘记声明就悄悄执行（fail-closed），而既有行为保持原样。
     `effect` 区分可逆与破坏性：`route/checkpoint/tick/tick-post` 只改控制面与账本
@@ -4770,6 +5063,13 @@ def _build_cycle_registry(ctx: dict):
     """
     reg = Registry(log=log,
                    over_budget=lambda step: _over_budget(ctx["deadline"], step))
+    reg.register(Pass("wake", lambda: _pass_wake(ctx), title="到期唤醒写回唯一入口",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("followup", lambda: _pass_followup(ctx),
+                      title="投递已逐项授权的进度追问",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
     reg.register(Pass("route", lambda: _pass_route(ctx), title="路由新收需求",
                       level=MODE_AUTO, authorization=AUTH_EXPLICIT,
                       effect=EFFECT_REVERSIBLE))
@@ -4781,6 +5081,10 @@ def _build_cycle_registry(ctx: dict):
                       effect=EFFECT_DESTRUCTIVE))
     reg.register(Pass("checkpoint", lambda: _pass_checkpoint(ctx),
                       title="工作槽状态提前落盘",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("route-health", lambda: _pass_route_health(ctx),
+                      title="每拍只读巡检路线与效用比",
                       level=MODE_AUTO, authorization=AUTH_EXPLICIT,
                       effect=EFFECT_REVERSIBLE))
     reg.register(Pass("tick", lambda: _pass_tick(ctx), title="刷新真相层",
@@ -4967,6 +5271,9 @@ def _run_cycle(dry: bool, max_land: int, deadline: float = None,
     # 这一拍跑了哪些 pass、各自什么状态、花了多久：出问题时第一眼要看的东西。
     state["last_passes"] = ctx["passes"]
     state["last_pass_counts"] = counts
+    # pass 被关闭 / observe / 超预算时这一拍没有新摘要，不能把上一拍的巡检结论抹成 None。
+    if ctx.get("route_health") is not None:
+        state["route_health"] = ctx["route_health"]
     save_state(state)
 
     log(f"--- cycle done: landed={len(landed)} failures={len(failures)} "
@@ -5245,6 +5552,24 @@ def wait_for_job_gone(uid: int, timeout: float = 30.0) -> bool:
     return _job_pid(uid) is None
 
 
+def verify_job_running(timeout: float = 20.0) -> tuple[bool, dict]:
+    """bootstrap 之后回读 launchd，确认 job 真的拿到了 pid。
+
+    只看 `launchctl bootstrap` 的退出码不够：进程可能在 RunAtLoad 后立刻崩掉，
+    控制面板却会把 `daemon_enabled` 写成 true，重新制造「开关绿、进程无」。
+    判据复用面板/CLI 共用的 daemon_liveness，不在这里另写一套 launchctl 正则。
+    """
+    deadline = time.monotonic() + timeout
+    last = {"status": "unknown", "pid": None}
+    while True:
+        last = daemon_liveness.daemon_liveness()
+        if last.get("status") == "running" and last.get("pid") is not None:
+            return True, last
+        if time.monotonic() >= deadline:
+            return False, last
+        time.sleep(1.0)
+
+
 def install(interval_min: int, maintenance_only=None) -> int:
     if sys.platform != "darwin":
         log("install 只支持 macOS（launchd）。其它平台请用 `--loop` 自己托管。")
@@ -5277,10 +5602,16 @@ def install(interval_min: int, maintenance_only=None) -> int:
     if rc != 0:
         log("× launchctl bootstrap 失败；请检查上面的 plist 和 python 路径")
         return 1
+    live, state = verify_job_running()
+    if not live:
+        log("× launchd 已加载 job，但回读不到运行中的守护进程"
+            f"（状态={state.get('status')}）；不把常驻开关写成已开启。"
+            f" 日志：{LOG}")
+        return 1
     mode = ("维护模式"
             if "--maintenance-only" in (plist_data.get("ProgramArguments") or [])
             else "完整自动挡")
-    log(f"已启用 {PLIST_LABEL}（每 {interval_min} 分钟一轮，{mode}，"
+    log(f"已启用 {PLIST_LABEL}（pid={state.get('pid')}，每 {interval_min} 分钟一轮，{mode}，"
         f"nice={os.environ.get('KG_DAEMON_NICE', '10')}）")
     return 0
 
@@ -5470,6 +5801,21 @@ def loop(interval_min: int, max_land: int, dry: bool,
                 constraint_candidates.daemon_hook(dry=dry, log_fn=log)
             except Exception as exc:
                 log(f"[constraint] 提名跳过（fail-open）：{exc!r}")
+            # 上下文管家自学习（fail-open）：跨会话找反复出现的共性诉求，只出候选。
+            # 不自动追问、不写生效约束；人确认后才进现有 constraint 候选闸。
+            try:
+                import context_learning
+                context_learning.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[context-learning] 学习跳过（fail-open）：{exc!r}")
+            # 验收管家（fail-open）：把已路由的「怎么算完成」原话提名成验收标准候选。
+            # 这里只提名、绝不登记验收项：promote 必须人显式确认，且不得伪造证据。
+            # 顺序放在上下文候选之后，两个候选来源彼此独立；异常一律吞掉。
+            try:
+                import acceptance_criteria
+                acceptance_criteria.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[acceptance] 提名跳过（fail-open）：{exc!r}")
             # 空转记分（fail-open）：给每一拍分类，连续空转就点名并把记分写进下一拍的 prompt。
             # 与预算闸门同族：只读判定、动作显式、一键关、异常一律吞掉。
             try:
