@@ -7368,7 +7368,6 @@ def test_rotation_streaming():
     print("selftest ok: 窗口轮换在 thread.started 后立即返回，不受首次长回复阻塞。")
 
 
-
 def test_disk_reap_reaps_stale_code_sign_clones():
     """签名临时副本只清旧副本，活跃副本和探针失败时必须保留。"""
     import importlib.util
@@ -7821,6 +7820,117 @@ def test_portable_serve_requires_token():
     print("selftest ok: 跨机移植 serve 走一次性令牌，缺/错令牌一律 404。")
 
 
+def test_human_verdict_close_gate():
+    """「done」这一格只能由人翻：人判类停在 awaiting_human，机器可证的照旧 done。
+
+    背景：agent 循环里执行层（磨「离目标多远」）归机器，判断层（「这个目标本身对不对」）
+    归人。视觉/体验这类条目，机器跑再多命令也判不了「够不够好看 / 顺不顺手」；
+    让 close 直接翻成 done，等于删掉高层反馈 —— 它会又快又狠地奔向一个没人质疑过的
+    错误目标，而且台账上看起来「全部完成」。
+
+    同时必须保住另一头：bug/gate/arch 有客观判据（退出码、断言、diff），它们的收口
+    必须仍然直达 done，否则 auto_exec 的自动闭环会断在这里。
+    """
+    import json as _json
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-gate-") as tmp:
+        repo = Path(tmp) / "state"
+        (repo / "ops" / "tasks").mkdir(parents=True)
+        (repo / "ops" / "truth").mkdir(parents=True)
+        for name in ("inbox.jsonl", "ledger.jsonl", "progress.jsonl",
+                     "decisions.jsonl", "acceptance.jsonl"):
+            (repo / "ops" / ("tasks" if name == "inbox.jsonl" else "truth")
+             / name).write_text("", encoding="utf-8")
+        (repo / "ops" / "truth" / "mainline.json").write_text("{}\n", encoding="utf-8")
+        run(["git", "init", "-q", "-b", "main", str(repo)])
+        git(repo, "config", "user.email", "selftest@example.invalid")
+        git(repo, "config", "user.name", "Autopilot Selftest")
+        (repo / "app.txt").write_text("main\n", encoding="utf-8")
+        git(repo, "add", "app.txt")
+        git(repo, "commit", "-q", "-m", "init")
+
+        def latest_ledger():
+            out = {}
+            for line in (repo / "ops" / "truth" / "ledger.jsonl").read_text(
+                    encoding="utf-8").splitlines():
+                if line.strip():
+                    r = _json.loads(line)
+                    out[r["id"]] = r
+            return out
+
+        # 视觉类：close 必须停在 awaiting_human，不能自称完成。
+        add = truthctl(repo, "add", "ledger", "首屏按钮挤在一起",
+                       extra_env={"KG_TRUTH_KIND": "visual"})
+        if add.returncode != 0:
+            raise AssertionError(f"ledger add 失败:\n{add.stdout}\n{add.stderr}")
+        v_id = _json.loads((repo / "ops" / "truth" / "ledger.jsonl")
+                           .read_text(encoding="utf-8").splitlines()[-1])["id"]
+        cl = truthctl(repo, "close", v_id, "已调整间距",
+                      extra_env={"KG_TRUTH_COMMIT": "abc1234"})
+        if cl.returncode != 0:
+            raise AssertionError(f"视觉类 close 失败:\n{cl.stdout}\n{cl.stderr}")
+        rec = latest_ledger()[v_id]
+        if rec.get("status") != "awaiting_human":
+            raise AssertionError(
+                f"视觉类 close 不该直接 done（应停在 awaiting_human）: {rec}")
+        if rec.get("closed"):
+            raise AssertionError(
+                f"停等确认时不该写 closed 时间戳 —— 那等于宣称已完成: {rec}")
+        if "等你确认" not in cl.stdout:
+            raise AssertionError(f"close 输出没有告诉用户要做什么:\n{cl.stdout}")
+
+        # 人看过了再翻：--confirm-human 才允许 done。
+        cl2 = truthctl(repo, "close", v_id, "看过，可以", "--confirm-human")
+        if cl2.returncode != 0:
+            raise AssertionError(f"confirm-human close 失败:\n{cl2.stdout}\n{cl2.stderr}")
+        rec2 = latest_ledger()[v_id]
+        if rec2.get("status") != "done":
+            raise AssertionError(f"人已确认后应翻成 done: {rec2}")
+        if not rec2.get("closed"):
+            raise AssertionError(f"确认完成后应写 closed 时间戳: {rec2}")
+
+        # bug 类：有客观判据，收口必须直达 done，否则自动派发闭环断掉。
+        add2 = truthctl(repo, "add", "ledger", "导出按钮报错",
+                        extra_env={"KG_TRUTH_KIND": "bug"})
+        if add2.returncode != 0:
+            raise AssertionError(f"bug add 失败:\n{add2.stdout}\n{add2.stderr}")
+        b_id = _json.loads((repo / "ops" / "truth" / "ledger.jsonl")
+                           .read_text(encoding="utf-8").splitlines()[-1])["id"]
+        cl3 = truthctl(repo, "close", b_id, "修好并跑过门禁",
+                       extra_env={"KG_TRUTH_COMMIT": "def5678",
+                                  "KG_TRUTH_EVIDENCE": "pytest -> exit 0"})
+        if cl3.returncode != 0:
+            raise AssertionError(f"bug close 失败:\n{cl3.stdout}\n{cl3.stderr}")
+        rec3 = latest_ledger()[b_id]
+        if rec3.get("status") != "done":
+            raise AssertionError(
+                f"机器可证的 bug 收口被误拦成 {rec3.get('status')}，"
+                f"会打断 auto_exec 自动闭环: {rec3}")
+
+        # 登记时就标了 needs_human 的，无论 kind 都要人签收。
+        add3 = truthctl(repo, "add", "ledger", "上线前手动点一遍",
+                        extra_env={"KG_TRUTH_KIND": "gate",
+                                   "KG_TRUTH_NEEDS_HUMAN": "1"})
+        if add3.returncode != 0:
+            raise AssertionError(f"needs_human add 失败:\n{add3.stdout}\n{add3.stderr}")
+        h_id = _json.loads((repo / "ops" / "truth" / "ledger.jsonl")
+                           .read_text(encoding="utf-8").splitlines()[-1])["id"]
+        cl4 = truthctl(repo, "close", h_id, "机器侧已就绪")
+        if latest_ledger()[h_id].get("status") != "awaiting_human":
+            raise AssertionError(
+                f"标了 needs_human 的条目应停在 awaiting_human: {latest_ledger()[h_id]}")
+
+        # next 里必须把「等你确认」单列，不能混进「优先处理」，
+        # 否则 agent 会以为还有活要干，反复重做同一件事。
+        nxt = truthctl(repo, "next")
+        if nxt.returncode != 0:
+            raise AssertionError(f"next 失败:\n{nxt.stdout}\n{nxt.stderr}")
+        if "等你确认" not in nxt.stdout:
+            raise AssertionError(f"next 没有单列等你确认的条目:\n{nxt.stdout}")
+
+    print("selftest ok: 人判类收口停在 awaiting_human、人确认后才 done；"
+          "机器可证的 bug 仍直达 done，自动派发闭环未被打断。")
+
+
 if __name__ == "__main__":
     test_disk_reap_reaps_stale_code_sign_clones()
     main()
@@ -7908,6 +8018,7 @@ if __name__ == "__main__":
     test_budget_gate()
     test_compact_session_logs_is_lossless_and_under_pressure_only()
     test_rotation_streaming()
+    test_human_verdict_close_gate()
 
 
 def test_reap_ignores_untracked_machine_scratch():
@@ -8071,3 +8182,4 @@ def test_disk_reap_follows_installed_release():
             pathlib.Path.home = orig
 
     print("selftest ok: 磁盘回收器跟随当前安装版本，且脚本本身已入库可回归。")
+
