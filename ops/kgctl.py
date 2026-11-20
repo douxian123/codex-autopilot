@@ -94,11 +94,7 @@ from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, looks_like_state_root, resolve_state_root  # noqa: E402
 import constraints as constraints_mod  # noqa: E402
 import central_config  # noqa: E402
-<<<<<<< HEAD
 import project_router  # noqa: E402
-=======
-import workspace_guard  # noqa: E402
->>>>>>> codex/reap-branch-preserve-20261111
 from daemon_liveness import (daemon_liveness, liveness_line,  # noqa: E402
                              liveness_problem)
 
@@ -3085,7 +3081,6 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
     if "--open" in args and sys.platform == "darwin":
         proc_run(["open", str(DASHBOARD)], check=False)
 
-<<<<<<< HEAD
 def _reap_wt_keep_reason(wt: Path) -> str:
     """Return why `cmd_reap` must not remove this worktree right now, or "".
 
@@ -3228,32 +3223,11 @@ def _pin_branch_ref(branch: str, stamp: str) -> str:
     跳过删除（宁可留着，也不裸删）。
     """
     sha = git("rev-parse", "--verify", f"refs/heads/{branch}")
-=======
-def _pin_branch_ref(branch: str, stamp: str) -> str:
-    """把分支 tip 钉进本地 preserve ref —— 必须在 `branch -D` **之前**。
-
-    为什么需要它（2026-11-11 实测）：`reap` 删的是**分支指针**，不是提交。指针
-    一旦没了、远端又没有影子 ref，tip 就成了不可达对象，下一次 `git gc` 可以把它
-    收走。当天 21 条本地 `codex/*` 分支 ref 正是这么被剪掉的；它们的成果没丢，
-    仅仅是因为其中一部分恰好早有 `origin/preserve/*` 影子。靠「碰巧有备份」不是
-    机制 —— 有两条分支（dock-drawer-overlap-20261110、供应复活与主链复验）当时
-    就既无本地 ref 也无影子，只能靠 untracked tgz 拼回。
-
-    所以在每次 `git branch -D` 之前，先把 tip 钉在本地
-    `refs/preserve/local/<stamp>/<branch>`。只写本地仓库，从不 push、从不碰远端。
-    还原：`git branch <branch> refs/preserve/local/<stamp>/<branch>`。
-    """
-    sha = git("rev-parse", "--verify", f"refs/heads/{branch}") or ""
->>>>>>> codex/reap-branch-preserve-20261111
     if not sha:
         return ""
     ref = f"refs/preserve/local/{stamp}/{branch}"
     pinned = proc_run(["git", "-C", str(REPO), "update-ref", ref, sha],
-<<<<<<< HEAD
                       capture_output=True, text=True)
-=======
-                            capture_output=True, text=True)
->>>>>>> codex/reap-branch-preserve-20261111
     return ref if pinned.returncode == 0 else ""
 
 
@@ -3262,14 +3236,11 @@ def cmd_reap(args):
     rows = scan()
     merged = [r for r in rows if r["kind"] == "MERGED"]
     wts = worktree_map()
-    live = workspace_guard.process_commands()
-    stamp = time.strftime("%Y%m%d-%H%M%S")
     print("回收预演（ahead=0 的分支 + 它们独占的 worktree）")
     planned = []
     for r in sorted(merged, key=lambda x: -x["behind"]):
         wt = wts.get(r["branch"], "")
         own = wt and Path(wt) != REPO
-<<<<<<< HEAD
         dirty = ""
         keep = ""
         if own:
@@ -3297,37 +3268,11 @@ def cmd_reap(args):
             # 这条只让回收少删，绝不多删；与 disk_reap 的保护名判据同一份名单。
             continue
         if own:
-=======
-        note = ""
-        if own:
-            busy = workspace_guard.process_reference(Path(wt), live)
-            if busy:
-                note = f"  跳过：有进程在用（{busy[:60]}）"
-            else:
-                st = proc_run(["git", "-C", wt, "status", "--porcelain"],
-                                    capture_output=True, text=True).stdout.strip()
-                note = f"  脏={len(st.splitlines())} 项，只删分支、不删 worktree" if st else ""
-        print(f"  {'分支+worktree' if own else '仅分支'}  {r['branch']:44s} {wt}{note}")
-    print(f"\n共 {len(merged)} 项。删分支前会先在本地钉 refs/preserve/local/{stamp}/<分支>。"
-          f"{'【已执行】' if go else '默认只预演；确认后加 --go'}")
-    if not go:
-        return
-    removed = skipped = pinned = 0
-    for r in merged:
-        wt = wts.get(r["branch"], "")
-        if wt and Path(wt) != REPO:
-            busy = workspace_guard.process_reference(Path(wt), live)
-            if busy:
-                print(f"  跳过（有进程在用）：{wt}：{busy[:80]}")
-                skipped += 1
-                continue
->>>>>>> codex/reap-branch-preserve-20261111
             st = proc_run(["git", "-C", wt, "status", "--porcelain"],
                                 capture_output=True, text=True).stdout.strip()
             if not st:
                 proc_run(["git", "-C", str(REPO), "worktree", "remove", wt],
                                capture_output=True, text=True)
-<<<<<<< HEAD
             elif _reap_stripped_only(Path(wt)):
                 # 剥离态：整棵树的脏项只剩「可再生目录（backend/evidence、
                 # evidence 等）里与 HEAD 相同的跟踪文件被删」。那些字节全在
@@ -3356,27 +3301,6 @@ def cmd_reap(args):
     print(f"已回收 {removed} 条分支（其中 {pinned} 条删除前已钉到 "
           f"refs/preserve/local/{stamp}/），跳过 {skipped} 项。"
           f"分支只是指针，成果在 main 里；被删分支的 tip 仍可从 preserve ref 还原。")
-=======
-            else:
-                print(f"  保留 worktree（{len(st.splitlines())} 项脏，只删分支）：{wt}")
-        ref = _pin_branch_ref(r["branch"], stamp)
-        if not ref:
-            print(f"  跳过分支删除（钉 ref 失败，宁可留着）：{r['branch']}")
-            skipped += 1
-            continue
-        pinned += 1
-        branch_rm = proc_run(["git", "-C", str(REPO), "branch", "-D", r["branch"]],
-                                   capture_output=True, text=True)
-        if branch_rm.returncode == 0:
-            removed += 1
-        else:
-            print(f"  跳过分支删除失败：{r['branch']}："
-                  f"{(branch_rm.stderr or branch_rm.stdout).strip()[:200]}")
-            skipped += 1
-    print(f"已回收 {removed} 条分支（{pinned} 条已钉到 refs/preserve/local/{stamp}/），"
-          f"跳过 {skipped} 项。分支只是指针，成果在 main 里；被删分支的 tip 仍可从 "
-          f"refs/preserve/local/{stamp}/<分支> 还原。")
->>>>>>> codex/reap-branch-preserve-20261111
 
 
 # ---------------------------------------------------------------- 落盘：merge train
