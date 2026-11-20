@@ -4926,6 +4926,52 @@ def push_truth_state() -> None:
         _release_lock()
 
 
+def _resolve_record_rank(task: dict) -> tuple:
+    """同一冲突任务多行并存时，选真正代表当前状态的记录。
+
+    landed/abandoned 是已裁决终态，必须压过早期 needs_agent/gate_fail；同优先级
+    再比 updated，最后用完整内容做确定性 tie-break。真相层并集保留历史行时，
+    读取层归一化能让队列、派活和收口都看到同一份当前状态。
+    """
+    status = task.get("status")
+    settled = 1 if status in ("landed", "abandoned") else 0
+    updated = str(task.get("updated") or "")
+    content = json.dumps(task, ensure_ascii=False, sort_keys=True)
+    return (settled, updated, content)
+
+
+def _dedupe_resolve_tasks(tasks: list) -> list:
+    valid = [t for t in (tasks or []) if isinstance(t, dict)]
+    if len(valid) <= 1:
+        return valid
+    parent = list(range(len(valid)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    by_slug, by_branch = {}, {}
+    for i, task in enumerate(valid):
+        slug, branch = task.get("slug"), task.get("branch")
+        if slug:
+            union(i, by_slug.setdefault(slug, i))
+        if branch:
+            union(i, by_branch.setdefault(branch, i))
+
+    groups = {}
+    for i in range(len(valid)):
+        groups.setdefault(find(i), []).append(i)
+    return [max((valid[i] for i in indices), key=_resolve_record_rank)
+            for indices in groups.values()]
+
+
 def load_resolve() -> dict:
     if not RESOLVE.exists():
         return {"tasks": []}
@@ -4935,7 +4981,7 @@ def load_resolve() -> dict:
         return {"tasks": []}
     if not isinstance(data, dict):
         return {"tasks": []}
-    data.setdefault("tasks", [])
+    data["tasks"] = _dedupe_resolve_tasks(data.get("tasks"))
     return data
 
 
