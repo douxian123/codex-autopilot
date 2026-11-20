@@ -1004,6 +1004,11 @@ def main(argv):
         pm_payload = dict(payload)
         pm_payload["pm_briefing"] = {
             "status": "attention",
+            "research": {
+                "status": "attention", "count": 1, "attention_count": 1,
+                "items": [{"research_id": "R-9001", "question": "选择成熟实现",
+                            "decision_status": "awaiting_approval", "choice": None}],
+            },
             "expectations": {
                 "status": "ok", "pending_count": 1, "active_count": 2,
                 "mainline_stage": "架构闭环",
@@ -1067,6 +1072,8 @@ def main(argv):
                      "追问授权", "1 条待发")
         fails += has("PM 简报上屏：施工路径只读投影", pm_out["pmBriefingBox"],
                      "施工路径", "L-0030", "施工路径上屏")
+        fails += has("PM 简报上屏：研究决策状态", pm_out["pmBriefingBox"],
+                     "PM 判断", "R-9001", "需要你确认")
         authorize_calls = pm_out.get("followupAuthorizeCalls") or []
         if len(authorize_calls) != 1 or authorize_calls[0].get("confirm") is not True \
            or authorize_calls[0].get("ticket_id") != "L-0021" \

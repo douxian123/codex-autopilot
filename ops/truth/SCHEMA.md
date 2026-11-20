@@ -23,6 +23,7 @@ ops/truth/
   ledger.jsonl       # 问题台账：bug / 视觉 / 体验 / 架构问题（追加式，带状态与泳道）
   progress.jsonl     # 进展台账：每条泳道最近干了什么、是否落盘（追加式）
   acceptance.jsonl   # 验收台账：实现模块 / 验收项 / 状态 / 证据 / 人工复核步骤（追加式）
+  research.jsonl     # PM 研究事件：请求 / 来源证据 / 候选方案 / 研究状态（追加式）
 
 生成物：
   docs/PRODUCT_MAINLINE.md  # 由 truthctl synthesize 从以上台账综合出的产品主线
@@ -44,8 +45,18 @@ ops/truth/
 
 ### decisions.jsonl
 
-额外字段：`decision`（结论）、`why`（理由）、`alternatives`（被否的备选）。
-`status` ∈ `active` | `superseded`。
+额外字段：`decision`（结论）、`why`（理由）、`alternatives`（被否的备选）。PM 产品决策
+还可带 `research_id`、`intent_id`、`choice`（`adopt` | `adapt` | `build` | `defer` |
+`reject`）、`approval_mode` 和 `approved`。`status` ∈ `active` | `approved` |
+`awaiting_approval` | `awaiting_external_research` | `superseded`。
+
+### research.jsonl
+
+同一 `research_id` 的记录只追加不改写，读取时取最后一条作为当前快照。请求、来源、
+候选方案和状态事件统一写在这个文件里。研究由宿主或人工适配器提供，不由账本模块
+假装执行搜索；每条来源应带 URL、抓取日期、结论、许可证状态、维护信号和置信度。
+`L0/L1` 可以不创建研究请求；`L2/L3` 没有研究证据时不能形成可执行的 `adopt` /
+`adapt` / `build` 决策。许可证未知的 `adopt`、高风险和 `L3` 决策必须等待用户确认。
 
 ### ledger.jsonl
 
@@ -114,6 +125,15 @@ judgment 记「以后遇到同类情况该怎么判断」——记的是判断�
                       └──> ops/truth/acceptance.jsonl（落盘即写真实验收证据）
 
 每轮收口后：回看人这轮额外说了什么 ──> ops/truth/judgments.jsonl（蒸馏判断逻辑）
+
+新产品能力的 PM 路径：
+
+```text
+ledger ──> pm_decision.classify ──> research.jsonl
+                                  ├─> 宿主/人工证据适配器
+                                  ├─> Adopt / Adapt / Build / Defer / Reject
+                                  └─> decisions.jsonl ──> 执行闸门 ──> 合流
+```
 ```
 
 ## 规矩

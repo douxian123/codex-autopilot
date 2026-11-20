@@ -417,6 +417,11 @@ def main(argv):
         }],
         "pm_briefing": {
             "status": "attention",
+            "research": {
+                "status": "attention", "count": 1, "attention_count": 1,
+                "items": [{"research_id": "R-9001", "question": "选择成熟实现",
+                            "decision_status": "awaiting_approval", "choice": None}],
+            },
             "expectations": {
                 "status": "ok", "pending_count": 1, "active_count": 2,
                 "mainline_stage": "架构闭环",
@@ -541,6 +546,8 @@ def main(argv):
             ("PM 简报上屏：施工路径只读投影",
              "施工路径" in pm_box and "L-0030" in pm_box
              and "施工路径上屏" in pm_box),
+            ("PM 简报上屏：研究决策状态",
+             "PM 判断" in pm_box and "R-9001" in pm_box and "需要你确认" in pm_box),
             ("上下文档案折叠区实际展开",
              str(adv_snapshot.get("contextArchiveFoldOpen")) == "1"),
             ("上下文档案上屏：四类状态与来源证据",

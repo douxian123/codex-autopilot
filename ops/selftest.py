@@ -174,6 +174,7 @@ def main():
             "test-closure-plan.py",
             "test-context-archive.py",
             "test-e2e-ten-real-inputs.py",
+            "test-pm-research-decision.py",
         )
         for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)
