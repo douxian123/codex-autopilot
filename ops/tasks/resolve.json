@@ -11,7 +11,7 @@
     "fe5cd24406e9d127a68f9354bf9f15f938e11650"
    ],
    "created": "2026-11-19 04:53:21",
-   "updated": "2026-11-20 13:57:58",
+   "updated": "2026-11-20 14:08:39",
    "conflict_files": [
     "docs/PRODUCT_MAINLINE.md"
    ],
@@ -19,7 +19,7 @@
     "docs/PRODUCT_MAINLINE.md"
    ],
    "auto_resolved_jsonl": [],
-   "status": "gate_fail",
+   "status": "landed",
    "gate_output": "→ codex/resolve-guard-release-version-20261119: 2 提交、落后 8、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n已有 land 在进行（/Users/danta/.newmax/workspace/codex-autopilot/.git/kgctl-land.lock）"
   },
   {
@@ -560,5 +560,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-20 13:57:58"
+ "updated": "2026-11-20 14:08:39"
 }
