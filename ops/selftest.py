@@ -14,13 +14,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
-<<<<<<< HEAD
 import time as _time
-=======
 from contextlib import redirect_stdout
 from importlib.util import module_from_spec, spec_from_file_location
 from io import StringIO
->>>>>>> codex/autopilot-resolve-stderr
 from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
