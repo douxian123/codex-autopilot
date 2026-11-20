@@ -1,12 +1,12 @@
 {
- "main": "598c39dcfd886e48cacbd3b2b4f5c95db35cf5dc",
+ "main": "1dd1a110c254d04f0823938eef550e218844970e",
  "branches": [
-  "codex/arch-boundaries-port-20261119",
   "codex/autopilot-close-gate-20261026",
   "codex/autopilot-exec-recover-min-20261020",
   "codex/autopilot-health-20261019",
   "codex/autopilot-parallel-runtime-fix-20261019",
   "codex/autopilot-resolve-stderr",
+  "codex/autopilot-routing-context-20261119",
   "codex/autopilot-truth-sync-failclosed",
   "codex/daemon-liveness-20261110",
   "codex/eval-loop-judge-20261110",
@@ -16,12 +16,12 @@
   "codex/snapshot-budget-archive-20261113"
  ],
  "burden": {
-  "codex/arch-boundaries-port-20261119": 1,
   "codex/autopilot-close-gate-20261026": 2,
   "codex/autopilot-exec-recover-min-20261020": 2,
   "codex/autopilot-health-20261019": 1,
   "codex/autopilot-parallel-runtime-fix-20261019": 1,
   "codex/autopilot-resolve-stderr": 2,
+  "codex/autopilot-routing-context-20261119": 2,
   "codex/autopilot-truth-sync-failclosed": 2,
   "codex/daemon-liveness-20261110": 4,
   "codex/eval-loop-judge-20261110": 7,
