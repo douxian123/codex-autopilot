@@ -60,6 +60,7 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 - **判断逻辑蒸馏**：每轮收口后回看人额外说了什么，只把「为什么这么判断」写进 `judgments.jsonl`（`truthctl distill add`）。记的是判断逻辑，不是一次性细节——下次换个地方也不用重新讲。
 - **问题闭环**：用户报的 bug / 视觉 / 体验 / 架构问题收进 `ledger.jsonl` 后，由 agent 推进修复 -> 验证 -> `truthctl close <L-id> "<结论>"`。关闭时带 commit、证据，并自动追加一条进展；回归了用 `truthctl open` 重开。问题不会一直挂在 `open`，也不靠用户自己记。
 - **自动实现需求**（`auto_exec`，默认关闭）：打开后，没关闭的台账条目会由自动挡在独立 worktree 里启动一个真实 `codex exec` 会话去实现；实现完显式提交，过 `kgctl land` 的同一道验证门禁后落盘，再自动 `truthctl close` 收口。每轮最多派一条；超时、门禁失败会保留分支和 worktree，不丢在途工作。它仍然遵守三条边界：不改产品方向、不删数据、不发布。
+- **项目自主运行**：面板里的“启用”只表示允许项目使用自主运行能力；只有切到“开始运行”，才会在用户不盯着时持续派发、验收和收口。运行中的项目会把任务、worker lease 和结果写入 `~/.codex-autopilot/projects/<project-key>/`，不把运行状态写进项目工作区，因此不会因为点面板产生 Git 脏改动。遇到产品方向、删数据、发布、权限或人工验收时会停在“等待确认”；“暂停”只停止新派发，已在途任务安全收口。
 - **主线综合**：每轮收口跑一次 `truthctl synthesize`，把决策 / 进展 / 问题 / 验收 / 产品状态综合成 `docs/PRODUCT_MAINLINE.md`。产品讨论和零散需求自动长成产品叙事，人只读这一页就知道现状、最近在推什么、还差什么。
 - **PM 研究决策**：新能力按 L0-L3 风险分级；L2/L3 自动建立研究请求，先记录竞品/开源来源、许可证和维护信号，再形成 `adopt / adapt / build / defer / reject` 决策。研究和决策没有完成时，施工泳道不能合流；搜索由宿主或人工适配器提供，不把某家 provider 写死。
 - **产品路线与验收分堆**：`mainline.json` 里的 `roadmap` 记录产品预期怎么一步步走完；验收台账分出「需要人拍板」和「机器已自证」。人只需要看人工项，并照着 `steps` 复核，不用从实现和日志里倒推。
@@ -168,6 +169,15 @@ python3 ops/kgctl.py projects scan ~/.newmax/workspace
 - **非常驻（默认）**：插件在，skill / MCP 就随叫随到；会话结束就停，不占后台。
 - **常驻（可选）**：装一个 launchd 守护，没开会话时也按周期推进安全子集。开是 `--install`，关是 `--uninstall`。
 - **彻底关掉**：在 Plugins 页禁用 / 卸载插件即可。账本还留在项目里，随时能再装回来。
+
+### 项目自主运行怎么用
+
+1. 在普通 Codex 对话里直接说需求，或调用 `render_autopilot_panel` 打开自动挡面板；面板首屏的“项目自主运行”区域就是项目级控制，不需要另开对话或分支。
+2. 第一次使用先点“仅启用”。这会保存项目授权，但不会自行启动新的实现任务。
+3. 确认希望项目在你离开窗口时继续推进，再点“开始运行”。看到状态变成“运行中”，并且待派 / 运行中 / 卡住 / 待确认计数出现，即表示项目级状态已加载。
+4. 想暂时停新活时点“暂停”；想保留授权但不自动推进时点“仅启用”。需要你确认的产品方向、发布、删除数据或人工验收会显示在“待确认”，不会被自动挡擅自越过。
+
+状态也可从对话里核验：`project_autonomy_status` 查看当前项目，`project_autonomy_control` 的 `enable` / `run` / `pause` / `wait` / `disable` 分别对应仅启用、开始运行、暂停、等待确认和关闭。旧项目没有项目级状态文件时，仍兼容原有 `auto_exec` 开关；一旦使用项目级控制，该项目状态优先于旧全局开关。
 
 也可以让对话直接调 MCP 工具：`intake_request`（一句话走完整条链，首选）/ `sync_control_plane` / `next_actions` / `project_status` / `route_inbox` / `resolve_list` / `resolve_plan` / `resolve_start` / `resolve_finish` / `convergence_plan` / `generate_context` / `dashboard` / `capture_request` / `suggest_branch` / `product_state` / `product_update` / `distill_review` / `distill_add` / `synthesize_mainline` / `register_acceptance` / `close_item` / `reopen_item`。
 

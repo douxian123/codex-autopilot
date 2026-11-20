@@ -62,6 +62,8 @@
   body.s-blocked,body.s-session_only{--acc:var(--warn);--accsoft:var(--warn-soft);--accline:var(--warn-line)}
   body.s-error{--acc:var(--err);--accsoft:var(--err-soft);--accline:var(--err-line)}
   body.s-idle{--acc:var(--ok);--accsoft:var(--ok-soft);--accline:var(--ok-line)}
+  body.s-enabled,body.s-waiting_human{--acc:var(--warn);--accsoft:var(--warn-soft);--accline:var(--warn-line)}
+  body.s-disabled{--acc:var(--ink-3);--accsoft:var(--surface-2);--accline:var(--line)}
   .wrap{max-width:780px;margin:0 auto;padding:18px 16px 34px}
   svg{display:block}
   button{font-family:inherit}
@@ -372,6 +374,15 @@
   .overview-detail>summary{list-style:none;cursor:pointer;padding:11px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:13px;font-weight:600;color:var(--ink)}
   .overview-detail>summary::-webkit-details-marker{display:none}
   .overview-detail[open]>summary{margin-bottom:12px}
+  .autonomy{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 18px;margin-bottom:11px;box-shadow:var(--shadow-1)}
+  .autonomy-head{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+  .autonomy-title{font-size:13.5px;font-weight:650}
+  .autonomy-mode{font-size:11.5px;color:var(--ink-3)}
+  .autonomy-copy{margin-top:5px;color:var(--ink-2);font-size:12.5px}
+  .autonomy-stats{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;color:var(--ink-3);font-size:11.5px}
+  .autonomy-stats b{color:var(--ink);font-weight:650;margin-right:3px}
+  .autonomy-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+  .autonomy-actions .btn{padding:6px 10px;font-size:12px}
 
   /* switches */
   .switchrow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line-2)}
@@ -509,6 +520,29 @@
       <summary>当前提醒的工程详情</summary>
       <div class="foldbody"><div id="needEvidenceBox"></div></div>
     </details>
+  <section class="autonomy" id="autonomyCard">
+    <div class="autonomy-head">
+      <span class="autonomy-title">项目自主运行</span>
+      <span class="autonomy-mode" id="autonomyMode">读取中</span>
+    </div>
+    <div class="autonomy-copy" id="autonomyCopy">项目级授权决定自动挡是否会在你不盯着时继续推进。</div>
+    <div class="autonomy-stats">
+      <span><b id="autonomyQueued">0</b>待派</span>
+      <span><b id="autonomyRunning">0</b>运行中</span>
+      <span><b id="autonomyBlocked">0</b>卡住</span>
+      <span><b id="autonomyWaiting">0</b>待确认</span>
+    </div>
+    <div class="autonomy-actions">
+      <button class="btn primary" data-autonomy-action="run" id="autonomyRun">开始运行</button>
+      <button class="btn danger" data-autonomy-action="pause" id="autonomyPause">暂停项目</button>
+      <button class="btn" data-autonomy-action="enable" id="autonomyEnable">仅启用</button>
+    </div>
+  </section>
+
+  <section class="card" id="acceptCard">
+    <div class="chead"><h2>需要你验收</h2><span class="count" id="accNote"></span></div>
+    <div id="acceptBox"></div>
+  </section>
 
   <section class="orientation" id="routeOverview">
     <div class="orientation-head">
@@ -867,6 +901,7 @@
     renderNorthStar(s.closure_rate);
     setAlert(s);
     renderGlobalRouting(s.global_routing);
+    renderAutonomy(s.project_autonomy || {});
     renderExecNow(s.exec_now);
     var c = s.counters || {};
     num("cReceived", c.received); num("cLanded", c.landed); num("cResolved", c.resolved);
@@ -1678,6 +1713,34 @@
     }
   }
 
+  var AUTONOMY_LABEL = {
+    disabled: "已关闭",
+    enabled: "已启用，尚未运行",
+    running: "运行中",
+    paused: "已暂停",
+    waiting_human: "等待你确认"
+  };
+  function renderAutonomy(a){
+    var mode = a.mode || "enabled";
+    setText("autonomyMode", AUTONOMY_LABEL[mode] || mode);
+    var copy = {
+      enabled: "项目已登记。切到“开始运行”后，自动挡才会持续规划、派活、验收和合并。",
+      running: "项目正在持续推进；没有待办时会安静等待，遇到必须由你决定的事会停下来。",
+      paused: a.reason || "项目暂停中；已有 worker 和工作区会保留，不再启动新的工作。",
+      waiting_human: a.reason || "自动挡已停在需要你确认的位置。确认后再恢复运行。"
+      ,disabled: a.reason || "项目自主运行已关闭。重新启用后才会恢复项目级授权。"
+    };
+    setText("autonomyCopy", copy[mode] || "项目自主运行状态已更新。");
+    var counts = a.counts || {};
+    num("autonomyQueued", counts.queued); num("autonomyRunning", counts.running);
+    num("autonomyBlocked", counts.blocked); num("autonomyWaiting", counts.waiting_human);
+    var run = el("autonomyRun"), pause = el("autonomyPause"), enable = el("autonomyEnable");
+    if (run) run.disabled = mode === "running";
+    if (pause) pause.disabled = mode === "paused" || mode === "enabled";
+    if (enable) enable.disabled = mode === "enabled";
+    if (run) run.textContent = mode === "waiting_human" ? "确认后运行" : "开始运行";
+  }
+
   function renderExecNow(en){
     var box = el("execNow"); if (!box) return;
     if (!en){ box.hidden = true; return; }
@@ -2460,6 +2523,19 @@
         toast("已" + (target ? "打开" : "关闭") + " " + key, "ok");
       }).catch(function(e){ toast("操作失败：" + (e && e.message || e), "err"); })
         .then(function(){ sw.disabled = false; });
+    });
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll("[data-autonomy-action]"), function(btn){
+    btn.addEventListener("click", function(){
+      var action = btn.getAttribute("data-autonomy-action");
+      btn.disabled = true;
+      callTool("project_autonomy_control", {action: action}).then(function(sc){
+        if (sc && sc.state) { state = sc; render(state); }
+        else { return loadStatus(); }
+        toast(action === "run" ? "项目已开始持续运行" : action === "pause" ? "项目已暂停" : "项目已启用", "ok");
+      }).catch(function(e){ toast("操作失败：" + (e && e.message || e), "err"); })
+        .then(function(){ btn.disabled = false; });
     });
   });
 

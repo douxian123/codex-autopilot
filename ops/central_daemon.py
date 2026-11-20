@@ -97,6 +97,7 @@ def _live_ops() -> Path:
 
 import central_config  # noqa: E402
 import control_state  # noqa: E402
+import project_autonomy  # noqa: E402
 import codex_native  # noqa: E402
 import pass_registry  # noqa: E402
 from pass_registry import (
@@ -404,6 +405,56 @@ def _state_repo():
     return None
 
 
+def _project_autonomy_summary(repo=None) -> dict:
+    """Return project mode without making a missing setup look like running."""
+    repo = repo or _state_repo()
+    if not repo:
+        return {"configured": False, "mode": "enabled", "reason": "未绑定项目"}
+    try:
+        return project_autonomy.summary(repo)
+    except Exception as exc:
+        log(f"[autonomy] 读取项目运行状态失败（按停止处理）：{exc!r}")
+        return {"configured": True, "mode": "paused", "reason": "状态读取失败，已安全暂停"}
+
+
+def _renew_project_leases(repo, workers) -> None:
+    """Keep durable task leases alive while the daemon still owns live workers."""
+    if not repo:
+        return
+    for rid, job in (workers.get("exec_jobs") or {}).items():
+        if job.get("recover") or not _worker_alive(job.get("pid")):
+            continue
+        worker = job.get("autonomy_worker") or ("daemon:%s" % os.getpid())
+        try:
+            project_autonomy.heartbeat(repo, rid, worker)
+        except Exception as exc:
+            log(f"[autonomy] {rid} 续租失败（保留 worker，不重复派发）：{exc!r}")
+
+
+def _record_project_results(results, workers) -> None:
+    """Mirror worker outcomes into the scheduling queue, never into project truth."""
+    for result in results or []:
+        rid = result.get("id")
+        if not rid:
+            continue
+        job = (workers.get("exec_jobs") or {}).get(rid) or {}
+        repo = Path(job.get("repo") or "")
+        if not repo:
+            continue
+        outcome = result.get("outcome")
+        try:
+            if outcome == "landed":
+                project_autonomy.finish(repo, rid, "done")
+            elif outcome in ("channel_unavailable", "land_locked", "relaunched"):
+                project_autonomy.finish(repo, rid, "queued", outcome)
+            elif outcome in ("resolve_gate_fail", "land_gate_fail", "land_conflict",
+                             "land_error", "codex_fail", "codex_fail_preserved",
+                             "nested_clone_preserved", "landed_close_fail"):
+                project_autonomy.finish(repo, rid, "blocked", outcome)
+        except Exception as exc:
+            log(f"[autonomy] {rid} 更新任务队列失败（不影响已完成代码）：{exc!r}")
+
+
 def auto_port_config() -> dict:
     """状态根 ops/central.config.json 的 auto_port 段。
 
@@ -646,8 +697,11 @@ def auto_exec_config() -> dict:
         out["fast_model"] = os.environ["KG_EXEC_FAST_MODEL"]
     if os.environ.get("KG_EXEC_MODEL"):
         out["slow_model"] = os.environ["KG_EXEC_MODEL"]
-    # 用户级开关拥有最终否决权（默认关）。
-    if not control_state.load().get("auto_exec", False):
+    # 新项目的 running 是项目级显式授权；未配置自主运行状态的旧项目继续
+    # 服从历史 auto_exec 开关。这样打开一个项目不会误伤其它项目。
+    autonomy = _project_autonomy_summary(repo)
+    if (not autonomy.get("configured")
+            and not control_state.load().get("auto_exec", False)):
         out["enabled"] = False
     # 预算熔断（fail-open）：用量越过硬上限时只停「派活」（auto_exec），
     # 不停 tick / land / resolve —— 不丢在途工作，降回来自动恢复。
@@ -4210,12 +4264,32 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
     cfg = auto_exec_config()
     if not cfg["enabled"]:
         return [], workers or {}
+    repo = _state_repo()
+    autonomy = _project_autonomy_summary(repo)
+    open_items = list(_exec_open_items())
+    if repo:
+        try:
+            # 队列同步不等于派活：即使项目暂停，也要让面板看见真实待办。
+            project_autonomy.sync_tasks(repo, open_items)
+        except Exception as exc:
+            log(f"[autonomy] 同步项目任务队列失败（不派新活）：{exc!r}")
+            return [], workers or {}
+    if repo and not project_autonomy.should_dispatch(repo, legacy_enabled=True):
+        # A mode change must stop new work without abandoning a worker that is
+        # already finishing. Reap existing jobs, then leave the queue intact.
+        workers = _hydrate_exec_jobs(workers if workers is not None else {})
+        existing_jobs = dict(workers.get("exec_jobs") or {})
+        results = _collect_exec(workers, blocked)
+        _record_project_results(results, {"exec_jobs": existing_jobs})
+        log("[autonomy] 项目未处于 running：不派发新 worker，保留已有现场")
+        return results, workers
     codex = _codex_bin()
     if not codex:
         log("[exec] auto_exec 已开，但找不到 codex 可执行文件，跳过")
         return [], workers or {}
     workers = _hydrate_exec_jobs(workers if workers is not None else {})
     jobs = workers.setdefault("exec_jobs", {})
+    _renew_project_leases(repo, workers)
     # 先按台账真实状态清掉已完成槽位。hydrate 只在启动时跑一次，而一轮里
     # 可能有多个槽位刚收口完；不在这里清，它们会一直占着并发名额。
     try:
@@ -4228,9 +4302,11 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
         pass
     # 只差落盘的 recover 槽位不耗模型，先把它们收口可以立刻腾出「需要会话」
     # 的名额，也不会和正在跑的 worker 争资源。
+    existing_jobs = dict(jobs)
     results = _collect_exec(workers, blocked)
     # 先收口已有的 recover/worker，再检查新派发准入。磁盘不足只挡新 worker，
     # 绝不终止已经在跑的任务。
+    _record_project_results(results, {"exec_jobs": existing_jobs})
     disk_held = bool(_disk_pressure())
     if disk_held:
         free = _disk_free_gb()
@@ -4243,6 +4319,11 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
     # A completed worker frees one slot immediately. Keep filling in the same
     # cycle instead of idling until the next 10-minute heartbeat.
     active_ids = {rid for rid, job in jobs.items() if not job.get("recover")}
+    # ``open_items`` is intentionally read before collection so the dispatcher
+    # can fill several slots in one pass. A worker that just landed is still
+    # present in that snapshot, though; do not start it again in the same
+    # cycle before the next truth refresh observes its closed ledger row.
+    handled_this_cycle = {r.get("id") for r in results if r.get("id")}
     # If _collect_exec just wrote a resolve gate_fail into blocked, it must not
     # be retried until the next cycle. Retrying inside the same cycle can race
     # another resolve worker that has already been dispatched for the same slug.
@@ -4286,7 +4367,6 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
                 holders.append((_rid, exec_overlap.declared_files(_it)))
                 seen.add(_rid)
         return holders
-
     def _session_slots() -> int:
         # 只数「真在跑/真要用模型」的槽位；recover 只是等落盘，不占算力名额。
         return _active_exec_session_count(jobs)
@@ -4300,7 +4380,7 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
     for item in sorted(open_items,
                        key=lambda it: (it.get("id") in blocked, it.get("ts", ""))):
         rid = item.get("id")
-        if rid in jobs or rid in active_ids:
+        if rid in jobs or rid in active_ids or rid in handled_this_cycle:
             continue
         if _session_slots() >= limit:
             break
@@ -4433,6 +4513,7 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
                                 force_session=rid in force_session_ids)
         if job.get("outcome") != "ready":
             results.append(job)
+            handled_this_cycle.add(rid)
             continue
         if not _ensure_live_model(job, blocked):
             results.append({"id": rid, "outcome": "channel_unavailable",
@@ -4445,6 +4526,18 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
                             "ts": _now()}
             results.append({"id": rid, "outcome": "start_fail", "error": err})
             continue
+        if repo:
+            try:
+                started["autonomy_worker"] = "daemon:%s" % os.getpid()
+                project_autonomy.claim(
+                    repo, rid, worker=started["autonomy_worker"],
+                    branch=started.get("branch") or "",
+                    worktree=started.get("worktree") or "")
+            except Exception as exc:
+                log(f"[autonomy] {rid} 租约未取得，跳过派发：{exc!r}")
+                # The worker has already started, so preserve it for normal
+                # collection instead of launching a duplicate next cycle.
+                started["autonomy_claim_error"] = repr(exc)
         jobs[rid] = started
         # 槽位只统计「需要跑 codex 会话」的工作。recover 槽位不需要模型
         # （只是等落盘门禁按序收口），把它们算进并发上限等于用一条不需要

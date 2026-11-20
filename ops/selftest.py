@@ -4422,6 +4422,88 @@ def test_auto_exec():
           "502 日志判定为可重试并在同一 worktree 重跑（重试到上限记 codex_infra_fail）。")
 
 
+def test_project_autonomy():
+    """项目自主运行状态、队列租约和项目间隔离。"""
+    import importlib
+
+    sys.path.insert(0, str(OPS))
+    import project_autonomy
+    importlib.reload(project_autonomy)
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-autonomy-") as tmp:
+        root = Path(tmp)
+        repo_a = root / "project-a"
+        repo_b = root / "project-b"
+        repo_a.mkdir()
+        repo_b.mkdir()
+        runtime = root / "runtime"
+        old_home = os.environ.get("KG_DAEMON_HOME")
+        os.environ["KG_DAEMON_HOME"] = str(runtime)
+        try:
+            initial = project_autonomy.summary(repo_a)
+            assert initial["configured"] is False
+            assert initial["mode"] == "enabled"
+
+            project_autonomy.set_mode(repo_a, "running", "selftest")
+            assert project_autonomy.should_dispatch(repo_a) is True
+            assert project_autonomy.should_dispatch(repo_b) is False
+
+            items = [{"id": "L-0001", "kind": "bug", "title": "a", "status": "open"}]
+            synced = project_autonomy.sync_tasks(repo_a, items)
+            assert synced["tasks"][0]["status"] == "queued"
+            claimed = project_autonomy.claim(repo_a, "L-0001", "worker-a",
+                                              "codex/exec-a", str(root / "wt-a"))
+            assert claimed["status"] == "running"
+            assert claimed["worker"] == "worker-a"
+            assert project_autonomy.heartbeat(repo_a, "L-0001", "worker-a") is True
+            assert project_autonomy.finish(repo_a, "L-0001", "done") is True
+            assert project_autonomy.summary(repo_a)["counts"]["done"] == 1
+
+            project_autonomy.set_mode(repo_a, "paused", "selftest pause")
+            assert project_autonomy.should_dispatch(repo_a) is False
+            assert project_autonomy.summary(repo_b)["total"] == 0
+            assert not (repo_a / "ops").exists()
+        finally:
+            if old_home is None:
+                os.environ.pop("KG_DAEMON_HOME", None)
+            else:
+                os.environ["KG_DAEMON_HOME"] = old_home
+    print("selftest ok: 项目自主运行状态独立存储、队列同步、worker claim/heartbeat/finish、暂停闸门和项目隔离。")
+
+
+def test_project_autonomy_result_sync():
+    """Worker 收口后，项目队列应立即反映最终结果。"""
+    import importlib
+
+    sys.path.insert(0, str(OPS))
+    import central_daemon
+    import project_autonomy
+    importlib.reload(project_autonomy)
+    importlib.reload(central_daemon)
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-autonomy-sync-") as tmp:
+        repo = Path(tmp)
+        repo.mkdir(exist_ok=True)
+        old_home = os.environ.get("KG_DAEMON_HOME")
+        os.environ["KG_DAEMON_HOME"] = str(repo / "runtime")
+        try:
+            project_autonomy.set_mode(repo, "running", "selftest")
+            project_autonomy.sync_tasks(repo, [{"id": "L-0001", "title": "a", "kind": "bug"}])
+            project_autonomy.claim(repo, "L-0001", "daemon:test", "codex/a", str(repo / "wt"))
+            job = {"repo": str(repo), "branch": "codex/a", "worktree": str(repo / "wt")}
+            central_daemon._record_project_results(
+                [{"id": "L-0001", "outcome": "landed"}],
+                {"exec_jobs": {"L-0001": job}})
+            assert project_autonomy.summary(repo)["counts"]["done"] == 1
+            assert project_autonomy.summary(repo)["counts"]["running"] == 0
+        finally:
+            if old_home is None:
+                os.environ.pop("KG_DAEMON_HOME", None)
+            else:
+                os.environ["KG_DAEMON_HOME"] = old_home
+    print("selftest ok: worker 收口结果即时回写项目队列，不残留运行中状态。")
+
+
 def test_exec_model_balance_fallback():
     """403 欠费日志必须被识别为慢通道 fallback，且 fast/slow 路由可预测。"""
     import importlib
@@ -7031,8 +7113,32 @@ def test_mcp_contract():
                    "distill_add", "synthesize_mainline", "close_item",
                    "reopen_item", "register_acceptance",
                    "constraints_add", "constraints_list",
-                   "codex_native_dispatch_task", "codex_native_follow_up"} - tool_names
+                   "codex_native_dispatch_task", "codex_native_follow_up",
+                   "project_autonomy_status", "project_autonomy_control"} - tool_names
         assert not missing, f"缺少自动挡工具: {sorted(missing)}"
+
+        send({"jsonrpc": "2.0", "id": 36, "method": "tools/call",
+              "params": {"name": "project_autonomy_status", "arguments": {}}})
+        autonomy = recv()["result"]["structuredContent"]
+        assert autonomy["configured"] is False, "新项目不应误显示为已配置"
+        assert autonomy["mode"] == "enabled", "未配置项目应保持兼容的 enabled 默认态"
+
+        send({"jsonrpc": "2.0", "id": 37, "method": "tools/call",
+              "params": {"name": "project_autonomy_control",
+                         "arguments": {"action": "run"}}})
+        run_result = recv()["result"]
+        assert not run_result.get("isError"), "项目自主运行 run 调用失败"
+        assert run_result["structuredContent"]["project_autonomy"]["mode"] == "running"
+
+        send({"jsonrpc": "2.0", "id": 38, "method": "tools/call",
+              "params": {"name": "project_autonomy_control",
+                         "arguments": {"action": "pause"}}})
+        pause_result = recv()["result"]
+        assert not pause_result.get("isError"), "项目自主运行 pause 调用失败"
+        assert pause_result["structuredContent"]["project_autonomy"]["mode"] == "paused"
+        autonomy_file = Path(home) / "projects" / autonomy["project_key"] / "autonomy.json"
+        assert autonomy_file.exists(), "项目状态未写入项目隔离 runtime"
+        assert not (project / "ops" / "project_autonomy.json").exists(), "项目工作区不应出现运行状态文件"
 
         send({"jsonrpc": "2.0", "id": 4, "method": "tools/call",
               "params": {"name": "autopilot_status", "arguments": {"fast": True}}})
@@ -8054,6 +8160,8 @@ if __name__ == "__main__":
     test_verify_and_truth()
     test_prune_exec_blocked_landed_commit()
     test_auto_exec()
+    test_project_autonomy()
+    test_project_autonomy_result_sync()
     test_exec_model_balance_fallback()
     test_model_channel_identity_and_dead_channel_fallback()
     test_relaunch_never_reuses_dead_channel()

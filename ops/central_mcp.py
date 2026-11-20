@@ -755,6 +755,7 @@ def _server_version() -> str:
 SERVER_VERSION = _server_version()
 
 import control_state  # noqa: E402
+import project_autonomy  # noqa: E402
 import codex_native  # noqa: E402
 import acceptance_criteria  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
@@ -1243,6 +1244,24 @@ TOOLS = [
             "properties": {
                 "fast": {"type": "boolean", "description": "true（默认）只读缓存，秒回；false 才现场重扫（较慢）"},
             },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "project_autonomy_status",
+        "description": "查看当前项目的自主运行状态、任务队列、运行中的 worker、等待用户事项和过期租约。它只读，不启动任务。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "project_autonomy_control",
+        "description": "设置当前项目的自主运行模式：enable 只登记项目、run 开始持续推进、pause 暂停新派活、wait 等待用户、disable 关闭项目自主运行。项目级状态不影响其它项目。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["enable", "run", "pause", "wait", "disable"]},
+                "reason": {"type": "string", "description": "暂停或等待的原因，可选"},
+            },
+            "required": ["action"],
             "additionalProperties": False,
         },
     },
@@ -2869,6 +2888,13 @@ def _status_payload(fast=True):
     enabled = bool(ctrl.get("enabled", True))
     lifecycle = control_state.lifecycle_status(ctrl)
 
+    repo = os.environ.get("KG_REPO") or str(REPO)
+    try:
+        autonomy = project_autonomy.summary(repo)
+    except Exception as exc:
+        autonomy = {"configured": True, "mode": "paused",
+                     "reason": "项目运行状态读取失败：%s" % exc}
+
     exec_now = _running_exec() if live else None
 
     # 「现在处在哪一步」只由 stage_table 里那一张 first-match-wins 表说了算。
@@ -2912,6 +2938,18 @@ def _status_payload(fast=True):
     if not enabled:
         doing = "自动挡已关闭；Codex 原生会话、项目与工作区保持不变"
         why = "总开关关闭后不再接收或启动自动挡工作"
+    elif autonomy.get("configured") and autonomy.get("mode") == "waiting_human":
+        doing = "项目已停在需要你确认的位置，没有启动新的工作"
+        why = autonomy.get("reason") or "这一步涉及产品方向、发布、删除数据或人工验收"
+    elif autonomy.get("configured") and autonomy.get("mode") == "paused":
+        doing = "项目暂停中，没有启动新的 worker"
+        why = autonomy.get("reason") or "项目自主运行被暂停；已有现场会保留"
+    elif autonomy.get("configured") and autonomy.get("mode") == "enabled":
+        doing = "项目已登记，但还没有开始持续推进"
+        why = "把项目切到“运行”后，自动挡才会持续规划、派活、验收和合并"
+    elif autonomy.get("configured") and autonomy.get("mode") == "disabled":
+        doing = "项目自主运行已关闭，没有启动新的 worker"
+        why = autonomy.get("reason") or "重新启用后才会恢复项目级运行授权"
     elif paused:
         doing = "暂停中，没有在动任何分支"
         why = "你按了暂停。恢复后它才会继续检查、合入"
@@ -2981,6 +3019,7 @@ def _status_payload(fast=True):
         "paused": paused,
         "enabled": enabled,
         "lifecycle": lifecycle,
+        "project_autonomy": autonomy,
         "error": ctrl.get("error"),
         "state": state_key,
         "state_label": state_label,
@@ -3267,6 +3306,32 @@ def control_action(action, enabled=None):
             control_state.append_event("daemon", enabled=want)
         return _with_status(out or ("已%s常驻" % ("开启" if want else "关闭"))), rc
     return "未知 action：%s" % action, 2
+
+
+def project_autonomy_action(action, reason=""):
+    modes = {"enable": "enabled", "run": "running", "pause": "paused",
+             "wait": "waiting_human", "disable": "disabled"}
+    if action not in modes:
+        return "project_autonomy_control 需要 enable/run/pause/wait/disable", 2
+    repo = os.environ.get("KG_REPO") or str(REPO)
+    if action == "disable":
+        reason = reason or "项目自主运行已关闭"
+    elif action == "run":
+        reason = reason or "用户已授权项目持续推进"
+    elif action == "pause":
+        reason = reason or "用户已暂停项目自主运行"
+    elif action == "wait":
+        reason = reason or "等待用户确认"
+    try:
+        state = project_autonomy.set_mode(repo, modes[action], reason)
+        control_state.append_event("project_autonomy", project=state["project"],
+                                   mode=state["mode"], reason=state["reason"])
+        return _with_status("当前项目已%s。" % {
+            "disabled": "关闭自主运行", "enabled": "启用但未运行",
+            "running": "开始持续运行", "paused": "暂停",
+            "waiting_human": "停在等待确认"}[state["mode"]]), 0
+    except (OSError, ValueError) as exc:
+        return "项目自主运行状态未更新：%s" % exc, 2
 
 
 def _settings_values():
@@ -3837,6 +3902,20 @@ def call_tool(name, args):
         return kgctl("dash", *(["--open"] if args.get("open") else []))
     if name == "autopilot_status":
         return _status_payload(fast=True), 0
+    if name == "project_autonomy_status":
+        repo = os.environ.get("KG_REPO") or str(REPO)
+        try:
+            payload = project_autonomy.summary(repo)
+            payload["__text__"] = (
+                "项目自主运行：%s；排队 %d，运行中 %d，阻塞 %d，等待确认 %d，已完成 %d"
+                % (payload.get("mode"), payload["counts"].get("queued", 0),
+                   payload["counts"].get("running", 0), payload["counts"].get("blocked", 0),
+                   payload["counts"].get("waiting_human", 0), payload["counts"].get("done", 0)))
+            return payload, 0
+        except Exception as exc:
+            return "项目自主运行状态读取失败：%s" % exc, 2
+    if name == "project_autonomy_control":
+        return project_autonomy_action(args.get("action"), args.get("reason") or "")
     if name == "autopilot_control":
         return control_action(args.get("action"), args.get("enabled"))
     if name == "autopilot_run_once":

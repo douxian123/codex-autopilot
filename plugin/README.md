@@ -41,10 +41,14 @@
 - **产品路线**（`ops/truth/mainline.json` 的 `roadmap`）：方向不是一句口号，而是一步步走到产品预期的路线；每一步标 `done / doing / next / todo`，面板直接显示走到哪了。
 - **验收分堆**（`ops/truth/acceptance.jsonl`）：机器能跑命令验证的归到「已机器验收」；审美、手感、真实产品里点一下这类必须人拍板的归到「需要你验收」，并原样显示 `steps`，用户不用猜怎么看。
 - **自动实现需求**（`auto_exec`，默认关闭）：用户显式打开后，自动挡把未关闭的台账条目派给独立 worktree 里的真实 `codex exec` 会话，自己实现、自己提交，过同一道门禁后落盘并收口；失败保留分支与 worktree，不丢在途工作。
+- **项目自主运行**：面板里的“仅启用”保存项目授权但不派新活；“开始运行”才允许项目在用户不盯着时持续派发、验收和收口。项目状态与任务租约写在 `~/.codex-autopilot/projects/<project-key>/`，不污染目标项目 Git。暂停只停止新派发，已在途任务安全收口；遇到需要产品方向、发布、删除数据或人工验收时停在待确认。
 
 面板第一屏就能看到「产品路线 · 需要你验收 · 当前在做什么 · 还差什么」，点「高级」还能看到产品状态、判断逻辑、最近一次自验证和自动实现开关。对应的 MCP 工具是
 `product_state` / `product_update` / `distill_review` / `distill_add` /
-`synthesize_mainline` / `register_acceptance` / `close_item` / `reopen_item`。
+`synthesize_mainline` / `register_acceptance` / `close_item` / `reopen_item` /
+`project_autonomy_status` / `project_autonomy_control`。
+
+在对话中调用 `render_autopilot_panel` 打开面板；看到“项目自主运行”状态变为“运行中”，并且计数区出现待派、运行中、卡住或待确认，说明项目级运行状态已经加载。`project_autonomy_control` 支持 `enable`、`run`、`pause`、`wait`、`disable`。
 
 ## 安装
 
