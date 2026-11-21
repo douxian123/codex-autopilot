@@ -58,6 +58,15 @@ def _fallback_repo() -> Path:
     return _live_ops().parent
 
 
+def _infer_experience_kind(text: str, files, declared: str) -> str:
+    """Keep MCP intake and CLI inbox on the same visual/ux classification."""
+    try:
+        import experience_contract
+        return experience_contract.infer_experience_kind(text, files, declared)
+    except Exception:
+        return declared or "unknown"
+
+
 def _closure_rate_summary():
     """北极星「首问闭环率」的三态摘要。
 
@@ -3659,8 +3668,10 @@ def call_tool(name, args):
         if not text:
             return "capture_request 需要 text", 2
         files = args.get("files") or []
+        declared_kind = args.get("kind") or "unknown"
+        effective_kind = _infer_experience_kind(text, files, declared_kind)
         env = {"KG_INBOX_FILES": ":".join(files) if files else None,
-               "KG_INBOX_KIND": args.get("kind") or "unknown",
+               "KG_INBOX_KIND": effective_kind,
                "KG_INBOX_CWD": (args.get("cwd") or "").strip() or None,
                "KG_INBOX_PROJECT": (args.get("project") or "").strip() or None}
         return kgctl("inbox", text, extra_env=env)
@@ -4063,21 +4074,37 @@ def call_tool(name, args):
         if not text:
             return "intake_request 需要 text", 2
         files = args.get("files") or []
+        declared_kind = args.get("kind") or "unknown"
+        effective_kind = _infer_experience_kind(text, files, declared_kind)
         env = {"KG_INBOX_FILES": ":".join(files) if files else None,
-               "KG_INBOX_KIND": args.get("kind") or "unknown",
+               "KG_INBOX_KIND": effective_kind,
                "KG_INBOX_CWD": (args.get("cwd") or "").strip() or None,
                "KG_INBOX_PROJECT": (args.get("project") or "").strip() or None}
         # 统一入口先生成本次最小充分验收范围。预览不写盘；只有显式
         # confirm_scope=true 才成为 pre_acceptance 的活动范围。
         import dynamic_acceptance_scope
         scope = dynamic_acceptance_scope.generate_scope(
-            text=text, kind=args.get("kind") or "unknown", files=files,
+            text=text, kind=effective_kind, files=files,
             product_shape=args.get("product_shape") or [],
             delivery_goal=args.get("delivery_goal") or "acceptance_ready",
             explicit_impacts=args.get("impacts") or [],
         )
+        experience_required = effective_kind in ("visual", "ux") or bool(
+            {"ui", "interaction"} & set(scope.get("impact_tags") or []))
         intake_result, intake_code = kgctl("intake", text, extra_env=env)
         result = {"intake": intake_result, "acceptance_scope_preview": scope,
+                  "declared_kind": declared_kind,
+                  "effective_kind": effective_kind,
+                  "experience_contract": {
+                      "required": experience_required,
+                      "status": "required" if experience_required else "not_applicable",
+                      "obligation": (
+                          "视觉/体验任务必须声明 Experience Contract；"
+                          "上线前需真实浏览器机器证据与用户人工验收，"
+                          "不能用 exit 0 或模型自评替代最后一票。"
+                          if experience_required else
+                          "当前任务未识别为视觉/体验变更；如触及界面仍需显式声明体验契约。"),
+                  },
                   "scope_persisted": False,
                   "__text__": "需求已进入统一入口；动态验收范围仅生成预览，尚未作为本次活动门禁。"}
         if intake_code != 0:
