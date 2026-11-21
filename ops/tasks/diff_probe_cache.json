@@ -466,5 +466,9 @@
  "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@02ad0ab72ec3f4137659949f29a8385c68668520": {
   "files": 12,
   "lines": 958
+ },
+ "codex/project-autonomy-mode-20261121@1aebb35c6630b5e7fcaf3605b26766d1d7785532@16606666f76aebbab5f48317827a731146f066a1": {
+  "files": 7,
+  "lines": 621
  }
 }
