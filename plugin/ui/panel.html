@@ -1083,7 +1083,14 @@
     if (!node) return;
     var checks = pre.checks || [];
     node.className = "pre-acceptance " + (pre.status || "unknown");
-    setText("preAcceptanceLabel", pre.label || "交付前预验收状态取不到");
+    var scope = pre.scope || {};
+    var selected = scope.selected_checks || [];
+    var unmapped = scope.unmapped_risks || [];
+    var scopeNote = selected.length
+      ? "本次验收范围：" + selected.join("、")
+      : (scope.status === "legacy-default" ? "本次使用完整验收标准" : "本次没有已确认的适用验收范围");
+    if (unmapped.length) scopeNote += " · 尚无专项门禁：" + unmapped.join("；");
+    setText("preAcceptanceLabel", (pre.label || "交付前预验收状态取不到") + " · " + scopeNote);
     setText("preAcceptanceCount", (pre.passed == null ? "—" : pre.passed + "/" + (pre.total || 0)) +
       (pre.failed != null ? " · 失败 " + pre.failed : "") +
       (pre.unknown != null ? " · 未知 " + pre.unknown : ""));
