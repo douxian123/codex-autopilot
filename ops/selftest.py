@@ -178,6 +178,7 @@ def main():
             "test-prd-evolution.py",
             "test-cost-discipline.py",
             "test-experience-contract.py",
+            "test-experience-contract-gate.py",
         )
         for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)

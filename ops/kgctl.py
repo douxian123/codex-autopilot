@@ -3949,10 +3949,31 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
         print("  ! 有 %d 条约束标了 gate 却没写命令，本轮未执行：%s"
               % (len(constraint_gaps),
                  "、".join(str(r.get("id") or "?") for r in constraint_gaps)))
+    # Experience is a first-class land gate once the target project declares a
+    # contract. Older projects without the file remain compatible, but a
+    # malformed declared contract must fail closed before any merge proceeds.
+    experience_result = {"name": "experience-contract", "cmd": "committed contract validation",
+                         "cwd": ".", "ok": True, "output": "未声明体验契约"}
+    try:
+        contract_path = wt / "docs" / "experience" / "experience-contract.json"
+        import experience_contract
+        checked = experience_contract.land_gate(contract_path)
+        experience_result.update({
+            "ok": bool(checked.get("ok")),
+            "output": "%s：%s" % (checked.get("status"), checked.get("reason")),
+        })
+        if checked.get("machine_checks"):
+            experience_result["machine_checks"] = checked["machine_checks"]
+        if checked.get("human_checks"):
+            experience_result["human_checks"] = checked["human_checks"]
+    except Exception as exc:
+        experience_result.update({"ok": False, "output": "体验契约门禁异常：%s" % exc})
+    if not experience_result["ok"]:
+        return False, [experience_result], "[experience-contract] %s" % experience_result["output"]
     if not gates:
-        return True, [], "(未配置验证门禁，跳过)"
+        return True, [experience_result], "[experience-contract] %s" % experience_result["output"]
     with _verification_gate_lock():
-        results, chunks, all_ok = [], [], True
+        results, chunks, all_ok = [experience_result], ["[experience-contract] %s" % experience_result["output"]], True
         for g in gates:
             rel = g.get("cwd") or "."
             cwd = wt / rel

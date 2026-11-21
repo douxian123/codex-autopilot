@@ -100,7 +100,8 @@ def main():
         trunk = seed(root, "trunk", "echo TRUNK_GATE_RAN")
         ok, results, out = kg._run_verify_gates(trunk)
         names = [r.get("name") for r in results]
-        check("门禁来自 trunk 自己的配置", names == ["trunk-gate"], f"(names={names})")
+        check("门禁来自 trunk 自己的配置",
+              names == ["experience-contract", "trunk-gate"], f"(names={names})")
         check("trunk 门禁真的被执行", "TRUNK_GATE_RAN" in out, f"(out={out[-200:]!r})")
         check("没有退回状态根的默认 build", "frontend" not in out, f"(out={out[-200:]!r})")
         check("门禁整体通过", ok is True, f"(ok={ok})")
@@ -117,7 +118,8 @@ def main():
         kg.CFG = {"build": {"cmd": "echo FALLBACK_CFG", "cwd": "."}, "verify": None}
         ok2, results2, out2 = kg._run_verify_gates(bare)
         check("trunk 缺配置时退回状态根 CFG（不抛异常）",
-              [r.get("name") for r in results2] == ["build"], f"(results={results2})")
+              [r.get("name") for r in results2] == ["experience-contract", "build"],
+              f"(results={results2})")
         check("退回后的门禁真的执行了", "FALLBACK_CFG" in out2, f"(out={out2[-200:]!r})")
 
     if failures:
