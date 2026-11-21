@@ -35,6 +35,7 @@ SERVER_NAME = "codex-autopilot"
 # kgctl / truthctl 的地方，路径都必须在那一次调用的当下解析，不能在这里算一次就
 # 锁死 —— 那样等于把「目录被删」这件事固化进进程内存，原故障照旧复现。
 RUNNING_OPS = Path(__file__).resolve().parent
+REPO = RUNNING_OPS.parent
 
 from plugin_binding import (apply_plugin_env, binding_health, binding_line,  # noqa: E402
                             current_ops, stale_code_problem)
@@ -2893,7 +2894,9 @@ def _status_payload(fast=True):
             "todo_count": None,
             "human_acceptance": [],
             "pre_acceptance": {"status": "unknown", "label": "验收管家：安装绑定失效，不通知你验收",
-                                "checks": [], "passed": 0, "total": 4, "notify_user": False},
+                                "checks": [], "categories": [], "items": [], "passed": 0,
+                                "failed": 0, "unknown": 92, "not_applicable": 0,
+                                "total": 92, "notify_user": False},
             "pre_acceptance_blocked": [],
             "pre_acceptance_blocked_count": None,
             "machine_verified": [],
@@ -2931,7 +2934,7 @@ def _status_payload(fast=True):
     enabled = bool(ctrl.get("enabled", True))
     lifecycle = control_state.lifecycle_status(ctrl)
 
-    repo = os.environ.get("KG_REPO") or str(REPO)
+    repo = os.environ.get("KG_REPO") or str(_fallback_repo())
     try:
         autonomy = project_autonomy.summary(repo)
     except Exception as exc:

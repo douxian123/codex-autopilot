@@ -46,6 +46,12 @@ CHECKS = (
         "reason": "所有需求、反馈、验收标准、人工边界和未决风险必须已对齐并回写。",
         "required_evidence": ("prd", "expectations", "acceptance", "risk"),
     },
+    {
+        "id": "evidence",
+        "title": "证据审计",
+        "reason": "每条必检项必须能回到当前版本、真实入口和可复核现场。",
+        "required_evidence": ("evidence", "version", "provenance"),
+    },
 )
 
 _CHECK_IDS = {item["id"] for item in CHECKS}

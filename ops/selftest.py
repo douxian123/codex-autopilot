@@ -268,6 +268,8 @@ def main():
         # 未全部通过时，人工验收不得进入用户台。
         run([sys.executable, str(OPS / "test-acceptance-dictionary.py")],
             cwd=str(OPS.parent), check=True)
+        run([sys.executable, str(OPS / "test-acceptance-evidence.py")],
+            cwd=str(OPS.parent), check=True)
         run([sys.executable, str(OPS / "test-pre-acceptance.py")],
             cwd=str(OPS.parent), check=True)
         # 复核截图必须由人点确认、只追加附件、失败时不写假路径。
@@ -1708,7 +1710,9 @@ def test_panel_first_screen():
     script = OPS / "panel_logic_check.py"
     assert script.is_file(), "panel_logic_check.py 缺失"
     env = os.environ.copy()
-    env.setdefault("KG_REPO", str(OPS.parent))
+    # 前序隔离夹具会临时改父进程的 KG_REPO；面板子进程必须固定绑定本次源码
+    # 项目，否则同一套 selftest 会因执行顺序读到不同账本，产生假红/假绿。
+    env["KG_REPO"] = str(OPS.parent)
     result = run([sys.executable, str(script), "--quiet"],
                  cwd=str(OPS.parent), env=env, check=False)
     if result.returncode != 0:
@@ -7254,7 +7258,8 @@ def test_mcp_contract():
         assert pend[0].get("screenshots") == ["/tmp/acceptance-shot.png"], \
             f"截图附件没进待自验台账: {pend}"
 
-        # 补上自验证据之后，它才有资格来敲用户的门。
+        # 补上单项自验证据之后，它只证明这一个验收项跑过；产品级 92 条预验收
+        # 尚未 ready，所以仍不能敲用户的门。用户不能被拿来补全系统漏跑的自检。
         _aid = pend[0]["id"]
         send({"jsonrpc": "2.0", "id": 36, "method": "tools/call",
               "params": {"name": "resolve_acceptance",
@@ -7265,12 +7270,15 @@ def test_mcp_contract():
               "params": {"name": "autopilot_status", "arguments": {"fast": True}}})
         sc37 = recv()["result"]["structuredContent"]
         hum2 = sc37.get("human_acceptance") or []
-        assert hum2 and hum2[0].get("id") == _aid, \
-            f"补了自验证据仍没进等你验收: {hum2} / {sc37.get('self_check_acceptance')}"
-        assert "panel_render_check" in (hum2[0].get("evidence") or ""), \
-            f"自验证据没带给面板: {hum2[0]}"
-        assert hum2[0].get("screenshots") == ["/tmp/acceptance-shot.png"], \
-            f"收敛状态时截图附件丢失: {hum2[0]}"
+        blocked2 = sc37.get("pre_acceptance_blocked") or []
+        assert not hum2, \
+            f"产品级预验收未 ready 却进了等你验收: {hum2}"
+        assert blocked2 and blocked2[0].get("id") == _aid, \
+            f"单项自验证据未留在产品级预验收阻断区: {blocked2}"
+        assert "panel_render_check" in (blocked2[0].get("evidence") or ""), \
+            f"自验证据没带给预验收阻断区: {blocked2[0]}"
+        assert blocked2[0].get("screenshots") == ["/tmp/acceptance-shot.png"], \
+            f"预验收阻断状态时截图附件丢失: {blocked2[0]}"
 
         send({"jsonrpc": "2.0", "id": 5, "method": "tools/call",
               "params": {"name": "autopilot_control", "arguments": {"action": "pause"}}})
