@@ -515,6 +515,57 @@ def _n(value):
     return "—" if value is None else str(value)
 
 
+def _ui_text(value, fallback="取不到"):
+    """UI 边界的最后一道脱敏：内部空值/布尔字面量不得进读者面。"""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return fallback
+    text = str(value)
+    return (text.replace("None", "取不到")
+                .replace("True", "是")
+                .replace("False", "否"))
+
+
+def _experience_summary():
+    """把体验契约投影成面板可渲染的只读摘要。
+
+    体验契约之前只被 kgctl 校验，面板首屏不消费，于是「注意力顺序」和
+    「适用状态」只停在文档里。这里只做投影，不重新定义契约，也不评分 taste。
+    """
+    path = REPO / "docs" / "experience" / "experience-contract.json"
+    fallback = {
+        "status": "unknown",
+        "headline": "体验契约取不到，首屏不冒充已按契约验收",
+        "schema_version": None,
+        "primary_task": None,
+        "attention_order": [],
+        "states": [],
+        "machine_checks": [],
+        "human_checks": [],
+    }
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return fallback
+    try:
+        import experience_contract
+        experience_contract.validate_contract(data)
+    except Exception as exc:
+        out = dict(fallback)
+        out["headline"] = "体验契约校验失败：%s" % _ui_text(exc)
+        return out
+    return {
+        "status": "ok" if data.get("experience_required") else "unknown",
+        "headline": "体验契约已生效：先%s，再让用户验收" % (
+            "看当前工作与阻塞" if data.get("attention_order") else "看当前状态"),
+        "schema_version": data.get("schema_version"),
+        "primary_task": data.get("primary_task"),
+        "attention_order": list(data.get("attention_order") or []),
+        "states": [s.get("name") for s in (data.get("states") or []) if isinstance(s, dict)],
+        "machine_checks": list(data.get("machine_checks") or []),
+        "human_checks": list(data.get("human_checks") or []),
+    }
+
+
 def _steward_health(payload):
     """七管家健康条：把七个管家的真实状态收敛成一份面板可读的清单。
 
@@ -650,7 +701,8 @@ def _steward_health(payload):
     # 6. 项目经理：对外可视的三问面板本身是否在产出。取不到就说取不到。
     if payload.get("project", {}).get("path"):
         rows.append({"key": "pm", "state": "ok",
-                     "label": "项目经理：已绑定 %s，三问面板在产出" % payload["project"]["name"]})
+                     "label": "项目经理：已绑定 %s，三问面板在产出"
+                     % _ui_text(payload["project"].get("name"), "未命名项目")})
     else:
         rows.append({"key": "pm", "state": "unknown",
                      "label": "项目经理：还没绑定项目"})
@@ -714,6 +766,8 @@ def _steward_health(payload):
     counts = {}
     for r in rows:
         counts[r["state"]] = counts.get(r["state"], 0) + 1
+    for row in rows:
+        row["label"] = _ui_text(row.get("label"), "状态取不到")
     return {"rows": rows, "counts": counts}
 
 
@@ -3195,6 +3249,8 @@ def _status_payload(fast=True):
         # 不把目标自动派给 worker，也不把「需要人」变成自动追问。
         "relationship_goals": _relationship_goals_summary(),
         "outcome_score": _outcome_score_summary(),
+        # 体验契约必须进入面板投影；只写 docs/experience 不算驱动 UI。
+        "experience": _experience_summary(),
         "harness_tune": _harness_tune_summary(),
         "constraint_candidates": _constraint_candidates_summary(),
         "context_archive": _context_archive_summary(),

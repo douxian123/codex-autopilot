@@ -120,6 +120,10 @@
   /* 管家健康条：首屏只留一行摘要和短名状态条，完整解释走 title / aria-label。
      attention 才用警告色；off 是用户自己关的，用中性灰，不冒充故障。 */
   .stewards{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);display:flex;align-items:center;flex-wrap:wrap;gap:5px 10px}
+  .exp-contract{margin-top:10px;padding:8px 10px;border:1px solid var(--line-2);border-left:2px solid var(--brand-200);border-radius:var(--r-xs);background:var(--surface-2);font-size:11.5px;line-height:1.55;color:var(--ink-2)}
+  .exp-contract[hidden]{display:none}
+  .exp-contract strong{color:var(--ink);font-weight:650}
+  .exp-contract .exp-meta{margin-top:3px;color:var(--ink-3);font-size:11px;overflow-wrap:anywhere}
   .steward-summary{font-size:11.5px;color:var(--ink-3);white-space:nowrap}
   .steward-strip{display:flex;align-items:center;flex-wrap:wrap;gap:4px 9px}
   .steward{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--ink-2);line-height:1.4;white-space:nowrap}
@@ -532,6 +536,10 @@
       <div class="execnow" id="execNow" hidden><span class="edot"></span><span class="etx" id="execNowText"></span></div>
     </section>
     <div class="sysline" id="sysLine">正在读取常驻与调度…</div>
+    <div class="exp-contract" id="experienceContract" hidden aria-label="体验契约投影">
+      <strong id="experienceHeadline">体验契约读取中</strong>
+      <div class="exp-meta" id="experienceMeta"></div>
+    </div>
     <div class="stewards" id="stewardBar" aria-label="管家状态与全局健康"></div>
     <div class="sysline" id="autonomyLine" hidden></div>
     <details class="card fold engineering-detail" id="systemEvidenceFold">
@@ -1033,6 +1041,7 @@
     var activeRoad = road.filter(function(r){ return r.status === "doing"; })[0]
       || road.filter(function(r){ return r.status === "next"; })[0];
     setFocusAnswers(s, activeRoad);
+    renderExperience(s.experience);
     el("runBtn").disabled = !s.enabled || !!s.paused;
     el("pauseBtn").disabled = !s.enabled;
     renderNative(s);
@@ -1076,6 +1085,23 @@
     renderMainline(s.mainline || {});
     var intakeButton = el("intakeSubmit");
     if (intakeButton) intakeButton.disabled = !s.enabled || !!s.error;
+  }
+
+  function renderExperience(exp){
+    var box = el("experienceContract");
+    if (!box) return;
+    exp = exp || {};
+    box.hidden = false;
+    setText("experienceHeadline", exp.headline || "体验契约取不到，首屏不冒充已按契约验收");
+    var order = (exp.attention_order || []).join(" -> ");
+    var states = (exp.states || []).join(" / ");
+    var machine = (exp.machine_checks || []).join("、");
+    var human = (exp.human_checks || []).join("、");
+    setText("experienceMeta", "注意力：" + (order || "取不到") +
+      " · 状态：" + (states || "取不到") +
+      " · 机器门禁：" + (machine || "取不到") +
+      " · 人工复核：" + (human || "取不到"));
+    box.setAttribute("data-status", exp.status || "unknown");
   }
 
   function renderPreAcceptance(pre){

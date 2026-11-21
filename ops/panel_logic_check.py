@@ -281,6 +281,9 @@ console.log(JSON.stringify({
   routeText: read("routeBox"),
   stewardBar: read("stewardBar"),
   stewardHtml: serializeEl(document.getElementById("stewardBar")),
+  experienceHeadline: read("experienceHeadline"),
+  experienceMeta: read("experienceMeta"),
+  experienceStatus: (function(){ var n = document.getElementById("experienceContract"); return n ? n.getAttribute("data-status") || "" : ""; })(),
   autonomyLine: read("autonomyLine"),
   autonomyAudit: read("autonomyAudit"),
   pmBriefingBox: read("pmBriefingBox") + " " + document.getElementById("pmBriefingBox").innerHTML,
@@ -903,6 +906,8 @@ def main(argv):
         # 新 UI 把它们放在短名的 title/aria-label 里，检查必须同时覆盖文本和 HTML。
         blank = dict(payload)
         blank["stewards"] = central_mcp._steward_health({})
+        blank["experience"] = {"status":"unknown","headline":"体验契约取不到，首屏不冒充已按契约验收",
+                              "attention_order":[],"states":[],"machine_checks":[],"human_checks":[]}
         bout2 = run_once(blank)
         blank_view = str(bout2["stewardBar"]) + " " + str(bout2.get("stewardHtml") or "")
         fails += has("健康条取不到时不冒充正常", blank_view, "取不到", "没在跑")
@@ -1363,6 +1368,45 @@ def main(argv):
             fails += 1
         else:
             print("  PASS  没归组的会话没有混进集合")
+
+        # 体验契约必须从 docs 投影到首屏；只校验 JSON 不算驱动 UI。
+        contract_path = REPO / "docs" / "experience" / "experience-contract.json"
+        try:
+            contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"  FAIL  体验契约读不到：{exc}")
+            fails += 1
+        else:
+            exp_out = run_once(dict(payload, experience=central_mcp._experience_summary()))
+            exp_view = str(exp_out.get("experienceHeadline") or "") + " " + str(exp_out.get("experienceMeta") or "")
+            exp_needles = ["体验契约已生效"] + list(contract.get("attention_order") or [])
+            exp_needles += [s.get("name") for s in (contract.get("states") or []) if isinstance(s, dict)]
+            exp_needles += list(contract.get("machine_checks") or [])
+            exp_needles += list(contract.get("human_checks") or [])
+            fails += has("体验契约投影到面板首屏", exp_view, *exp_needles)
+            if str(exp_out.get("experienceStatus") or "") != "ok":
+                print("  FAIL  体验契约状态不是 ok")
+                fails += 1
+            else:
+                print("  PASS  体验契约状态为 ok")
+            # 取不到时必须诚实，不能把缺失契约渲染成正常。
+            exp_unknown = run_once(dict(payload, experience={
+                "status": "unknown", "headline": "体验契约取不到，首屏不冒充已按契约验收",
+                "attention_order": [], "states": [], "machine_checks": [], "human_checks": []}))
+            fails += has("体验契约缺失时如实提示", exp_unknown.get("experienceHeadline") or "",
+                         "取不到")
+
+        # 项目经理项目名为 None 时不得泄漏 Python 字面量。
+        none_name = dict(payload)
+        none_name["project"] = {"name": None, "path": "/tmp/example"}
+        none_name["stewards"] = central_mcp._steward_health(none_name)
+        none_out = run_once(none_name)
+        none_view = str(none_out.get("stewardBar") or "") + " " + str(none_out.get("stewardHtml") or "")
+        if "None" in none_view:
+            print("  FAIL  项目名缺失时健康条泄漏 None")
+            fails += 1
+        else:
+            print("  PASS  项目名缺失时健康条不泄漏 None")
 
         if not quiet:
             print("\n结果：" + ("全部通过" if fails == 0 else f"{fails} 项未通过"))
