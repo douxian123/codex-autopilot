@@ -173,6 +173,7 @@ def main():
             "test-closure-plan.py",
             "test-context-archive.py",
             "test-project-constitution.py",
+            "test-stale-worktree-map.py",
             "test-e2e-ten-real-inputs.py",
             "test-pm-research-decision.py",
             "test-closure-package.py",

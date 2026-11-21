@@ -654,13 +654,24 @@ def conflict_groups(rows=None) -> list:
 
 
 def worktree_map():
+    """只返回目录仍在的 worktree 注册。
+
+    `git worktree list --porcelain` 会把 `prunable`（gitdir 指向的目录已消失）的
+    注册也列出来。旧实现只要看到 `branch refs/heads/x` 就把那条路径当成有效
+    工作树，于是 `kgctl gate x` 会坚持在已不存在的路径里跑门禁，三条命令全部
+    因 `cwd 不存在` 假红，分支明明能过门禁却被判成失败。这里按真实目录过滤，
+    让 gate 自建临时 worktree；不删除注册、不影响真正存在的分支工作树。
+    """
     out = git("worktree", "list", "--porcelain")
     m, cur = {}, {}
     for line in out.split("\n"):
         if line.startswith("worktree "):
-            cur = {"path": line.split(" ", 1)[1]}
+            path = line.split(" ", 1)[1]
+            p = Path(path)
+            cur = {"path": path, "valid": p.is_dir() and (p / ".git").exists()}
         elif line.startswith("branch "):
-            m[line.split(" ", 1)[1].replace("refs/heads/", "")] = cur["path"]
+            if cur.get("valid"):
+                m[line.split(" ", 1)[1].replace("refs/heads/", "")] = cur["path"]
     return m
 
 
