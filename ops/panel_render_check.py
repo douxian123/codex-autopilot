@@ -287,9 +287,9 @@ def main(argv):
         ("首屏显示正在做什么", expected_doing_text(payload)),
         ("首屏显示原生直连结论", (payload.get("native") or {}).get("label")),
         ("有「项目文件夹」区块", "项目文件夹"),
-        ("有「需要你介入」区块", "需要你介入"),
+        ("有「待确认事项」区块", "待确认事项"),
         ("有「工作项走到哪了」区块", "工作项走到哪了"),
-        ("有「工程详情与证据」区块", "工程详情与证据"),
+        ("有「验收证据与 Codex 工作区」区块", "验收证据与 Codex 工作区"),
     ]
     folders = ((payload.get("project_folders") or {}).get("folders") or [])
     # 该状态根没有雷达/门禁数据时，这两条不是「面板没显示」，而是「没东西可显示」。
@@ -326,7 +326,7 @@ def main(argv):
         checks.append(step_check)
 
     fails = 0
-    print("Codex 自动挡 面板渲染检查")
+    print("Codex Autopilot 面板渲染检查")
 
     stuck = [i for i in ("stateLabel", "projectLine", "focusStatus", "focusStep")
              if snapshot.get(i, "").strip() in ("", "读取中", "读取中…")]
@@ -352,7 +352,7 @@ def main(argv):
     layer_checks = [
         ("首屏明示主入口、执行入口与兜底入口",
          all(word in str(snapshot.get("entryMap") or "")
-             for word in ("主入口", "当前 Codex 输入框", "万法归一",
+             for word in ("主入口", "Codex 总输入框", "万法归一",
                           "执行入口", "后台任务窗口", "兜底入口", "高级区输入框"))),
         ("面板输入框收进高级区", str(snapshot.get("intakeInAdvanced")) == "1"),
         ("默认首屏看不到面板输入框", str(snapshot.get("intakeVisible")) == "0"),

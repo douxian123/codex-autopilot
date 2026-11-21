@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Codex 自动挡</title>
+<title>Codex Autopilot</title>
 <style>
   :root{
     /* 主题：先读 @openai/apps-sdk-ui / Codex 宿主注入的官方语义 token，
@@ -384,6 +384,47 @@
   .autonomy-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
   .autonomy-actions .btn{padding:6px 10px;font-size:12px}
 
+  /* ---- Codex Autopilot project brief ---- */
+  .brand-kicker{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:700}
+  .project-overview{display:grid;grid-template-columns:152px minmax(0,1fr);gap:20px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px;margin-bottom:11px;box-shadow:var(--shadow-2)}
+  .progress-ring{--progress:0%;width:128px;height:128px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--brand-600) var(--progress),var(--surface-3) 0);position:relative;margin:auto}
+  .progress-ring::after{content:"";position:absolute;inset:9px;border-radius:50%;background:var(--surface)}
+  .progress-ring .ring-value{position:relative;z-index:1;text-align:center;line-height:1}
+  .ring-value strong{display:block;font-size:27px;font-weight:720;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .ring-value span{display:block;margin-top:7px;font-size:10.5px;color:var(--ink-3)}
+  .overview-copy{min-width:0}
+  .overview-copy h1{font-size:19px;line-height:1.25;margin:4px 0 5px;font-weight:700;color:var(--ink)}
+  .overview-copy .lede{font-size:13px;color:var(--ink-2);line-height:1.5;margin:0;overflow-wrap:anywhere}
+  .overview-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:15px}
+  .overview-metric{min-width:0;border-top:1px solid var(--line-2);padding-top:8px}
+  .overview-metric strong{display:block;font-size:15px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+  .overview-metric span{display:block;margin-top:2px;font-size:10.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .attention{display:flex;gap:9px;align-items:flex-start;margin-top:14px;padding:10px 11px;border-left:3px solid var(--warn);background:var(--warn-soft);border-radius:var(--r-xs)}
+  .attention[hidden]{display:none}
+  .attention .attention-dot{width:8px;height:8px;border-radius:50%;background:var(--warn);margin-top:5px;flex:0 0 auto}
+  .attention strong{display:block;font-size:12px;color:var(--warn);font-weight:700}
+  .attention span{display:block;margin-top:2px;font-size:11.5px;color:var(--ink-2);line-height:1.4;overflow-wrap:anywhere}
+  .map-card{padding:16px 18px 13px}
+  .map-head{display:flex;align-items:baseline;gap:9px;margin-bottom:13px}
+  .map-head h2{margin:0;font-size:15px;font-weight:680}
+  .map-head .map-meta{margin-left:auto;color:var(--ink-3);font-size:11px;font-variant-numeric:tabular-nums}
+  .map-summary{height:6px;border-radius:99px;background:var(--surface-3);overflow:hidden;margin-bottom:14px}
+  .map-summary span{display:block;height:100%;border-radius:99px;background:var(--brand-600);transition:width .45s ease}
+  .project-card{border-top:1px solid var(--line-2);padding:13px 0 2px}
+  .project-card:first-child{border-top:0;padding-top:0}
+  .project-card-head{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:9px;align-items:center}
+  .project-card-dot{width:9px;height:9px;border-radius:50%;background:var(--neutral);box-shadow:0 0 0 3px var(--neutral-soft)}
+  .project-card-dot.done{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+  .project-card-dot.doing{background:var(--brand-600);box-shadow:0 0 0 3px var(--brand-50)}
+  .project-card-title{min-width:0;font-size:13px;font-weight:650;color:var(--ink);overflow-wrap:anywhere}
+  .project-card-state{font-size:11px;color:var(--ink-3);white-space:nowrap}
+  .project-card-bar{height:4px;border-radius:99px;background:var(--surface-3);margin:9px 0 7px 19px;overflow:hidden}
+  .project-card-bar span{display:block;height:100%;border-radius:99px;background:var(--brand-500)}
+  .project-card.done .project-card-bar span{background:var(--ok)}
+  .project-card-foot{display:flex;gap:8px;justify-content:space-between;margin-left:19px;font-size:11px;color:var(--ink-3)}
+  .project-card-foot .detail{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .project-card-foot .percent{font-variant-numeric:tabular-nums;color:var(--ink-2);font-weight:650;white-space:nowrap}
+
   /* switches */
   .switchrow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line-2)}
   .switchrow:last-child{border-bottom:0;padding-bottom:0}
@@ -420,7 +461,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" stroke="#fff"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12z"/></svg>
     </span>
     <div class="hdr-tx">
-      <div class="hdr-title">自动挡</div>
+      <div class="hdr-title">Codex Autopilot</div>
       <div class="hdr-sub" id="subtitle">正在读取状态…</div>
     </div>
     <div class="hdr-act">
@@ -435,7 +476,7 @@
 
   <!-- 首屏只回答三件事，其余一律下沉。健康时不占空间。 -->
   <div class="entrymap" id="entryMap" aria-label="入口说明">
-    <span><b>主入口</b>：当前 Codex 输入框，万法归一</span>
+    <span><b>主入口</b>：Codex 总输入框，万法归一</span>
     <span><b>执行入口</b>：后台任务窗口，只汇报状态</span>
     <span><b>兜底入口</b>：高级区输入框</span>
   </div>
@@ -447,7 +488,7 @@
       <span class="al-tx" id="needText">读取中…</span>
     </div>
     <section class="card" id="acceptCard">
-      <div class="chead"><h2>需要你介入</h2><span class="count" id="accNote"></span></div>
+      <div class="chead"><h2>待确认事项</h2><span class="count" id="accNote"></span></div>
       <div id="acceptBox"></div>
     </section>
   </section>
@@ -505,8 +546,8 @@
 
   <section class="card" style="padding:11px 14px;margin-bottom:10px">
     <div class="switchrow" style="padding:0;border:0">
-      <div><div class="t">Codex 自动挡</div><div class="d" id="masterState">正在读取状态…</div></div>
-      <button class="sw" id="masterToggle" aria-label="启用或关闭 Codex 自动挡" aria-pressed="true"></button>
+      <div><div class="t">Autopilot</div><div class="d" id="masterState">正在读取状态…</div></div>
+      <button class="sw" id="masterToggle" aria-label="启用或关闭 Codex Autopilot" aria-pressed="true"></button>
     </div>
     <div class="d projline" id="projectLine">绑定项目：读取中…</div>
   </section>
@@ -514,6 +555,31 @@
   <section class="card" id="folderCard">
     <div class="chead"><h2>项目文件夹</h2><span class="count" id="folderNote"></span></div>
     <div class="folders" id="folderBox"></div>
+  </section>
+
+  <section class="project-overview" id="projectOverview" aria-label="项目总览">
+    <div class="progress-ring" id="overallRing" style="--progress:0%">
+      <div class="ring-value"><strong id="overallPercent">—</strong><span>整体进度</span></div>
+    </div>
+    <div class="overview-copy">
+      <div class="brand-kicker">PROJECT BRIEF</div>
+      <h1 id="overviewTitle">正在读取项目</h1>
+      <p class="lede" id="overviewLede">正在整理当前项目的真实进展。</p>
+      <div class="overview-metrics">
+        <div class="overview-metric"><strong id="metricDone">0</strong><span>已完成</span></div>
+        <div class="overview-metric"><strong id="metricDoing">0</strong><span>进行中</span></div>
+        <div class="overview-metric"><strong id="metricRest">0</strong><span>待推进</span></div>
+      </div>
+      <div class="attention" id="attentionBox" hidden>
+        <span class="attention-dot"></span><div><strong id="attentionTitle">建议先关注</strong><span id="attentionText"></span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card map-card" id="mapCard">
+    <div class="map-head"><h2>施工地图</h2><span class="map-meta" id="mapMeta">正在计算</span></div>
+    <div class="map-summary"><span id="mapFill" style="width:0%"></span></div>
+    <div id="mapBox"><div class="empty">正在读取路线。</div></div>
   </section>
 
     <details class="card fold need-evidence" id="needEvidenceFold">
@@ -525,7 +591,7 @@
       <span class="autonomy-title">项目自主运行</span>
       <span class="autonomy-mode" id="autonomyMode">读取中</span>
     </div>
-    <div class="autonomy-copy" id="autonomyCopy">项目级授权决定自动挡是否会在你不盯着时继续推进。</div>
+    <div class="autonomy-copy" id="autonomyCopy">项目级授权决定 Autopilot 是否会在你不盯着时继续推进。</div>
     <div class="autonomy-stats">
       <span><b id="autonomyQueued">0</b>待派</span>
       <span><b id="autonomyRunning">0</b>运行中</span>
@@ -577,7 +643,7 @@
   </section>
 
   <details class="overview-detail">
-    <summary>工程详情与证据</summary>
+    <summary>验收证据与 Codex 工作区</summary>
     <div class="sysline" id="autonomyAudit" hidden></div>
     <section class="track">
       <div class="stages">
@@ -605,7 +671,7 @@
 
     <section class="card">
       <div class="chead"><h2>任务路线</h2><span class="count">Codex 原生工作区</span></div>
-      <div class="route-summary" id="routeSummary">任务由自动挡账本、泳道分支和 worktree 关联；Codex thread 的实时列表由宿主提供时再显示。</div>
+      <div class="route-summary" id="routeSummary">任务由项目账本、工作区和 Codex 原生会话共同推进；Codex thread 的实时列表由宿主提供时再显示。</div>
       <div class="nativeline">
         <span id="nativeState">原生直连：正在读取…</span>
         <button class="btn" id="nativeProbe" type="button">原生自检</button>
@@ -637,7 +703,7 @@
     <div class="foldbody">
       <ol class="steps">
         <li><span class="stepn">1</span><div>把看到的零散问题<b>原样说出来</b>就行——视觉不对、体验别扭、冒出一个 bug，可以一起丢过来。</div></li>
-        <li><span class="stepn">2</span><div>自动挡负责<b>归类、记录、追踪</b>，并把和主线不冲突、检查通过的改动<b>自己合好</b>。</div></li>
+        <li><span class="stepn">2</span><div>Autopilot 负责<b>归类、记录、追踪</b>，并把和主线不冲突、检查通过的改动<b>自己合好</b>。</div></li>
         <li><span class="stepn">3</span><div>只有<b>改产品方向、删数据、发布</b>这类要拍板的事，它才会停下来问你。</div></li>
       </ol>
       <div class="callout">
@@ -649,10 +715,10 @@
 
   <div id="advanced">
     <details class="card fold">
-      <summary>把问题交给自动挡</summary>
+      <summary>交给 Autopilot</summary>
       <div class="foldbody">
         <section class="intake">
-          <label for="intakeText">写给自动挡的一句话</label>
+          <label for="intakeText">写给 Autopilot 的一句话</label>
           <textarea id="intakeText" placeholder="说说你发现的问题或想完成的事"></textarea>
           <div class="intake-route" id="intakeRoute" role="status" aria-live="polite">写一句话后显示它会落到哪个项目</div>
           <div class="intake-actions">
@@ -758,7 +824,7 @@
     </details>
   </div>
 
-  <div class="foot">你平时打字的那个 Codex 输入框，就是总输入框——零散问题直接说，其余交给自动挡。</div>
+  <div class="foot">你平时使用的 Codex 总输入框，就是 Autopilot 的入口。</div>
 </div>
 
 <script>
@@ -827,7 +893,7 @@
     var reason = loadError || "状态服务没有响应";
     document.body.className = "s-error";
     setText("stateLabel", "读不到状态");
-    setText("subtitle", "自动挡面板读不到当前状态");
+    setText("subtitle", "Autopilot 面板读不到当前状态");
     setText("statusTime", "更新失败");
     setText("projectLine", "绑定项目：读不到");
     setText("focusStatus", "读不到");
@@ -845,7 +911,7 @@
     if (box) {
       box.className = "alert lv-err";
       var icn = box.querySelector(".al-ic"); if (icn) icn.innerHTML = IC_WARN;
-      var tx = box.querySelector(".al-tx"); if (tx) tx.textContent = "读不到自动挡状态：" + reason;
+      var tx = box.querySelector(".al-tx"); if (tx) tx.textContent = "读不到 Autopilot 状态：" + reason;
     }
     var routingFold = el("globalRoutingFold"); if (routingFold) routingFold.hidden = true;
     var en = el("execNow"); if (en) en.hidden = true;
@@ -928,7 +994,7 @@
     if (s.paused) { pb.innerHTML = IC_PLAY + "<span>恢复运行</span>"; pb.className = "btn primary"; }
     else { pb.innerHTML = IC_PAUSE + "<span>暂停</span>"; pb.className = "btn danger"; }
     if (s.error) { el("subtitle").textContent = s.error; }
-    else if (!s.enabled) { el("subtitle").textContent = "自动挡已关闭，Codex 保持原生状态"; }
+    else if (!s.enabled) { el("subtitle").textContent = "Autopilot 已关闭，Codex 保持原生状态"; }
     else { el("subtitle").textContent = s.paused ? "已暂停，不再推进新工作" : "零散问题直接说，其余我来"; }
     var master = el("masterToggle");
     master.classList.toggle("on", !!s.enabled);
@@ -972,6 +1038,8 @@
     renderJudgments(s.judgments || []);
     renderVerify(s.last_verification);
     renderRoadmap(s.roadmap || [], s.mainline || {});
+    renderProjectOverview(s);
+    renderProjectMap(s.roadmap || [], s);
     renderFolders(s.project_folders || {}, s);
     renderOrientation(s);
     renderAcceptance(humanAcc, s.machine_verified || []);
@@ -987,6 +1055,81 @@
     renderMainline(s.mainline || {});
     var intakeButton = el("intakeSubmit");
     if (intakeButton) intakeButton.disabled = !s.enabled || !!s.error;
+  }
+
+  function roadmapProgress(item){
+    if (!item) return 0;
+    if (typeof item.progress === "number") return Math.max(0, Math.min(100, Math.round(item.progress)));
+    var m = item.milestones || {};
+    var keys = ["defined", "planned", "implemented", "verified", "landed"];
+    var found = keys.filter(function(k){ return typeof m[k] === "boolean"; });
+    if (found.length) return Math.round(found.reduce(function(sum, k){ return sum + (m[k] ? 1 : 0); }, 0) / found.length * 100);
+    return item.status === "done" ? 100 : item.status === "doing" ? 50 : 0;
+  }
+
+  function overallRoadmapProgress(road){
+    if (!road.length) return null;
+    var total = 0, weight = 0;
+    road.forEach(function(item){
+      var w = typeof item.weight === "number" && item.weight > 0 ? item.weight : 1;
+      total += roadmapProgress(item) * w; weight += w;
+    });
+    return weight ? Math.round(total / weight) : null;
+  }
+
+  function renderProjectOverview(s){
+    var road = s.roadmap || [], p = overallRoadmapProgress(road);
+    var ring = el("overallRing"), pct = el("overallPercent");
+    if (ring) {
+      var progressValue = (p == null ? 0 : p) + "%";
+      if (ring.style && typeof ring.style.setProperty === "function") ring.style.setProperty("--progress", progressValue);
+      else if (ring.style) ring.style["--progress"] = progressValue;
+    }
+    if (pct) pct.textContent = p == null ? "—" : p + "%";
+    var project = s.project || {}, ml = s.mainline || {};
+    setText("overviewTitle", project.name || ml.product || "当前项目");
+    var current = road.filter(function(x){ return x.status === "doing"; })[0] || road.filter(function(x){ return x.status === "next"; })[0];
+    var human = s.human_acceptance || [], blocked = s.blocked || {};
+    var hasBlock = (blocked.failures || []).length || (blocked.resolve || []).length || (blocked.exec || []).length;
+    var lede = current ? ((current.status === "doing" ? "正在推进" : "下一步是") + "「" + (current.step || "当前路线") + "」") : "Autopilot 正在等待下一条明确的项目工作。";
+    if (s.paused) lede = "Autopilot 已暂停，项目状态保留，恢复后继续推进。";
+    if (!s.enabled) lede = "Autopilot 已关闭，Codex 保持原生状态。";
+    setText("overviewLede", lede);
+    var done = road.filter(function(x){ return x.status === "done"; }).length;
+    var doing = road.filter(function(x){ return x.status === "doing"; }).length;
+    var rest = Math.max(0, road.length - done - doing);
+    setText("metricDone", done); setText("metricDoing", doing); setText("metricRest", rest);
+    var attention = el("attentionBox");
+    if (attention){
+      attention.hidden = !(human.length || hasBlock);
+      setText("attentionTitle", human.length ? "建议先完成验收" : "建议先关注");
+      setText("attentionText", human.length ? (human[0].title || "有一项工作等待验收") : "当前有工作项卡住，展开详情查看原因。");
+    }
+  }
+
+  function renderProjectMap(road, s){
+    var box = el("mapBox"), meta = el("mapMeta"), fill = el("mapFill");
+    if (!box) return;
+    box.innerHTML = "";
+    if (!road.length){ box.innerHTML = '<div class="empty">还没有施工地图。Autopilot 会在项目路线明确后显示每个工程项。</div>'; if (meta) meta.textContent = "待拆解"; if (fill) fill.style.width = "0%"; return; }
+    var overall = overallRoadmapProgress(road), done = road.filter(function(x){ return x.status === "done"; }).length;
+    if (meta) meta.textContent = done + " / " + road.length + " 项完成" + (overall == null ? "" : " · " + overall + "%");
+    if (fill) fill.style.width = (overall == null ? 0 : overall) + "%";
+    road.forEach(function(item){
+      var progress = roadmapProgress(item), status = item.status || "todo";
+      var row = document.createElement("div"); row.className = "project-card " + (status === "done" ? "done" : status === "doing" ? "doing" : "todo");
+      var head = document.createElement("div"); head.className = "project-card-head";
+      var dot = document.createElement("span"); dot.className = "project-card-dot " + (status === "done" ? "done" : status === "doing" ? "doing" : "");
+      var title = document.createElement("span"); title.className = "project-card-title"; title.textContent = item.step || "未命名工程项";
+      var state = document.createElement("span"); state.className = "project-card-state"; state.textContent = ROAD_LABEL[status] || "未开始";
+      head.appendChild(dot); head.appendChild(title); head.appendChild(state); row.appendChild(head);
+      var bar = document.createElement("div"); bar.className = "project-card-bar";
+      var barFill = document.createElement("span"); barFill.style.width = progress + "%"; bar.appendChild(barFill); row.appendChild(bar);
+      var foot = document.createElement("div"); foot.className = "project-card-foot";
+      var detail = document.createElement("span"); detail.className = "detail"; detail.textContent = item.detail || item.expected || (status === "done" ? "已完成并进入项目主线" : status === "doing" ? "正在推进" : "等待进入施工");
+      var percent = document.createElement("span"); percent.className = "percent"; percent.textContent = progress + "%";
+      foot.appendChild(detail); foot.appendChild(percent); row.appendChild(foot); box.appendChild(row);
+    });
   }
 
   // 首屏三问的右侧小字：只说「要不要人、系统忙不忙、最近有没有产出」，
@@ -1050,7 +1193,7 @@
     if (al) {
       if (au.status === "ok" && au.label) {
         al.textContent = au.label;
-        al.title = "逐条授权来源见工程详情与证据";
+        al.title = "逐条授权来源见验收证据与 Codex 工作区";
         al.hidden = false;
       } else if (au.status === "unknown") {
         al.textContent = au.label || "授权情况：本轮记录取不到";
@@ -1736,10 +1879,10 @@
     var mode = a.mode || "enabled";
     setText("autonomyMode", AUTONOMY_LABEL[mode] || mode);
     var copy = {
-      enabled: "项目已登记。切到“开始运行”后，自动挡才会持续规划、派活、验收和合并。",
+      enabled: "项目已登记。切到“开始运行”后，Autopilot 才会持续规划、派活、验收和合并。",
       running: "项目正在持续推进；没有待办时会安静等待，遇到必须由你决定的事会停下来。",
       paused: a.reason || "项目暂停中；已有 worker 和工作区会保留，不再启动新的工作。",
-      waiting_human: a.reason || "自动挡已停在需要你确认的位置。确认后再恢复运行。"
+      waiting_human: a.reason || "Autopilot 已停在需要你确认的位置。确认后再恢复运行。"
       ,disabled: a.reason || "项目自主运行已关闭。重新启用后才会恢复项目级授权。"
     };
     setText("autonomyCopy", copy[mode] || "项目自主运行状态已更新。");
@@ -2187,7 +2330,7 @@
   function buildAcceptanceAction(a){
     var row = document.createElement("div"); row.className = "accact";
     var msg = document.createElement("span"); msg.className = "accmsg";
-    msg.textContent = "补图只追加附件，不会替你收口；确认通过才会把这条从首屏移走；不点就继续占着「需要你介入」。";
+    msg.textContent = "补图只追加附件，不会替你收口；确认通过才会把这条从首屏移走；不点就继续占着「待确认事项」。";
     var actions = document.createElement("div"); actions.className = "accbtns";
     var shotBtn = document.createElement("button");
     shotBtn.className = "btn"; shotBtn.type = "button";
@@ -2305,14 +2448,14 @@
     var items = [];
     var f = (s.blocked && s.blocked.failures) || [];
     f.forEach(function(x){ items.push({tag:"需拍板", cls:"warn", text:x.target + " · " + x.kind,
-      act:"retry", why:"点它会立刻让自动挡再检查一轮（不改代码、不动 main）；不点就继续挂着，等下一拍自己重试。"}); });
+      act:"retry", why:"点它会立刻让Autopilot 再检查一轮（不改代码、不动 main）；不点就继续挂着，等下一拍自己重试。"}); });
     var r = (s.blocked && s.blocked.resolve) || [];
     r.forEach(function(x){ items.push({tag:"冲突暂缓", cls:"", text:x.branch + (x.reason? " · "+x.reason : ""),
       act:"resolve", branch:x.branch,
-      why:"自动挡按默认闸门拆不动它。点它会放宽到 16 个冲突文件 / 3000 行，在独立 worktree 里再拆一次，main 和源分支都不动；不点就继续跳过这条。"}); });
+      why:"Autopilot 按默认闸门拆不动它。点它会放宽到 16 个冲突文件 / 3000 行，在独立 worktree 里再拆一次，main 和源分支都不动；不点就继续跳过这条。"}); });
     var xe = (s.blocked && s.blocked.exec) || [];
     xe.forEach(function(x){ items.push({tag:"实现暂缓", cls:"", text:(x.id||"") + (x.reason? " · "+x.reason : ""),
-      act:"retry", why:"点它会立刻让自动挡再检查一轮（不改代码、不动 main）；不点就继续挂着，等下一拍自己重试。"}); });
+      act:"retry", why:"点它会立刻让Autopilot 再检查一轮（不改代码、不动 main）；不点就继续挂着，等下一拍自己重试。"}); });
     // 状态管家提出的 harness 调整卡：改配置会影响你接下来的所有会话，所以它
     // 绝不自动应用 —— 卡片只列在这里，你点了才改，改前按字节备份、随时可一键回滚。
     var ht = s.harness_tune || {};
@@ -2351,7 +2494,7 @@
           "。点「确认成验收项」只登记验收项，不写证据；机器项仍要真门禁，人工项先自验才提醒你。点「不算」这条不再出现，验收台账什么都不写。"});
     });
     if (s.error) items.unshift({tag:"异常", cls:"err", text:s.error, act:"retry",
-      why:"点它会立刻让自动挡再检查一轮（不改代码、不动 main）；不点就继续停在异常。"});
+      why:"点它会立刻让Autopilot 再检查一轮（不改代码、不动 main）；不点就继续停在异常。"});
     if (!items.length){ ul.innerHTML = '<div class="empty">没有需要你决策的，也没有异常。</div>'; return; }
     items.forEach(function(it){
       var li = document.createElement("li");
@@ -2442,7 +2585,7 @@
     this.disabled = true;
     callTool("autopilot_control", {action:target ? "enable" : "disable"}).then(function(sc){
       if (sc && sc.state) { state = sc; render(state); }
-      toast(target ? "自动挡已开启" : "自动挡已关闭", "ok");
+      toast(target ? "Autopilot 已开启" : "Autopilot 已关闭", "ok");
     }).catch(function(e){ toast("操作失败：" + (e && e.message || e), "err"); })
       .then(function(){ el("masterToggle").disabled = false; });
   });
@@ -2476,7 +2619,7 @@
     }
     var button = el("intakeSubmit");
     button.disabled = true;
-    el("intakeState").textContent = "正在加入自动挡任务…";
+    el("intakeState").textContent = "正在加入 Autopilot 任务…";
     callTool("intake_request", {text:text, kind:"unknown", cwd:currentCwd()}).then(function(result){
       field.value = "";
       el("intakeRoute").textContent = "写一句话后显示它会落到哪个项目";
