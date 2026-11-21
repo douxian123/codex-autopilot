@@ -571,6 +571,14 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 
 ---
 
+### 12.15 磁盘准入状态自愈与 launchd 外部服务分类（2026-11-21）
+
+- 磁盘闸旧病：完整守护模式的周期没有独立的 `_disk_pressure()` 刷新；自动派活关闭时，`state.json` 的 `exec_disk_held` / `exec_disk_state_at` 可以停在旧快照，重新启动派活后被陈旧持有态挡住。修复加 `disk-admission` pass，每拍先刷新磁盘准入状态再进 `exec`；只刷新状态和日志，不改阈值、不删项目文件、不动在途任务。反向回归锁住「陈旧持有态按当前余量解除」和「pass 顺序在 exec 之前」。
+- launchd freshness 旧病：两项本地 ok8888 bridge 服务在 `~/.codex-proxy/`，既不是版本目录也不是薄转发，门禁长期 EXIT=1，把外部服务误计成自动挡陈旧项。修复改为 registry 驱动的 `external_services` 精确分类，必须同时命中 label 与精确脚本路径才可见但不计失败；绝不按目录整体放行。新增反向断言：label 或路径任一不匹配仍判红。
+- 本轮没有 reload / kill / 切 provider / 改运行阈值 / 清 sessions / 删 evidence；运行中的 `0.6.0-preview.107` 保持原样。
+
+---
+
 ## 十三、下一步（谁该做什么）
 
 **用户（只有这几件，别的不用管）**：

@@ -4831,6 +4831,25 @@ def _pass_followup(ctx: dict) -> dict:
     return result
 
 
+def _pass_disk_admission(ctx: dict) -> dict:
+    """每拍刷新磁盘准入状态；即使 auto_exec 关闭也要让状态机跟上现场。
+
+    历史事故：完整守护模式的周期没有独立的磁盘闸刷新，`_disk_pressure()` 只在
+    dispatch / 维护路径里被调用。auto_exec 关闭时，state.json 可以一直停在几周前
+    的 exec_disk_held / exec_disk_state_at；一旦重新打开派活，旧快照会先挡住 worker，
+    用户看到的是「磁盘够用但自动挡不动」。这里只刷新准入状态和日志，不改阈值、
+    不派活、不删任何东西；后续 pass 仍从同一份 state 读最新值。
+    """
+    held = bool(_disk_pressure())
+    state = load_state()
+    return {
+        "held": held,
+        "free_gb": state.get("exec_disk_free_gb"),
+        "threshold_gb": state.get("exec_disk_threshold_gb"),
+        "state_at": state.get("exec_disk_state_at"),
+    }
+
+
 def _pass_route(ctx: dict) -> dict:
     """把新收进来的零散需求路由到泳道。必须在派活之前跑。
 
@@ -5191,16 +5210,20 @@ def _build_cycle_registry(ctx: dict):
     注册顺序 = 执行顺序（见文件头注释）。
 
     pass_registry 现在默认 `observe`：**没写 level 的 pass 只会观察，不执行副作用**。
-    下面这十二条是既有自动挡工序，逐条显式转正 —— 每条都声明 `level=auto` 加
+    下面这十三条是既有自动挡工序，逐条显式转正 —— 每条都声明 `level=auto` 加
     `authorization=explicit`，表示「人已经授权这条工序自动跑」，不是系统自行升权。
     这样新加的 pass 不会因为忘记声明就悄悄执行（fail-closed），而既有行为保持原样。
-    `effect` 区分可逆与破坏性：`route/checkpoint/tick/tick-post` 只改控制面与账本
+    `effect` 区分可逆与破坏性：`disk-admission/route/checkpoint/tick/tick-post` 只改控制面与账本
     （可逆），其余会动分支/工作区/磁盘（破坏性）。破坏性动作在授权来源变成 inferred
     时会被注册表拦成提案，所以这里显式标注 `explicit`。
     要观察某一步，用 `--only` + `--mode` 临时降权，不改默认值。
     """
     reg = Registry(log=log,
                    over_budget=lambda step: _over_budget(ctx["deadline"], step))
+    reg.register(Pass("disk-admission", lambda: _pass_disk_admission(ctx),
+                      title="每拍刷新磁盘准入状态",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
     reg.register(Pass("wake", lambda: _pass_wake(ctx), title="到期唤醒写回唯一入口",
                       level=MODE_AUTO, authorization=AUTH_EXPLICIT,
                       effect=EFFECT_REVERSIBLE))
