@@ -28,7 +28,10 @@ def main():
     contract = (REPO / "docs" / "PRODUCT_CONTRACT.md").read_text(encoding="utf-8")
     for needle in ("成本纪律：token-friendly，不以质量换省钱",
                    "必留上下文 + 可判定验收 + 人工边界 = 不可裁剪",
-                   "预算状态只有 `ok / blocked / unknown`"):
+                   "预算状态只有 `ok / blocked / unknown`",
+                   "流程通畅、可用性、交付质量和现有体验无损",
+                   "不得为了省 token 做负向工程、负向交互",
+                   "预算紧张只触发范围重排与报告，不触发降低交付标准"):
         check("PRD 写清成本边界：" + needle, needle in contract, needle)
 
     closure = load("cost_closure_package_under_test", "closure_package.py")
@@ -54,6 +57,7 @@ def main():
     daemon = load("cost_central_daemon_under_test", "central_daemon.py")
     prompt = daemon._exec_prompt({"id": "L-9001", "kind": "gate", "title": "成本纪律"})
     for needle in ("成本纪律", "scope + 文件指纹", "未命中才增量读取",
+                   "不得为省 token 做负向工程或负向交互修改",
                    "不得删除目标、必留上下文、可判定验收、人工边界、回滚或真实入口证据",
                    "预算不足只停新派活并报告", "不中断在途收尾"):
         check("执行 prompt 保留质量边界：" + needle, needle in prompt, needle)
