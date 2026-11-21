@@ -4,7 +4,10 @@
 import copy
 import importlib.util
 import json
+import os
 import tempfile
+import threading
+import time
 from pathlib import Path
 
 
@@ -165,5 +168,30 @@ with tempfile.TemporaryDirectory() as tmp:
     real_reasons = module.evaluate_machine_evidence(
         real_contract, real_evidence_path, ROOT, real_evidence_dir)
     check(not real_reasons, "real runner evidence must satisfy evaluator: %s" % real_reasons)
+
+    # Chrome can write profile files while TemporaryDirectory is cleaning up.
+    # The runner owns its scratch dir, so cleanup must tolerate one transient
+    # ENOTEMPTY instead of turning a passing live run into a false failure.
+    spec = importlib.util.spec_from_file_location(
+        "experience_evidence_cleanup", OPS / "experience_evidence.py")
+    cleanup_runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cleanup_runner)
+    with tempfile.TemporaryDirectory(prefix="autopilot-experience-cleanup-test-") as cleanup_dir:
+        late_file = Path(cleanup_dir) / "chrome-profile" / "late-write"
+        late_file.parent.mkdir(parents=True)
+        original_rmtree = cleanup_runner.shutil.rmtree
+
+        def rmtree_once_then_clean(path, *args, **kwargs):
+            if Path(path) == Path(cleanup_dir) and not late_file.exists():
+                late_file.write_text("late profile write", encoding="utf-8")
+                raise OSError(66, "Directory not empty")
+            return original_rmtree(path, *args, **kwargs)
+
+        cleanup_runner.shutil.rmtree = rmtree_once_then_clean
+        try:
+            cleanup_runner._remove_tempdir(cleanup_dir, attempts=3, delay=0.05)
+        finally:
+            cleanup_runner.shutil.rmtree = original_rmtree
+        check(not Path(cleanup_dir).exists(), "transient ENOTEMPTY must be cleaned")
 
 print("experience contract evidence gate: PASS (compat/valid/invalid/unknown/missing/self-verified/live)")

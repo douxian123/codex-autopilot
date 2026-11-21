@@ -19,6 +19,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -44,6 +45,64 @@ STATES = ("default", "loading", "empty", "error", "success", "focus")
 
 class EvidenceError(RuntimeError):
     pass
+
+
+def _terminate_chrome(proc):
+    """Stop only the browser process group started by this runner."""
+    if proc is None:
+        return
+    if proc.poll() is None:
+        if os.name == "posix":
+            try:
+                if os.getpgid(proc.pid) == proc.pid:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                else:
+                    proc.terminate()
+            except ProcessLookupError:
+                pass
+        else:
+            proc.terminate()
+        try:
+            proc.wait(timeout=5)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+    if os.name == "posix":
+        try:
+            if os.getpgid(proc.pid) == proc.pid:
+                os.killpg(proc.pid, signal.SIGKILL)
+            else:
+                proc.kill()
+        except ProcessLookupError:
+            pass
+    else:
+        proc.kill()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
+def _remove_tempdir(path, attempts=6, delay=0.2):
+    """Remove our own scratch profile even if Chrome writes during cleanup."""
+    path = Path(path)
+    for attempt in range(attempts):
+        try:
+            shutil.rmtree(path)
+            return
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            if attempt == attempts - 1:
+                print("warning: temporary browser profile was not removed: %s" % exc,
+                      file=sys.stderr)
+                return
+            for child in path.rglob("*"):
+                try:
+                    child.chmod(0o700)
+                except OSError:
+                    pass
+            time.sleep(delay)
 
 
 class MiniWebSocket(object):
@@ -395,7 +454,10 @@ def _launch_chrome(chrome, port, user_dir):
         "--user-data-dir=%s" % user_dir,
         "about:blank",
     ]
-    proc = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    launch_kwargs = {"stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    if os.name == "posix":
+        launch_kwargs["start_new_session"] = True
+    proc = subprocess.Popen(args, **launch_kwargs)
     try:
         version = _wait_for_json("http://127.0.0.1:%d/json/version" % port)
         targets = json.loads(urllib.request.urlopen(
@@ -403,11 +465,7 @@ def _launch_chrome(chrome, port, user_dir):
         page = next(t for t in targets if t.get("type") == "page")
         return proc, version.get("Browser", "unknown"), page["webSocketDebuggerUrl"]
     except Exception:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except Exception:
-            proc.kill()
+        _terminate_chrome(proc)
         raise
 
 
@@ -422,77 +480,75 @@ def run_browser_checks(panel=PANEL, chrome=None, include_screenshots=True):
     port = _free_port()
     checks = []
     screenshots = []
-    with tempfile.TemporaryDirectory(prefix="autopilot-experience-") as tmp:
+    tmp = tempfile.mkdtemp(prefix="autopilot-experience-")
+    proc = None
+    ws = None
+    try:
         user_dir = str(Path(tmp) / "chrome-profile")
         proc, browser, ws_url = _launch_chrome(chrome, port, user_dir)
-        ws = None
-        try:
-            ws = MiniWebSocket(ws_url, timeout=15)
-            cdp = CDP(ws, ws_url)
-            cdp.call("Page.enable")
-            cdp.call("Runtime.enable")
-            for viewport in VIEWPORTS:
-                cdp.call("Emulation.setDeviceMetricsOverride", {
-                    "width": viewport["width"],
-                    "height": viewport["height"],
-                    "deviceScaleFactor": 1,
-                    "mobile": False,
-                })
-                cdp.call("Page.navigate", {"url": panel.resolve().as_uri()})
-                deadline = time.monotonic() + 8
-                while time.monotonic() < deadline:
-                    ready = cdp.evaluate("document.readyState === 'complete' && !!document.getElementById('stateLabel')")
-                    if ready:
-                        break
-                    time.sleep(0.1)
-                for state in STATES:
-                    measurement = cdp.evaluate(_driver_js(state))
-                    if not isinstance(measurement, dict):
-                        raise EvidenceError("bad measurement for %s/%s" % (viewport["name"], state))
-                    if measurement.get("text_length", 0) < 50:
-                        raise EvidenceError("fixture/real content missing for %s/%s" %
-                                            (viewport["name"], state))
-                    expected_label = _state_payload(state)["state_label"]
-                    if measurement.get("state_label") != expected_label:
-                        raise EvidenceError("state was not applied for %s/%s: %r" %
-                                            (viewport["name"], state, measurement.get("state_label")))
-                    for check_name, key in (
-                        ("no-overflow", "no_overflow"),
-                        ("no-clipping", "no_clipping"),
-                        ("accessible-names", "accessible_names"),
-                        ("focus-visible", "focus_visible"),
-                    ):
-                        failures = measurement.get(key) or []
-                        checks.append({
-                            "name": check_name,
-                            "viewport": viewport["name"],
-                            "state": state,
-                            "status": "pass" if not failures else "fail",
-                            "details": failures[:20],
-                            "text_length": measurement.get("text_length", 0),
-                            "state_label": measurement.get("state_label", ""),
-                            "source": "chrome-cdp-rendered-panel",
-                        })
-                    if include_screenshots and state in ("default", "focus"):
-                        shot = cdp.call("Page.captureScreenshot", {"format": "png"})
-                        screenshots.append({
-                            "name": "%s-%s.png" % (viewport["name"], state),
-                            "data": shot["data"],
-                        })
-            return {
-                "browser": browser,
-                "panel_sha256": _sha256(panel),
-                "checks": checks,
-                "screenshots": screenshots,
-            }
-        finally:
-            if ws:
-                ws.close()
-            proc.terminate()
-            try:
-                proc.wait(timeout=5)
-            except Exception:
-                proc.kill()
+        ws = MiniWebSocket(ws_url, timeout=15)
+        cdp = CDP(ws, ws_url)
+        cdp.call("Page.enable")
+        cdp.call("Runtime.enable")
+        for viewport in VIEWPORTS:
+            cdp.call("Emulation.setDeviceMetricsOverride", {
+                "width": viewport["width"],
+                "height": viewport["height"],
+                "deviceScaleFactor": 1,
+                "mobile": False,
+            })
+            cdp.call("Page.navigate", {"url": panel.resolve().as_uri()})
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                ready = cdp.evaluate("document.readyState === 'complete' && !!document.getElementById('stateLabel')")
+                if ready:
+                    break
+                time.sleep(0.1)
+            for state in STATES:
+                measurement = cdp.evaluate(_driver_js(state))
+                if not isinstance(measurement, dict):
+                    raise EvidenceError("bad measurement for %s/%s" % (viewport["name"], state))
+                if measurement.get("text_length", 0) < 50:
+                    raise EvidenceError("fixture/real content missing for %s/%s" %
+                                        (viewport["name"], state))
+                expected_label = _state_payload(state)["state_label"]
+                if measurement.get("state_label") != expected_label:
+                    raise EvidenceError("state was not applied for %s/%s: %r" %
+                                        (viewport["name"], state, measurement.get("state_label")))
+                for check_name, key in (
+                    ("no-overflow", "no_overflow"),
+                    ("no-clipping", "no_clipping"),
+                    ("accessible-names", "accessible_names"),
+                    ("focus-visible", "focus_visible"),
+                ):
+                    failures = measurement.get(key) or []
+                    checks.append({
+                        "name": check_name,
+                        "viewport": viewport["name"],
+                        "state": state,
+                        "status": "pass" if not failures else "fail",
+                        "details": failures[:20],
+                        "text_length": measurement.get("text_length", 0),
+                        "state_label": measurement.get("state_label", ""),
+                        "source": "chrome-cdp-rendered-panel",
+                    })
+                if include_screenshots and state in ("default", "focus"):
+                    shot = cdp.call("Page.captureScreenshot", {"format": "png"})
+                    screenshots.append({
+                        "name": "%s-%s.png" % (viewport["name"], state),
+                        "data": shot["data"],
+                    })
+        return {
+            "browser": browser,
+            "panel_sha256": _sha256(panel),
+            "checks": checks,
+            "screenshots": screenshots,
+        }
+    finally:
+        if ws:
+            ws.close()
+        _terminate_chrome(proc)
+        _remove_tempdir(tmp)
 
 
 def evidence_summary(result, panel=PANEL):
