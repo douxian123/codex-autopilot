@@ -44,11 +44,23 @@ def main():
     must_fail("进度估算缺口径会红",
               lambda d: d["progress_estimates"].pop("口径"))
     must_fail("缺完成分层会红", lambda d: d.pop("completion_layers"))
-    must_fail("虚报 5/5 可以对外会红",
+    must_fail("无发布证据时写 5/5 可以对外会红",
+              lambda d: (d["progress_estimates"].update(
+                  {"对外发布就绪度": "产品评估 5/5，可以对外"}),
+                  d.pop("release_evidence", None)))
+    must_fail("发布证据结果被改假会红",
+              lambda d: d["release_evidence"].update(eval_result="编造的绿灯"))
+    must_fail("进度声明与发布证据结论不一致会红",
               lambda d: d["progress_estimates"].update(
-                  {"对外发布就绪度": "产品评估 5/5，可以对外"}))
+                  {"对外发布就绪度": "当前 4/5，不能对外"}))
+    must_fail("声明可以对外但缺完整愿景边界会红",
+              lambda d: d["release_evidence"].update(
+                  scope_note="只覆盖发布评估，不写产品完成边界"))
     must_fail("发布地基越级标 done 会红",
-              lambda d: d["stages"][1].update(status="done"))
+              lambda d: (d["progress_estimates"].update(
+                  {"对外发布就绪度": "当前 4/5，不能对外"}),
+                  d.pop("release_evidence", None),
+                  d["stages"][1].update(status="done")))
 
     print("closure-plan: PASS")
     return 0

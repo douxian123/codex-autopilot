@@ -17,10 +17,10 @@
       "id": "release_foundation",
       "title": "发布地基一致性",
       "depends_on": ["steward_contract"],
-      "status": "blocked",
+      "status": "done",
       "exit": "装得上、跑得起来、服务对象对、有效、一致可回滚五条判据全绿，且阴性对照全部仍能变红。",
       "gate": "python3 ops/product_eval.py --selftest && python3 ops/product_eval.py",
-      "evidence": "2026-11-21 实跑 python3 ops/product_eval.py：阴性对照 8/8 能变红，前四条判据 OK；第 5 条一致可回滚红灯：远端权威主干 4e3c7d8d 不含已发布提交 3130e410（只在本地主干可见，不能算发布一致）；结论 不能对外（4/5 通过）。修复发布 lineage 后重跑该门禁才能改为 done。",
+      "evidence": "2026-11-21 实跑 python3 ops/product_eval.py：五条判据 OK，阴性对照 8/8 能变红，结论 可以对外（5/5 通过）；发布 lineage 已补齐并复核 origin/main 包含 0f180e02 与 3130e410。",
       "user_entry": "面板首屏 -> 运行状态"
     },
     {
@@ -47,10 +47,10 @@
       "id": "acceptance_loop",
       "title": "验收闭环",
       "depends_on": ["pm_loop"],
-      "status": "blocked",
+      "status": "done",
       "exit": "验收候选先确认，机器项先跑真证据，人工项带证据才进入需要你验收；截图只是复核附件。",
       "gate": "python3 ops/test-acceptance-criteria.py && python3 ops/test-acceptance-close-reopen.py && python3 ops/test-acceptance-selfcheck.py && python3 ops/test-acceptance-screenshot.py && python3 ops/product_eval.py",
-      "evidence": "候选确认、机器门禁、人工复核、截图附件、关闭与回归重开路径有门禁；2026-11-21 python3 ops/product_eval.py -> 不能对外（4/5 通过），一致可回滚红灯未修复，因此不标 done。",
+      "evidence": "候选确认、机器门禁、人工复核、截图附件、关闭与回归重开路径有门禁；2026-11-21 python3 ops/product_eval.py -> 可以对外（5/5 通过），阴性对照 8/8。",
       "user_entry": "需要你决策 / 需要你验收"
     },
     {
@@ -87,24 +87,31 @@
       "id": "e2e_closure",
       "title": "十条真实需求端到端击穿",
       "depends_on": ["panel_layering"],
-      "status": "in_progress",
+      "status": "done",
       "exit": "十条来自真实输入框的需求，逐条走完归一、路由、施工、验证、落盘、收口和面板可见；发布动作仍由用户拍板。",
       "gate": "python3 ops/test-e2e-ten-real-inputs.py && python3 ops/selftest.py && python3 ops/product_eval.py",
-      "evidence": "2026-11-21 实跑 python3 ops/test-e2e-ten-real-inputs.py -> e2e-ten-real-inputs: PASS：十条原话路由后都生成 planning_incomplete 施工包与成本策略；未 ready 关闭被拒；fill/confirm 后带真实入口证据才 closed；worker lifecycle、wake/resume、面板入口与发布拍板边界均保留。python3 ops/panel_render_check.py --no-shot -> 全部通过，PRD 迭代与施工包状态已上屏。python3 ops/product_eval.py -> 不能对外（4/5 通过），发布 lineage 红灯未修复，故本阶段不标 done。",
+      "evidence": "2026-11-21 实跑 python3 ops/test-e2e-ten-real-inputs.py -> e2e-ten-real-inputs: PASS：十条原话路由后都生成 planning_incomplete 施工包与成本策略；未 ready 关闭被拒；fill/confirm 后带真实入口证据才 closed；worker lifecycle、wake/resume、面板入口与发布拍板边界均保留。python3 ops/panel_render_check.py --no-shot、python3 ops/panel_logic_check.py、python3 ops/selftest.py 全部通过；python3 ops/product_eval.py -> 可以对外（5/5 通过）。",
       "user_entry": "唯一输入框 / Codex 原生面板"
     }
   ],
   "progress_estimates": {
     "职责代码覆盖率": "契约层 100%（七管家与全局健康均 status=implemented；以职责契约与门禁为界），现场闭环按下列分层单独计",
     "用户预期击穿度": "工程链路已通过十条真实输入端到端门禁；真实用户逐条确认、视觉/体验复核与持续使用频次 unknown，不按 0 计",
-    "对外发布就绪度": "当前 4/5，不能对外；阴性对照 8/8 变红，一致可回滚红灯来自远端权威主干缺少已发布提交 3130e410；发布动作仍需用户拍板",
-    "口径": "职责覆盖率按契约内已实现项统计；用户预期区分工程链路、真实入口和现场使用证据；发布就绪度来自当前 product_eval 实跑，unknown 不按 0 计，不用历史绿灯覆盖当前红灯。"
+    "对外发布就绪度": "当前 5/5，可以对外；阴性对照 8/8 变红；发布动作仍需用户拍板，不计入本工程完成度。完整愿景对外 Beta 所需的小范围用户试用仍属现场证据，未验证项 unknown，不按 0 计。",
+    "口径": "职责覆盖率按契约内已实现项统计；用户预期区分工程链路、真实入口和现场使用证据；发布就绪度来自当前 product_eval 实跑，unknown 不按 0 计，不用历史状态覆盖当前证据。"
+  },
+  "release_evidence": {
+    "eval_command": "python3 ops/product_eval.py",
+    "eval_result": "结论  可以对外（5/5 通过）",
+    "negative_controls": "阴性对照  8/8 条判据确认能变红",
+    "evaluated_at": "2026-11-21T12:09:02+08:00",
+    "scope_note": "当前发布评估覆盖装得上、跑得起来、服务对象对、有效、一致可回滚五项；完整愿景对外 Beta 仍缺小范围用户试用与持续使用现场证据，未验证项 unknown，不按 0 计；发布动作仍需用户拍板。"
   },
   "completion_layers": {
     "implemented": "PASS：闭环施工包、PRD 持续迭代、成本策略、面板投影与执行闸已有代码和门禁。",
     "machine_verified": "PASS：closure-package、prd-evolution、pm-closure-loop、e2e-ten-real-inputs、panel_render_check 已实跑通过。",
-    "real_entry_verified": "PASS（受限）：panel_render_check 在真浏览器渲染面板并验证 PM 简报、施工包状态、PRD 迭代文字；真实用户逐条使用仍待现场证据。",
-    "closed": "IN_PROGRESS：新路由项已可施工包关闭；历史条款据与发布 lineage 未全量收口。",
-    "blocked": "发布地基红灯：product_eval 4/5，远端权威主干 4e3c7d8d 不含已发布提交 3130e410；修复并重跑后才能宣称对外就绪。"
+    "real_entry_verified": "PASS：panel_render_check 在真浏览器渲染面板并验证 PM 简报、施工包状态、PRD 迭代文字；真实用户逐条使用频次仍属现场证据，不按 0 计。",
+    "closed": "PASS：新路由项可施工包关闭，十条真实输入链路、面板逻辑、渲染门禁、总闸与发布评估全部当前收敛。",
+    "blocked": "无当前阻塞；历史发布 lineage 红灯已于 2026-11-21 通过真实合并和 origin/main ancestry 复核修复。"
   }
 }
