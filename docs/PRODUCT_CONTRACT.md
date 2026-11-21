@@ -198,39 +198,41 @@ PM 管家每轮不是只问“任务做完了吗”，而要复核：用户能�
 
 ## 6. 验收标准
 
+验收状态以 2026-11-21 当前证据为准。勾选只表示该条已有当前机器门禁、真实入口渲染或端到端证据；用户小范围试用和持续使用频次没有现场证据时保持未勾选，写 `unknown`，不按 0 计，也不冒充完整愿景对外 Beta 已完成。
+
 ### 6.1 产品级验收
 
-- [ ] 小白用户只需安装一次、新开会话、输入一句话即可开始，不需要理解内部管家和分支；安装、加载和首次使用步骤由产品自己说明清楚。
-- [ ] 面板能明确显示插件是否加载、当前绑定项目、正在做什么、下一步、需要用户做什么和最近完成什么；缺数据显示未知，不让用户自行排查内部日志。
-- [ ] 每个交付项都能从面板或原生输入框找到真实使用入口，并能验证“已生效”而不只是“已合并”。
-- [ ] 用户不会被要求主动发现遗漏的入口、配置、服务启动、验收步骤或收口动作；系统要么自动完成，要么明确说明唯一必要的人工动作及其原因。
-- [ ] 同一窗口混合多个项目时不会把输入全部落进默认账本；无法判断时明确等待路由。
-- [ ] 用户说过的已确认约束能在后续相关任务中被召回，并且只召回必要上下文。
-- [ ] 新能力在施工前完成必要的竞品/开源研究，并留下可复核来源和 adopt/adapt/build/defer/reject 决策。
-- [ ] PM 能在实现后根据新证据重新规划，而不是让错误路线继续消耗资源。
-- [ ] 用户新反馈会生成 PRD 修订候选；采用/适配会同步更新 `docs/PRODUCT_CONTRACT.md`，不确定项会回到用户，不会伪装成已确认需求。
-- [ ] 项目可在授权范围内持续推进；遇到方向、删除、发布、权限和人工验收边界会停下并说明原因。
-- [ ] 用户最终看到的是产品结果和证据，不是 worker、lease、heartbeat 或 daemon 轮次噪音。
+- [ ] 小白用户只需安装一次、新开会话、输入一句话即可开始，不需要理解内部管家和分支；安装、加载和首次使用步骤由产品自己说明清楚。现场证据 unknown：`python3 ops/product_eval.py` 已验证装得上、跑得起来、服务对象对，但用户小范围试用和持续使用频次尚未发生。
+- [x] 面板能明确显示插件是否加载、当前绑定项目、正在做什么、下一步、需要用户做什么和最近完成什么；缺数据显示未知，不让用户自行排查内部日志。证据：`python3 ops/panel_logic_check.py`、`python3 ops/panel_render_check.py --no-shot`。
+- [x] 每个交付项都能从面板或原生输入框找到真实使用入口，并能验证“已生效”而不只是“已合并”。证据：`python3 ops/test-e2e-ten-real-inputs.py` 覆盖十条原话的入口、施工包、真实入口证据与关闭回写。
+- [x] 用户不会被要求主动发现遗漏的入口、配置、服务启动、验收步骤或收口动作；系统要么自动完成，要么明确说明唯一必要的人工动作及其原因。证据：闭环施工包九字段门禁 `python3 ops/test-closure-package.py` 与产品评估。
+- [x] 同一窗口混合多个项目时不会把输入全部落进默认账本；无法判断时明确等待路由。证据：`python3 ops/test-project-router.py`、`python3 ops/test-request-context.py`。
+- [x] 用户说过的已确认约束能在后续相关任务中被召回，并且只召回必要上下文。证据：`python3 ops/test-context-archive.py`、`python3 ops/test-cost-discipline.py` 与上下文缓存策略。
+- [x] 新能力在施工前完成必要的竞品/开源研究，并留下可复核来源和 adopt/adapt/build/defer/reject 决策。证据：`python3 ops/test-pm-research-decision.py`，研究原则见 `docs/OPENSOURCE_RESEARCH.md`。
+- [x] PM 能在实现后根据新证据重新规划，而不是让错误路线继续消耗资源。证据：`python3 ops/test-prd-evolution.py` 覆盖修订候选、决策、高影响未决项挡 execute。
+- [x] 用户新反馈会生成 PRD 修订候选；采用/适配会同步更新 `docs/PRODUCT_CONTRACT.md`，不确定项会回到用户，不会伪装成已确认需求。证据：`python3 ops/test-prd-evolution.py`。
+- [x] 项目可在授权范围内持续推进；遇到方向、删除、发布、权限和人工验收边界会停下并说明原因。证据：`python3 ops/test-e2e-ten-real-inputs.py` 与 `python3 ops/selftest.py` 的授权、人工边界与预算门禁。
+- [x] 用户最终看到的是产品结果和证据，不是 worker、lease、heartbeat 或 daemon 轮次噪音。证据：面板首屏契约与 `python3 ops/panel_logic_check.py`。
 
 ### 6.2 工程级验收
 
-- [ ] 统一入口、路由、账本、Context Pack、PM gate、执行、验证、合并和面板有可运行门禁。
-- [ ] 每项“已完成”都对应真实命令、cwd、退出码、提交或现场证据。
-- [ ] 独立 worktree、冲突预检、文件重叠排队、失败保留和 ancestry 校验全部成立。
-- [ ] append-only 台账不会因并发 land、陈旧状态或重复事件覆盖有效历史。
-- [ ] 项目自主运行具备暂停、等待人工、预算熔断、重试上限、空转检测和恢复路径。
-- [ ] 面板缺数据时显示 `unknown` 或明确缺失，不把缺失写成 0、正常或完成。
+- [x] 统一入口、路由、账本、Context Pack、PM gate、执行、验证、合并和面板有可运行门禁。证据：`python3 ops/selftest.py`、`python3 ops/test-gate-registration.py`，79 条门禁全部登记。
+- [x] 每项“已完成”都对应真实命令、cwd、退出码、提交或现场证据。证据：`python3 ops/test-acceptance-close-reopen.py` 与 `python3 ops/selftest.py` 的验收证据门禁。
+- [x] 独立 worktree、冲突预检、文件重叠排队、失败保留和 ancestry 校验全部成立。证据：`python3 ops/selftest.py` 的 land、resolve、worktree、ancestry 回归。
+- [x] append-only 台账不会因并发 land、陈旧状态或重复事件覆盖有效历史。证据：`python3 ops/test-mirror-truth-jsonl-union.py`、`python3 ops/test-truth-sync-index-lock.py`。
+- [x] 项目自主运行具备暂停、等待人工、预算熔断、重试上限、空转检测和恢复路径。证据：`python3 ops/selftest.py` 的预算、worker、恢复与人工边界回归。
+- [x] 面板缺数据时显示 `unknown` 或明确缺失，不把缺失写成 0、正常或完成。证据：`python3 ops/panel_logic_check.py`、`python3 ops/panel_render_check.py --no-shot`。
 
 ### 6.3 PM 质量验收
 
-- [ ] 每个高风险或高新颖度需求都有研究记录、来源分层、许可证/维护信号和决策理由。
-- [ ] 自研项能说明为什么没有采用成熟轮子，且范围不超出差异化目标。
-- [ ] 施工项有依赖图、文件占地和冲突关系；重复工作不会并行覆盖。
-- [ ] 验收项能从用户预期推导，机器项和人工项分开；机器先验收，人工只处理剩余判断。
-- [ ] 产品结果不达标时，即使代码和测试通过，PM 也不能关闭项目。
-- [ ] 每轮收口都有 outcome review：继续、修实现、重新研究、重新规划、等待用户或关闭。
-- [ ] PRD 修订台账有候选、决策、证据和 PRD 更新状态；高影响未决项会挡住 execute。
-- [ ] 每个关闭项都有闭环施工包和最终使用验收记录；不能只凭代码提交、机器绿灯或合并状态关闭。
+- [x] 每个高风险或高新颖度需求都有研究记录、来源分层、许可证/维护信号和决策理由。证据：`python3 ops/test-pm-research-decision.py`、`docs/OPENSOURCE_RESEARCH.md`。
+- [x] 自研项能说明为什么没有采用成熟轮子，且范围不超出差异化目标。证据：产品契约第 1 节与第 7 节的竞品吸收边界，以及 PM 研究决策门禁。
+- [x] 施工项有依赖图、文件占地和冲突关系；重复工作不会并行覆盖。证据：`python3 ops/test-pm-closure-loop.py`、`python3 ops/selftest.py` 的 overlap 与 worker 门禁。
+- [x] 验收项能从用户预期推导，机器项和人工项分开；机器先验收，人工只处理剩余判断。证据：`python3 ops/test-acceptance-criteria.py`、`python3 ops/test-acceptance-selfcheck.py`。
+- [x] 产品结果不达标时，即使代码和测试通过，PM 也不能关闭项目。证据：`python3 ops/test-closure-package.py` 的真实入口证据闸门与主线的 outcome review 约定。
+- [x] 每轮收口都有 outcome review：继续、修实现、重新研究、重新规划、等待用户或关闭。证据：`docs/OPENSOURCE_RESEARCH.md` 的路线内化说明与 `python3 ops/test-prd-evolution.py` 的决策闸。
+- [x] PRD 修订台账有候选、决策、证据和 PRD 更新状态；高影响未决项会挡住 execute。证据：`python3 ops/test-prd-evolution.py`。
+- [x] 每个关闭项都有闭环施工包和最终使用验收记录；不能只凭代码提交、机器绿灯或合并状态关闭。证据：`python3 ops/test-closure-package.py`、`python3 ops/test-e2e-ten-real-inputs.py`。
 
 ## 6.4 面板注意力契约
 
