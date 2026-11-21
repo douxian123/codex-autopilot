@@ -540,6 +540,10 @@
       <strong id="experienceHeadline">体验契约读取中</strong>
       <div class="exp-meta" id="experienceMeta"></div>
     </div>
+    <div class="exp-contract" id="rendererContract" hidden data-renderer-mode="interim" aria-label="面板渲染契约">
+      <strong id="rendererHeadline">面板渲染契约读取中</strong>
+      <div class="exp-meta" id="rendererMeta"></div>
+    </div>
     <div class="stewards" id="stewardBar" aria-label="管家状态与全局健康"></div>
     <div class="sysline" id="autonomyLine" hidden></div>
     <details class="card fold engineering-detail" id="systemEvidenceFold">
@@ -1042,6 +1046,7 @@
       || road.filter(function(r){ return r.status === "next"; })[0];
     setFocusAnswers(s, activeRoad);
     renderExperience(s.experience);
+    renderRendererContract(s.renderer_contract);
     el("runBtn").disabled = !s.enabled || !!s.paused;
     el("pauseBtn").disabled = !s.enabled;
     renderNative(s);
@@ -1102,6 +1107,22 @@
       " · 机器门禁：" + (machine || "取不到") +
       " · 人工复核：" + (human || "取不到"));
     box.setAttribute("data-status", exp.status || "unknown");
+  }
+
+  function renderRendererContract(rc){
+    var box = el("rendererContract");
+    if (!box) return;
+    rc = rc || {};
+    box.hidden = false;
+    box.setAttribute("data-status", rc.status || "unknown");
+    box.setAttribute("data-renderer-mode", rc.mode || "unknown");
+    setText("rendererHeadline", rc.headline || "面板渲染契约取不到，当前界面不冒充最终设计");
+    var order = (rc.attention_order || []).join(" -> ");
+    var states = (rc.states || []).join(" / ");
+    setText("rendererMeta", "当前模式：" + (rc.mode || "取不到") +
+      " · 最终视觉已定稿：" + (rc.final_visual_approved === true ? "是" : "否") +
+      " · 注意力：" + (order || "取不到") +
+      " · 状态：" + (states || "取不到"));
   }
 
   function renderPreAcceptance(pre){

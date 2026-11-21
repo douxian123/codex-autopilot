@@ -575,6 +575,37 @@ def _experience_summary():
     }
 
 
+def _renderer_contract_summary():
+    """把权威 renderer contract 投给面板，当前 HTML 与最终面板都消费同一份。"""
+    fallback = {
+        "status": "unknown",
+        "headline": "面板渲染契约取不到，当前界面不冒充最终设计",
+        "mode": "unknown",
+        "final_visual_approved": False,
+        "attention_order": [],
+        "states": [],
+        "resource_uri": None,
+    }
+    path = REPO / "docs" / "experience" / "panel-renderer-contract.json"
+    try:
+        import panel_renderer_contract
+        data = panel_renderer_contract.load(path)
+        panel_renderer_contract.validate(data)
+    except Exception as exc:
+        out = dict(fallback)
+        out["headline"] = "面板渲染契约校验失败：%s" % _ui_text(exc)
+        return out
+    return {
+        "status": "ok",
+        "headline": "当前面板是中间态 renderer，最终视觉另行定稿",
+        "mode": data.get("renderer_mode"),
+        "final_visual_approved": bool(data.get("final_visual_approved")),
+        "attention_order": list(data.get("attention_order") or []),
+        "states": [s.get("name") for s in (data.get("states") or []) if isinstance(s, dict)],
+        "resource_uri": data.get("resource_uri"),
+    }
+
+
 def _steward_health(payload):
     """七管家健康条：把七个管家的真实状态收敛成一份面板可读的清单。
 
@@ -3260,6 +3291,8 @@ def _status_payload(fast=True):
         "outcome_score": _outcome_score_summary(),
         # 体验契约必须进入面板投影；只写 docs/experience 不算驱动 UI。
         "experience": _experience_summary(),
+        # 最终面板仍在重设计：renderer contract 是新旧面板共同的消费者边界。
+        "renderer_contract": _renderer_contract_summary(),
         "harness_tune": _harness_tune_summary(),
         "constraint_candidates": _constraint_candidates_summary(),
         "context_archive": _context_archive_summary(),

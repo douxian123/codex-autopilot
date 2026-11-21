@@ -1,5 +1,7 @@
 # Codex 自动挡面板交互设计
 
+> 当前 `plugin/ui/panel.html` 是 **interim renderer / reference implementation only**，只用于验证数据契约和工程接线，不是最终视觉稿。最终面板正在重新设计；两者都必须消费 `docs/experience/panel-renderer-contract.json`，不得直接把当前 DOM、CSS 或卡片布局固化为最终规范。
+
 ## 产品判断
 
 这个面板应该是 Codex 原生界面里的一层「挡风玻璃」，不是另一个任务工作台，也不应该是独立 Electron 应用。用户仍然在原来的 Codex 输入框里说话；面板只负责把系统状态压缩成几件值得人看的事，并在必须时接收人的确认。

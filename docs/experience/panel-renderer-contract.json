@@ -1,0 +1,150 @@
+{
+  "schema_version": "1",
+  "contract_name": "autopilot-panel-renderer",
+  "status": "interim_renderer_required",
+  "renderer_mode": "interim",
+  "final_visual_approved": false,
+  "resource_uri": "ui://autopilot/panel-v2.html",
+  "primary_task": "让用户看懂 Codex 自动档当前在做什么、卡在哪里、下一步由谁做",
+  "attention_order": [
+    "需要你做什么",
+    "是不是在干对的事",
+    "已经替你完成什么",
+    "PM 简报",
+    "工程证据"
+  ],
+  "required_status_fields": [
+    "needs_human",
+    "current_work",
+    "recent_completed",
+    "pm_briefing",
+    "engineering_evidence"
+  ],
+  "states": [
+    {
+      "name": "loading",
+      "applicable": true,
+      "required_copy": "正在读取真实状态"
+    },
+    {
+      "name": "empty",
+      "applicable": true,
+      "required_copy": "当前没有需要你处理的事项"
+    },
+    {
+      "name": "working",
+      "applicable": true,
+      "required_copy": "正在推进"
+    },
+    {
+      "name": "awaiting_human",
+      "applicable": true,
+      "required_copy": "建议先关注"
+    },
+    {
+      "name": "blocked",
+      "applicable": true,
+      "required_copy": "需要重新规划"
+    },
+    {
+      "name": "error",
+      "applicable": true,
+      "required_copy": "状态取不到"
+    },
+    {
+      "name": "success",
+      "applicable": true,
+      "required_copy": "已经收口"
+    }
+  ],
+  "field_semantics": {
+    "needs_human": {
+      "meaning": "不可替代的人工判断、验收或授权",
+      "empty": "当前没有需要你处理的事项",
+      "unknown": "取不到，不写成没有"
+    },
+    "current_work": {
+      "meaning": "当前真实推进项与所处步骤",
+      "empty": "暂时没有在推进的工作",
+      "unknown": "取不到，不冒充正在运行"
+    },
+    "recent_completed": {
+      "meaning": "已经真实生效并完成收口的结果",
+      "empty": "还没有可确认的收口结果",
+      "unknown": "取不到，不冒充已完成"
+    },
+    "pm_briefing": {
+      "meaning": "路线是否仍然成立、下一刀是否值得做",
+      "empty": "PM 简报尚未生成",
+      "unknown": "取不到，不让用户误以为路线已复核"
+    },
+    "engineering_evidence": {
+      "meaning": "命令、退出码、截图、证据链与授权记录",
+      "empty": "没有可折叠的工程证据",
+      "unknown": "取不到，不伪造证据"
+    }
+  },
+  "action_policy": {
+    "max_primary_actions": 2,
+    "required_explanations": [
+      "点了会怎样",
+      "不点会怎样"
+    ],
+    "forbidden": [
+      "让用户选择内部角色",
+      "让用户选择分支",
+      "把日志或台账 ID 当用户动作"
+    ]
+  },
+  "user_hidden_fields": [
+    "worker",
+    "lease",
+    "heartbeat",
+    "daemon_tick",
+    "internal_round",
+    "raw_queue_count",
+    "raw_branch_list",
+    "internal_id",
+    "raw_command_log"
+  ],
+  "accessibility": {
+    "keyboard_required": true,
+    "visible_focus_required": true,
+    "non_color_status_required": true,
+    "accessible_names_required": true
+  },
+  "machine_checks": [
+    "payload-matches-contract",
+    "all-required-states-present",
+    "no-internal-fields-in-first-screen",
+    "no-overflow",
+    "no-clipping",
+    "focus-visible"
+  ],
+  "human_checks": [
+    "attention-order",
+    "information-density",
+    "task-completion",
+    "final-visual-approval"
+  ],
+  "replacement_policy": {
+    "current_panel_role": "interim_renderer_reference_implementation_only",
+    "final_panel_must_preserve_contract": true,
+    "final_panel_must_preserve_fields": true,
+    "final_panel_may_change": [
+      "layout",
+      "components",
+      "spacing",
+      "typography",
+      "motion",
+      "color"
+    ],
+    "final_panel_may_not_change_without_new_decision": [
+      "attention_order",
+      "state_semantics",
+      "missing_data_policy",
+      "human_boundary"
+    ],
+    "note": "当前 plugin/ui/panel.html 只验证数据契约，不是最终视觉稿。"
+  }
+}

@@ -284,6 +284,10 @@ console.log(JSON.stringify({
   experienceHeadline: read("experienceHeadline"),
   experienceMeta: read("experienceMeta"),
   experienceStatus: (function(){ var n = document.getElementById("experienceContract"); return n ? n.getAttribute("data-status") || "" : ""; })(),
+  rendererHeadline: read("rendererHeadline"),
+  rendererMeta: read("rendererMeta"),
+  rendererStatus: (function(){ var n = document.getElementById("rendererContract"); return n ? n.getAttribute("data-status") || "" : ""; })(),
+  rendererMode: (function(){ var n = document.getElementById("rendererContract"); return n ? n.getAttribute("data-renderer-mode") || "" : ""; })(),
   autonomyLine: read("autonomyLine"),
   autonomyAudit: read("autonomyAudit"),
   pmBriefingBox: read("pmBriefingBox") + " " + document.getElementById("pmBriefingBox").innerHTML,
@@ -1395,6 +1399,25 @@ def main(argv):
                 "attention_order": [], "states": [], "machine_checks": [], "human_checks": []}))
             fails += has("体验契约缺失时如实提示", exp_unknown.get("experienceHeadline") or "",
                          "取不到")
+
+        # 最终面板仍在重设计；新面板和当前中间态面板必须消费同一个 renderer contract。
+        renderer_contract = central_mcp._renderer_contract_summary()
+        renderer_out = run_once(dict(payload, renderer_contract=renderer_contract))
+        renderer_view = str(renderer_out.get("rendererHeadline") or "") + " " + str(renderer_out.get("rendererMeta") or "")
+        fails += has("渲染契约投影到中间态面板", renderer_view,
+                     "中间态 renderer", "最终视觉", "需要你做什么", "是不是在干对的事",
+                     "已经替你完成什么")
+        if str(renderer_out.get("rendererMode") or "") != "interim":
+            print("  FAIL  当前面板没有声明 interim renderer")
+            fails += 1
+        else:
+            print("  PASS  当前面板声明为 interim renderer")
+        renderer_unknown = run_once(dict(payload, renderer_contract={
+            "status": "unknown", "headline": "面板渲染契约取不到，当前界面不冒充最终设计",
+            "mode": "unknown", "final_visual_approved": False,
+            "attention_order": [], "states": [], "resource_uri": None}))
+        fails += has("渲染契约缺失时如实提示", renderer_unknown.get("rendererHeadline") or "",
+                     "取不到")
 
         # 项目经理项目名为 None 时不得泄漏 Python 字面量。
         none_name = dict(payload)

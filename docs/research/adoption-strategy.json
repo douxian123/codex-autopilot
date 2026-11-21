@@ -1,0 +1,100 @@
+{
+  "schema_version": "1",
+  "product_name": "Codex 自动档",
+  "positioning": "Codex 项目治理层与控制面，不是通用 Super Agent，也不是工作流运行时依赖",
+  "runtime_dependency_policy": {
+    "external_tools_required": false,
+    "rule": "研究结论必须内化为自动档自己的契约、状态机、门禁或面板字段；不能要求用户额外安装竞品才能使用。"
+  },
+  "decisions": [
+    {
+      "id": "R-001",
+      "source": "Oh My Codex",
+      "decision": "adapt",
+      "absorb": ["需求澄清", "持久目标", "规划-执行-验证循环", "阶段恢复"],
+      "rationale": "它的流程先验成熟，但自动挡需要把流程变成 Codex 内的项目真相与门禁，不能让用户额外安装 OMX。",
+      "landed_in": ["docs/PRODUCT_CONTRACT.md", "docs/OPENSOURCE_RESEARCH.md", "ops/research.py", "ops/test-pm-research-decision.py"],
+      "runtime_dependency": false
+    },
+    {
+      "id": "R-002",
+      "source": "DeepSeek Harness Super-agent",
+      "decision": "adapt",
+      "absorb": ["Router/Worker 分层", "观察优先", "连续主动"],
+      "rationale": "统一入口与路由概念撞车，应吸收而非重造；差异化留在真相、约束门禁、合并防丢失和验收证据。",
+      "landed_in": ["docs/OPENSOURCE_RESEARCH.md", "ops/project_router.py", "docs/ARCHITECTURE_STEWARDS.md"],
+      "runtime_dependency": false
+    },
+    {
+      "id": "R-003",
+      "source": "Claude Code 多 Agent / background task 模式",
+      "decision": "defer",
+      "absorb": [],
+      "rationale": "宿主 API 与产品形态仍在变化，当前不据此承诺侧栏置顶、后台任务一等公民等能力。",
+      "landed_in": ["docs/OPENSOURCE_RESEARCH.md", "docs/PANEL_INTERACTION_DESIGN.md"],
+      "runtime_dependency": false
+    },
+    {
+      "id": "R-004",
+      "source": "Lauren Tan 合并方法论",
+      "decision": "adapt",
+      "absorb": ["worktree 隔离", "冲突收拢", "防丢失", "append-only 事件账本", "串行合流"],
+      "rationale": "吸收工程原则并实现为 kgctl 的 converge / supersede / port / land 门禁，不复制外部实现。",
+      "landed_in": ["ops/kgctl.py", "docs/ARCHITECTURE_STEWARDS.md", "ops/test-conflict-queue-cap.py"],
+      "runtime_dependency": false
+    },
+    {
+      "id": "R-005",
+      "source": "brat / Vibe Kanban / Paseo / Emdash",
+      "decision": "adapt",
+      "absorb": ["worktree 隔离", "任务状态", "控制面"],
+      "rationale": "控制面经验只用于内部执行状态；首屏仍保持三问，不把看板和日志流搬给用户。",
+      "landed_in": ["docs/OPENSOURCE_RESEARCH.md", "docs/PANEL_INTERACTION_DESIGN.md"],
+      "runtime_dependency": false
+    },
+    {
+      "id": "R-006",
+      "source": "@openai/apps-sdk-ui 与 MCP Apps",
+      "decision": "adapt",
+      "absorb": ["官方语义 token 优先", "MCP UI resource", "ui/* 协议", "组件复用方向"],
+      "rationale": "当前已落地 token 顺序和 UI resource 接线；最终面板应继续复用官方组件，不复制本地 app.asar 构建产物。",
+      "landed_in": ["docs/PANEL_INTERACTION_DESIGN.md", "ops/central_mcp.py", "plugin/ui/panel.html"],
+      "runtime_dependency": false
+    },
+    {
+      "id": "R-007",
+      "source": "Codex CLI / App Server / Skills / Plugins",
+      "decision": "adopt",
+      "absorb": ["Codex 会话", "worktree", "skill", "MCP", "App Server 契约"],
+      "rationale": "这些是宿主公开原语，自动挡只做上层治理，不再自建一套 agent 运行时。",
+      "landed_in": ["ops/central_mcp.py", "ops/kgctl.py", "plugin/.codex-plugin/plugin.json"],
+      "runtime_dependency": true
+    },
+    {
+      "id": "R-008",
+      "source": "Codex 桌面面板 app.asar",
+      "decision": "reject",
+      "absorb": [],
+      "rationale": "它是构建产物，无源码、source map 或独立 design spec；只能反推 token，不能整包复用。",
+      "landed_in": ["docs/PANEL_INTERACTION_DESIGN.md"],
+      "runtime_dependency": false
+    },
+    {
+      "id": "R-009",
+      "source": "Superset（Elastic License 2.0）",
+      "decision": "reject",
+      "absorb": [],
+      "rationale": "许可证与本项目不兼容，不作为实现来源。",
+      "landed_in": ["docs/OPENSOURCE_RESEARCH.md"],
+      "runtime_dependency": false
+    }
+  ],
+  "required_landings": [
+    "docs/PRODUCT_CONTRACT.md",
+    "docs/OPENSOURCE_RESEARCH.md",
+    "docs/PANEL_INTERACTION_DESIGN.md",
+    "docs/ARCHITECTURE_STEWARDS.md",
+    "ops/kgctl.py",
+    "ops/central_mcp.py"
+  ]
+}
