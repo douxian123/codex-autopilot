@@ -282,6 +282,15 @@ if [ -d "$REPO/docs" ]; then
   if [ -f "$REPO/docs/ARCHITECTURE_STEWARDS.md" ]; then
     cp "$REPO/docs/ARCHITECTURE_STEWARDS.md" "$STAGE/docs/ARCHITECTURE_STEWARDS.md"
   fi
+  # 动态验收标准与体验契约是安装后门禁/面板要读的现行规范，必须随 release 发布。
+  for doc in DYNAMIC_ACCEPTANCE_SCOPE.md PRE_ACCEPTANCE_STANDARD.md; do
+    if [ -f "$REPO/docs/$doc" ]; then
+      cp "$REPO/docs/$doc" "$STAGE/docs/$doc"
+    fi
+  done
+  if [ -d "$REPO/docs/experience" ]; then
+    cp -R "$REPO/docs/experience" "$STAGE/docs/"
+  fi
 fi
 # 本机 launchd 定时任务的源文件（看门狗 / 快照 / hooks 看门狗 / 3000 巡检 /
 # 日志轮转）。它们以前散落在 ~/.codex-guard/ 这类「没有版本、没人升级」的位置，
