@@ -70,7 +70,9 @@ if __name__ == "__main__":
 
 def build(home: Path, *, forwarder_dirty: bool = False,
           versioned_ok: bool = True, missing_version_file: bool = False,
-          fossil_versioned: bool = False) -> Path:
+          fossil_versioned: bool = False,
+          external_label: str | None = None,
+          external_path: str | None = None) -> Path:
     """造一个假的机器现场，返回 registry 路径。"""
     rel = "plugins/codex-autopilot/releases/9.9.9"
     ver = home / rel
@@ -131,6 +133,12 @@ def build(home: Path, *, forwarder_dirty: bool = False,
                            "~/.codex-proxy/"],
         "registered_forwarders": [{"path": "~/.codex-autopilot/ops/disk_reap.py"}],
     }
+    if external_label or external_path:
+        reg["external_services"] = [{
+            "label": external_label or "ai.danta.ok8888-gpt-sse-bridge",
+            "path": external_path or "~/.codex-proxy/ok8888_gpt_sse_bridge.py",
+            "owner": "test external service",
+        }]
     reg_path = home / "registry.json"
     reg_path.write_text(json.dumps(reg), encoding="utf-8")
     return reg_path
@@ -183,6 +191,49 @@ def main():
         r = run_gate(home, reg)
         check("安装版本缺文件时判红", r.returncode == 1 and
               "缺文件" in r.stdout, r.stdout[-400:])
+
+    # 4b) 外部服务豁免必须精确命中 label + 路径，不能按目录整体放行。
+    with tempfile.TemporaryDirectory(prefix="launchd-external-") as tmp:
+        home = Path(tmp)
+        reg = build(home, fossil_versioned=True,
+                    external_label="ai.danta.ok8888-gpt-sse-bridge")
+        bridge = home / ".codex-proxy/ok8888_gpt_sse_bridge.py"
+        bridge.parent.mkdir(parents=True, exist_ok=True)
+        bridge.write_text("# local bridge\n", encoding="utf-8")
+        write_plist(home / "Library/LaunchAgents/ai.danta.ok8888-gpt-sse-bridge.plist",
+                    "ai.danta.ok8888-gpt-sse-bridge", ["/usr/bin/python3", str(bridge)])
+        r = run_gate(home, reg)
+        check("登记过的外部服务可见但不判红",
+              r.returncode == 0 and "[external ] ai.danta.ok8888-gpt-sse-bridge" in r.stdout,
+              r.stdout[-500:])
+
+    with tempfile.TemporaryDirectory(prefix="launchd-external-wronglabel-") as tmp:
+        home = Path(tmp)
+        reg = build(home, fossil_versioned=True,
+                    external_label="ai.danta.not-the-bridge")
+        bridge = home / ".codex-proxy/ok8888_gpt_sse_bridge.py"
+        bridge.parent.mkdir(parents=True, exist_ok=True)
+        bridge.write_text("# local bridge\n", encoding="utf-8")
+        write_plist(home / "Library/LaunchAgents/ai.danta.ok8888-gpt-sse-bridge.plist",
+                    "ai.danta.ok8888-gpt-sse-bridge", ["/usr/bin/python3", str(bridge)])
+        r = run_gate(home, reg)
+        check("外部服务 label 不匹配仍判红",
+              r.returncode == 1 and "ai.danta.ok8888-gpt-sse-bridge" in r.stdout,
+              r.stdout[-500:])
+
+    with tempfile.TemporaryDirectory(prefix="launchd-external-wrongpath-") as tmp:
+        home = Path(tmp)
+        reg = build(home, fossil_versioned=True,
+                    external_path="~/.codex-proxy/other_bridge.py")
+        bridge = home / ".codex-proxy/ok8888_gpt_sse_bridge.py"
+        bridge.parent.mkdir(parents=True, exist_ok=True)
+        bridge.write_text("# local bridge\n", encoding="utf-8")
+        write_plist(home / "Library/LaunchAgents/ai.danta.ok8888-gpt-sse-bridge.plist",
+                    "ai.danta.ok8888-gpt-sse-bridge", ["/usr/bin/python3", str(bridge)])
+        r = run_gate(home, reg)
+        check("外部服务路径不匹配仍判红",
+              r.returncode == 1 and "ok8888_gpt_sse_bridge.py" in r.stdout,
+              r.stdout[-500:])
 
     # 5) registry 自身必须是有效的、每个 script 都真实存在于源码里
     real_reg = json.loads((OPS / "guards" / "registry.json").read_text(encoding="utf-8"))

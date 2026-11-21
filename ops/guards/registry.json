@@ -13,6 +13,20 @@
     "ProgramArguments 改指到 releases/<version>/ops/... 并 reload。",
     "这样「代码更新了但没人升级它」在结构上不可能再发生。"
   ],
+  "external_services": [
+    {
+      "label": "ai.danta.ok8888-gpt-sse-bridge-watchdog",
+      "path": "~/.codex-proxy/ok8888-gpt-bridge-watchdog.sh",
+      "owner": "local proxy bridge watchdog",
+      "note": "独立代理看门狗，不属于自动挡发版范围；只放行这个 label 的这条精确路径。"
+    },
+    {
+      "label": "ai.danta.ok8888-gpt-sse-bridge",
+      "path": "~/.codex-proxy/ok8888_gpt_sse_bridge.py",
+      "owner": "local proxy bridge",
+      "note": "独立代理服务，不属于自动挡发版范围；只放行这个 label 的这条精确路径。"
+    }
+  ],
   "entries": [
     {
       "label": "com.danta.autopilot-watchdog",

@@ -4997,6 +4997,47 @@ def test_disk_probe_refreshes_state_even_when_gate_stays_open():
     print("selftest ok: 磁盘闸未暂停时也持续刷新实测余量与当前阈值。")
 
 
+def test_disk_admission_pass_refreshes_stale_state():
+    """常规周期必须刷新磁盘闸，不能等 auto_exec 打开才读一次盘。"""
+    import importlib
+    import json as _json
+    import sys
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+
+    with tempfile.TemporaryDirectory(prefix="codex-autopilot-disk-admission-") as tmp:
+        home = Path(tmp)
+        stale_at = "2026-11-14 01:03:42"
+        (home / "state.json").write_text(_json.dumps({
+            "exec_disk_held": True,
+            "exec_disk_free_gb": 15.1,
+            "exec_disk_threshold_gb": 24.0,
+            "exec_disk_state_at": stale_at,
+        }), encoding="utf-8")
+        with mock.patch.dict(os.environ, {"KG_DAEMON_HOME": str(home)}, clear=False):
+            importlib.reload(central_daemon)
+            free = central_daemon.EXEC_DISK_RESUME_FREE_GB + 1.0
+            with mock.patch.object(central_daemon, "_disk_free_gb", return_value=free):
+                out = central_daemon._pass_disk_admission({"deadline": None})
+
+        state = _json.loads((home / "state.json").read_text(encoding="utf-8"))
+        assert out["held"] is False, out
+        assert out["free_gb"] == round(free, 2), out
+        assert state["exec_disk_held"] is False, state
+        assert state["exec_disk_free_gb"] == round(free, 2), state
+        assert state["exec_disk_state_at"] != stale_at, state
+
+        names = central_daemon._build_cycle_registry({"deadline": None}).names()
+        assert "disk-admission" in names, names
+        assert names.index("disk-admission") < names.index("exec"), names
+
+    print("selftest ok: 常规周期先刷新磁盘闸，陈旧持有态按当前余量自动解除。")
+
+
 def test_worktree_admission_fails_closed_before_creation():
     """Disk and inventory admission must reject before `git worktree add`.
 
@@ -7078,6 +7119,20 @@ def test_mcp_contract():
     project = Path(tempfile.mkdtemp(prefix="kg-mcp-proj-"))
     (project / "ops" / "truth").mkdir(parents=True)
     (project / "ops" / "truth" / "ledger.jsonl").write_text("", encoding="utf-8")
+    # 预验收门禁现在要求四类自检全部 pass；测试项目必须显式提供证据，
+    # 否则人工验收项会按设计停在 pre_acceptance_blocked，永远进不了 human_acceptance。
+    (project / "ops" / "truth" / "pre_acceptance.jsonl").write_text(
+        "".join(_json.dumps({
+            "check_id": check_id,
+            "status": "pass",
+            "evidence_types": evidence_types,
+            "summary": "预验收证据已确认",
+        }, ensure_ascii=False) + "\n" for check_id, evidence_types in (
+            ("engineering", ["machine", "backend", "integration", "rollback"]),
+            ("frontend", ["browser", "screenshot", "interaction", "responsive"]),
+            ("comprehension", ["comprehension", "user_walkthrough"]),
+            ("alignment", ["prd", "expectations", "acceptance", "risk"]),
+        )), encoding="utf-8")
     env = os.environ.copy()
     env["KG_DAEMON_HOME"] = home
     env["KG_REPO"] = str(project)
@@ -8175,6 +8230,7 @@ if __name__ == "__main__":
     test_parallel_exec_slots()
     test_disk_hold_withholds_worker_restart()
     test_disk_probe_refreshes_state_even_when_gate_stays_open()
+    test_disk_admission_pass_refreshes_stale_state()
     test_worktree_admission_fails_closed_before_creation()
     test_git_gc_never_prunes_shared_partial_clone()
     test_proc_run_never_hangs_on_inherited_pipe()

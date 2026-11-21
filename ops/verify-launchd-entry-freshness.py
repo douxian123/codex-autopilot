@@ -28,6 +28,10 @@
   文件存在、正文里没有任何业务实现关键字、且哈希与登记值一致。
   薄转发的意义是「它不需要升级，因为它自己不含逻辑」。
 
+外（external）：不属于自动挡发版范围、但在 owned_prefixes 目录里的独立服务。
+   只有 registry.json 里 label + 精确脚本路径同时命中才算，报告里可见、不计失败。
+   这是给 ok8888 bridge 这类本地常驻服务用的，绝不允许按目录整体放行。
+
 红（stale）：属于我们但既不是绿也不是黄。这就是「跑着跑着又得清一轮」的病灶。
 
 不属于我们的任务（Chrome、openclaw gateway、GitHub runner 之类）不判定，
@@ -142,6 +146,10 @@ def main() -> int:
     reg = _load_registry()
     prefixes = reg.get("owned_prefixes") or []
     registered = {e["label"]: e for e in (reg.get("entries") or [])}
+    externals = {
+        (e["label"], _expand(e["path"], home)): e
+        for e in (reg.get("external_services") or [])
+    }
     forwarders = {}
     for fw in reg.get("registered_forwarders") or []:
         forwarders[_expand(fw["path"], home)] = fw
@@ -149,7 +157,8 @@ def main() -> int:
     versioned = _versioned_roots(home)
     pdir = home / "Library" / "LaunchAgents"
     failures: list[str] = []
-    stats = {"fresh": 0, "forwarder": 0, "stale": 0, "foreign": 0, "ours_absent": 0}
+    stats = {"fresh": 0, "forwarder": 0, "external": 0, "stale": 0,
+             "foreign": 0, "ours_absent": 0}
 
     if not pdir.is_dir():
         print(f"（{pdir} 不存在，本机没有 launchd 任务）")
@@ -175,6 +184,9 @@ def main() -> int:
         for script in scripts:
             if classify(script, home, versioned) == "fresh":
                 verdicts.append(("fresh", script, ""))
+            elif (label, script) in externals:
+                verdicts.append(("external", script,
+                                 externals[(label, script)].get("owner") or "独立服务"))
             elif script in forwarders:
                 ok, why = forwarder_ok(script)
                 verdicts.append(("forwarder" if ok else "stale", script, why))
@@ -195,8 +207,11 @@ def main() -> int:
                     + (f"（{why}）" if why else ""))
             elif verdict == "forwarder" and worst == "fresh":
                 worst = "forwarder"
+            elif verdict == "external" and worst == "fresh":
+                worst = "external"
         stats[worst] += 1
-        print(f"  [{worst:9s}] {label}  ->  {[str(s) for s in scripts]}")
+        suffix = f"（{verdicts[0][2]}）" if worst == "external" else ""
+        print(f"  [{worst:9s}] {label}  ->  {[str(s) for s in scripts]}{suffix}")
 
     # 登记了但本机没装的：不算失败（用户可能只装了部分能力），但要可见。
     for label in registered:
@@ -225,6 +240,7 @@ def main() -> int:
 
     print()
     print(f"统计：鲜活 {stats['fresh']} 条 / 薄转发 {stats['forwarder']} 条 / "
+          f"外部服务 {stats['external']} 条 / "
           f"停在旧路径 {stats['stale']} 条 / 不归我们 {stats['foreign']} 条 / "
           f"登记但未装 {stats['ours_absent']} 条")
     if failures:
