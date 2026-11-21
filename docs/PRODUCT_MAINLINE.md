@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-21 08:41:15　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-22 07:50:50　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -46,7 +46,6 @@
 
 ## 最近在推进
 
-- [已落盘] @ fe7ae040c0 codex/pm-research-decision-20261120 验证门禁通过，已落盘 main @ fe7ae040c0；改动 13 个文件：README.md（+1/-0）、ops/central_mcp.py（+147/-0）、ops/kgctl.py（+18/-0）、ops/panel_logic_check.py（+7/-0）、ops/panel_render_check.py（+7/-0），另有 8 个文件｜13 files changed, 1099 insertions(+), 11 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0152
 - [已落盘] @ b827dba849 codex/cross-entry-route-control-20261120 验证门禁通过，已落盘 main @ b827dba849；改动 6 个文件：ops/central_mcp.py（+139/-6）、ops/kgctl.py（+39/-2）、ops/panel_logic_check.py（+44/-0）、ops/test-route-inbox.py（+60/-1）、ops/truth/acceptance.jsonl（+1/-0），另有 1 个文件｜6 files changed, 390 insertions(+), 9 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0155、A-0156
 - [已落盘] @ 1db2bc5563 codex/resolve-guard-release-version-20261119 验证门禁通过，已落盘 main @ 1db2bc5563；改动 2 个文件：ops/truth/acceptance.jsonl（+2/-0）、ops/truth/progress.jsonl（+1/-0）｜2 files changed, 3 insertions(+)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 543f005f37 codex/resolve-ledger-normalization-20261120 验证门禁通过，已落盘 main @ 543f005f37；改动 1 个文件：ops/tasks/resolve.json（+51/-4）｜1 file changed, 51 insertions(+), 4 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
@@ -56,11 +55,10 @@
 - [在途] 端到端闭环施工地图九阶段已按门禁闭环并推送 main
 - [在途] launchd guard 随版本发布完整性门禁已覆盖并全量通过
 - [已落盘] @ 51a8d2a7ff codex/project-autonomy-main-port-20261121 验证门禁通过，已落盘 main @ 51a8d2a7ff；改动 7 个文件：README.md（+10/-0）、ops/central_daemon.py（+97/-4）、ops/central_mcp.py（+79/-0）、ops/project_autonomy.py（+232/-0）、ops/selftest.py（+109/-1），另有 2 个文件｜7 files changed, 608 insertions(+), 6 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0163、A-0164
+- [已落盘] @ 31347afa07 codex/experience-evidence-gate-20261121 验证门禁通过，已落盘 main @ 31347afa07；改动 5 个文件：ops/central_mcp.py（+30/-3）、ops/experience_contract.py（+253/-4）、ops/experience_evidence.py（+582/-0）、ops/kgctl.py（+13/-2）、ops/test-experience-contract-gate.py（+108/-2）｜5 files changed, 986 insertions(+), 11 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0152` [P1] codex/pm-research-decision-20261120 门禁预跑（未落盘）
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0153` [P1] codex/resolve-autopilot-truth-sync-failclosed 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0154` [P1] codex/pm-research-decision-20261120 落盘验收
@@ -83,6 +81,8 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0165` [P1] codex/project-autonomy-main-port-20261121 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0170` [P1] codex/experience-evidence-gate-20261121 落盘验收
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 
 ## 还差什么
 
@@ -187,11 +187,12 @@
 - `A-0162` [P1] codex/resolve-dedupe-load-20261120 落盘验收
 - `A-0164` [P1] codex/project-autonomy-main-port-20261121 门禁预跑（未落盘）
 - `A-0165` [P1] codex/project-autonomy-main-port-20261121 落盘验收
+- `A-0170` [P1] codex/experience-evidence-gate-20261121 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：13 条
-- 累计落盘：92 条
+- 累计落盘：93 条
 - 未决问题：1 条
-- 已验收：92 条
+- 已验收：93 条
 
