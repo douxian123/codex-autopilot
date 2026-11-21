@@ -75,6 +75,7 @@ def seed(root: Path):
     # 关键复现条件：生成视图在 .gitignore 里被排除。
     (repo / ".gitignore").write_text(
         "docs/PROJECT_STATUS.md\n"
+        "docs/PROJECT_CONSTITUTION.md\n"
         "docs/CONTROL_BOARD.md\n"
         "docs/CONTROL_PLANE.html\n"
         "ops/context/\n",
@@ -100,6 +101,7 @@ def main():
 
         # 生成视图真的存在（tick/dash 会写它们），且一条真账本有改动。
         (repo / "docs" / "PROJECT_STATUS.md").write_text("# status\n", encoding="utf-8")
+        (repo / "docs" / "PROJECT_CONSTITUTION.md").write_text("# constitution\n", encoding="utf-8")
         (repo / "docs" / "CONTROL_BOARD.md").write_text("# board\n", encoding="utf-8")
         (repo / "docs" / "CONTROL_PLANE.html").write_text("<html></html>\n", encoding="utf-8")
         (repo / "ops" / "context").mkdir(parents=True, exist_ok=True)
@@ -116,7 +118,8 @@ def main():
         changed = git(repo, "show", "--name-only", "--format=", "HEAD").stdout
         check("真账本被提交", "ops/truth/progress.jsonl" in changed,
               f"(changed={changed.strip()!r})")
-        for view in ("docs/PROJECT_STATUS.md", "docs/CONTROL_BOARD.md",
+        for view in ("docs/PROJECT_STATUS.md", "docs/PROJECT_CONSTITUTION.md",
+                     "docs/CONTROL_BOARD.md",
                      "docs/CONTROL_PLANE.html", "ops/context/pack.json"):
             check(f"ignored 生成视图不进版本库：{view}", view not in changed,
                   f"(changed={changed.strip()!r})")

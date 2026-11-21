@@ -38,6 +38,8 @@ truthctl 管「这个项目现在到底是什么状态」。
   truthctl goal <summary|list|create|update|link|close>  跨项目长期目标（显式账本）
   truthctl synthesize          把决策/进展/问题/验收综合成 docs/PRODUCT_MAINLINE.md
   truthctl synthesize --if-changed  常驻自追踪用：内容无变化时不重写生成时间
+  truthctl constitution         从约束/候选/判断/书面宪法生成 docs/PROJECT_CONSTITUTION.md
+  truthctl constitution --if-changed  内容无变化时不重写生成时间
 
 add 的环境变量：
   KG_TRUTH_DETAIL KG_TRUTH_STATUS KG_TRUTH_LANE KG_TRUTH_FILES
@@ -87,6 +89,8 @@ import relationship_ledger  # noqa: E402
 import acceptance_criteria_compiler  # noqa: E402
 import closure_package  # noqa: E402
 import pm_decision  # noqa: E402
+import prd_evolution  # noqa: E402
+import project_constitution  # noqa: E402
 
 # 自包含安装下，绑定的项目写在插件 .mcp.json 里；显式 KG_REPO 优先。
 apply_plugin_env()
@@ -102,6 +106,7 @@ STATUS = REPO / 'docs' / 'PROJECT_STATUS.md'
 PRODUCT_STATE = TRUTH / 'product_state.json'
 JUDGMENTS = TRUTH / 'judgments.jsonl'
 PRODUCT_MAINLINE = REPO / 'docs' / 'PRODUCT_MAINLINE.md'
+PROJECT_CONSTITUTION = REPO / 'docs' / 'PROJECT_CONSTITUTION.md'
 
 
 def _kgctl_cmd() -> str:
@@ -1105,6 +1110,7 @@ def cmd_constraints(args):
         enforceable = (os.environ.get('KG_CONSTRAINT_ENFORCEABLE') or 'none').strip()
         scope = [s for s in re.split(r'[:,\n]', os.environ.get('KG_CONSTRAINT_SCOPE', ''))
                  if s.strip()]
+        scope_class = (os.environ.get('KG_CONSTRAINT_SCOPE_CLASS') or '').strip() or None
         # 标了 gate 就必须带命令，否则「有门禁」是空话：落盘那一刻没有东西可跑，
         # 面板却会渲染成有机器兜底（2026-11-17 实测 C-0001 就是这种假绿灯）。
         cmd = (os.environ.get('KG_CONSTRAINT_CMD') or '').strip()
@@ -1115,7 +1121,8 @@ def cmd_constraints(args):
         rec = _append_new('constraint',
                           statement=statement, title=statement[:80],
                           kind=kind, enforceable=enforceable,
-                          scope=scope, cmd=cmd or None, cwd=cwd,
+                          scope=scope, scope_class=scope_class,
+                          cmd=cmd or None, cwd=cwd,
                           policy_version=os.environ.get('KG_CONSTRAINT_POLICY') or None,
                           supersedes=os.environ.get('KG_CONSTRAINT_SUPERSEDES') or None,
                           source=os.environ.get('KG_TRUTH_SOURCE', 'user'),
@@ -1545,6 +1552,7 @@ def cmd_synthesize(args):
     done_led = [r for r in led if r.get('status') == 'done']
     landed = [r for r in prg if r.get('landed')]
     verified = [r for r in acc if r.get('status') == 'verified']
+    prd = prd_evolution.summary(str(REPO))
 
     # 生成时间必须位于正文之外：守护逐拍 synthesize 时，只有真相内容真的变化
     # 才应该刷新它。把时间混在正文里做 diff 会让「什么都没发生」也像新进展。
@@ -1592,6 +1600,24 @@ def cmd_synthesize(args):
             L.append('- %s%s' % (r.get('title', ''), why))
     else:
         L.append('- （还没有决策记录）')
+    L.append('')
+
+    L += ['## PRD 修订索引', '']
+    if prd.get('status') == 'unknown':
+        L.append('- （PRD 修订台账取不到，不按 0 条处理）')
+        if prd.get('reason'):
+            L.append('  - %s' % prd['reason'])
+    else:
+        L.append('- 修订 %d 条，需收敛 %d 条' % (
+            prd.get('count') if prd.get('count') is not None else 0,
+            prd.get('attention_count') if prd.get('attention_count') is not None else 0))
+        for r in (prd.get('items') or [])[-10:]:
+            L.append('- `%s` [%s] %s' % (
+                r.get('revision_id') or 'PR-id 取不到',
+                r.get('status') or '状态取不到',
+                r.get('text') or r.get('question') or ''))
+            if r.get('why'):
+                L.append('  - %s' % str(r['why'])[:190])
     L.append('')
 
     L += ['## 最近在推进', '']
@@ -1698,6 +1724,15 @@ def cmd_synthesize(args):
     else:
         print('产品主线内容未变化，保留原生成时间：%s'
               % PRODUCT_MAINLINE.relative_to(REPO))
+    project_constitution.write_page(repo=str(REPO), if_changed=if_changed)
+
+
+def cmd_constitution(args):
+    """从约束/候选/判断台账生成一页项目宪法；源台账坏则拒绝覆盖旧页。"""
+    if_changed = '--if-changed' in args
+    rc = project_constitution.write_page(repo=str(REPO), if_changed=if_changed)
+    if rc:
+        sys.exit(rc)
 
 
 def cmd_snapshot(args):
@@ -2004,7 +2039,8 @@ CMDS = {'add': cmd_add, 'ls': cmd_ls, 'snapshot': cmd_snapshot, 'promote': cmd_p
         'constraints': cmd_constraints, 'retire': cmd_retire,
         'close': cmd_close, 'open': cmd_open, 'synthesize': cmd_synthesize,
         'accept': cmd_accept, 'goal': cmd_goal,
-        'closure-package': cmd_closure_package}
+        'closure-package': cmd_closure_package,
+        'constitution': cmd_constitution}
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
@@ -2016,5 +2052,5 @@ if __name__ == '__main__':
         print('命令：' + ' | '.join(['snapshot', 'ls', 'add', 'promote', 'route', 'lanes',
                                      'next', 'product', 'distill', 'constraints', 'retire',
                                      'close', 'open', 'synthesize', 'accept', 'goal',
-                                     'closure-package']))
+                                     'closure-package', 'constitution']))
         sys.exit(1)

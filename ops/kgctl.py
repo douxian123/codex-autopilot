@@ -4132,7 +4132,8 @@ def _origin_contains(commit: str) -> bool:
 # 多一份无人认领的在途改动（正是 PARALLEL_WORKFLOW「禁止制造在途改动」要禁止的形态）。
 TRUTH_PATHS = ("ops/truth", "ops/tasks", "ops/context", "docs/PROJECT_STATUS.md",
                "docs/CONTROL_BOARD.md", "docs/CONTROL_PLANE.html",
-               "docs/PRODUCT_MAINLINE.md", "docs/COCKPIT_BRIEF.md",
+               "docs/PRODUCT_MAINLINE.md", "docs/PROJECT_CONSTITUTION.md",
+               "docs/COCKPIT_BRIEF.md",
                "docs/AGENT_SYNC.md", "docs/OCT29_PROGRESS_RADAR.generated.md")
 TRUTH_COMMIT_RE = re.compile(r"^(chore\(truth\)|train: (sync|merge))")
 
@@ -4142,6 +4143,7 @@ APPEND_ONLY_MARKDOWN = ("docs/COCKPIT_BRIEF.md", "docs/AGENT_SYNC.md")
 # 从台账/真相综合出来的 Markdown 视图。它们有稳定的「生成时间」行，恢复主干工作树
 # 时不能用旧快照覆盖 main 已经综合好的新视图；否则 PRODUCT_MAINLINE 会退回几个月前。
 GENERATED_MARKDOWN_VIEWS = ("docs/PRODUCT_MAINLINE.md", "docs/PROJECT_STATUS.md",
+                            "docs/PROJECT_CONSTITUTION.md",
                             "docs/CONTROL_BOARD.md", "docs/OCT29_PROGRESS_RADAR.generated.md")
 
 # 产品真相证据：这些文件由真实质量/运维命令生成，不能由旧真相同步或冲突合并覆盖。

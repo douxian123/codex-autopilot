@@ -172,6 +172,7 @@ def main():
             "test-runtime-freshness.py",
             "test-closure-plan.py",
             "test-context-archive.py",
+            "test-project-constitution.py",
             "test-e2e-ten-real-inputs.py",
             "test-pm-research-decision.py",
             "test-closure-package.py",

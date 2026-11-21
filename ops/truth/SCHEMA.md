@@ -20,6 +20,9 @@ ops/truth/
   product_state.json # 产品状态：产品今天实际是怎么工作的（按模块，随代码同步）
   decisions.jsonl    # 决策台账：做过哪些决定、为什么、备选是什么（追加式）
   judgments.jsonl    # 判断逻辑台账：人为什么这么判断（每轮蒸馏回写，追加式）
+  constraints.jsonl  # 生效约束台账：人确认后参与的全局/流程/模块/项目规范（追加式）
+  constraint_candidates.jsonl # 约束候选：用户说过但尚未生效的原话与证据（追加式）
+  prd_revisions.jsonl # PRD 修订候选与 PM 决策索引（追加式）
   ledger.jsonl       # 问题台账：bug / 视觉 / 体验 / 架构问题（追加式，带状态与泳道）
   progress.jsonl     # 进展台账：每条泳道最近干了什么、是否落盘（追加式）
   acceptance.jsonl   # 验收台账：实现模块 / 验收项 / 状态 / 证据 / 人工复核步骤（追加式）
@@ -27,6 +30,7 @@ ops/truth/
 生成物：
   docs/PRODUCT_MAINLINE.md  # 由 truthctl synthesize 从以上台账综合出的产品主线
   docs/PROJECT_STATUS.md    # 由 truthctl snapshot 生成的一屏项目状态
+  docs/PROJECT_CONSTITUTION.md # 由 truthctl constitution 从约束/候选/判断台账投影出的项目宪法
 ```
 
 ## 通用字段（JSONL 每条）
@@ -132,3 +136,6 @@ judgment 记「以后遇到同类情况该怎么判断」——记的是判断�
 8. **主线自动综合**：每轮收口跑 `truthctl synthesize`，把决策/进展/问题/验收/产品状态
    综合成 `docs/PRODUCT_MAINLINE.md`。人在 `mainline.json` 只拍板方向；零散讨论长成的主线
    由这份生成物承接，人只读这一页。
+9. **宪法只读投影**：`docs/PROJECT_CONSTITUTION.md` 由 `truthctl constitution` 生成；
+   用户说过的规范先进入候选区，只有人确认后才进入生效约束区。候选、驳回、判断逻辑
+   和书面宪法仍以各自源文件为准，生成页不反向写台账。
