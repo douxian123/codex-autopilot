@@ -119,7 +119,12 @@ def validate_repo(root=None):
     """Validate both the contract and the consumer wiring that keeps it honest."""
     root = Path(root or ROOT)
     validate(load(root / "docs" / "experience" / "panel-renderer-contract.json"))
-    panel = (root / "plugin" / "ui" / "panel.html").read_text(encoding="utf-8")
+    # 源码仓库把插件放在 plugin/，release 根目录自身就是插件根。
+    # 两种布局都必须能被校验，否则安装后门禁会把正确发布误判成坏包。
+    panel_path = root / "plugin" / "ui" / "panel.html"
+    if not panel_path.is_file():
+        panel_path = root / "ui" / "panel.html"
+    panel = panel_path.read_text(encoding="utf-8")
     if 'id="rendererContract"' not in panel:
         raise ContractError("面板没有消费 renderer contract 的落点")
     if 'data-renderer-mode="interim"' not in panel:

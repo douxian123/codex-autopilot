@@ -5,7 +5,9 @@
 import copy
 import importlib.util
 import json
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -30,6 +32,21 @@ def main():
     valid = module.load()
     assert module.validate(valid) is True
     assert module.validate_repo(ROOT) is True
+
+    # release 根目录自身就是插件根：panel.html 在 ui/ 而不是 plugin/ui/。
+    # 安装后门禁必须先在这里跑通，不能只在源码仓库里亮绿灯。
+    with tempfile.TemporaryDirectory(prefix="panel-renderer-release-") as raw:
+        release = Path(raw)
+        (release / "docs" / "experience").mkdir(parents=True)
+        (release / "ops").mkdir()
+        (release / "ui").mkdir()
+        shutil.copy2(ROOT / "docs/experience/panel-renderer-contract.json",
+                     release / "docs/experience/panel-renderer-contract.json")
+        shutil.copy2(ROOT / "docs/PANEL_INTERACTION_DESIGN.md",
+                     release / "docs/PANEL_INTERACTION_DESIGN.md")
+        shutil.copy2(ROOT / "ops/central_mcp.py", release / "ops/central_mcp.py")
+        shutil.copy2(ROOT / "plugin/ui/panel.html", release / "ui/panel.html")
+        assert module.validate_repo(release) is True
 
     wrong_order = copy.deepcopy(valid)
     wrong_order["attention_order"] = list(reversed(wrong_order["attention_order"]))
@@ -66,7 +83,7 @@ def main():
 
     schema = json.loads((ROOT / "docs/experience/panel-renderer-contract.json").read_text(encoding="utf-8"))
     assert schema["replacement_policy"]["current_panel_role"] == "interim_renderer_reference_implementation_only"
-    print("panel renderer contract: PASS (valid + 6 negative cases + provider projection)")
+    print("panel renderer contract: PASS (valid + 6 negative cases + source/release layouts + provider projection)")
 
 
 if __name__ == "__main__":

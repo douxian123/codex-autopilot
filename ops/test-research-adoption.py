@@ -28,6 +28,11 @@ def main():
     assert module.validate(valid) is True
     assert module.validate_repo(ROOT) is True
 
+    installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+    assert 'cp -R "$REPO/docs/research" "$STAGE/docs/"' in installer
+    assert "docs/research/adoption-strategy.json" in installer
+    assert "PRODUCT_CONTRACT.md" in installer
+
     external_dep = copy.deepcopy(valid)
     external_dep["runtime_dependency_policy"]["external_tools_required"] = True
     expect_fail(external_dep, "运行时前置依赖")
@@ -49,7 +54,7 @@ def main():
                                    if row["source"] != "Lauren Tan 合并方法论"]
     expect_fail(missing_source, "Lauren Tan")
 
-    print("research adoption: PASS (valid + 5 negative cases + repo wiring)")
+    print("research adoption: PASS (valid + 5 negative cases + repo wiring + release packaging)")
 
 
 if __name__ == "__main__":

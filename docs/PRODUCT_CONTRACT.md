@@ -207,7 +207,7 @@ PM 管家每轮不是只问“任务做完了吗”，而要复核：用户能�
 
 - [ ] 小白用户只需安装一次、新开会话、输入一句话即可开始，不需要理解内部管家和分支；安装、加载和首次使用步骤由产品自己说明清楚。现场证据 unknown：`python3 ops/product_eval.py` 已验证装得上、跑得起来、服务对象对，但用户小范围试用和持续使用频次尚未发生。
 - [x] 面板能明确显示插件是否加载、当前绑定项目、正在做什么、下一步、需要用户做什么和最近完成什么；缺数据显示未知，不让用户自行排查内部日志。证据：`python3 ops/panel_logic_check.py`、`python3 ops/panel_render_check.py --no-shot`。
-- [x] 当前面板只作为中间态 renderer，最终重设计面板必须消费同一份权威渲染契约，保留注意力顺序、状态语义、缺失数据策略和人工边界；视觉布局、组件、间距和动效可替换。证据：`python3 ops/test-panel-renderer-contract.py`、`python3 ops/panel_logic_check.py`。
+- [x] 当前面板只作为中间态 renderer，最终重设计面板必须消费同一份权威渲染契约，保留注意力顺序、状态语义、缺失数据策略和人工边界；视觉布局、组件、间距和动效可替换。证据：`python3 ops/test-panel-renderer-contract.py`、`python3 ops/panel_logic_check.py`；安装后的 release 根目录也运行同一门禁，覆盖 `plugin/ui/panel.html` 与 `ui/panel.html` 两种布局。
 - [x] 每个交付项都能从面板或原生输入框找到真实使用入口，并能验证“已生效”而不只是“已合并”。证据：`python3 ops/test-e2e-ten-real-inputs.py` 覆盖十条原话的入口、施工包、真实入口证据与关闭回写。
 - [x] 用户不会被要求主动发现遗漏的入口、配置、服务启动、验收步骤或收口动作；系统要么自动完成，要么明确说明唯一必要的人工动作及其原因。证据：闭环施工包九字段门禁 `python3 ops/test-closure-package.py` 与产品评估。
 - [x] 同一窗口混合多个项目时不会把输入全部落进默认账本；无法判断时明确等待路由。证据：`python3 ops/test-project-router.py`、`python3 ops/test-request-context.py`。
@@ -221,6 +221,7 @@ PM 管家每轮不是只问“任务做完了吗”，而要复核：用户能�
 ### 6.2 工程级验收
 
 - [x] 统一入口、路由、账本、Context Pack、PM gate、执行、验证、合并和面板有可运行门禁。证据：`python3 ops/selftest.py`、`python3 ops/test-gate-registration.py`，88 条门禁全部登记。
+- [x] 研究采用策略与渲染契约随不可变 release 一起发布，并在安装后的 release 根目录可校验。证据：`install.sh` staging 必需文件断言、`python3 ops/test-research-adoption.py`、`python3 ops/test-panel-renderer-contract.py`。
 - [x] 每项“已完成”都对应真实命令、cwd、退出码、提交或现场证据。证据：`python3 ops/test-acceptance-close-reopen.py` 与 `python3 ops/selftest.py` 的验收证据门禁。
 - [x] 独立 worktree、冲突预检、文件重叠排队、失败保留和 ancestry 校验全部成立。证据：`python3 ops/selftest.py` 的 land、resolve、worktree、ancestry 回归。
 - [x] append-only 台账不会因并发 land、陈旧状态或重复事件覆盖有效历史。证据：`python3 ops/test-mirror-truth-jsonl-union.py`、`python3 ops/test-truth-sync-index-lock.py`。
