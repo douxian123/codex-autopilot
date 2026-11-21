@@ -248,6 +248,23 @@ def _acceptance_criteria_summary():
     return {"status": "ok", "count": len(items), "items": items}
 
 
+def _pre_acceptance_summary():
+    """验收管家的产品级预验收闸：未 ready 不得进入用户验收台。"""
+    try:
+        import pre_acceptance
+        return pre_acceptance.evaluate(Path(_truth_dir()).parent.parent)
+    except Exception as exc:
+        return {
+            "status": "unknown",
+            "label": "验收管家：交付前自检取不到，不通知你验收",
+            "checks": [],
+            "passed": 0,
+            "total": 4,
+            "notify_user": False,
+            "reason": repr(exc),
+        }
+
+
 def _route_health_summary(payload, state=None):
     """状态管家内部的路线/效能只读检测：不是第八个管家，不自动纠偏。
 
@@ -650,6 +667,20 @@ def _steward_health(payload):
         rows.append({"key": "accept", "state": "attention",
                      "label": "验收管家：%s 条验收标准候选等你确认（未登记）"
                      % acc_criteria.get("count")})
+    elif (payload.get("pre_acceptance_blocked_count") or 0) or (
+            payload.get("pre_acceptance", {}).get("status") in ("blocked", "unknown")):
+        pre = payload.get("pre_acceptance") or {}
+        pre_checks = pre.get("checks") or []
+        failed = [r.get("title") for r in pre_checks if r.get("state") != "pass"]
+        label = "、".join([x for x in failed if x][:2]) or "交付前自检"
+        rows_text = "；".join(
+            "%s：%s" % (r.get("title"), r.get("summary"))
+            for r in pre_checks if r.get("state") != "pass"
+        )
+        rows_text = rows_text or "证据不完整"
+        rows.append({"key": "accept", "state": "attention",
+                     "label": "验收管家：%s 未通过，先返修，不通知你验收（%s）"
+                     % (label, rows_text)})
     elif self_check_n and not sw.get("auto_exec"):
         # 待自验却没人会去跑，是真实卡点，不是「正在处理」。
         rows.append({"key": "accept", "state": "attention",
@@ -2415,8 +2446,13 @@ def _acceptance_board():
     # 否则登记一条 needs_human=true 就能把活直接推给用户，等于让用户当第一道测试。
     human_pending = [r for r in acc
                      if r.get("needs_human") and r.get("status") in ("todo", "wip", "blocked")]
-    human = [r for r in human_pending if str(r.get("evidence") or "").strip()]
+    pre = _pre_acceptance_summary()
+    # 有单项 evidence 仍不代表整项产品已经可交付。只有产品级预验收四类检查
+    # 全部 ready，才把人工验收送进用户台；否则用户仍然是第一道测试。
+    evidence_ready = [r for r in human_pending if str(r.get("evidence") or "").strip()]
+    human = evidence_ready if pre.get("notify_user") else []
     self_check = [r for r in human_pending if not str(r.get("evidence") or "").strip()]
+    pre_blocked = evidence_ready if not pre.get("notify_user") else []
     machine = [r for r in acc if r.get("status") == "verified" and not r.get("needs_human")]
     human_done = [r for r in acc if r.get("status") == "verified" and r.get("needs_human")]
 
@@ -2443,6 +2479,9 @@ def _acceptance_board():
         "human": [acc_brief(r) for r in human[:8]],
         "self_check": [acc_brief(r) for r in self_check[:8]],
         "self_check_count": len(self_check),
+        "pre_acceptance": pre,
+        "pre_acceptance_blocked": [acc_brief(r) for r in pre_blocked[:8]],
+        "pre_acceptance_blocked_count": len(pre_blocked),
         "machine": [acc_brief(r) for r in machine[:8]],
         "human_done_count": len(human_done),
         "machine_count": len(machine),
@@ -2853,6 +2892,10 @@ def _status_payload(fast=True):
             "todo_items": [],
             "todo_count": None,
             "human_acceptance": [],
+            "pre_acceptance": {"status": "unknown", "label": "验收管家：安装绑定失效，不通知你验收",
+                                "checks": [], "passed": 0, "total": 4, "notify_user": False},
+            "pre_acceptance_blocked": [],
+            "pre_acceptance_blocked_count": None,
             "machine_verified": [],
             "human_accepted_count": None,
             "binding": health,
@@ -3129,6 +3172,9 @@ def _status_payload(fast=True):
         "todo_items": board["todo"],
         "todo_count": board["todo_count"],
         "human_acceptance": board["human"],
+        "pre_acceptance": board["pre_acceptance"],
+        "pre_acceptance_blocked": board["pre_acceptance_blocked"],
+        "pre_acceptance_blocked_count": board["pre_acceptance_blocked_count"],
         # 「还没自验完的人工验收项」：先自己跑一遍，再拿来打扰用户。
         "self_check_acceptance": board["self_check"],
         "self_check_count": board["self_check_count"],

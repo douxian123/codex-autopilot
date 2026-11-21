@@ -312,6 +312,19 @@
   .accfold>summary::after{content:"";margin-left:auto;width:7px;height:7px;border-right:1.6px solid var(--ink-3);border-bottom:1.6px solid var(--ink-3);transform:rotate(45deg) translateY(-2px);transition:transform .15s}
   .accfold[open]>summary::after{transform:rotate(-135deg) translateY(-2px)}
   .accfold .foldbody{padding:6px 0 0}
+  .pre-acceptance{border:1px solid var(--line-2);border-left:3px solid var(--brand-500);border-radius:var(--r-sm);padding:11px 13px;margin-bottom:14px;background:var(--surface-2)}
+  .pre-acceptance.ready{border-left-color:var(--ok)}
+  .pre-acceptance.blocked{border-left-color:var(--err)}
+  .pre-acceptance.unknown{border-left-color:var(--warn)}
+  .pre-summary{font-size:12px;color:var(--ink-2);margin:0 0 8px;line-height:1.5}
+  .pre-detail{display:grid;gap:5px}
+  .pre-row{display:flex;gap:8px;align-items:baseline;font-size:11.5px;color:var(--ink-3);line-height:1.45}
+  .pre-row b{color:var(--ink);font-weight:600;flex:0 0 auto}
+  .pre-row.failed,.pre-row.unknown{align-items:flex-start;flex-wrap:wrap}
+  .pre-row .pre-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--ink-3);min-width:48px}
+  .pre-row .pre-body{min-width:0;flex:1 1 220px}
+  .pre-row .pre-reason{display:block;width:100%;padding-left:56px;color:var(--err);font-size:11px}
+  .pre-row .pre-condition{display:block;width:100%;padding-left:56px;color:var(--ink-3);font-size:10.5px}
 
   /* lists (advanced + shared) */
   .list{margin:0;padding:0;list-style:none}
@@ -606,6 +619,11 @@
   </section>
 
   <section class="card" id="acceptCard">
+    <section class="pre-acceptance" id="preAcceptance" aria-live="polite">
+      <div class="chead"><h2>交付前自检</h2><span class="count" id="preAcceptanceCount">—</span></div>
+      <p class="pre-summary" id="preAcceptanceLabel">正在读取验收管家的自检结论</p>
+      <div class="pre-detail" id="preAcceptanceDetail"></div>
+    </section>
     <div class="chead"><h2>需要你验收</h2><span class="count" id="accNote"></span></div>
     <div id="acceptBox"></div>
   </section>
@@ -919,6 +937,8 @@
 
   function el(id){ return document.getElementById(id); }
   function setText(id, v){ var n = el(id); if(n) n.textContent = (v===undefined||v===null||v==="")?"—":v; }
+  function escapeHtml(v){ return String(v == null ? "" : v).replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
   function num(id, v){ var n = el(id); if(n) n.textContent = (v==null)?"0":String(v); }
 
   function fmtTime(iso){
@@ -1037,6 +1057,7 @@
     renderProduct(s.product_state || {});
     renderJudgments(s.judgments || []);
     renderVerify(s.last_verification);
+    renderPreAcceptance(s.pre_acceptance || {});
     renderRoadmap(s.roadmap || [], s.mainline || {});
     renderProjectOverview(s);
     renderProjectMap(s.roadmap || [], s);
@@ -1055,6 +1076,33 @@
     renderMainline(s.mainline || {});
     var intakeButton = el("intakeSubmit");
     if (intakeButton) intakeButton.disabled = !s.enabled || !!s.error;
+  }
+
+  function renderPreAcceptance(pre){
+    var node = el("preAcceptance");
+    if (!node) return;
+    var checks = pre.checks || [];
+    node.className = "pre-acceptance " + (pre.status || "unknown");
+    setText("preAcceptanceLabel", pre.label || "交付前预验收状态取不到");
+    setText("preAcceptanceCount", (pre.passed == null ? "—" : pre.passed + "/" + (pre.total || 0)) +
+      (pre.failed != null ? " · 失败 " + pre.failed : "") +
+      (pre.unknown != null ? " · 未知 " + pre.unknown : ""));
+    var detail = el("preAcceptanceDetail");
+    if (detail) {
+      var items = pre.items || checks;
+      detail.innerHTML = items.map(function(c){
+        var state = c.state === "pass" ? "已通过" : (c.state === "not_applicable" ? "不适用" :
+          (c.state === "fail" || c.state === "blocked" ? "未通过" : "证据不足"));
+        var bad = c.state !== "pass" && c.state !== "not_applicable";
+        return "<div class=\"pre-row " + (bad ? (c.state === "unknown" ? "unknown" : "failed") : "") + "\">" +
+          "<span class=\"pre-id\">" + escapeHtml(c.id || "—") + "</span>" +
+          "<span class=\"pre-body\"><b>" + escapeHtml(c.title || "预验收项") + "</b> · " +
+          escapeHtml(state) + (c.reason ? " · " + escapeHtml(c.reason) : "") + "</span>" +
+          (bad ? "<span class=\"pre-condition\">通过条件：" + escapeHtml(c.pass_condition || "逐项证据完整且关联当前版本") +
+            "</span><span class=\"pre-reason\">缺失或阻断：" + escapeHtml((c.missing_evidence || []).join(", ") || c.reason || "请返修并重新取证") + "</span>" : "") +
+          "</div>";
+      }).join("");
+    }
   }
 
   function roadmapProgress(item){
