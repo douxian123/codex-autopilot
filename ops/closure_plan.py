@@ -25,7 +25,10 @@ VALID_STATUS = {"pending", "in_progress", "done", "blocked"}
 REQUIRED = ("id", "title", "depends_on", "status", "exit", "gate", "evidence", "user_entry")
 COMPLETION_LAYERS = ("implemented", "machine_verified", "real_entry_verified",
                      "closed", "blocked")
-FORBIDDEN_RELEASE_CLAIMS = ("5/5", "可以对外", "公开发布就绪")
+RELEASE_CLAIMS = ("5/5", "可以对外")
+RELEASE_EVIDENCE_FIELDS = ("eval_command", "eval_result", "negative_controls",
+                           "evaluated_at", "scope_note")
+RELEASE_BOUNDARY = "完整愿景对外 Beta"
 
 
 def load(path=None):
@@ -79,16 +82,43 @@ def validate(data):
             if layer not in completion:
                 errors.append(f"completion_layers 缺 {layer}")
 
-    serialized = json.dumps(data, ensure_ascii=False)
-    for phrase in FORBIDDEN_RELEASE_CLAIMS:
-        if phrase in serialized:
-            errors.append(f"施工计划不能虚报发布状态：{phrase}")
+    release_evidence = data.get("release_evidence")
+    evidence_ok = isinstance(release_evidence, dict)
+    readiness = ""
+    estimates = data.get("progress_estimates")
+    if isinstance(estimates, dict):
+        readiness = str(estimates.get("对外发布就绪度") or "")
+    readiness_claims = any(phrase in readiness for phrase in RELEASE_CLAIMS)
+    eval_result = str(release_evidence.get("eval_result") or "") if evidence_ok else ""
+    evidence_claims = any(phrase in eval_result for phrase in RELEASE_CLAIMS)
+    if readiness_claims != evidence_claims:
+        errors.append("对外发布就绪度与 release_evidence.eval_result 结论不一致")
+    claims_release = readiness_claims or evidence_claims
+    if evidence_ok:
+        for key in RELEASE_EVIDENCE_FIELDS:
+            if not str(release_evidence.get(key) or "").strip():
+                errors.append(f"release_evidence 缺字段 {key}")
+                evidence_ok = False
+        if evidence_ok and "可以对外（5/5 通过）" not in str(
+                release_evidence.get("eval_result") or ""):
+            errors.append("release_evidence.eval_result 必须写清当前 product_eval 原文结论")
+            evidence_ok = False
+        if evidence_ok and "8/8" not in str(
+                release_evidence.get("negative_controls") or ""):
+            errors.append("release_evidence.negative_controls 必须写清阴性对照结果")
+            evidence_ok = False
+        if evidence_ok and RELEASE_BOUNDARY not in str(
+                release_evidence.get("scope_note") or ""):
+            errors.append("release_evidence.scope_note 必须写清完整愿景对外 Beta 的未验证边界")
+            evidence_ok = False
+    if claims_release and not evidence_ok:
+        errors.append("施工计划声明 5/5 / 可以对外时，必须带当前可复核的 release_evidence")
 
     by_id = {s.get("id"): s for s in stages if isinstance(s, dict)}
     for sid in ("release_foundation", "acceptance_loop", "e2e_closure"):
         stage = by_id.get(sid)
-        if stage and stage.get("status") == "done":
-            errors.append(f"{sid} 不能标 done：发布一致性与全量验收仍未现场收敛")
+        if stage and stage.get("status") == "done" and not evidence_ok:
+            errors.append(f"{sid} 标 done 但发布证据不成立，不能宣称收敛")
     return errors
 
 
