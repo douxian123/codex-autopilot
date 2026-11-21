@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import acceptance_dictionary
+
 
 CHECKS = (
     {
@@ -116,36 +118,61 @@ def _check_view(spec: dict[str, Any], row: dict[str, Any] | None) -> dict[str, A
 
 
 def evaluate(root: Path) -> dict[str, Any]:
-    """返回只读预验收结果；没有台账时必须是 unknown。"""
+    """返回逐项只读预验收结果；缺少逐项记录时必须是 unknown。"""
     rows = latest(Path(root))
-    checks = [_check_view(spec, rows.get(spec["id"])) for spec in CHECKS]
-    if not rows:
+    item_rows: dict[str, dict[str, Any]] = {}
+    for row in _rows(Path(root)):
+        item_id = _text(row.get("item_id"))
+        if item_id in acceptance_dictionary.BY_ID:
+            item_rows[item_id] = row
+    items = [acceptance_dictionary.evaluate_item(spec, item_rows.get(spec["id"]))
+             for spec in acceptance_dictionary.ITEMS]
+    categories = []
+    for category in acceptance_dictionary.CATEGORIES:
+        subset = [item for item in items if item["category"] == category]
+        categories.append({
+            "id": category,
+            "title": next((c["title"] for c in CHECKS if c["id"] == category), category),
+            "required": len([x for x in subset if x["required"]]),
+            "passed": len([x for x in subset if x["state"] == "pass"]),
+            "failed": len([x for x in subset if x["state"] in ("fail", "blocked")]),
+            "unknown": len([x for x in subset if x["state"] == "unknown"]),
+            "not_applicable": len([x for x in subset if x["state"] == "not_applicable"]),
+        })
+    if not item_rows:
         state = "unknown"
-        label = "验收管家：交付前预验收尚未开始"
-    elif any(item["state"] == "blocked" for item in checks):
+        label = "验收管家：逐项自检尚未完成，不通知你验收"
+    elif any(item["state"] in ("fail", "blocked") for item in items):
         state = "blocked"
-        label = "验收管家：自检未通过，先返修，不通知你验收"
-    elif any(item["state"] == "unknown" for item in checks):
+        label = "验收管家：有逐项失败，先返修，不通知你验收"
+    elif any(item["state"] == "unknown" for item in items):
         state = "unknown"
-        label = "验收管家：自检证据不完整，先补齐，不通知你验收"
+        label = "验收管家：有逐项缺证据或未判定，不通知你验收"
     else:
         state = "ready"
-        label = "验收管家：已完成交付前自检，可以通知你验收"
+        label = "验收管家：所有适用必检项通过，可以通知你验收"
+    passed = sum(item["state"] == "pass" for item in items)
     return {
         "status": state,
         "label": label,
-        "checks": checks,
-        "passed": sum(item["state"] == "pass" for item in checks),
-        "total": len(checks),
+        "checks": categories,
+        "categories": categories,
+        "items": items,
+        "passed": passed,
+        "failed": sum(item["state"] in ("fail", "blocked") for item in items),
+        "unknown": sum(item["state"] == "unknown" for item in items),
+        "not_applicable": sum(item["state"] == "not_applicable" for item in items),
+        "total": len(items),
         "notify_user": state == "ready",
-        "policy": "四类自检全部 pass 后才进入用户验收；截图是复核附件，不是自检替代品。",
+        "policy": "所有适用必检项逐条 pass 后才进入用户验收；截图是复核附件，不是自检替代品。",
     }
 
 
 def record(root: Path, check_id: str, status: str, evidence_types: list[str],
            summary: str = "", commands: list[str] | None = None,
-           artifacts: list[str] | None = None) -> dict[str, Any]:
-    """追加一条预验收证据；只接受四类标准检查。"""
+           artifacts: list[str] | None = None, *, item_id: str | None = None,
+           version: str = "", reason: str = "") -> dict[str, Any]:
+    """追加一条逐项预验收证据；旧 check_id 仍保留供迁移期兼容。"""
     check_id = _text(check_id)
     status = _text(status).lower()
     if check_id not in _CHECK_IDS:
@@ -154,6 +181,7 @@ def record(root: Path, check_id: str, status: str, evidence_types: list[str],
         raise ValueError(f"invalid pre-acceptance status: {status}")
     row = {
         "check_id": check_id,
+        "item_id": item_id or "",
         "status": status,
         "evidence_types": sorted({_text(value).lower() for value in evidence_types if _text(value)}),
         "summary": _text(summary),
@@ -161,6 +189,10 @@ def record(root: Path, check_id: str, status: str, evidence_types: list[str],
         "artifacts": artifacts or [],
         "updated_at": _now(),
     }
+    if version:
+        row["version"] = version
+    if reason:
+        row["reason"] = reason
     path = Path(root) / "ops" / "truth" / "pre_acceptance.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -177,12 +209,16 @@ def main() -> int:
     parser.add_argument("check_id", nargs="?")
     parser.add_argument("status", nargs="?")
     parser.add_argument("evidence_types", nargs="*")
+    parser.add_argument("--item-id", default="")
+    parser.add_argument("--version", default="")
+    parser.add_argument("--reason", default="")
     args = parser.parse_args()
     root = Path(args.repo).expanduser().resolve()
     if args.command == "record":
         if not args.check_id or not args.status or not args.evidence_types:
             parser.error("record 需要 check_id status evidence_types")
-        record(root, args.check_id, args.status, args.evidence_types)
+        record(root, args.check_id, args.status, args.evidence_types,
+               item_id=args.item_id, version=args.version, reason=args.reason)
     print(json.dumps(evaluate(root), ensure_ascii=False, indent=2))
     return 0 if evaluate(root)["status"] == "ready" else 1
 

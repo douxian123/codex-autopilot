@@ -66,18 +66,14 @@ def main():
             "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
             encoding="utf-8")
         (truth / "ledger.jsonl").write_text("", encoding="utf-8")
+        import acceptance_dictionary
         (truth / "pre_acceptance.jsonl").write_text(
             "".join(json.dumps({
-                "check_id": check_id,
-                "status": "pass",
-                "evidence_types": evidence_types,
-                "summary": "预验收证据已确认",
-            }, ensure_ascii=False) + "\n" for check_id, evidence_types in (
-                ("engineering", ["machine", "backend", "integration", "rollback"]),
-                ("frontend", ["browser", "screenshot", "interaction", "responsive"]),
-                ("comprehension", ["comprehension", "user_walkthrough"]),
-                ("alignment", ["prd", "expectations", "acceptance", "risk"]),
-            )), encoding="utf-8")
+                "check_id": "engineering", "item_id": spec["id"],
+                "status": "pass", "evidence_types": list(spec["evidence_required"]),
+                "version": "selfcheck-commit", "summary": "预验收证据已确认",
+            }, ensure_ascii=False) + "\n" for spec in acceptance_dictionary.ITEMS),
+            encoding="utf-8")
 
         old = os.environ.get("KG_REPO")
         os.environ["KG_REPO"] = str(repo)

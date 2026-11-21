@@ -266,6 +266,8 @@ def main():
             cwd=str(OPS.parent), check=True)
         # 产品级预验收：工程、真实前端、小白可理解性、PRD 对齐四类证据
         # 未全部通过时，人工验收不得进入用户台。
+        run([sys.executable, str(OPS / "test-acceptance-dictionary.py")],
+            cwd=str(OPS.parent), check=True)
         run([sys.executable, str(OPS / "test-pre-acceptance.py")],
             cwd=str(OPS.parent), check=True)
         # 复核截图必须由人点确认、只追加附件、失败时不写假路径。

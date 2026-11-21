@@ -320,6 +320,11 @@
   .pre-detail{display:grid;gap:5px}
   .pre-row{display:flex;gap:8px;align-items:baseline;font-size:11.5px;color:var(--ink-3);line-height:1.45}
   .pre-row b{color:var(--ink);font-weight:600;flex:0 0 auto}
+  .pre-row.failed,.pre-row.unknown{align-items:flex-start;flex-wrap:wrap}
+  .pre-row .pre-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--ink-3);min-width:48px}
+  .pre-row .pre-body{min-width:0;flex:1 1 220px}
+  .pre-row .pre-reason{display:block;width:100%;padding-left:56px;color:var(--err);font-size:11px}
+  .pre-row .pre-condition{display:block;width:100%;padding-left:56px;color:var(--ink-3);font-size:10.5px}
 
   /* lists (advanced + shared) */
   .list{margin:0;padding:0;list-style:none}
@@ -1079,13 +1084,23 @@
     var checks = pre.checks || [];
     node.className = "pre-acceptance " + (pre.status || "unknown");
     setText("preAcceptanceLabel", pre.label || "交付前预验收状态取不到");
-    setText("preAcceptanceCount", (pre.passed == null ? "—" : pre.passed + "/" + (pre.total || 4)));
+    setText("preAcceptanceCount", (pre.passed == null ? "—" : pre.passed + "/" + (pre.total || 0)) +
+      (pre.failed != null ? " · 失败 " + pre.failed : "") +
+      (pre.unknown != null ? " · 未知 " + pre.unknown : ""));
     var detail = el("preAcceptanceDetail");
     if (detail) {
-      detail.innerHTML = checks.map(function(c){
-        var state = c.state === "pass" ? "已通过" : (c.state === "blocked" ? "未通过" : "证据不足");
-        return "<div class=\"pre-row\"><b>" + escapeHtml(c.title || "预验收项") + "</b><span>" +
-          escapeHtml(state + " · " + (c.summary || "")) + "</span></div>";
+      var items = pre.items || checks;
+      detail.innerHTML = items.map(function(c){
+        var state = c.state === "pass" ? "已通过" : (c.state === "not_applicable" ? "不适用" :
+          (c.state === "fail" || c.state === "blocked" ? "未通过" : "证据不足"));
+        var bad = c.state !== "pass" && c.state !== "not_applicable";
+        return "<div class=\"pre-row " + (bad ? (c.state === "unknown" ? "unknown" : "failed") : "") + "\">" +
+          "<span class=\"pre-id\">" + escapeHtml(c.id || "—") + "</span>" +
+          "<span class=\"pre-body\"><b>" + escapeHtml(c.title || "预验收项") + "</b> · " +
+          escapeHtml(state) + (c.reason ? " · " + escapeHtml(c.reason) : "") + "</span>" +
+          (bad ? "<span class=\"pre-condition\">通过条件：" + escapeHtml(c.pass_condition || "逐项证据完整且关联当前版本") +
+            "</span><span class=\"pre-reason\">缺失或阻断：" + escapeHtml((c.missing_evidence || []).join(", ") || c.reason || "请返修并重新取证") + "</span>" : "") +
+          "</div>";
       }).join("");
     }
   }

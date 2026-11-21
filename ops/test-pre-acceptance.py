@@ -21,17 +21,21 @@ def main():
         check("没有预验收台账时是 unknown", first["status"] == "unknown")
         check("没有预验收台账时不通知用户", first["notify_user"] is False)
 
-        for spec in pre_acceptance.CHECKS:
-            pre_acceptance.record(root, spec["id"], "pass", list(spec["required_evidence"]),
+        for spec in pre_acceptance.acceptance_dictionary.ITEMS:
+            pre_acceptance.record(root, "engineering", "pass",
+                                  list(spec["evidence_required"]),
+                                  item_id=spec["id"], version="test-commit",
                                   summary=spec["title"] + " 已由对应门禁确认")
         ready = pre_acceptance.evaluate(root)
-        check("四类证据齐全才 ready", ready["status"] == "ready")
+        check("每条必检标准都通过才 ready", ready["status"] == "ready")
         check("ready 才允许通知用户", ready["notify_user"] is True)
-        check("四类自检全部通过", ready["passed"] == 4 and ready["total"] == 4)
+        check("逐项自检数量完整", ready["passed"] == ready["total"] == len(pre_acceptance.acceptance_dictionary.ITEMS))
 
-        pre_acceptance.record(root, "frontend", "fail", ["browser"], summary="真实交互出现错误")
+        pre_acceptance.record(root, "engineering", "fail", ["browser"],
+                              item_id="FE-001", version="test-commit",
+                              summary="真实交互出现错误")
         blocked = pre_acceptance.evaluate(root)
-        check("前端失败会阻断用户验收", blocked["status"] == "blocked")
+        check("任一逐项失败会阻断用户验收", blocked["status"] == "blocked")
         check("阻断时不通知用户", blocked["notify_user"] is False)
 
     print("pre-acceptance: PASS")
