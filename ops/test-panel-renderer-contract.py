@@ -33,6 +33,10 @@ def main():
     assert module.validate(valid) is True
     assert module.validate_repo(ROOT) is True
 
+    source_panel = ROOT / "plugin" / "ui" / "panel.html"
+    if not source_panel.is_file():
+        source_panel = ROOT / "ui" / "panel.html"
+
     # release 根目录自身就是插件根：panel.html 在 ui/ 而不是 plugin/ui/。
     # 安装后门禁必须先在这里跑通，不能只在源码仓库里亮绿灯。
     with tempfile.TemporaryDirectory(prefix="panel-renderer-release-") as raw:
@@ -45,7 +49,7 @@ def main():
         shutil.copy2(ROOT / "docs/PANEL_INTERACTION_DESIGN.md",
                      release / "docs/PANEL_INTERACTION_DESIGN.md")
         shutil.copy2(ROOT / "ops/central_mcp.py", release / "ops/central_mcp.py")
-        shutil.copy2(ROOT / "plugin/ui/panel.html", release / "ui/panel.html")
+        shutil.copy2(source_panel, release / "ui/panel.html")
         assert module.validate_repo(release) is True
 
     wrong_order = copy.deepcopy(valid)
