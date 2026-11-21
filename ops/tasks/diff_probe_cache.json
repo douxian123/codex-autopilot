@@ -470,5 +470,13 @@
  "codex/project-autonomy-mode-20261121@1aebb35c6630b5e7fcaf3605b26766d1d7785532@16606666f76aebbab5f48317827a731146f066a1": {
   "files": 7,
   "lines": 621
+ },
+ "codex/prd-closure-package-20261121@44b485e4a045555b92fed90a41c24494654cc2df@2f4368fc7ece371fbbc010247a6d0eaceaebec53": {
+  "files": 6,
+  "lines": 153
+ },
+ "codex/project-autonomy-main-port-20261121@3a7580dd74db38c92abaa62b6f53c1c786271091@2f4368fc7ece371fbbc010247a6d0eaceaebec53": {
+  "files": 18,
+  "lines": 867
  }
 }

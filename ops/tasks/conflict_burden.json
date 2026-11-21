@@ -1,9 +1,13 @@
 {
- "main": "04a28a1a22820d236fbc82cec2db31b6937058b8",
+ "main": "2f4368fc7ece371fbbc010247a6d0eaceaebec53",
  "branches": [
+  "codex/prd-closure-package-20261121",
+  "codex/project-autonomy-main-port-20261121",
   "codex/project-autonomy-mode-20261121"
  ],
  "burden": {
+  "codex/prd-closure-package-20261121": 2,
+  "codex/project-autonomy-main-port-20261121": 2,
   "codex/project-autonomy-mode-20261121": 4
  }
 }
