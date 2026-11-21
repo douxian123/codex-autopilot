@@ -1252,10 +1252,17 @@ def cmd_inbox(args):
         return
     text = " ".join(args)
     files = [f for f in os.environ.get("KG_INBOX_FILES", "").split(":") if f]
+    declared_kind = os.environ.get("KG_INBOX_KIND", "unknown")
+    try:
+        import experience_contract
+        effective_kind = experience_contract.infer_experience_kind(
+            text, files, declared_kind)
+    except Exception:
+        effective_kind = declared_kind
     rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "text": text,
            "source": os.environ.get("KG_INBOX_SOURCE", "user"),
            "files": files,
-           "kind": os.environ.get("KG_INBOX_KIND", "unknown"),  # visual|ux|bug|arch|unknown
+           "kind": effective_kind,  # visual|ux|bug|arch|gate|unknown
            "routed": False, "lane": None}
     route = _route_record(text, files)
     if route["decision"] == "ambiguous":
@@ -2752,6 +2759,8 @@ def cmd_context(args):
                     f"- states: {', '.join(x.get('name', '') for x in contract.get('states') or [])}",
                     f"- machine checks: {', '.join(contract.get('machine_checks') or []) or '（无）'}",
                     f"- human checks: {', '.join(contract.get('human_checks') or []) or '（无）'}",
+                    "- 交付义务：触及 plugin/ui、docs/experience 或前端界面时，land 前必须生成真实浏览器机器证据；"
+                    "体验判断必须由用户确认，不能用 exit 0 或模型自评替代最后一票。",
                 ]
         if payload["conflict_files"]:
             lines += ["", "## 冲突文件"]
@@ -3957,7 +3966,9 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
     try:
         contract_path = wt / "docs" / "experience" / "experience-contract.json"
         import experience_contract
-        checked = experience_contract.land_gate(contract_path)
+        need_live = experience_contract.changes_require_live_experience(changed)
+        checked = experience_contract.land_gate(
+            contract_path, verify_evidence=need_live, root=wt)
         experience_result.update({
             "ok": bool(checked.get("ok")),
             "output": "%s：%s" % (checked.get("status"), checked.get("reason")),
