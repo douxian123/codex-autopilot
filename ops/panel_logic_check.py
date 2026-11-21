@@ -1094,8 +1094,22 @@ def main(argv):
                 "status": "ok",
                 "paths": [{
                     "work_item": {"id": "L-0030", "title": "施工路径上屏",
-                                  "status": "doing", "occupancy": "known"},
+                                  "status": "doing", "occupancy": "known",
+                                  "closure_package": {
+                                      "label": "施工包未规划",
+                                      "status": "planning_incomplete",
+                                      "usage_status": "pending",
+                                      "closure_debt": False,
+                                  }},
                 }],
+            },
+            "prd_revision": {
+                "status": "attention", "count": 1, "attention_count": 1,
+                "reason": "仍有 PRD 修订候选未收敛，不能按旧 PRD 继续施工",
+                "items": [{"revision_id": "PR-0001",
+                           "text": "PM 管家必须持续更新 PRD",
+                           "decision": "ask_user", "status": "ask_user",
+                           "question": "这条职责是否要写进验收标准？"}],
             },
         }
         # 授权账本是顶层状态，不属于 PM 简报子对象；面板按这个契约读取。
@@ -1123,6 +1137,10 @@ def main(argv):
                      "施工路径", "L-0030", "施工路径上屏")
         fails += has("PM 简报上屏：研究决策状态", pm_out["pmBriefingBox"],
                      "PM 判断", "R-9001", "需要你确认")
+        fails += has("PM 简报上屏：PRD 持续迭代状态", pm_out["pmBriefingBox"],
+                     "PRD 迭代", "PR-0001", "等你确认")
+        fails += has("PM 简报上屏：闭环施工包状态", pm_out["pmBriefingBox"],
+                     "施工包未规划", "L-0030")
         authorize_calls = pm_out.get("followupAuthorizeCalls") or []
         if len(authorize_calls) != 1 or authorize_calls[0].get("confirm") is not True \
            or authorize_calls[0].get("ticket_id") != "L-0021" \

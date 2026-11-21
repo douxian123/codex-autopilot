@@ -23,6 +23,9 @@ STAGE_IDS = (
 )
 VALID_STATUS = {"pending", "in_progress", "done", "blocked"}
 REQUIRED = ("id", "title", "depends_on", "status", "exit", "gate", "evidence", "user_entry")
+COMPLETION_LAYERS = ("implemented", "machine_verified", "real_entry_verified",
+                     "closed", "blocked")
+FORBIDDEN_RELEASE_CLAIMS = ("5/5", "可以对外", "公开发布就绪")
 
 
 def load(path=None):
@@ -67,6 +70,25 @@ def validate(data):
     estimates = data.get("progress_estimates")
     if not isinstance(estimates, dict) or not estimates.get("口径"):
         errors.append("进度估计必须写明口径，不能把估算当自动计量")
+
+    completion = data.get("completion_layers")
+    if not isinstance(completion, dict):
+        errors.append("必须写明 completion_layers，区分实现、机器验证、真实入口、收口和阻塞")
+    else:
+        for layer in COMPLETION_LAYERS:
+            if layer not in completion:
+                errors.append(f"completion_layers 缺 {layer}")
+
+    serialized = json.dumps(data, ensure_ascii=False)
+    for phrase in FORBIDDEN_RELEASE_CLAIMS:
+        if phrase in serialized:
+            errors.append(f"施工计划不能虚报发布状态：{phrase}")
+
+    by_id = {s.get("id"): s for s in stages if isinstance(s, dict)}
+    for sid in ("release_foundation", "acceptance_loop", "e2e_closure"):
+        stage = by_id.get(sid)
+        if stage and stage.get("status") == "done":
+            errors.append(f"{sid} 不能标 done：发布一致性与全量验收仍未现场收敛")
     return errors
 
 

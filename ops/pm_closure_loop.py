@@ -17,8 +17,12 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import closure_package  # noqa: E402
 
 DEFAULT_STALE_MINUTES = 30
 ACTIVE_STATUSES = ("open", "doing", "todo", "wip", "blocked")
@@ -184,6 +188,56 @@ def _close_path(item):
             "evidence": "", "note": "完成并跑真实验证后，由系统关闭；不替人写结论。"}
 
 
+def _closure_package(item):
+    """把 PRD 5.0 施工包投影成用户能看懂的状态，不替施工包补证据。"""
+    package = item.get("closure_package")
+    if not isinstance(package, dict):
+        return {
+            "status": "legacy",
+            "label": "历史债务：无闭环施工包",
+            "missing": [],
+            "reason": "历史条目没有闭环施工包，不计入 PRD 5.0 闭环口径。",
+            "usage_status": "unknown",
+            "closure_debt": True,
+        }
+
+    validation = closure_package.validate(package)
+    current = str(package.get("status") or validation["status"])
+    closure = package.get("closure") if isinstance(package.get("closure"), dict) else {}
+    closure_status = str(closure.get("status") or "")
+    usage = package.get("real_usage_acceptance")
+    usage_rows = usage if isinstance(usage, list) else ([usage] if isinstance(usage, dict) else [])
+    pending_usage = any(
+        isinstance(row, dict)
+        and row.get("status") in (None, "pending", "needs_human", "blocked")
+        for row in usage_rows
+    )
+    if not usage_rows:
+        usage_status = "unknown"
+    elif pending_usage:
+        usage_status = "pending"
+    else:
+        usage_status = "verified"
+
+    if closure_status == "closed" and closure_package.is_closed(package):
+        label = "已闭环"
+    elif current == closure_package.STATUS_READY:
+        label = "已确认可开工"
+    elif current == closure_package.STATUS_CLOSED:
+        label = "已关闭但证据未收敛"
+    else:
+        label = "施工包未规划"
+
+    return {
+        "status": current,
+        "label": label,
+        "missing": validation.get("missing") or [],
+        "reason": closure.get("reason") or validation.get("reason") or "",
+        "usage_status": usage_status,
+        "closure_debt": bool(item.get("closure_debt")),
+    }
+
+
 def compute(repo, runtime=None, now=None, stale_minutes=DEFAULT_STALE_MINUTES):
     """把入口原话与现有台账投影成施工路径。纯函数，不写文件。"""
     root = Path(repo).expanduser()
@@ -244,6 +298,7 @@ def compute(repo, runtime=None, now=None, stale_minutes=DEFAULT_STALE_MINUTES):
             "lane": item.get("lane") or "未归属",
             "status": item.get("status") or "",
             "files": files[:8], "occupancy": "known" if files else "unknown",
+            "closure_package": _closure_package(item),
         }
         paths.append({
             "source_text": raw or "原话取不到",
@@ -273,7 +328,10 @@ def human(summary):
     lines = []
     for row in rows[:5]:
         work = row["work_item"]
-        lines.append("%s [%s] %s" % (work["id"], work["status"] or "unknown", work["title"]))
+        pkg = work.get("closure_package") or {}
+        lines.append("%s [%s] %s · %s" % (
+            work["id"], work["status"] or "unknown", work["title"],
+            pkg.get("label") or "施工包状态取不到"))
     return "；".join(lines)
 
 

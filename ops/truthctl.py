@@ -30,6 +30,9 @@ truthctl 管「这个项目现在到底是什么状态」。
   truthctl retire <decision|judgment|constraint|progress> <id>  追加式停用一条真相
   truthctl close <L-id> "<结论>"  标 done（必须带证据：KG_TRUTH_EVIDENCE 或 KG_TRUTH_COMMIT）
   truthctl reopen <L-id> "<原因>"  把已关闭的问题重新打开
+  truthctl closure-package show <L-id>  查看闭环施工包与缺口
+  truthctl closure-package fill <L-id> --json '{"..."}'  补齐施工包字段（仍停在规划未完成）
+  truthctl closure-package confirm <L-id> --note "..." --evidence "..."  确认完整施工包进入 ready
   truthctl accept "<标题>" [--human --steps "..."]  登记验收项，分清机器自证/人工验收
   truthctl accept --id <A-id> --status verified [--note "..."]  收敛一条验收项（人工拍板/机器复核）
   truthctl goal <summary|list|create|update|link|close>  跨项目长期目标（显式账本）
@@ -82,6 +85,7 @@ import constraints as constraints_mod  # noqa: E402
 import central_config  # noqa: E402
 import relationship_ledger  # noqa: E402
 import acceptance_criteria_compiler  # noqa: E402
+import closure_package  # noqa: E402
 import pm_decision  # noqa: E402
 
 # 自包含安装下，绑定的项目写在插件 .mcp.json 里；显式 KG_REPO 优先。
@@ -644,18 +648,21 @@ def infer_lane(kind: str, text: str, files) -> str:
 
 
 def _append_ledger(kind, title, detail, files, source, lane,
-                   acceptance_plan=None, pm_research=None) -> dict:
+                   acceptance_plan=None, closure_package_draft=None,
+                   pm_research=None) -> dict:
     fields = {'kind': kind, 'title': title, 'detail': detail,
               'status': 'open', 'lane': lane, 'files': files or [], 'source': source}
     if acceptance_plan is not None:
         fields['acceptance_plan'] = acceptance_plan
+    if closure_package_draft is not None:
+        fields['closure_package'] = closure_package_draft
     if pm_research is not None:
         fields['pm_research'] = pm_research
     return _append_new('ledger', **fields)
 
 
 def _append_ledger_with_pm(kind, title, detail, files, source, lane,
-                           acceptance_plan=None) -> dict:
+                           acceptance_plan=None, closure_package_draft=None) -> dict:
     """一次写入 ledger 与 PM 绑定，保持稳定 intent_id 且不制造重复工作项。"""
     with _truth_lock():
         rec = {'id': _next_id('ledger'), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'),
@@ -663,6 +670,8 @@ def _append_ledger_with_pm(kind, title, detail, files, source, lane,
                'status': 'open', 'lane': lane, 'files': files or [], 'source': source}
         if acceptance_plan is not None:
             rec['acceptance_plan'] = acceptance_plan
+        if closure_package_draft is not None:
+            rec['closure_package'] = closure_package_draft
         rec.update(_pm_fields(_pm_research_for_ledger(rec, source=source)))
         _append(rec)
         return rec
@@ -715,6 +724,20 @@ def _compile_acceptance_plan(text, kind, files, lane) -> dict:
             'needs_human': False,
             'source': 'acceptance-criteria-compiler',
         }
+
+
+def _compile_closure_package(text, kind, files, lane, acceptance_plan=None) -> dict:
+    """把一条新路由项编成 PRD 5.0 的闭环施工包草案。
+
+    路由时大多数字段只能从原话和文件线索里推到草案，不能伪装成已经完整。
+    这里统一委托给 closure_package.for_ledger，避免路由草案和人工收敛草案
+    两套逻辑漂移；草案永远是 planning_incomplete，不能直接进入 execute。
+    """
+    return closure_package.for_ledger(
+        {"title": text, "detail": text, "files": files or [], "lane": lane,
+         "kind": kind, "acceptance_plan": acceptance_plan},
+        text=text, kind=kind, lane=lane, files=files,
+        acceptance_plan=acceptance_plan)
 
 
 def _lane_names() -> set:
@@ -806,6 +829,9 @@ def cmd_route(args):
                      'files': it.get('files') or [], 'cand': cand[:2],
                      'acceptance_plan': _compile_acceptance_plan(
                          it.get('text', ''), kind, it.get('files') or [], lane)})
+        plan[-1]['closure_package'] = _compile_closure_package(
+            it.get('text', ''), kind, it.get('files') or [], lane,
+            acceptance_plan=plan[-1]['acceptance_plan'])
     # text[:120] -> 已有台账 id。命中即「这条其实已经进过台账」，不再新建，但必须把它
     # 归并到那条台账并把 inbox 标 routed —— 否则重复输入会永远停在「待路由」，
     # 每轮 tick 都重复报同一批待办，进度永远清不干净。
@@ -827,6 +853,9 @@ def cmd_route(args):
         label = acceptance_criteria_compiler.summary_label(p['acceptance_plan'])
         if label:
             print(f"       {label}")
+        pkg = p.get('closure_package') or {}
+        if pkg.get('status') == closure_package.STATUS_PLANNING_INCOMPLETE:
+            print("       闭环施工包：规划未完成，补齐前不能进入 execute")
     for p in dups:
         print(f" #{p['n']:03d} [{p['kind']:6s}] -> 归并 {seen[p['text'][:120]]}  {p['text'][:70]}")
     if not go:
@@ -851,6 +880,8 @@ def cmd_route(args):
                     target['evidence'] = ev
                 if not target.get('acceptance_plan'):
                     target['acceptance_plan'] = p['acceptance_plan']
+                if not target.get('closure_package'):
+                    target['closure_package'] = p['closure_package']
                 path = TRUTH / FILES['ledger']
                 rows = _read(path)
                 for i, rec in enumerate(rows):
@@ -862,7 +893,8 @@ def cmd_route(args):
         else:
             rec = _append_ledger_with_pm(
                 p['kind'], p['text'][:80].replace('\n', ' '), p['text'], p['files'],
-                f"inbox#{p['n']}", p['lane'], acceptance_plan=p['acceptance_plan'])
+                f"inbox#{p['n']}", p['lane'], acceptance_plan=p['acceptance_plan'],
+                closure_package_draft=p['closure_package'])
             it['lane'], it['ledger_id'], it['routed'] = rec['lane'], rec['id'], True
             made.append(rec['id'])
     merged = 0
@@ -881,6 +913,8 @@ def cmd_route(args):
                     rec['evidence'] = ev
                 if not rec.get('acceptance_plan'):
                     rec['acceptance_plan'] = p['acceptance_plan']
+                if not rec.get('closure_package'):
+                    rec['closure_package'] = p['closure_package']
                 rows[j] = rec
                 break
         with path.open('w') as fh:
@@ -1158,7 +1192,7 @@ def _coerce_evidence(evidence):
     return str(evidence).strip()
 
 
-def _set_ledger_status(rid, status, note, evidence='', commit=''):
+def _set_ledger_status(rid, status, note, evidence='', commit='', extra_fields=None):
     # JSONL 只追加：同 id 的新记录覆盖旧记录，得到当前状态
     with _truth_lock():
         rec = _latest_ledger(_read(TRUTH / FILES['ledger'])).get(rid)
@@ -1192,6 +1226,21 @@ def _set_ledger_status(rid, status, note, evidence='', commit=''):
             # 重新打开或停在 awaiting_human 时不能留着上一次的关闭时间。
             # 留着就等于对外宣称「这条已经完成过」，面板会把它当已完成渲染。
             merged.pop('closed', None)
+        if extra_fields:
+            merged.update(extra_fields)
+        _append(merged)
+        return merged
+
+
+def _update_ledger_record(rid, fields):
+    """只更新指定字段，不改台账状态；用于施工包确认这种中间态。"""
+    with _truth_lock():
+        rec = _latest_ledger(_read(TRUTH / FILES['ledger'])).get(rid)
+        if rec is None:
+            sys.exit('问题台账里没有 %s（先 truthctl ls ledger 看现有条目）' % rid)
+        merged = dict(rec)
+        merged.update(fields)
+        merged['ts'] = time.strftime('%Y-%m-%d %H:%M:%S')
         _append(merged)
         return merged
 
@@ -1255,6 +1304,10 @@ def cmd_close(args):
     用法：
       truthctl close <L-id> "<结论/证据>"              机器可证的收口；人判类停在 awaiting_human
       truthctl close <L-id> "<结论>" --confirm-human  人已看过并认可，直接 done
+
+    新路由项带闭环施工包时，施工包必须先由 PM 补齐并确认到 ready；关闭时还要给
+    真实入口证据（KG_TRUTH_USAGE_EVIDENCE）。历史无施工包条目仍可关闭，但会被
+    明确标成 closure_debt，不冒充新 PRD 闭环。
     """
     if not args:
         sys.exit('用法: truthctl close <L-id> "<结论/证据>"'
@@ -1269,6 +1322,9 @@ def cmd_close(args):
         return _park_for_human(rid, prev, note)
     raw_commit = os.environ.get('KG_TRUTH_COMMIT') or ''
     evidence = os.environ.get('KG_TRUTH_EVIDENCE', '')
+    if raw_commit.strip() and not evidence:
+        evidence = ('commit %s（已合入 main，可用 git show %s 复核）'
+                    % (raw_commit.strip(), raw_commit.strip()))
     if confirmed and not evidence:
         # 人的显式确认也是证据；否则 --confirm-human 会被 fail-closed 卡死。
         evidence = '用户确认：%s（--confirm-human）' % (note or '看过，可以')
@@ -1277,7 +1333,33 @@ def cmd_close(args):
             '拒绝把 %s 标成 done：没有证据。\n'
             '  KG_TRUTH_EVIDENCE="<命令/退出码/复现结果>"，或\n'
             '  KG_TRUTH_COMMIT=<已合入 main 的 commit sha>。' % rid)
-    rec = _set_ledger_status(rid, 'done', note, evidence, raw_commit)
+
+    extra = {}
+    package = prev.get('closure_package')
+    if isinstance(package, dict):
+        try:
+            closed_pkg = closure_package.close(
+                package, note=note, evidence=evidence,
+                human_confirmed=confirmed,
+                usage_evidence=os.environ.get('KG_TRUTH_USAGE_EVIDENCE', ''))
+        except ValueError as exc:
+            sys.exit('拒绝把 %s 标成 done：%s' % (rid, exc))
+        closure_state = str((closed_pkg.get('closure') or {}).get('status') or '')
+        if closure_state != 'closed':
+            sys.exit('拒绝把 %s 标成 done：%s' % (
+                rid,
+                (closed_pkg.get('closure') or {}).get('reason')
+                or closed_pkg.get('reason')
+                or '闭环施工包未完成'))
+        extra['closure_package'] = closed_pkg
+        extra['closure_debt'] = False
+    else:
+        extra['closure_debt'] = True
+        extra['closure_debt_reason'] = (
+            '历史条目没有闭环施工包；按旧证据关门，不计入 PRD 5.0 闭环口径。')
+
+    rec = _set_ledger_status(rid, 'done', note, evidence, raw_commit,
+                             extra_fields=extra)
     commit = raw_commit.strip() or None
     prog = _append_new('progress', title='关闭 %s：%s' % (rid, rec.get('title', '')),
                        summary=note, commit=commit, landed=bool(commit),
@@ -1285,6 +1367,76 @@ def cmd_close(args):
                        source=os.environ.get('KG_TRUTH_SOURCE', 'agent'),
                        status='done')
     print('已关闭 [%s] %s（同时记入进展 %s）' % (rid, rec.get('title', ''), prog['id']))
+
+
+def _ledger_for_closure(rid):
+    rec = _latest_ledger(_read(TRUTH / FILES['ledger'])).get(rid)
+    if rec is None:
+        sys.exit('问题台账里没有 %s（先 truthctl ls ledger 看现有条目）' % rid)
+    return rec
+
+
+def cmd_closure_package(args):
+    """查看/补齐/确认一条工作项的闭环施工包。"""
+    if not args or args[0] not in ('show', 'fill', 'confirm'):
+        sys.exit('用法: truthctl closure-package <show|fill|confirm> <L-id> ...')
+    sub, rid = args[0], args[1] if len(args) > 1 else ''
+    if not rid:
+        sys.exit('closure-package %s 必须带 ledger id' % sub)
+    rec = _ledger_for_closure(rid)
+    package = rec.get('closure_package')
+    if not isinstance(package, dict):
+        sys.exit('%s 没有闭环施工包；新路由项会自动生成，历史项需重新规划' % rid)
+
+    if sub == 'show':
+        verdict = closure_package.validate(package)
+        print(json.dumps({
+            'id': rid, 'closure_package': package, 'validation': verdict,
+            'gate': closure_package.execution_gate(package),
+        }, ensure_ascii=False, indent=2))
+        return
+
+    if sub == 'fill':
+        raw = os.environ.get('KG_TRUTH_PACKAGE_JSON') or ''
+        if len(args) > 2 and args[2] == '--json':
+            raw = args[3] if len(args) > 3 else ''
+        elif not raw and len(args) > 2:
+            raw = args[2]
+        if not raw:
+            sys.exit('用法: truthctl closure-package fill <L-id> \'<json>\''
+                     '（也可设 KG_TRUTH_PACKAGE_JSON）')
+        try:
+            updates = json.loads(raw)
+        except ValueError as exc:
+            sys.exit('闭环施工包补丁不是合法 JSON：%s' % exc)
+        try:
+            filled = closure_package.fill(package, updates)
+        except ValueError as exc:
+            sys.exit(str(exc))
+        _update_ledger_record(rid, {'closure_package': filled})
+        print('已补齐 [%s] 闭环施工包：%s' % (rid, filled['reason']))
+        return
+
+    rest = args[2:]
+    note, evidence = '', ''
+    i = 0
+    while i < len(rest):
+        if rest[i] == '--note' and i + 1 < len(rest):
+            note = rest[i + 1]; i += 2
+        elif rest[i] == '--evidence' and i + 1 < len(rest):
+            evidence = rest[i + 1]; i += 2
+        else:
+            i += 1
+    try:
+        confirmed = closure_package.confirm(package, note=note, evidence=evidence)
+    except ValueError as exc:
+        sys.exit(str(exc))
+    if (confirmed.get('confirmation') or {}).get('status') != 'confirmed':
+        sys.exit('拒绝确认 [%s] 闭环施工包：%s' % (
+            rid, (confirmed.get('confirmation') or {}).get('reason')
+            or confirmed.get('reason')))
+    _update_ledger_record(rid, {'closure_package': confirmed})
+    print('已确认 [%s] 闭环施工包：可以进入 execute' % rid)
 
 
 def _needs_human_verdict(rec: dict) -> bool:
@@ -1844,7 +1996,8 @@ CMDS = {'add': cmd_add, 'ls': cmd_ls, 'snapshot': cmd_snapshot, 'promote': cmd_p
         'product': cmd_product, 'distill': cmd_distill,
         'constraints': cmd_constraints, 'retire': cmd_retire,
         'close': cmd_close, 'open': cmd_open, 'synthesize': cmd_synthesize,
-        'accept': cmd_accept, 'goal': cmd_goal}
+        'accept': cmd_accept, 'goal': cmd_goal,
+        'closure-package': cmd_closure_package}
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
@@ -1855,5 +2008,6 @@ if __name__ == '__main__':
         print(__doc__)
         print('命令：' + ' | '.join(['snapshot', 'ls', 'add', 'promote', 'route', 'lanes',
                                      'next', 'product', 'distill', 'constraints', 'retire',
-                                     'close', 'open', 'synthesize', 'accept', 'goal']))
+                                     'close', 'open', 'synthesize', 'accept', 'goal',
+                                     'closure-package']))
         sys.exit(1)

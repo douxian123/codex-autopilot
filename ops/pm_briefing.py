@@ -288,13 +288,21 @@ def compute(repo, runtime=None, now=None, stale_minutes=DEFAULT_STALE_MINUTES):
     except Exception as exc:
         research = {"status": "unknown", "count": 0, "items": [],
                     "reason": "PM 研究状态取不到：%s" % exc}
+    try:
+        import prd_evolution
+        prd_revision = prd_evolution.summary(repo)
+    except Exception as exc:
+        prd_revision = {"status": "unknown", "count": None,
+                        "attention_count": None, "items": [],
+                        "reason": "PRD 修订状态取不到：%s" % exc}
     statuses = [expectations["status"], acceptance["status"],
                 overlap["status"], follow_up["status"], closure["status"],
-                research["status"]]
+                research["status"], prd_revision["status"]]
     if "unknown" in statuses:
         overall = "unknown"
     elif (expectations["pending_count"] or acceptance["pending_count"]
-          or follow_up["items"] or research.get("attention_count")):
+          or follow_up["items"] or research.get("attention_count")
+          or prd_revision.get("attention_count")):
         overall = "attention"
     else:
         overall = "ok"
@@ -306,7 +314,8 @@ def compute(repo, runtime=None, now=None, stale_minutes=DEFAULT_STALE_MINUTES):
         "follow_up_candidates": follow_up,
         "closure": closure,
         "research": research,
-        "source": "只读聚合：constraints / candidates / acceptance_criteria / research / mainline / ledger / native_routes / 运行面",
+        "prd_revision": prd_revision,
+        "source": "只读聚合：constraints / candidates / acceptance_criteria / research / prd_revisions / mainline / ledger / native_routes / 运行面",
     }
 
 
