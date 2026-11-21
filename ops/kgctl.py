@@ -37,15 +37,19 @@ kgctl —— 自动挡的唯一执行入口（stdlib only）
   * `matrix/queue/status/sync/clash/inbox 读` 全部只读。
 """
 
+from __future__ import annotations
+
 import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import subprocess
 import sys
 import time
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -61,21 +65,57 @@ from pathlib import Path
 import proc as _proc  # noqa: E402
 proc_run = _proc.run
 
+
+class KgctlError(Exception):
+    """库函数里的「用法/前置条件不满足」错误，由 CLI 边界翻译成退出码。
+
+    这些错误以前写成 `sys.exit(msg)`：`sys.exit` 是进程级终止，不是普通报错，
+    任何同进程调用者（selftest、import kgctl 的脚本、守护收尾）都会被它连同自己的
+    断言一起截断——2026-11-09 实测 `ops/selftest.py` 就因此只打印 21 条 ok 便静默
+    exit 1、stderr 全空，而 selftest 正是 build 与 verify[0] 门禁，land 链路整条被堵。
+    库位置只抛这个异常；`__main__` 捕获后按「stderr 打印 + 非零退出」翻译，
+    CLI 对外行为与旧的 sys.exit(msg) 完全一致。
+    """
+
+    def __init__(self, message: str, code: int = 1):
+        super().__init__(message)
+        self.code = code
+
+
 MAIN = os.environ.get("KG_MAIN", "main")
 
 # 编排状态（inbox / 台账 / 泳道 / 看板）只有一处权威目录，见 ops/state_root.py。
 # 旧实现取「git 主工作树」当账本家，而 truthctl 取「调用所在 worktree」，于是
 # 同一个项目能同时存在两份互不相认的账本。现在两个脚本共用同一个解析器。
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from plugin_binding import apply_plugin_env  # noqa: E402
+import gate_owner  # noqa: E402
+from plugin_binding import apply_plugin_env, binding_health, binding_line  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
 from state_root import main_worktree, looks_like_state_root, resolve_state_root  # noqa: E402
+import constraints as constraints_mod  # noqa: E402
 import central_config  # noqa: E402
+import project_router  # noqa: E402
+from daemon_liveness import (daemon_liveness, liveness_line,  # noqa: E402
+                             liveness_problem)
+
 
 # 自包含安装下，绑定的项目写在插件 .mcp.json 里；显式 KG_REPO 优先。
 apply_plugin_env()
 REPO = resolve_state_root()
+# status / doctor 是诊断入口：即使状态根坏了，也必须能说清坏在哪。其它命令继续
+# fail-closed，绝不把写操作落到一个未经校验的目录。
+_DIAGNOSTIC_CMDS = {"status", "doctor"}
 if not looks_like_state_root(REPO):
+    _requested = sys.argv[1] if len(sys.argv) > 1 else ""
+    if _requested in _DIAGNOSTIC_CMDS:
+        _h = binding_health()
+        print("=== 自动挡诊断 ===")
+        print(binding_line(_h))
+        print(f"状态根         {REPO}")
+        print("结论           自动挡当前不可用：状态根缺少 ops/tasks 或 ops/truth。")
+        print("下一步         请用 ./install.sh <真实 git 仓库根目录> 重新绑定；"
+              "不要把它指向安装缓存或空壳目录。")
+        sys.exit(1)
     sys.exit(f"找不到编排状态根（{REPO}）；请设 KG_REPO 指到带 ops/tasks + ops/truth 的目录"
              "（自包含插件用 ./install.sh <项目> 初始化，不再要求项目里放运行时代码）")
 # 项目相关的旋钮集中在 ops/central.config.json（env 可覆盖），见 ops/central_config.py。
@@ -105,6 +145,10 @@ def _git_common_dir() -> Path:
 # land 锁放进共享的 .git（所有 worktree 共用），而不是任何检出目录里：放在检出里
 # 会被 `git status` 当成脏改动，而 land 要求主干工作树干净，于是命令把自己锁死。
 LOCK = _git_common_dir() / "kgctl-land.lock"
+# 重验证锁也必须跨 worktree 共用。land 锁只防落盘，不能阻止多个 land 在各自
+# worktree 同时跑 tsc/Playwright/build；周末实测多个门禁并发把 Swap 和磁盘一起
+# 推满。锁只包住实际命令，不包住队列推进或真相推送。
+VERIFY_LOCK = _git_common_dir() / "kgctl-verify.lock"
 
 
 def _lock_blocked() -> bool:
@@ -164,6 +208,115 @@ def _prune_stale_locks(keep: int = 5) -> None:
             old.unlink()
         except OSError:
             pass
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, default))
+    except (TypeError, ValueError):
+        return float(default)
+
+
+# git 自己的 index.lock 不带 pid 字段，`_lock_blocked()` 那套「读 pid 探活」用不上。
+# 2026-11-17 实测：共享检出里一次被中断的 git 留下 0 字节 `index.lock`，此后每一拍
+# tick 的 `[7/8] git add` 都以 "Another git process seems to be running" 失败；而
+# `sync_trunk_truth` 当时**不检查 add 的返回码**，于是真相层每一拍都静默空转——
+# 新写入的 `constraints.jsonl` 连写几天都进不了 git，守护与面板却全显示「正常」。
+# 判据改成：先探活（lsof）确认没人持有、再要求足够老，才把锁隔离留证；否则 loud-fail。
+STALE_INDEX_LOCK_SECONDS = _env_float("KG_STALE_INDEX_LOCK_SECONDS", 120.0)
+
+
+def index_lock_path(wt: Path) -> Path:
+    """这个检出自己的 index.lock 路径（worktree 各有各的 index，不能写死 .git/index.lock）。"""
+    out = proc_run(["git", "-C", str(wt), "rev-parse", "--git-path", "index.lock"],
+                   capture_output=True, text=True)
+    text = (out.stdout or "").strip()
+    if out.returncode == 0 and text:
+        path = Path(text)
+        return path if path.is_absolute() else (Path(wt) / path).resolve()
+    return Path(wt) / ".git" / "index.lock"
+
+
+def _index_lock_holders(path: Path):
+    """持有 index.lock 的 pid 集合；返回 None 表示「探不清」（工具缺失 / 报错）。
+
+    lsof 无匹配进程时的语义是 rc=1 + 空 stdout —— 那是「没人持有」，不是探不清。
+    区分这两者很要紧：把「探不清」当成「没人持有」就会删掉别人正在写的锁。
+    """
+    if not shutil.which("lsof"):
+        return None
+    try:
+        out = proc_run(["lsof", "-t", str(path)], capture_output=True, text=True)
+    except Exception:
+        return None
+    if (out.stdout or "").strip() == "":
+        # 空 stdout：要么没人持有（rc=1），要么 lsof 自己坏了（rc>1）。后者按探不清处理。
+        return set() if out.returncode in (0, 1) else None
+    pids = set()
+    for token in (out.stdout or "").split():
+        try:
+            pids.add(int(token))
+        except ValueError:
+            continue
+    return pids
+
+
+def index_lock_state(wt: Path) -> dict:
+    """只读地判定这个检出的 index.lock 会不会让下一次 git add 失败。
+
+    返回 {present, path, age, holders, blocked, stale, reason}。`blocked=True` 表示
+    调用方现在同步真相层一定会失败；`stale=True` 表示锁无持有者且已够老，可以隔离。
+    本函数**不碰任何文件**。
+    """
+    lock = index_lock_path(wt)
+    if not lock.exists():
+        return {"present": False, "path": lock, "blocked": False, "stale": False, "reason": ""}
+    try:
+        st = lock.stat()
+    except OSError as exc:
+        return {"present": True, "path": lock, "blocked": True, "stale": False, "holders": None,
+                "reason": f"index.lock 存在但读不到属性（{exc}）"}
+    holders = _index_lock_holders(lock)
+    age = time.time() - st.st_mtime
+    info = {"present": True, "path": lock, "age": round(age, 1),
+            "size": st.st_size, "holders": holders, "stale": False}
+    if holders is None:
+        info.update({"blocked": True, "reason":
+                     f"index.lock 存在（{lock}）且探不清持有者（lsof 不可用）；"
+                     "先人工确认没有 git 进程在跑，再删掉它，别让真相同步继续空转"})
+        return info
+    if holders:
+        info.update({"blocked": True, "reason":
+                     f"index.lock 正被 git 进程持有（pid "
+                     f"{', '.join(map(str, sorted(holders)))}，{lock}）：等它结束"})
+        return info
+    if age < STALE_INDEX_LOCK_SECONDS:
+        info.update({"blocked": True, "reason":
+                     f"index.lock 存在且 {age:.0f}s 前才动过（{lock}）："
+                     "可能有人正在写，本轮不同步真相层"})
+        return info
+    info.update({"blocked": False, "stale": True, "reason":
+                 f"index.lock 无持有者且已 {age:.0f}s 未动（{lock}）：陈旧，可隔离"})
+    return info
+
+
+def clear_index_lock_if_stale(wt: Path) -> tuple:
+    """(ok, reason)：陈旧 index.lock 就地隔离留证；不清楚时 loud-fail，绝不乱删。"""
+    state = index_lock_state(wt)
+    if not state.get("present"):
+        return True, ""
+    if state.get("blocked") or not state.get("stale"):
+        # 有真实持有者 / 刚动过 / 探不清 / 读不到属性：一律 loud-fail，不动这把锁。
+        return False, state["reason"]
+    lock = state["path"]
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    stale = lock.with_name(f"{lock.name}.stale-{stamp}")
+    try:
+        lock.replace(stale)
+    except OSError as exc:
+        return False, f"隔离陈旧 index.lock 失败（{exc}）：{lock}"
+    print(f"  [index.lock] 无持有者且已 {state.get('age')}s 未动，隔离 -> {stale}")
+    return True, f"已隔离陈旧 index.lock -> {stale.name}"
 
 
 def _acquire_lock(reason: str) -> bool:
@@ -816,7 +969,10 @@ def cmd_supersede(args):
         _align_main()
         wt = _trunk_worktree()
         reset_trunk_head(wt)
-        dirty = [line for line in trunk_status(wt) if not is_truth_path(line)]
+        head_regenerable = _regenerable_head_paths(wt)
+        dirty = [line for line in trunk_status(wt)
+                 if not is_truth_path(line)
+                 and not _is_zero_loss_noise(line, head_regenerable)]
         if dirty:
             print(f"× 主干工作树有非真相层改动，拒绝 supersede：{wt}")
             print("\n".join(dirty[:20])[:800])
@@ -1050,7 +1206,14 @@ def load_lanes():
 
 
 def cmd_inbox(args):
-    """零散需求不需要用户分类：一律追加进同一账本，由自动挡负责路由。"""
+    """零散需求不需要用户分类：追加进账本，由自动挡负责路由。
+
+    但「追加进哪个账本」必须先判归属。插件安装时 `.mcp.json` 里写死了一个
+    `KG_REPO`，于是不管用户在哪个窗口、说的是哪个项目，记录都会落进那一个账本 ——
+    2026-11-16 用户原话：「为什么我在别的窗口说别的东西都会落到另一个账本里…这不
+    对呀」。修法是：投稿时按 cwd / 文件路径 / 文本线索现算归属（见
+    ops/project_router.py）；**判不清就进全局待路由箱，绝不猜**。
+    """
     OPS.mkdir(parents=True, exist_ok=True)
     if not args:
         lines = INBOX.read_text().splitlines() if INBOX.exists() else []
@@ -1065,21 +1228,478 @@ def cmd_inbox(args):
             shown += 1
         if shown == 0:
             print("inbox 为空（没有待路由项）。新需求直接：kgctl inbox \"…\"")
+        _print_routing_backlog()
         return
     if args[0] in ('-h', '--help'):
         print('用法: kgctl inbox "用户原话"')
         return
     text = " ".join(args)
+    files = [f for f in os.environ.get("KG_INBOX_FILES", "").split(":") if f]
     rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "text": text,
            "source": os.environ.get("KG_INBOX_SOURCE", "user"),
-           "files": [f for f in os.environ.get("KG_INBOX_FILES", "").split(":") if f],
+           "files": files,
            "kind": os.environ.get("KG_INBOX_KIND", "unknown"),  # visual|ux|bug|arch|unknown
            "routed": False, "lane": None}
-    with INBOX.open("a") as fh:
+    route = _route_record(text, files)
+    if route["decision"] == "ambiguous":
+        _stash_ambiguous(rec, route)
+        return "ambiguous", route, None
+    target_root = Path(route["root"]) if route.get("root") else REPO
+    target_inbox = _inbox_path(target_root)
+    target_inbox.parent.mkdir(parents=True, exist_ok=True)
+    if route.get("project"):
+        rec["project"] = route["project"]
+        rec["project_root"] = str(target_root)
+    with target_inbox.open("a") as fh:
         fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    where = route.get("project") or target_root.name
     print(f"已记入唯一入口 {rec['ts']}：{text[:80]}", flush=True)
-    print("（无需分类；自动挡路由时按 files 落到既有泳道）", flush=True)
+    if target_root.resolve() != REPO.resolve():
+        print(f"（归属判定：这条属于「{where}」，已写进 {target_inbox}）", flush=True)
+        return "routed-elsewhere", route, target_root
+    else:
+        print(f"（归属判定：属于「{where}」；无需分类，自动挡按 files 落到既有泳道）",
+              flush=True)
+    return "ok", route, target_root
 
+
+def cmd_route_preview(args):
+    """只读预演一条输入会落到哪个项目；不写账本，也不补登记注册表。
+
+    这里刻意不复用 `_route_record()` 里的 `ensure_registered` / `_register_from_cwd`：
+    面板输入时每敲一个字都会预演，预览若偷偷写注册表，就把只读动作变成了写操作。
+    真正提交时 `cmd_inbox()` 仍走原来的登记逻辑；预览在内存里补上同一个 cwd 候选，
+    提交前后的判定来源保持一致，但磁盘上的注册表一个字都不动。
+    """
+    if not args:
+        print("用法：kgctl route-preview \"用户原话\"")
+        return 0
+    text = " ".join(args)
+    files = [f for f in os.environ.get("KG_INBOX_FILES", "").split(":") if f]
+    hint = os.environ.get("KG_INBOX_PROJECT") or ""
+    cwd_hint = os.environ.get("KG_INBOX_CWD") or ""
+    registry = project_router.load_registry()
+
+    # 提交路径会把 cwd 指向的状态根自动登记后再匹配。预览不能写注册表，
+    # 但必须在内存里放入同一个候选，否则会显示「判不清」而提交却落进该项目。
+    def add_implicit_row(root, name):
+        nonlocal registry
+        root = root.resolve()
+        row_id = project_router.identity(str(root))
+
+        def same(row):
+            try:
+                same_path = Path(str(row.get("root") or "")).expanduser().resolve() == root
+            except (OSError, ValueError):
+                same_path = False
+            return same_path or (bool(row_id) and row.get("identity") == row_id)
+
+        existing = next((row for row in registry if same(row)), None)
+        if existing:
+            return existing
+        row = {"name": str(name), "root": str(root),
+               "aliases": [], "clues": [], "identity": row_id}
+        registry = list(registry) + [row]
+        return row
+
+    # `_route_record()` 先 ensure_registered(REPO)，再从 cwd 登记。预览按同样顺序
+    # 在内存里补候选：少一个都会让「预演说判不清、提交却落进某个项目」。
+    add_implicit_row(REPO, REPO.name)
+    def implicit_root_from_cwd():
+        if not cwd_hint:
+            return None
+        try:
+            base = Path(cwd_hint).expanduser()
+        except (OSError, ValueError):
+            return None
+        if not base.is_dir():
+            return None
+        for cand in _state_root_candidates(base):
+            try:
+                if looks_like_state_root(cand):
+                    return cand.resolve()
+            except OSError:
+                continue
+        return None
+
+    implicit_root = implicit_root_from_cwd()
+    if implicit_root:
+        add_implicit_row(implicit_root, implicit_root.name)
+
+    if hint:
+        detail = []
+        pinned = project_router.resolve_hint(hint, registry, detail=detail)
+        if pinned:
+            route = {"decision": "resolved", "project": pinned["name"],
+                     "root": pinned["root"], "score": 1000,
+                     "reasons": ["调用方明确指定了「%s」" % hint], "candidates": []}
+        else:
+            route = {"decision": "ambiguous", "project": None, "root": None,
+                     "score": 0, "candidates": [],
+                     "reasons": detail or [
+                         "调用方指定了「%s」，但注册表里没有这个项目" % hint]}
+    else:
+        route = project_router.match(text, files, registry, cwd=cwd_hint or None)
+        if route["decision"] == "none" and (cwd_hint or len(registry) > 1):
+            route = dict(route)
+            route["decision"] = "ambiguous"
+            route["reasons"] = [
+                (f"调用方给的 cwd「{cwd_hint}」不在任何已注册项目里" if cwd_hint
+                 else "有多个已注册项目，但这条猜不出属于哪个")]
+        elif route["decision"] == "none" and REPO:
+            # cmd_inbox 的最终落点是 `route["root"] or REPO`。预览必须说出这个
+            # 兜底，不能一边显示「判不清」，一边提交时悄悄写进绑定项目。
+            route = dict(route)
+            route["decision"] = "none"
+            # 真实提交在 route.root 为空时用 target_root.name；这里必须同一口径。
+            route["project"] = REPO.name
+            route["root"] = str(REPO)
+            route["reasons"] = [
+                "没有其它线索，默认按当前绑定项目落账；如不是，请在原话里点名项目"]
+    reasons = route.get("reasons") or []
+    print(json.dumps({
+        "decision": route.get("decision"),
+        "project": route.get("project"),
+        "root": route.get("root"),
+        "reasons": reasons,
+        "candidates": [r.get("name") for r in (route.get("candidates") or [])
+                       if r.get("name")],
+        "error": route.get("error"),
+    }, ensure_ascii=False))
+    return 0
+
+
+def _inbox_path(root) -> Path:
+    """某个状态根对应的输入账本。路由到别的项目时不能再写死模块级 INBOX。"""
+    return Path(root) / "ops" / "tasks" / "inbox.jsonl"
+
+
+def _route_record(text, files):
+    """算这条投稿属于哪个项目。只做判定 + 登记当前项目，不写任何账本。"""
+    try:
+        project_router.ensure_registered(REPO)
+        hint = os.environ.get("KG_INBOX_PROJECT") or ""
+        cwd_hint = os.environ.get("KG_INBOX_CWD") or ""
+        if cwd_hint:
+            _register_from_cwd(cwd_hint)
+        registry = project_router.load_registry()
+        if hint:
+            why = []
+            pinned = project_router.resolve_hint(hint, registry, detail=why)
+            if pinned:
+                return {"decision": "resolved", "project": pinned["name"],
+                        "root": pinned["root"], "score": 1000,
+                        "reasons": [f"调用方明确指定了「{hint}」"], "candidates": []}
+            # 两种停法都不许猜：① 指定了名字但重名/匹配到多个（why 里有真实原因）；
+            # ② 注册表里根本没有这个名字。绝不回退到安装时写死的那个账本。
+            reason = why[0] if why else f"调用方指定了「{hint}」，但注册表里没有这个项目"
+            return {"decision": "ambiguous", "project": None, "root": None,
+                    "score": 0, "candidates": [],
+                    "reasons": [reason]}
+        got = project_router.match(text, files, registry, cwd=cwd_hint or None)
+        if got["decision"] == "none" and (cwd_hint or registry):
+            # 调用方给了 cwd / 已经有多项目注册表，却仍然谁都不像 —— 这时候回退到
+            # 安装时写死的账本，就是用户抱怨的那个 bug。宁可停，不许猜。
+            if cwd_hint or len(registry) > 1:
+                got = dict(got)
+                got["decision"] = "ambiguous"
+                got["reasons"] = [
+                    (f"调用方给的 cwd「{cwd_hint}」不在任何已注册项目里" if cwd_hint
+                     else "有多个已注册项目，但这条猜不出属于哪个")]
+        return got
+    except Exception as exc:  # 归属判定本身不该让投稿失败
+        return {"decision": "none", "project": None, "root": None, "score": 0,
+                "reasons": [], "candidates": [],
+                "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _register_from_cwd(cwd_hint):
+    """cwd 指向一个还没注册过的项目时，顺手把它登记进来。
+
+    这是「在别的项目窗口里说话」能真正工作的那一环：MCP 进程是全局单例，看不到
+    用户开的是哪个窗口，只能靠调用方把 cwd 传进来。传进来的 cwd 若指向一个合法的
+    状态根（同时有 ops/tasks 和 ops/truth），就说明用户是在那个项目里说话 —— 登记
+    它，下一次投稿它就在候选里。
+
+    只在「确实像状态根」时才登记：普通目录、临时目录、插件安装缓存都不算。
+    """
+    try:
+        base = Path(cwd_hint).expanduser()
+        if not base.is_dir():
+            return None
+    except (OSError, ValueError):
+        return None
+    for cand in _state_root_candidates(base):
+        try:
+            if looks_like_state_root(cand):
+                return project_router.ensure_registered(cand)
+        except OSError:
+            continue
+    return None
+
+
+def _state_root_candidates(base):
+    """从 cwd 往上找可能的项目根：git 顶层、以及同仓库的落盘主干。
+
+    `KG_TRUNK` 只有在和当前 cwd **属于同一个仓库**时才算候选。它是安装时写进
+    `.mcp.json` 的、指向某个特定项目的落盘主干；用户换到另一个项目说话时，这个
+    环境变量依然存在，照单全收就会把无关项目登记进注册表（2026-11-16 冒烟实测：
+    注册表里凭空多出一条 `knowledge-graph-trunk`）。
+    """
+    cands = []
+    out = proc_run(["git", "-C", str(base), "rev-parse", "--show-toplevel"],
+                   capture_output=True, text=True)
+    if out.returncode == 0 and out.stdout.strip():
+        top = Path(out.stdout.strip()).resolve()
+        cands.append(top)
+        top_ident = project_router.identity(top)
+        trunk_env = os.environ.get("KG_TRUNK")
+        if trunk_env:
+            trunk = Path(trunk_env).expanduser()
+            if top_ident and project_router.identity(trunk) == top_ident:
+                cands.append(trunk)
+        cands.append(top.parent / (top.name + "-trunk"))
+    cands.append(base)
+    return cands
+
+
+def cmd_projects(args):
+    """多项目注册表：让「万法归一」的入口真的能认出不止一个项目。"""
+    sub = args[0] if args else "list"
+    if sub in ("-h", "--help"):
+        print("用法：kgctl projects [list | register <名字> <状态根> | scan <目录> | forget <名字>]")
+        return
+    if sub == "list":
+        registry = project_router.load_registry()
+        print(f"注册表 {project_router.registry_path()}")
+        if not registry:
+            print("（空。first run：kgctl projects register <项目名> <该项目的状态根>）")
+        for p in registry:
+            mark = " ← 当前绑定" if Path(p["root"]).resolve() == REPO.resolve() else ""
+            print(f"  {p['name']}{mark}")
+            print(f"    root  {p['root']}")
+            if p.get("clues"):
+                print(f"    线索  {'、'.join(p['clues'])}")
+        backlog = project_router.routing_inbox_path()
+        if backlog.exists():
+            pending = project_router.pending_routing_records(backlog)
+            print(f"  待路由箱 {backlog}（{len(pending)} 条待复核；原始记录 {len(read_jsonl(backlog))} 条）")
+        return
+    if sub == "register":
+        if len(args) < 3:
+            sys.exit('用法：kgctl projects register <项目名> <该项目的状态根>')
+        name, root = args[1], Path(args[2]).expanduser()
+        if not looks_like_state_root(root):
+            sys.exit(f"× {root} 不像状态根（需要同时有 ops/tasks 和 ops/truth）；"
+                     "先在该项目跑 install.sh，别把没落账的地方注册进来")
+        clues = [c for c in (args[3:] or []) if c.strip()]
+        row = project_router.register(name, root, clues=clues)
+        print(f"已注册「{row['name']}」→ {row['root']}")
+        if clues:
+            print(f"  线索 {'、'.join(clues)}")
+        return
+    if sub == "scan":
+        base = Path(args[1]).expanduser() if len(args) > 1 else Path.home() / ".newmax" / "workspace"
+        found = project_router.discover(base)
+        # 按**仓库身份**判断「已注册」，不能按 root 字符串比：discover 归并后给出的
+        # root 是同一仓库里路径最短的那个 worktree，未必等于注册表里存的那一个。
+        registered = project_router.load_registry()
+        known_roots = {p["root"] for p in registered}
+        known_idents = {p.get("identity") for p in registered if p.get("identity")}
+        print(f"扫描 {base}（只读，不自动注册）：")
+        if not found:
+            print("  没找到带 ops/tasks + ops/truth 的项目。")
+        for row in found:
+            known = (row["root"] in known_roots
+                     or (row.get("identity") and row["identity"] in known_idents))
+            mark = "已注册" if known else "未注册"
+            sites = row.get("sites") or [row["root"]]
+            extra = f"（{len(sites)} 个 worktree）" if len(sites) > 1 else ""
+            print(f"  [{mark}] {row['name']}  {row['root']}{extra}")
+        print("  注册：kgctl projects register <名字> <root>")
+        return
+    if sub == "forget":
+        if len(args) < 2:
+            sys.exit('用法：kgctl projects forget <项目名>')
+        target = args[1]
+        registry = project_router.load_registry()
+        kept = [p for p in registry
+                if p["name"] != target and Path(p["root"]).name != target]
+        if len(kept) == len(registry):
+            sys.exit(f"× 注册表里没有「{target}」")
+        project_router.save_registry(kept)
+        print(f"已从注册表移除「{target}」（不动任何项目文件）")
+        return
+    sys.exit(f"× 不认识的子命令 {sub}；可用 list / register / scan / forget")
+
+
+def _stash_ambiguous(rec, route):
+    """判不清归属：进全局待路由箱 + 用人话说明，**不写任何项目账本**。"""
+    names = "、".join(c["name"] for c in route.get("candidates") or []) or "未知"
+    row = dict(rec)
+    row["candidates"] = route.get("candidates") or []
+    row["reasons"] = route.get("reasons") or []
+    path = project_router.stash_ambiguous(row)
+    print(f"× 分不清这条属于哪个项目（候选：{names}）", flush=True)
+    print(f"  已放全局待路由箱，没写进任何项目账本：{path}", flush=True)
+    print("  想直接指派：重发时带上项目名/路径，或设 KG_INBOX_PROJECT=<项目名>。", flush=True)
+
+
+def _print_routing_backlog():
+    """待路由箱里有东西时，列出来 —— 静默堆积等于丢失。"""
+    try:
+        path = project_router.routing_inbox_path()
+        if not path.exists():
+            return
+        pending = project_router.pending_routing_records(path)
+        if pending:
+            print(f"\n全局待路由箱 {len(pending)} 条待复核（未写进任何项目账本）：{path}")
+            for item in pending[-5:]:
+                r = item["record"]
+                print(f"  - [{r.get('ts','')[-11:]}] {item['fingerprint']} "
+                      f"{str(r.get('text',''))[:70]}")
+    except Exception:
+        pass
+
+
+def cmd_route_inbox(args):
+    """复核全局待路由箱：只读列出，或把一条明确指派给某个项目。
+
+    自动路由判不清时进全局箱，绝不猜；但人看过一遍之后，原话里的产品名、日志里的
+    项目路径往往是明确证据。这里给这条证据一个显式出口：默认只读，必须同时给出
+    指纹 + 项目 + `--go` 才写。原始记录不删、不回写，只追加一份复核凭证。
+    """
+    if args and args[0] in ('-h', '--help'):
+        print('用法：kgctl route-inbox '
+              '[--fingerprint <指纹> --project <项目名> [--reason "为什么"]] [--go] [--json]')
+        print('  kgctl route-inbox                  # 只读列出待复核项')
+        print('  kgctl route-inbox --json           # 只读清单，输出机器可解析 JSON')
+        print('  kgctl route-inbox --fingerprint a1b2 --project knowledge-graph '
+              '--reason "原话点名知识图谱" --go')
+        return 0
+    go = '--go' in args
+    json_out = '--json' in args
+    rest = [a for a in args if a not in ('--go', '--json')]
+    fingerprint, project_hint, reason = None, None, ''
+    i = 0
+    while i < len(rest):
+        flag = rest[i]
+        if flag in ('--fingerprint', '--project', '--reason') and i + 1 < len(rest):
+            value = rest[i + 1]
+            if flag == '--fingerprint':
+                fingerprint = value
+            elif flag == '--project':
+                project_hint = value
+            else:
+                reason = value
+            i += 2
+            continue
+        sys.exit(f'× 不认识的参数 {flag}')
+
+    path = project_router.routing_inbox_path()
+    pending = project_router.pending_routing_records(path)
+    if not project_hint and not fingerprint:
+        if not pending:
+            if json_out:
+                print(json.dumps({"status": "ok", "count": 0, "items": [],
+                                  "path": str(path)}, ensure_ascii=False))
+                return 0
+            print('全局待路由箱为空（没有待复核项）。')
+            return 0
+        if json_out:
+            items = []
+            for item in pending:
+                row = item["record"]
+                candidates = [c.get('name') for c in (row.get('candidates') or [])
+                              if isinstance(c, dict) and c.get('name')]
+                items.append({
+                    "index": item["index"],
+                    "fingerprint": item["fingerprint"],
+                    "ts": row.get('ts'),
+                    "text": str(row.get('text') or ''),
+                    "candidates": candidates,
+                })
+            print(json.dumps({"status": "ok", "count": len(items),
+                              "items": items, "path": str(path)},
+                             ensure_ascii=False))
+            return 0
+        print(f'全局待路由箱 {len(pending)} 条待复核：{path}')
+        for item in pending:
+            row = item["record"]
+            text = str(row.get('text') or '')
+            candidates = [c.get('name') for c in (row.get('candidates') or [])
+                          if isinstance(c, dict) and c.get('name')]
+            context = f' 候选：{"、".join(candidates)}' if candidates else ''
+            print(f"  #{item['index']:03d} {item['fingerprint']} "
+                  f"[{row.get('ts','')[-11:]}] {text[:84]}{context}")
+        print('\n指派：kgctl route-inbox --fingerprint <指纹> --project <项目名> '
+              '--reason "证据" --go')
+        return 0
+
+    if not fingerprint or not project_hint:
+        sys.exit('× 指派必须同时给出 --fingerprint 和 --project；'
+                 '先跑 kgctl route-inbox 看指纹')
+    matches = [item for item in pending if item['fingerprint'] == fingerprint]
+    if not matches:
+        sys.exit(f'× 待复核箱里没有指纹 {fingerprint}（可能已指派；'
+                 '先跑 kgctl route-inbox 刷新）')
+    item = matches[0]
+    why = []
+    pinned = project_router.resolve_hint(project_hint, detail=why)
+    if not pinned:
+        sys.exit('× 项目指派有歧义或不存在：' + (why[0] if why else project_hint))
+    target_root = Path(pinned['root'])
+    if not looks_like_state_root(target_root):
+        sys.exit(f'× {target_root} 不像状态根；不写入')
+
+    print(f"待复核 #{item['index']:03d} [{item['record'].get('ts','')}] "
+          f"{str(item['record'].get('text',''))[:100]}")
+    print(f'指派到「{pinned["name"]}」→ {target_root}')
+    print(f'理由：{reason or "人工复核确认归属"}')
+    if not go:
+        print('\n预演：未写任何账本。确认后加 --go。')
+        if json_out:
+            print(json.dumps({"status": "ok", "written": False,
+                              "fingerprint": fingerprint,
+                              "project": pinned["name"],
+                              "reason": reason or '人工复核确认归属'},
+                             ensure_ascii=False))
+        return 0
+
+    source = item['record']
+    target_row = {k: v for k, v in source.items()
+                  if k not in ('status', 'candidates', 'reasons', 'routed')}
+    target_row.update({
+        'project': pinned['name'],
+        'project_root': str(target_root),
+        'routed': False,
+        'lane': None,
+        'routing_review': {
+            'fingerprint': fingerprint,
+            'reason': reason or '人工复核确认归属',
+            'source': str(path),
+        },
+    })
+    target_inbox = _inbox_path(target_root)
+    target_inbox.parent.mkdir(parents=True, exist_ok=True)
+    with target_inbox.open('a', encoding='utf-8') as fh:
+        fh.write(json.dumps(target_row, ensure_ascii=False) + '\n')
+
+    review_path = project_router.record_routing_review(
+        item['index'], source, pinned['name'], target_root,
+        reason or '人工复核确认归属')
+    print(f'已追加到 {target_inbox}')
+    print(f'复核凭证已追加（原记录不回写、不删除）：{review_path}')
+    print('只追加到目标项目唯一入口；归类由目标项目自己的 tick / route 处理。')
+    if json_out:
+        print(json.dumps({"status": "ok", "written": True,
+                          "fingerprint": fingerprint,
+                          "project": pinned["name"],
+                          "reason": reason or '人工复核确认归属',
+                          "target_inbox": str(target_inbox),
+                          "review_path": str(review_path)},
+                         ensure_ascii=False))
+    return 0
 
 
 def cmd_intake(args):
@@ -1094,8 +1714,23 @@ def cmd_intake(args):
         print('用法: kgctl intake "用户原话"')
         return
     _restore_truth_keep_files_from_origin()
-    cmd_inbox(args)
+    got = cmd_inbox(args)
+    outcome, route, target_root = (got if isinstance(got, tuple) else (got, None, None))
     sys.stdout.flush()
+    if outcome == "ambiguous":
+        print("\n这条分不清属于哪个项目，已经放进全局待路由箱；"
+              "**没有**写进任何项目账本，也没有在这个项目上跑路由/落盘。", flush=True)
+        print("指派后再跑一次即可：kgctl intake \"同上，指定 <项目名>\"。", flush=True)
+        return
+    if outcome == "routed-elsewhere":
+        # 只把记录写进目标 inbox 是**半个动作**：没有守护在跑那个项目时，这条需求
+        # 会一直停在「待路由」，既不在任何看板上，也没人分类。所以这里把归类这一步
+        # 当场在目标项目里跑掉（只写它自己的泳道/问题台账，不 land、不 merge）。
+        print("\n[接力] 在目标项目里归类这条投稿", flush=True)
+        _relay_route_to_project(target_root, route)
+        print("\n这条归「%s」，已写进它的账本并完成归类；落盘仍由那个项目自己决定。"
+              % (route.get("project") if route else "?", ), flush=True)
+        return
     print("\n[1/5] route inbox", flush=True)
     _truth("route", "--go")
     print("\n[2/5] refresh truth", flush=True)
@@ -1114,8 +1749,99 @@ def cmd_route(args):
 
     委托给 truthctl 的 route，读写同一份 inbox 与问题台账。旧的「按文件重叠给建议」
     挪到 `kgctl suggest`，避免「两个 route 各读各的文件、各说各话」再次出现。
+
+    `--all` 再多扫一层：除当前绑定项目，把**其他已注册项目**的 inbox 也路由掉。
+    守护是全局单例、只认一个 `KG_REPO`，没有这一层，用户在别的项目窗口里提的
+    需求会永远停在「待路由」（2026-11-18 实测：`codex-autopilot` 账本里 8 条
+    躺了 7~20 天，而守护每 15 分钟都报 rc=0）。
     """
-    return _truth("route", *args)
+    sweep = "--all" in args
+    rest = [a for a in args if a != "--all"]
+    rc = _truth("route", *rest)
+    if sweep:
+        # 绑定项目的退出码以 rc 为准；别的项目各自的失败已在它自己的输出里如实打了
+        # 出来，不回滚、也不冒充成绑定项目的成功或失败。
+        _route_all_projects(go="--go" in rest)
+    return rc
+
+
+def _registered_roots(exclude=None) -> list:
+    """已注册项目里去重后的状态根（按 git 仓库身份去重，不按路径字符串）。"""
+    out, seen = [], set()
+    skip = {str(Path(exclude).resolve())} if exclude else set()
+    try:
+        registry = project_router.load_registry()
+    except Exception:
+        return out
+    for row in registry:
+        root = Path(str(row.get("root") or "")).expanduser()
+        if not str(root):
+            continue
+        try:
+            key = str(root.resolve())
+        except OSError:
+            continue
+        if key in seen or key in skip:
+            continue
+        if not looks_like_state_root(root):
+            continue
+        seen.add(key)
+        out.append((row.get("name") or root.name, root))
+    return out
+
+
+def _route_all_projects(go=True) -> list:
+    """把**其他已注册项目**各自 inbox 里的待路由项，交给它们自己的 truthctl 归类。
+
+    为什么需要（2026-11-18 实测）：守护是全局单例，route pass 只跑当前绑定的
+    `KG_REPO`。于是「万法归一」入口只在绑定项目上归一——用户在 `codex-autopilot`
+    这类别的项目窗口提的需求写进了它自己的 inbox，却没有任何人在跑它的 route，
+    永久停在 `routed=false`：既不在看板上、也不进台账、也不报错。
+
+    这里只跑目标项目自己的 `truthctl route`（写它自己的泳道 + 问题台账 + 回写
+    routed），不 land、不 merge、不碰代码，也不动当前绑定项目的账本。某个项目
+    失败只如实报出来，不影响其他项目、也不改调用方的退出码。
+    """
+    targets = _registered_roots(exclude=REPO)
+    if not targets:
+        return []
+    results = []
+    for name, root in targets:
+        inbox = root / "ops" / "tasks" / "inbox.jsonl"
+        try:
+            pending = [r for r in read_jsonl(inbox) if not r.get("routed")]
+        except OSError:
+            pending = []
+        if not pending:
+            continue
+        own = root / "ops" / "truthctl.py"
+        path = own if own.is_file() else (RUNTIME_OPS / "truthctl.py")
+        if not path.is_file():
+            print(f"  ! 跳过「{name}」：找不到 truthctl（{path}）", flush=True)
+            results.append({"project": name, "root": str(root), "pending": len(pending),
+                            "ok": False, "detail": "找不到 truthctl"})
+            continue
+        env = os.environ.copy()
+        env["KG_REPO"] = str(root)
+        env.pop("KG_TRUNK", None)
+        argv = [sys.executable, str(path), "route"] + (["--go"] if go else [])
+        try:
+            res = proc_run(argv, cwd=str(root), env=env,
+                           capture_output=True, text=True)
+        except OSError as exc:
+            print(f"  ! 跳过「{name}」：调不起 truthctl（{exc}）", flush=True)
+            results.append({"project": name, "root": str(root), "pending": len(pending),
+                            "ok": False, "detail": str(exc)})
+            continue
+        ok = res.returncode == 0
+        print(f"\n[路由接力] 「{name}」待路由 {len(pending)} 条 "
+              f"({'已归类' if ok else '失败'}）", flush=True)
+        for line in ((res.stdout or "") + (res.stderr or "")).strip().splitlines():
+            if line.strip():
+                print("  " + line, flush=True)
+        results.append({"project": name, "root": str(root), "pending": len(pending),
+                        "ok": ok, "detail": (res.stderr or "").strip()[-200:]})
+    return results
 
 
 def cmd_suggest(args):
@@ -1363,13 +2089,21 @@ def cmd_gate(args):
         wt = Path(wt_path)
         print(f"用分支已有的工作树：{wt}")
     else:
-        tmp = Path(tempfile.gettempdir()) / f"kg-gate-{slugify(branch, 24)}-{os.getpid()}"
-        proc_run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
-                       capture_output=True, text=True)
+        # 随机后缀代替「同 pid 同名覆盖」：旧实现先 `worktree remove --force`
+        # 一个同路径对象，重启后 pid 复用就可能帮别人清现场。现在每次建树都是
+        # 新路径，崩溃残留靠 sidecar 标记交给带判活守卫的回收器处理。
+        tmp = (Path(tempfile.gettempdir())
+               / f"kg-gate-{slugify(branch, 24)}-{os.getpid()}-{secrets.token_hex(4)}")
         add = proc_run(["git", "-C", str(SHARED), "worktree", "add", "--detach", str(tmp), branch],
                              capture_output=True, text=True, errors="replace")
         if add.returncode != 0:
             sys.exit(f"× 建门禁工作树失败：{(add.stdout or '') + (add.stderr or '')}".strip()[:400])
+        try:
+            gate_owner.write_marker(tmp, branch)
+        except Exception as exc:
+            proc_run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
+                     capture_output=True, text=True)
+            sys.exit(f"× 写门禁工作树归属标记失败：{type(exc).__name__}: {exc}")
         wt = tmp
         print(f"门禁工作树（临时）：{wt}")
     try:
@@ -1399,8 +2133,10 @@ def cmd_gate(args):
         return 0 if ok else 1
     finally:
         if tmp is not None and not keep:
-            proc_run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
-                           capture_output=True, text=True)
+            cleanup = proc_run(["git", "-C", str(SHARED), "worktree", "remove", "--force", str(tmp)],
+                               capture_output=True, text=True)
+            if cleanup.returncode == 0:
+                gate_owner.remove_marker(tmp)
 
 
 def cmd_clash(args):
@@ -1911,9 +2647,14 @@ def _context_payload(branch: str, head: str = "", main_head: str = "") -> dict:
         "active_decisions": [r for r in latest_by_id(read_jsonl(REPO / "ops" / "truth" / "decisions.jsonl")).values()
                              if r.get("status") == "active"],
         "open_issues_overlapping": overlap,
+        # 上下文管家：只带和这条分支实际改动文件相关的约束（scope 为空 = 全局，
+        # 恒命中）。这是「精准调取」——不是把全部上下文喂进去。
+        "constraints": constraints_mod.matching_constraints(
+            REPO / "ops" / "truth" / "constraints.jsonl", files),
         "acceptance_todo": [r for r in latest_by_id(read_jsonl(REPO / "ops" / "truth" / "acceptance.jsonl")).values()
                             if r.get("status") in ("todo", "wip", "blocked")],
-        "recent_progress": sorted(latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values(),
+        "recent_progress": sorted([r for r in latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values()
+                                   if (r.get("status") or "active") != "retired"],
                                   key=lambda r: r.get("ts", ""))[-8:],
         "convergence": next((g for g in load_convergence().get("groups", [])
                              if g.get("branch") == branch), None),
@@ -1973,6 +2714,9 @@ def cmd_context(args):
         lines += ["", "## 相关未决问题"]
         lines += [f"- `{x['id']}` {x['title']}（命中 {', '.join(x['files'])}）"
                   for x in payload["open_issues_overlapping"]] or ["- （无文件重叠）"]
+        # 只带和这条分支改动文件相关的约束；这是「说过一次就不再犯」的调取面。
+        lines += ["", "## 必须遵守的约束（按改动文件精准调取）"]
+        lines += [constraints_mod.render_line(r) for r in payload["constraints"]] or ["- （无）"]
         lines += ["", "## 验收 / DoD"]
         lines += [f"- [{x.get('status')}] {x.get('level','')} {x.get('title','')}"
                   for x in payload["acceptance_todo"]] or ["- （无）"]
@@ -2010,7 +2754,8 @@ def cmd_dash(args):
     open_led = [r for r in led if r.get("status") in ("open", "doing", "todo")]
     open_led.sort(key=lambda r: ({"bug": 0, "arch": 1, "ux": 2, "visual": 3}.get(r.get("kind"), 9),
                                  r.get("ts", "")))
-    prog = sorted(latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values(),
+    prog = sorted([r for r in latest_by_id(read_jsonl(REPO / "ops" / "truth" / "progress.jsonl")).values()
+                   if (r.get("status") or "active") != "retired"],
                   key=lambda r: r.get("ts", ""))[-8:]
     inbox = read_jsonl(INBOX)
     pending = [x for x in inbox if not x.get("routed")]
@@ -2139,17 +2884,23 @@ def cmd_dash(args):
     else:
         machine_html = '<div class="note">机器已自证 · 不需要你动手</div>'
 
-    # 当前在做什么 / 还差什么
+    # 当前在做什么 / 还差什么 / 等你确认
+    waiting = [r for r in led if r.get("status") == "awaiting_human"]
     doing = [r for r in open_led if r.get("status") == "doing"]
-    todo = [r for r in open_led if r.get("status") != "doing"]
+    todo = [r for r in open_led if r.get("status") not in ("doing", "awaiting_human")]
 
     def item_ul(items):
         return "".join(
             f'<li>{kind_tag(r.get("kind"))}<span class="grow">{esc(r.get("title"))}</span>'
             f'<span class="when">{esc(r.get("id"))}</span></li>' for r in items)
 
-    if doing or todo:
+    if doing or todo or waiting:
         parts = []
+        if waiting:
+            # 活已经干完，缺的是人这一票。放在「还差这些」之前，避免用户以为
+            # 机器还没做，也避免 agent 把这几条当成待办反复重做。
+            parts.append('<div class="subhead">等你确认（做完了，缺你看一眼）</div>'
+                         '<ul class="list">' + item_ul(waiting) + "</ul>")
         if doing:
             parts.append('<div class="subhead">正在做</div><ul class="list">' + item_ul(doing) + "</ul>")
         if todo:
@@ -2367,38 +3118,251 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
     if "--open" in args and sys.platform == "darwin":
         proc_run(["open", str(DASHBOARD)], check=False)
 
+def _reap_wt_keep_reason(wt: Path) -> str:
+    """Return why `cmd_reap` must not remove this worktree right now, or "".
+
+    手工 `kgctl reap --go` 曾经只问一句「ahead==0？」，于是会把**刚创建、另一个
+    会话正在里面干活**的树连目录一起删掉。2026-11-13 实测：`/private/tmp/
+    kg-t01-binding` 03:37 建好、03:39 被这条命令删掉，而那个会话正拿它当工作目录
+    —— 分支指针和 tip 都在 main 里（内容零损失），但那个会话的文件系统现场没了。
+    守护进程那条通道（central_daemon._reap_dead_worktrees）早就有判活 + 创建宽限，
+    只有这条手工通道漏了。这里补上同一组闸，判据只让它少删，绝不多删：
+
+      1. 创建宽限期（默认 1h，KG_REAP_CREATION_GRACE_H 可调）——刚建好的树不碰；
+      2. 有活进程引用它（cwd / 命令行）——正在干活的人不打断；
+      3. 有活跃会话把它当工作目录 —— 只读会话的 argv 里没有树路径，只能问内核 + 会话记录。
+
+    任何一条命中都返回原因；读不到证据时**不**返回原因（与旧行为一致：证据不足
+    不构成额外保留），因此这条加固不会让回收停摆。既然目录不删，分支指针也不删：
+    分支是它在 git 里的名字，删了就等于从别人脚底下抽掉现场。
+    """
+    try:
+        here = Path(__file__).resolve().parent
+        if str(here) not in sys.path:
+            sys.path.insert(0, str(here))
+        import workspace_guard as _wg
+    except Exception:
+        return ""  # 缺守卫模块绝不阻塞回收：与旧行为一致
+
+    grace_h = float(os.environ.get("KG_REAP_CREATION_GRACE_H", "1"))
+    if grace_h > 0:
+        try:
+            st = wt.stat()
+            birth = getattr(st, "st_birthtime", None) or st.st_ctime
+            if (time.time() - float(birth)) / 3600 < grace_h:
+                return "creation-grace"
+        except OSError:
+            return "stat-failed"
+
+    try:
+        if _wg.process_reference(wt):
+            return "live-process"
+    except Exception:
+        pass
+    try:
+        if _wg.live_guard_blocker(wt, "all"):
+            return "live-session"
+    except Exception:
+        pass
+    return ""
+
+
+def _reap_protected_name(name: str) -> bool:
+    """True when this worktree name is on the shared do-not-touch list.
+
+    Same list the strip channel uses (`workspace_guard.PROTECTED_NAMES` plus
+    `PROTECTED_PREFIXES`, e.g. `kg-live-*` serving the running stack). The
+    manual reap channel never had this gate; adding it can only make reaping
+    more conservative, never less.
+    """
+    try:
+        here = Path(__file__).resolve().parent
+        if str(here) not in sys.path:
+            sys.path.insert(0, str(here))
+        import workspace_guard as _wg
+    except Exception:
+        return True  # 守卫不在时保守：当保护名处理
+    try:
+        return name in _wg.PROTECTED_NAMES or name.startswith(_wg.PROTECTED_PREFIXES)
+    except Exception:
+        return True
+
+
+def _reap_stripped_only(wt: Path) -> bool:
+    """True when a worktree's only dirt is deletions inside regenerable dirs.
+
+    This is exactly what the strip channel leaves behind
+    (`strip_regenerable_files` removes tracked copies of `backend/evidence` /
+    `evidence` that are byte-identical to HEAD). Those bytes are reproducible
+    from HEAD by definition, so such a tree carries zero human work and can be
+    reclaimed. Deliberately narrow in the other direction: one untracked file,
+    one edit anywhere, or one non-deletion entry returns False and the tree is
+    left exactly as it is.
+
+    Delegates to workspace_guard.only_regenerable_deletions so the two reaper
+    channels share one predicate instead of drifting apart.
+    """
+    try:
+        here = Path(__file__).resolve().parent
+        if str(here) not in sys.path:
+            sys.path.insert(0, str(here))
+        import workspace_guard as _wg
+    except Exception:
+        return False
+    try:
+        return bool(_wg.only_regenerable_deletions(wt))
+    except Exception:
+        return False
+
+
+def _reap_remove_worktree(wt: str) -> tuple[bool, str]:
+    """Remove a stripped worktree, verifying the directory really disappeared.
+
+    `git worktree remove` refuses a tree that reads dirty; `force_regenerable`
+    retries with --force but ONLY when the whole diff is deletions inside the
+    regenerable dirs (same predicate as above). After the call we re-check
+    `exists()` because git's exit code alone has been observed reporting success
+    while the directory stayed on disk.
+    """
+    try:
+        here = Path(__file__).resolve().parent
+        if str(here) not in sys.path:
+            sys.path.insert(0, str(here))
+        import workspace_guard as _wg
+    except Exception as exc:
+        return False, f"workspace_guard unavailable: {exc}"
+    ok, detail = _wg.remove_worktree(REPO, Path(wt), force_regenerable=True)
+    if not ok:
+        return False, detail
+    if Path(wt).exists():
+        return False, "git reported success but directory still exists"
+    return True, ""
+
+
+def _pin_branch_ref(branch: str, stamp: str) -> str:
+    """把分支 tip 钉到本地 preserve ref —— 必须在 `git branch -D` **之前**。
+
+    为什么必须有这一步（2026-11-16 实测）：`reap` 删的是**分支指针**，不是提交。
+    指针一没、远端又没有影子 ref，tip 就成了不可达对象，`git gc`（默认
+    gc.pruneExpire 两周）随后可以把它连同整条祖先链静默清掉。本机
+    knowledge-graph 仓的历史里正是这样攒下一万多条游离提交。
+
+    插件这份 `kgctl reap` 此前**完全没有**这层保护，而守护拉起第一拍就会在磁盘
+    压力下真的执行 `reap --go`（2026-11-16 实测：磁盘 92.8% > 阈值 85%，只读预演
+    列出 34 条待删分支），属于「一装就裸删」。
+
+    钉成 `refs/preserve/local/<stamp>/<branch>` 是纯加法：只新增一个本地 ref，
+    不改任何已有分支、不改 main、不碰远端。本地 ref 一旦建立，对象就从「无人可达」
+    变成「ref 可达」，gc 不会再动它。还原：
+    `git branch <branch> refs/preserve/local/<stamp>/<branch>`。
+
+    返回钉成功时用的 ref；取不到 head 或 update-ref 失败时返回 ""，调用方据此
+    跳过删除（宁可留着，也不裸删）。
+    """
+    sha = git("rev-parse", "--verify", f"refs/heads/{branch}")
+    if not sha:
+        return ""
+    ref = f"refs/preserve/local/{stamp}/{branch}"
+    pinned = proc_run(["git", "-C", str(REPO), "update-ref", ref, sha],
+                      capture_output=True, text=True)
+    return ref if pinned.returncode == 0 else ""
+
+
 def cmd_reap(args):
     go = "--go" in args
     rows = scan()
     merged = [r for r in rows if r["kind"] == "MERGED"]
     wts = worktree_map()
     print("回收预演（ahead=0 的分支 + 它们独占的 worktree）")
+    planned = []
     for r in sorted(merged, key=lambda x: -x["behind"]):
         wt = wts.get(r["branch"], "")
         own = wt and Path(wt) != REPO
         dirty = ""
+        keep = ""
         if own:
             st = proc_run(["git", "-C", wt, "status", "--porcelain"],
                                 capture_output=True, text=True).stdout.strip()
             dirty = f"  脏={len(st.splitlines())} 项，只删分支、不删 worktree" if st else ""
+            # 判活/宽限只影响「目录 + 分支」要不要一起留，不影响别的分支。
+            keep = _reap_wt_keep_reason(Path(wt))
+            if keep:
+                dirty = f"  保留：{keep}"
+        planned.append((r, wt, own, keep))
         print(f"  {'分支+worktree' if own else '仅分支'}  {r['branch']:44s} {wt}{dirty}")
-    print(f"\n共 {len(merged)} 项。{'【已执行】' if go else '默认只预演；确认后加 --go'}")
+    print(f"\n共 {len(merged)} 项。删分支前会先在本地钉 refs/preserve/local/<stamp>/<分支>。"
+          f"{'【已执行】' if go else '默认只预演；确认后加 --go'}")
     if not go:
         return
-    for r in merged:
-        wt = wts.get(r["branch"], "")
-        if wt and Path(wt) != REPO:
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    removed = skipped = pinned = 0
+    for r, wt, own, keep in planned:
+        if own and keep:
+            # 现场还在用：目录和它的分支名都留着，这一项本轮跳过。
+            continue
+        if own and _reap_protected_name(Path(wt).name):
+            # 保护名（主仓、kg-trunk、kg-live-* 等正在服务的树）：目录和分支都留。
+            # 这条只让回收少删，绝不多删；与 disk_reap 的保护名判据同一份名单。
+            continue
+        if own:
             st = proc_run(["git", "-C", wt, "status", "--porcelain"],
                                 capture_output=True, text=True).stdout.strip()
             if not st:
                 proc_run(["git", "-C", str(REPO), "worktree", "remove", wt],
                                capture_output=True, text=True)
-        proc_run(["git", "-C", str(REPO), "branch", "-D", r["branch"]],
-                       capture_output=True, text=True)
-    print("已回收。分支只是指针，成果在 main 里。")
+            elif _reap_stripped_only(Path(wt)):
+                # 剥离态：整棵树的脏项只剩「可再生目录（backend/evidence、
+                # evidence 等）里与 HEAD 相同的跟踪文件被删」。那些字节全在
+                # git 里，`git checkout -- <dir>` 可逐字节还原，树里没有人的
+                # 工作。旧口径只认 st 为空，于是剥离过的树永远显示脏、永远
+                # 回收不掉 —— 实测 190 棵树常年压在盘上。判据只认这一种形态：
+                # 一个未跟踪文件、一处真实改动、一条非删除，都仍按脏保留。
+                removed, detail = _reap_remove_worktree(wt)
+                if not removed:
+                    print(f"  剥离态回收未生效 {Path(wt).name}：{detail}")
+        # 先钉后删：钉不上就跳过这条分支，宁可留着，也不裸删。
+        ref = _pin_branch_ref(r["branch"], stamp)
+        if not ref:
+            print(f"  跳过分支删除（钉 preserve ref 失败，宁可留着）：{r['branch']}")
+            skipped += 1
+            continue
+        pinned += 1
+        delr = proc_run(["git", "-C", str(REPO), "branch", "-D", r["branch"]],
+                        capture_output=True, text=True)
+        if delr.returncode == 0:
+            removed += 1
+        else:
+            print(f"  跳过分支删除失败：{r['branch']}："
+                  f"{(delr.stderr or delr.stdout).strip()[:200]}")
+            skipped += 1
+    print(f"已回收 {removed} 条分支（其中 {pinned} 条删除前已钉到 "
+          f"refs/preserve/local/{stamp}/），跳过 {skipped} 项。"
+          f"分支只是指针，成果在 main 里；被删分支的 tip 仍可从 preserve ref 还原。")
 
 
 # ---------------------------------------------------------------- 落盘：merge train
+
+def _trunk_is_foreign_clone(wt: Path) -> bool:
+    """主干路径是否属于**另一个 clone**，而不是本仓库的 worktree。
+
+    判据用仓库身份（git common dir），不是路径或目录名——本机有两份 remote 相同的
+    clone（`~/.newmax/workspace/codex-autopilot` 与
+    `~/Documents/Codex/codex-autopilot-native-autopilot`），路径长得再像也判不出来。
+
+    拿不到身份（不是 git 仓库 / git 报错）时返回 False：那种情况交给下游
+    `worktree add` 或 checkout 自己报错，不在这里猜。
+    """
+    try:
+        if not wt.exists():
+            return False
+    except OSError:
+        return False
+    mine = project_router.identity(REPO)
+    theirs = project_router.identity(wt)
+    if not theirs:
+        return False
+    return bool(mine) and theirs != mine
+
 
 def _trunk_worktree():
     """落盘必须在**独立主干工作树**里做。
@@ -2414,6 +3378,18 @@ def _trunk_worktree():
         # 所以这里强制改用默认的 `<项目名>-trunk`。
         fallback = REPO.parent / (REPO.name + "-trunk")
         print(f"  !KG_TRUNK 指向状态根本身（{REPO}），已改用独立主干工作树：{fallback}")
+        wt = fallback
+    if _trunk_is_foreign_clone(wt):
+        # 配置里的 trunk_dir 也可能指向**另一个 clone**（本仓实测就写死了一条
+        # ~/Documents/Codex/codex-autopilot-native-autopilot-trunk：remote 相同、
+        # git common dir 不同）。那不是「本项目的落盘主干」，而是另一份检出。
+        # land 会在主干里 checkout main / merge / reset HEAD —— 跑到别人的检出里做
+        # 这些，既是破坏性修改，也会因为那边有自己的未跟踪 runtime 产物而必然失败
+        # （实测：「untracked working tree files would be overwritten by checkout」）。
+        # 身份不是本仓库就退回默认的 `<项目名>-trunk`。
+        fallback = REPO.parent / (REPO.name + "-trunk")
+        print(f"  !配置的落盘主干属于另一个 clone（{wt}），"
+              f"已改用本仓库主干：{fallback}")
         wt = fallback
     if not (wt / ".git").exists():
         wt.parent.mkdir(parents=True, exist_ok=True)
@@ -2474,23 +3450,134 @@ def _fetch_origin_main(attempts: int = 5, delay: float = 3.0) -> bool:
     raise RuntimeError(f"fetch origin/{MAIN} 失败（重试 {attempts} 次后仍失败）: {last}")
 
 
+def _is_network_unreachable(text: str) -> bool:
+    """只识别传输层不可达；认证/non-fast-forward/hook 拒绝绝不能降成本地落盘。"""
+    lowered = (text or "").lower()
+    signals = (
+        "couldn't connect to server",
+        "could not connect to server",
+        "failed to connect",
+        "connection refused",
+        "connection timed out",
+        "operation timed out",
+        "network is unreachable",
+        "could not resolve host",
+        "temporary failure in name resolution",
+        "proxy connect",
+        "could not read from remote repository",
+        "operation too slow",
+        "less than 1 bytes/sec",
+    )
+    return any(s in lowered for s in signals)
+
+
+def _push_main_with_offline_fallback(wt: Path) -> str:
+    """推送 main；网络明确不可达时本地推进，其他失败仍 fail-closed。"""
+    try:
+        return _push_main_with_one_retry(wt)
+    except RuntimeError as exc:
+        text = str(exc)
+        if not _is_network_unreachable(text):
+            raise
+        # The merge happened in the trunk worktree. Advance the local main
+        # ref only when it is still exactly the pre-merge value; this is a
+        # compare-and-swap, so a concurrent writer can never be overwritten.
+        new = git("-C", str(wt), "rev-parse", "HEAD")
+        pre = git("rev-parse", MAIN)
+        if not new or not pre:
+            raise
+        if not git("rev-parse", "--verify", new):
+            raise RuntimeError("离线落盘无法读取合并提交")
+        cas = proc_run(
+            ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}", new, pre],
+            capture_output=True, text=True)
+        if cas.returncode != 0:
+            raise RuntimeError(
+                f"离线落盘无法安全推进本地 {MAIN}（引用已变化）："
+                f"{pre[:10]} -> {new[:10]}；{(cas.stdout + cas.stderr).strip()[:500]}")
+        return ("origin 当前网络不可达，已在本地安全推进 main，尚未推送；"
+                "联网后 daemon 会继续推送。原始错误：" + text[:300])
+
+
 def _align_main():
-    """落盘前先把本地 main 引用对齐 origin/main，拒绝在分叉引用上继续。"""
+    """落盘前对齐 origin/main；断网时用已知远端引用，并安全处理领先/分叉。"""
     if not _fetch_origin_main():
-        return
+        print(f"  ! origin 网络不可达，使用已知 origin/{MAIN} 本地收口")
     local = git("rev-parse", MAIN)
     remote = git("rev-parse", f"origin/{MAIN}")
     if local == remote:
         return
     ff = proc_run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
                          local, remote], capture_output=True, text=True)
-    if ff.returncode != 0:
+    if ff.returncode == 0:
+        proc_run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
+                  remote, local], check=True)
+        print(f"  {MAIN} 本地引用 {local[:8]} -> {remote[:8]}（同步 origin）")
+        return
+
+    # 本地领先：纯真相提交可以快照后安全重置引用；产品提交绝不自动丢弃。
+    rev = proc_run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
+                          remote, local], capture_output=True, text=True)
+    if rev.returncode == 0:
+        if trunk_head_is_truth_only(REPO, remote):
+            snap = _snapshot_truth_files(REPO)
+            proc_run(
+                ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
+                 remote, local], check=True)
+            _restore_truth_files(REPO, snap)
+            print(f"  {MAIN} 本地领先的纯真相提交已安全对齐到已知 origin/{MAIN}")
+            return
         raise RuntimeError(
-            f"本地 {MAIN} 与 origin/{MAIN} 已分叉：local={local[:10]} remote={remote[:10]}；"
-            "先人工合并/推送本地提交，再执行 land")
-    proc_run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
-                    remote, local], check=True)
-    print(f"  {MAIN} 本地引用 {local[:8]} -> {remote[:8]}（同步 origin）")
+            f"本地 {MAIN} 领先且包含产品提交，拒绝自动对齐："
+            f"local={local[:10]} remote={remote[:10]}；先推送或人工合并")
+
+    # 真正的分叉：内容等价只移动引用；否则在临时 worktree 重放，绝不切用户检出。
+    local_delta = proc_run(
+        ["git", "-C", str(REPO), "diff", "--quiet", local, remote, "--"],
+        capture_output=True, text=True)
+    if local_delta.returncode == 0:
+        proc_run(
+            ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
+             remote, local], check=True)
+        print(f"  {MAIN} 本地分叉内容已在 origin/{MAIN}，引用已安全对齐")
+        return
+    import tempfile
+    wt = _trunk_worktree()
+    replay_temp = Path(tempfile.mkdtemp(prefix="kg-replay-", dir="/private/tmp"))
+    tmp = f"refs/kgctl/replay/{os.getpid()}"
+    proc_run(["git", "-C", str(REPO), "update-ref", tmp, remote],
+                   check=True)
+    try:
+        added = proc_run(
+            ["git", "-C", str(REPO), "worktree", "add", "--detach",
+             str(replay_temp), tmp],
+            capture_output=True, text=True)
+        if added.returncode != 0:
+            raise RuntimeError(
+                "安全重放准备失败，无法创建临时 worktree："
+                f"{(added.stdout + added.stderr).strip()[:500]}")
+        replayed = proc_run(
+            ["git", "-C", str(replay_temp), "merge", "--no-ff", local,
+             "-m", f"train: replay local {MAIN} over origin/{MAIN}"],
+            capture_output=True, text=True)
+        if replayed.returncode != 0:
+            proc_run(["git", "-C", str(replay_temp), "merge", "--abort"],
+                           capture_output=True, text=True)
+            raise RuntimeError(
+                f"本地 {MAIN} 与 origin/{MAIN} 分叉且重放冲突，"
+                "已放弃并保持 main 不动；需人工裁决")
+        replay_head = git("-C", str(replay_temp), "rev-parse", "HEAD")
+        proc_run(
+            ["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}",
+             replay_head, local], check=True)
+        print(f"  {MAIN} 本地分叉已安全重放到 origin/{MAIN}："
+              f"{local[:8]} + {remote[:8]} -> {replay_head[:8]}（尚未推送）")
+    finally:
+        proc_run(["git", "-C", str(REPO), "worktree", "remove", "--force",
+                        str(replay_temp)], capture_output=True, text=True)
+        proc_run(["git", "-C", str(REPO), "update-ref", "-d", tmp],
+                       check=False)
+        shutil.rmtree(replay_temp, ignore_errors=True)
 
 
 def _verify_evidence(verify_results: list) -> str:
@@ -2736,9 +3823,26 @@ def _mirror_truth_into_trunk(wt: Path) -> None:
 
     自包含安装下，账本在项目目录的 `ops/truth` 里，而主干工作树是从 `main` 检出的；
     若 `ops/truth` 没进过版本库，trunk 里连目录都不存在，写进展台账会直接崩。这里只做
-    文件级拷贝（加法），让主干工作树拥有同一份账本，后续 `sync_trunk_truth` 才能把它
+    加法镜像：真账本 JSONL 按行并集，不允许状态根的旧副本整文件覆盖 trunk 上已经
+    落盘的记录（2026-11-18 实测：状态根的 P-0080 覆盖掉 main 的 P-0079，A-0006
+    验收记录也被覆盖）；其它真相文件仍按文件级拷贝，后续 `sync_trunk_truth` 才能把它
     作为真相层提交，与代码一起推回 `main`。
     """
+    def mirror_file(src: Path, target: Path) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        rel = target.relative_to(wt).as_posix()
+        if (rel.startswith(("ops/truth/", "ops/tasks/"))
+                and rel.endswith(".jsonl") and target.exists()):
+            try:
+                current = target.read_text(encoding="utf-8")
+                incoming = src.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                shutil.copy2(src, target)
+                return
+            target.write_text(_union_jsonl_text(current, incoming), encoding="utf-8")
+            return
+        shutil.copy2(src, target)
+
     for rel in TRUTH_PATHS:
         src, dst = REPO / rel, wt / rel
         if not src.exists():
@@ -2752,11 +3856,9 @@ def _mirror_truth_into_trunk(wt: Path) -> None:
                 if not item.is_file():
                     continue
                 target = dst / item.relative_to(src)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(item, target)
+                mirror_file(item, target)
         elif src.is_file():
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+            mirror_file(src, dst)
 
 
 def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
@@ -2765,6 +3867,14 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
     门禁清单来自 ops/central.config.json 的 verify（没配就退化成 build 那一条）。
     verify_by_change 可按本次 merge 的实际 diff 追加相关门禁；没命中规则时仍保留
     build 作为真实验证底线。工作目录不存在时按失败处理，不抛未捕获异常。
+
+    配置必须从**正在被验证的 trunk** 读，而不是从 RESOLVE 出来的状态根读：
+    状态根（共享检出）经常被另一个 worktree 占着、甚至停在完全不同历史的分支上，
+    里面可能根本没有 `ops/central.config.json`。旧实现用启动时加载的 CFG，于是
+    退化成内置默认 `npm run build` + `cwd=frontend`，而本仓没有 frontend ——
+    每次 land 都报 `cwd 不存在` 并丢弃合并（2026-11-17 本轮实测，真正原因就是
+    配置来源错了，不是门禁本身失败）。门禁要描述的是「这棵树怎么验」，所以它
+    必须来自这棵树。
     """
     changed = []
     try:
@@ -2775,32 +3885,113 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
             changed = [line for line in (p.stdout or "").splitlines() if line.strip()]
     except Exception:
         changed = []
+    # trunk 自带配置就用 trunk 的；缺失才退回启动时那份 CFG，保证老行为不退化。
+    gate_cfg = CFG
+    if (wt / "ops" / "central.config.json").exists():
+        try:
+            gate_cfg = central_config.load(wt)
+        except Exception as exc:
+            print(f"  ! trunk 的 central.config.json 读不了（{exc}），退回状态根配置")
+            gate_cfg = CFG
     selector = getattr(central_config, "verify_gates_for_changes", None)
     # Runtime copies can briefly lag the staged source copy. Falling back to the
     # stable gate list keeps landing possible while the change selector is absent.
-    gates = (selector(CFG, changed) if callable(selector)
-             else central_config.verify_gates(CFG))
+    gates = (selector(gate_cfg, changed) if callable(selector)
+             else central_config.verify_gates(gate_cfg))
+    # 约束管家接线：`enforceable=gate` 且写了 cmd 的约束，按本次改动路径转成
+    # 真的门禁。旧实现只读 central.config.json，标了 gate 的约束从没被执行过——
+    # 面板却渲染成「有门禁」，是实打实的假绿灯（2026-11-17 实测）。
+    # 读的是**正在被验证的 trunk** 的约束台账，不是状态根那份。
+    constraint_gaps = []
+    try:
+        cpath = wt / "ops" / "truth" / "constraints.jsonl"
+        if cpath.exists():
+            gates = list(gates) + constraints_mod.gate_commands(cpath, changed)
+            constraint_gaps = constraints_mod.gate_gaps(cpath, changed)
+    except Exception as exc:
+        print(f"  ! 约束门禁读取失败（{exc}），本轮按未接处理", file=sys.stderr)
+    if constraint_gaps:
+        # 不因为「声称有门禁但其实没有」就拦下落盘，但也绝不假装它验证过：
+        # 名字进结果列表、状态如实标 skipped，面板与验收台账都看得到。
+        print("  ! 有 %d 条约束标了 gate 却没写命令，本轮未执行：%s"
+              % (len(constraint_gaps),
+                 "、".join(str(r.get("id") or "?") for r in constraint_gaps)))
     if not gates:
         return True, [], "(未配置验证门禁，跳过)"
-    results, chunks, all_ok = [], [], True
-    for g in gates:
-        rel = g.get("cwd") or "."
-        cwd = wt / rel
-        if not cwd.exists():
+    with _verification_gate_lock():
+        results, chunks, all_ok = [], [], True
+        for g in gates:
+            rel = g.get("cwd") or "."
+            cwd = wt / rel
+            if not cwd.exists():
+                results.append({"name": g.get("name"), "cmd": g.get("cmd"), "cwd": rel,
+                                "ok": False, "output": f"工作目录不存在：{cwd}"})
+                chunks.append(f"[{g.get('name')}] cwd 不存在：{cwd}")
+                all_ok = False
+                continue
+            p = proc_run(g["cmd"], shell=True, cwd=cwd, capture_output=True, text=True)
+            out = (p.stdout or "") + (p.stderr or "")
             results.append({"name": g.get("name"), "cmd": g.get("cmd"), "cwd": rel,
-                            "ok": False, "output": f"工作目录不存在：{cwd}"})
-            chunks.append(f"[{g.get('name')}] cwd 不存在：{cwd}")
-            all_ok = False
-            continue
-        p = proc_run(g["cmd"], shell=True, cwd=cwd, capture_output=True, text=True)
-        out = (p.stdout or "") + (p.stderr or "")
-        results.append({"name": g.get("name"), "cmd": g.get("cmd"), "cwd": rel,
-                        "ok": p.returncode == 0, "output": out[-4000:]})
-        chunks.append(f"[{g.get('name')}] $ {g.get('cmd')} (cwd={rel}) "
-                      f"-> exit {p.returncode}\n{out[-1500:]}")
-        if p.returncode != 0:
-            all_ok = False
-    return all_ok, results, "\n".join(chunks)
+                            "ok": p.returncode == 0, "output": out[-4000:]})
+            chunks.append(f"[{g.get('name')}] $ {g.get('cmd')} (cwd={rel}) "
+                          f"-> exit {p.returncode}\n{out[-1500:]}")
+            if p.returncode != 0:
+                all_ok = False
+        return all_ok, results, "\n".join(chunks)
+
+
+def _pm_gate_for_branch(wt: Path, branch: str) -> tuple:
+    """合流前检查 PM 产品决策门；旧工作项没有研究挂钩时保持兼容放行。"""
+    try:
+        import pm_decision
+        result = pm_decision.execution_gate_for_branch(wt, branch=branch)
+    except Exception as exc:
+        return False, {"status": "unknown", "reason": "PM 决策门读取失败：%s" % exc}
+    if result.get("status") == "pass":
+        return True, result
+    return False, result
+
+
+@contextmanager
+def _verification_gate_lock():
+    """跨进程串行执行重验证，不让一个坏进程留下永久锁。
+
+    使用 flock 而不是 O_EXCL：进程崩溃、收到 SIGKILL 或调用器超时后，内核会
+    自动释放文件锁；不需要猜测多久算“僵死”，也不会因为残留文件堵住后续任务。
+    锁失败时 fail-open 并打印告警，保证正常 land 不会因审计设施故障停摆。
+    """
+    try:
+        import fcntl
+    except ImportError:
+        print("  [verify-lock] 当前平台无 fcntl，重验证锁 fail-open", file=sys.stderr)
+        yield
+        return
+    try:
+        VERIFY_LOCK.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(VERIFY_LOCK, "a+", encoding="utf-8")
+    except OSError as exc:
+        print(f"  [verify-lock] 无法打开 {VERIFY_LOCK}，重验证锁 fail-open：{exc}",
+              file=sys.stderr)
+        yield
+        return
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print("  [verify-lock] 另一路自动挡正在跑重验证；等待它结束后继续",
+                  flush=True)
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        handle.seek(0)
+        handle.truncate()
+        handle.write(f"{os.getpid()} verification\n")
+        handle.flush()
+        yield
+    finally:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        except OSError:
+            pass
+        handle.close()
 
 
 def _push_main_with_one_retry(wt: Path) -> str:
@@ -2888,8 +4079,16 @@ def _origin_contains(commit: str) -> bool:
 TRUTH_PATHS = ("ops/truth", "ops/tasks", "ops/context", "docs/PROJECT_STATUS.md",
                "docs/CONTROL_BOARD.md", "docs/CONTROL_PLANE.html",
                "docs/PRODUCT_MAINLINE.md", "docs/COCKPIT_BRIEF.md",
-               "docs/AGENT_SYNC.md")
+               "docs/AGENT_SYNC.md", "docs/OCT29_PROGRESS_RADAR.generated.md")
 TRUTH_COMMIT_RE = re.compile(r"^(chore\(truth\)|train: (sync|merge))")
+
+# 追加型台账：每拍追加 `## ` 条目，绝不能因为工作副本落后于 HEAD 而删掉已落盘章节。
+APPEND_ONLY_MARKDOWN = ("docs/COCKPIT_BRIEF.md", "docs/AGENT_SYNC.md")
+
+# 从台账/真相综合出来的 Markdown 视图。它们有稳定的「生成时间」行，恢复主干工作树
+# 时不能用旧快照覆盖 main 已经综合好的新视图；否则 PRODUCT_MAINLINE 会退回几个月前。
+GENERATED_MARKDOWN_VIEWS = ("docs/PRODUCT_MAINLINE.md", "docs/PROJECT_STATUS.md",
+                            "docs/CONTROL_BOARD.md", "docs/OCT29_PROGRESS_RADAR.generated.md")
 
 # 产品真相证据：这些文件由真实质量/运维命令生成，不能由旧真相同步或冲突合并覆盖。
 TRUTH_KEEP_IF_BASELINE_MISSING = ("ops/truth/benchmark-contract-report.json",
@@ -2912,13 +4111,128 @@ def trunk_status(wt: Path):
     return [line for line in out.splitlines() if line.strip()]
 
 
-def is_truth_path(line: str) -> bool:
-    """judge whether a `git status --porcelain` line belongs to the truth layer."""
+def truth_pending_status(wt: Path):
+    """真相层里「有东西要提交吗」——必须**包含未跟踪文件**。
+
+    与 `trunk_status`（只用于「有没有非真相层污染」，故意只看已跟踪）不同，这里
+    少看未跟踪文件会漏掉一整类真实改动：`ops/truth/constraints.jsonl` 在新建项目里
+    是全新未跟踪文件，如果它是这一拍唯一的真相改动，`pending` 就会是空的，
+    `sync_trunk_truth` 直接返回 False —— 表现为「没有改动」，而不是「还没提交」。
+    """
+    out = proc_run(["git", "-C", str(wt), "status", "--porcelain",
+                          "--untracked-files=all"],
+                         capture_output=True, text=True).stdout
+    return [line for line in out.splitlines()
+            if line.strip() and is_truth_path(line)]
+
+
+def _porcelain_body(line: str) -> str:
+    """从一行 `git status --porcelain` 里取出相对路径（重命名取新名）。"""
     body = line[3:].strip() if len(line) > 3 else line.strip()
     if " -> " in body:
         body = body.split(" -> ", 1)[1]
-    body = body.strip('"')
-    return any(body == t or body.startswith(t.rstrip("/") + "/") for t in TRUTH_PATHS)
+    return body.strip('"')
+
+
+def _truth_rel(path: str) -> bool:
+    path = path.strip().strip('"')
+    return any(path == t or path.startswith(t.rstrip("/") + "/") for t in TRUTH_PATHS)
+
+
+def is_truth_path(line: str) -> bool:
+    """judge whether a `git status --porcelain` line belongs to the truth layer."""
+    return _truth_rel(_porcelain_body(line))
+
+
+# SQLite 运行时伴随文件（WAL/SHM/journal）。它们由数据库进程在跑的时候边写边删，
+# 谁都没有「改」过它们；历史上被误提交进版本库后，一次 checkpoint 就会在工作区留下
+# 一条 ` D`，从此永远挡住真相同步（2026-11-16 实测：两条 wal 把 tick 的 [7/8] 卡死）。
+# 这类条目既不是真相层、也不是人造改动，判据里单独豁免，且**绝不**提交它们。
+RUNTIME_SIDECAR_RE = re.compile(r"(^|/)[^/]*\.db-(wal|shm|journal)$")
+
+
+def is_runtime_sidecar(line: str) -> bool:
+    return bool(RUNTIME_SIDECAR_RE.search(_porcelain_body(line)))
+
+
+# 备份/临时产物：`.bak-*`、`*.orig`、`*.rej`、编辑器 `*~`。它们不是账本，是某次
+# 操作留下的副本；把副本提交进 main 只会让版本库多一份永远不更新的死重。
+TRUTH_NOISE_RE = re.compile(r"(\.bak(-|$)|\.orig$|\.rej$|~$|\.tmp$)")
+
+
+def is_truth_noise(rel: str) -> bool:
+    return bool(TRUTH_NOISE_RE.search(rel.strip().strip('"')))
+
+
+def _ignored_untracked(wt: Path, rel: str) -> bool:
+    """`rel` 是否被 .gitignore 排除、且从未进过版本库。
+
+    `kgctl dash` / `tick` 生成的视图（`docs/PROJECT_STATUS.md`、
+    `docs/CONTROL_BOARD.md`、`docs/CONTROL_PLANE.html`、`ops/context/`）在
+    .gitignore 里被显式排除，也从未被跟踪。对它们 `git add` 会以
+    `The following paths are ignored by one of your .gitignore files` 失败。
+
+    旧实现把这个失败当成真相同步失败：已经 add 成功的台账文件留在索引里不回滚，
+    函数返回 False，调用方却继续 merge —— 于是 merge 立刻被这批半暂存的本地改动
+    挡住（`Your local changes ... would be overwritten by merge`），main 永久推不动。
+    2026-11-17 本轮 land 实测踩到，源分支提交始终进不了 main。
+
+    这些视图由真实命令随时重建，不该也不进版本库；跳过它们是正确的，不是放宽。
+    """
+    ignored = proc_run(["git", "-C", str(wt), "check-ignore", "-q", "--", rel],
+                       capture_output=True, text=True)
+    if ignored.returncode != 0:
+        return False
+    tracked = proc_run(["git", "-C", str(wt), "ls-files", "--error-unmatch", "--", rel],
+                       capture_output=True, text=True)
+    return tracked.returncode != 0
+
+
+def _is_regenerable_rel(path: str) -> bool:
+    """路径是否落在「内容由 git 完整保存、可 `git checkout --` 原样还原」的再生目录里。"""
+    rel = path.strip().strip('"')
+    try:
+        import workspace_guard as _wg
+        dirs = _wg.REGENERABLE_TRACKED_DIRS
+    except Exception:
+        dirs = ("backend/evidence", "evidence")
+    return any(rel == d or rel.startswith(d + "/") for d in dirs)
+
+
+def _regenerable_head_paths(wt: Path) -> set:
+    """HEAD 里再生目录下的全部路径（一次 `ls-tree`，不逐文件问 git）。
+
+    用作「这条删除是否真的零损失」的判据：只有 HEAD 里确实存着这个 blob，
+    删掉工作副本才等价于「只是没把副本物化出来」，随时能原样还原。
+    """
+    try:
+        import workspace_guard as _wg
+        dirs = _wg.REGENERABLE_TRACKED_DIRS
+    except Exception:
+        dirs = ("backend/evidence", "evidence")
+    out = git("-C", str(wt), "ls-tree", "-r", "--name-only", "HEAD", "--", *dirs)
+    return {line.strip() for line in out.splitlines() if line.strip()}
+
+
+def _is_zero_loss_noise(line: str, head_regenerable: set) -> bool:
+    """这条脏记录是否属于「机器噪声」——既不是人造改动，放掉也不丢任何信息。
+
+    两类：
+      * 运行时伴随文件（`data/*.db-wal` 等）：数据库自己在写，谁也没「改」过；
+      * 再生目录里**且 HEAD 里确有该 blob** 的删除：回收器为省磁盘把与 HEAD 逐字节
+        相同的副本剥掉了（`workspace_guard.strip_regenerable_tracked`），留下的
+        ` D` 随时 `git checkout --` 即原样还原。
+
+    严格性说明：只豁免「删除」，不豁免修改；且必须 `head_regenerable` 里能查到该路径。
+    工作副本里被人改过的再生文件（status 是 ` M`）一律不豁免，照旧 fail-closed。
+    """
+    if is_runtime_sidecar(line):
+        return True
+    code = line[:2]
+    if "D" not in code:
+        return False
+    body = _porcelain_body(line)
+    return bool(head_regenerable) and _is_regenerable_rel(body) and body in head_regenerable
 
 
 def trunk_truth_commits(wt: Path, base: str = None):
@@ -2941,8 +4255,80 @@ def trunk_head_is_truth_only(wt: Path, base: str = None) -> bool:
     files = [f.strip().strip('"') for f in out.split("\n") if f.strip()]
     if not files:
         return False
-    return all(any(f == t or f.startswith(t.rstrip("/") + "/") for t in TRUTH_PATHS)
-               for f in files)
+    return all(_truth_rel(f) for f in files)
+
+
+def _union_markdown_sections(base: str, local: str, remote: str) -> str:
+    """按二级标题对追加型台账做并集，绝不因为一份陈旧快照而删掉已落盘章节。
+
+    Cockpit 台账每条 `## ` 标题就是一条记录。标题不同的全部保留；同一标题出现多次
+    时取更长的那份（保住完整记录，而不是只剩标题的半条）；长度相同时 base 优先，再按
+    字典序取一个，保证两个合并方向得到同一个结果。
+    """
+    def parse(text: str):
+        preamble, sections = [], []
+        for line in text.splitlines():
+            if line.startswith("## "):
+                sections.append([line, []])
+            elif sections:
+                sections[-1][1].append(line)
+            else:
+                preamble.append(line)
+        return preamble, sections
+
+    base_preamble, base_sections = parse(base)
+    local_preamble, local_sections = parse(local)
+    remote_preamble, remote_sections = parse(remote)
+    preamble = next((p for p in (local_preamble, remote_preamble, base_preamble) if p), [])
+
+    def render(section) -> str:
+        heading, lines = section
+        return "\n".join([heading, *lines]).rstrip()
+
+    base_by_heading = {heading: body for heading, body in base_sections}
+    ordered, by_heading = [], {}
+    for heading, body in [*base_sections, *local_sections, *remote_sections]:
+        text = render((heading, body))
+        if heading not in by_heading:
+            ordered.append(heading)
+            by_heading[heading] = text
+            continue
+        current = by_heading[heading]
+        base_text = render((heading, base_by_heading.get(heading, [])))
+        candidates = (base_text, current, text)
+        best = max(len(c) for c in candidates)
+        longest = [c for c in candidates if len(c) == best]
+        by_heading[heading] = longest[0] if base_text in longest else min(longest)
+
+    body = "\n\n".join(by_heading[heading] for heading in ordered)
+    prefix = "\n".join(preamble).rstrip()
+    if prefix and body:
+        return prefix + "\n\n" + body + "\n"
+    return (prefix or body) + ("\n" if prefix or body else "")
+
+
+def _reconcile_append_only_with_head(wt: Path, rel: str) -> bool:
+    """暂存前先把追加型台账的陈旧工作副本与 HEAD 版做「只增不减」并集。
+
+    根因（2026-10-27 第四次复现）：这两份文件常年落后于已提交 main，直接 `git add`
+    工作副本会把别的窗口已经落盘的整段章节删掉（实测一次删 232 行 + 75 行）。
+    """
+    head = proc_run(["git", "-C", str(wt), "show", f"HEAD:{rel}"],
+                          capture_output=True, text=True, errors="replace")
+    if head.returncode != 0:
+        return True  # HEAD 里还没有这个文件：没有已提交内容可丢
+    target = wt / rel
+    if not target.exists():
+        return True
+    try:
+        work_text = target.read_text(encoding="utf-8")
+    except OSError:
+        return True
+    merged = _union_markdown_sections(head.stdout, work_text, head.stdout)
+    if merged != work_text:
+        target.write_text(merged, encoding="utf-8")
+        print(f"  追加型台账 {rel} 已与 HEAD 并集对齐（防陈旧副本删章节）")
+    return True
 
 
 def _hash_blob(ref: str, rel: str) -> str:
@@ -3041,11 +4427,129 @@ def _snapshot_truth_files(wt: Path) -> dict:
 
 
 def _restore_truth_files(wt: Path, snap: dict) -> None:
-    """把 `_snapshot_truth_files` 抓到的真相文件写回工作树（纯加法，只写真相路径）。"""
+    """把 `_snapshot_truth_files` 抓到的真相文件安全写回工作树（只写真相路径）。
+
+    追加型台账（Cockpit / Agent Sync）不能盲写回：快照抓到的常常是**落后于 main 的
+    陈旧副本**（实测 2026-11-16：工作副本比 main 少 10318 / 10616 行）。盲写回等于用
+    截断版盖掉 main 的完整章节，然后再提交——这正是历史上「一次删 232 行 + 75 行」的
+    同一种病。这里改成与切换后（= main）的内容做二级标题并集：main 的章节一个不少，
+    快照里独有的条目也保留。
+
+    同一原则扩展到全部真相路径：
+      * JSONL 做行级并集，旧快照不许删掉 main 上已经落盘的记录；
+      * 结构化 JSON 按 `updated` 选择较新的一侧作为权威，只递归补齐它缺失的键；
+      * 生成视图按「生成时间」选择更新的一侧，不让旧视图回退；
+      * 其余文件维持原先的快照恢复语义，避免改变未分类真相路径的行为。
+    """
+    def generated_time(text: str) -> str:
+        match = re.search(
+            r"(?:生成时间|更新时间)\s+(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}:\d{2})?)",
+            text)
+        return match.group(1) if match else ""
+
+    def fill_missing(preferred, supplemental):
+        """重叠字段以较新文档为准，只补它缺失的键；字典可递归补缺，列表不拼接。"""
+        if isinstance(preferred, dict) and isinstance(supplemental, dict):
+            out = dict(preferred)
+            for key, value in supplemental.items():
+                if key not in out:
+                    out[key] = value
+                elif isinstance(out[key], dict) and isinstance(value, dict):
+                    out[key] = fill_missing(out[key], value)
+            return out
+        return preferred
+
     for rel, data in snap.items():
         dst = wt / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
+        is_text = (
+            rel.endswith((".jsonl", ".json"))
+            or rel in APPEND_ONLY_MARKDOWN
+            or rel in GENERATED_MARKDOWN_VIEWS
+        )
+        if is_text and dst.exists():
+            try:
+                snap_text = data.decode("utf-8")
+                current = dst.read_text(encoding="utf-8") if dst.exists() else ""
+            except (UnicodeDecodeError, OSError):
+                dst.write_bytes(data)
+                continue
+            if rel.endswith(".jsonl"):
+                dst.write_text(_union_jsonl_text(current, snap_text), encoding="utf-8")
+            elif rel in APPEND_ONLY_MARKDOWN:
+                # base = 切换后的内容（main）：同标题冲突时优先保住已落盘的完整章节。
+                merged = _union_markdown_sections(current, snap_text, current)
+                dst.write_text(merged, encoding="utf-8")
+            elif rel in GENERATED_MARKDOWN_VIEWS:
+                # 生成视图谁新留谁；同时间戳时 main 已是权威，不让旧工作副本回退。
+                if generated_time(snap_text) > generated_time(current):
+                    dst.write_text(snap_text, encoding="utf-8")
+            elif rel.endswith(".json"):
+                try:
+                    old_json, new_json = json.loads(snap_text), json.loads(current)
+                    if isinstance(old_json, dict) and isinstance(new_json, dict):
+                        if str(old_json.get("updated", "")) > str(new_json.get("updated", "")):
+                            # 快照的时间戳更新：保留它，同时并进 main 新增的键。
+                            merged = fill_missing(old_json, new_json)
+                        else:
+                            # main 更新或同时间：main 胜，仍保留快照独有键。
+                            merged = fill_missing(new_json, old_json)
+                        dst.write_text(json.dumps(merged, ensure_ascii=False, indent=1) + "\n",
+                                       encoding="utf-8")
+                    else:
+                        dst.write_text(current, encoding="utf-8")
+                except (ValueError, TypeError):
+                    dst.write_text(current, encoding="utf-8")
+            continue
         dst.write_bytes(data)
+
+
+def _checkout_blockers(stderr: str) -> list:
+    """从 `git checkout` 的报错里解析出「挡住切换」的路径。
+
+    git 的两种形态都是「一句 header + 一串 Tab 缩进的路径」：
+      error: Your local changes to the following files would be overwritten by checkout:
+      error: The following untracked working tree files would be overwritten by checkout:
+    只认 header 之后连续的 Tab 行，避免把 "Abort" 之类的尾行当成路径。
+    """
+    blockers, collecting = [], False
+    for raw in (stderr or "").splitlines():
+        if "would be overwritten" in raw:
+            collecting = True
+            continue
+        if not collecting:
+            continue
+        if raw.startswith("\t") or raw.startswith("        "):
+            path = raw.strip().strip('"')
+            if path:
+                blockers.append(path)
+            continue
+        if raw.strip():
+            collecting = False
+    return blockers
+
+
+def _clean_checkout_blockers(wt: Path, blockers: list) -> list:
+    """放掉「有备份或可确定性还原」的挡路路径，返回**不能安全放掉**的那些。
+
+    事故（2026-11-16 实测）：trunk 工作树里两份追加型台账相对 HEAD 有改动，
+    `git checkout --detach main` 报「local changes would be overwritten」并中止，
+    于是 supersede / land 每一拍都失败。那两份改动本身是有价值的真相，不能丢；
+    但调用方已经 `_snapshot_truth_files` 抓进内存，切完会原样写回——放掉是安全的。
+
+    只放掉三类，其余原样保留并由调用方 fail-closed（碰了就会丢没提交的代码）：
+      * 真相层：已快照到内存，切完写回；
+      * 运行时伴随文件：数据库自己生成/删除的，放掉不损失信息；
+      * 再生目录（evidence 等）：内容在 git 里按字节保存，`checkout --` 即原样还原。
+    """
+    unsafe = []
+    for rel in blockers:
+        if _truth_rel(rel) or is_runtime_sidecar(f" D {rel}") or _is_regenerable_rel(rel):
+            proc_run(["git", "-C", str(wt), "checkout", "--", rel],
+                           capture_output=True, text=True)
+        else:
+            unsafe.append(rel)
+    return unsafe
 
 
 def reset_trunk_head(wt: Path) -> None:
@@ -3085,10 +4589,25 @@ def reset_trunk_head(wt: Path) -> None:
         print(f"  保留主干工作树上 {len(trunk_truth_commits(wt))} 条真相提交并同步 origin/{MAIN}")
         return
     snap = _snapshot_truth_files(wt)
-    ok = proc_run(["git", "-C", str(wt), "checkout", "--detach", MAIN],
-                        capture_output=True, text=True)
-    if ok.returncode != 0:
-        print("× 主干工作树切不到 main：", ok.stderr.strip()[:200])
+    ok = None
+    for _attempt in range(2):
+        ok = proc_run(["git", "-C", str(wt), "checkout", "--detach", MAIN],
+                            capture_output=True, text=True)
+        if ok.returncode == 0:
+            break
+        blockers = _checkout_blockers(ok.stderr)
+        if not blockers:
+            break
+        unsafe = _clean_checkout_blockers(wt, blockers)
+        if unsafe:
+            # 挡路的是代码 / 产品文件：宁可失败，也不静默丢弃别人的在途改动。
+            print(f"× 主干工作树切不到 main：{len(unsafe)} 个非真相层改动会被覆盖，"
+                  f"拒绝自动丢弃")
+            for rel in unsafe[:10]:
+                print("    " + rel)
+            sys.exit(1)
+    if ok is None or ok.returncode != 0:
+        print("× 主干工作树切不到 main：", (ok.stderr if ok else "").strip()[:200])
         sys.exit(1)
     _restore_truth_files(wt, snap)
     if snap:
@@ -3096,11 +4615,22 @@ def reset_trunk_head(wt: Path) -> None:
 
 
 def sync_trunk_truth(wt: Path, reason: str) -> bool:
-    """把主干工作树上真相层 / 生成视图的改动提交掉（只显式列出这些路径）。"""
-    pending = [line for line in trunk_status(wt) if is_truth_path(line)]
+    """把主干工作树上真相层 / 生成视图的改动提交掉（只显式列出这些路径）。
+
+    判据分三类，缺一类就会永久卡死：
+      * 真相层 -> 本次要提交；
+      * 运行时伴随文件（`data/*.db-wal` 这类）-> 既不是人造改动也不该提交，豁免放行。
+        历史上它们被误提交进版本库，之后数据库每 checkpoint 一次就留下一条 ` D`，
+        2026-11-16 实测正是这两条 wal 让 tick 的 [7/8] 每拍都被拒、真相层永远推不上 main；
+      * 其余（代码 / 产品文件）-> fail-closed，绝不吞进 `chore(truth)`。
+    """
+    # 判据必须包含未跟踪文件：新建的 `ops/truth/constraints.jsonl` 是未跟踪状态，
+    # 用 `trunk_status`（--untracked-files=no）会把它看成「没有改动」，永远不进 git。
+    pending = truth_pending_status(wt)
     if not pending:
         return False
-    dirty = [line for line in trunk_status(wt) if not is_truth_path(line)]
+    dirty = [line for line in trunk_status(wt)
+             if not is_truth_path(line) and not is_runtime_sidecar(line)]
     if dirty:
         # 共享检出里可能有并行任务在写代码/产品文件。只提交真相层会把它们吞进
         # `chore(truth)`，并让本地 main 与 origin/main 分叉，随后 land 永久卡死。
@@ -3115,14 +4645,86 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     if not _ensure_truth_baselines(wt):
         print("  × 稳定性基准保护失败，拒绝提交真相层")
         return False
+    # 陈旧 index.lock 会让后面的 `git add` 全部失败。以前这里不看返回码，于是真相层
+    # 每拍静默空转（2026-11-17 实测：0 字节锁堵了 2h45m，constraints.jsonl 进不了 git，
+    # 守护与面板却全显示正常）。先隔离陈旧锁；探不清就 loud-fail，不假装同步过。
+    lock_ok, lock_note = clear_index_lock_if_stale(wt)
+    if not lock_ok:
+        print(f"  × 真相同步被 index.lock 挡住：{lock_note}")
+        print("    真相同步本轮未完成。上面这条是明确失败，不是「无改动」。")
+        return False
+    if lock_note:
+        print(f"  {lock_note}")
+    # 追加型台账暂存前必须与已提交版本做并集：工作副本常常落后于 main，
+    # 直接 add 会把别的窗口已经落盘的整段章节删掉（实测一次删 232 + 75 行）。
+    for rel in APPEND_ONLY_MARKDOWN:
+        _reconcile_append_only_with_head(wt, rel)
+    # JSONL 同理。land 在落盘前会先把状态根账本镜像进 trunk；如果状态根是旧
+    # 检出，直接 git add 会把 main 已关闭的 L-0002/L-0003 整文件覆盖回 open。
+    # 镜像入口已经做过行级并集，但 tick/intake/land 都会走这个提交入口，必须
+    # 在暂存前再做一次，保证任何入口都不会丢已落盘记录。
+    for rel in truth_pending_status(wt):
+        path = _porcelain_body(rel).strip('"')
+        if not (path.startswith(("ops/truth/", "ops/tasks/"))
+                and path.endswith(".jsonl")):
+            continue
+        head = proc_run(["git", "-C", str(wt), "show", f"HEAD:{path}"],
+                        capture_output=True, text=True, errors="replace")
+        if head.returncode != 0:
+            continue
+        target = wt / path
+        try:
+            work_text = target.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        merged = _union_jsonl_text(head.stdout, work_text)
+        if merged != work_text:
+            target.write_text(merged, encoding="utf-8")
+            print(f"  JSONL 台账 {path} 已与 HEAD 并集对齐（防旧状态根覆盖）")
+    add_failures = []
     for rel in TRUTH_PATHS:
-        if (wt / rel).exists():
-            proc_run(["git", "-C", str(wt), "add", "--", rel],
-                           capture_output=True, text=True)
+        if not (wt / rel).exists():
+            continue
+        # 生成视图（PROJECT_STATUS / CONTROL_BOARD / CONTROL_PLANE / ops/context）
+        # 被 .gitignore 排除且从未跟踪，随时可重建，不该 add。旧实现照 add，
+        # 得到 `paths are ignored` 后当成致命失败返回 False，但索引里已经 add 成功
+        # 的台账没被回滚 —— 下一次 merge 就被半暂存挡住，main 永久推不动。
+        if _ignored_untracked(wt, rel):
+            continue
+        added = proc_run(["git", "-C", str(wt), "add", "--", rel],
+                         capture_output=True, text=True)
+        if added.returncode != 0:
+            # add 失败却被忽略，是「静默空转」的成因：没有暂存就没有 staged，
+            # 函数就返回 False，调用方看起来像「这拍本来就没改动」。
+            add_failures.append((rel, (added.stderr or added.stdout or "").strip()))
+    if add_failures:
+        # 半暂存是 merge 卡死的直接原因：既然本轮同步失败，就把刚才 add 进去的
+        # 真相层撤回索引，别把一份「没提交的改动」留给下一次 land。工作区内容
+        # 一分不动（reset 只动索引），台账仍在磁盘上，下一拍重跑即可。
+        proc_run(["git", "-C", str(wt), "reset", "-q", "--", *TRUTH_PATHS],
+                 capture_output=True, text=True)
+        print("  × 暂存真相层失败，本轮不同步（这不是「无改动」）：")
+        for rel, err in add_failures[:5]:
+            print(f"    {rel}: {err[:160]}")
+        return False
     staged = proc_run(["git", "-C", str(wt), "diff", "--cached", "--name-only"],
                             capture_output=True, text=True).stdout.strip()
     if not staged:
         return False
+    # 备份/临时副本（`.bak-*` 这类 smoke 测试遗留）不是账本，撤出索引即可：
+    # 文件本身留在磁盘上原样不动，只是不进 `chore(truth)`。旧实现会把它们静默
+    # 提交进 main（实测 ops/tasks/inbox.jsonl.bak-route-smoke-20261116-235548
+    # 就被 staged 成 A 状态），让版本库多一份永远不更新的死重。
+    noise = [rel for rel in staged.splitlines() if is_truth_noise(rel)]
+    if noise:
+        proc_run(["git", "-C", str(wt), "reset", "-q", "--", *noise],
+                 capture_output=True, text=True)
+        print(f"  跳过 {len(noise)} 个备份/临时副本（留在磁盘，不进版本库）："
+              + "、".join(noise[:3]))
+        staged = proc_run(["git", "-C", str(wt), "diff", "--cached", "--name-only"],
+                          capture_output=True, text=True).stdout.strip()
+        if not staged:
+            return False
     committed = proc_run(["git", "-C", str(wt), "commit", "-m", f"chore(truth): {reason}"],
                                capture_output=True, text=True)
     if committed.returncode != 0:
@@ -3139,12 +4741,40 @@ def _stage_blob(wt: Path, stage: int, rel: str) -> str:
 
 
 def _union_jsonl_text(a: str, b: str) -> str:
-    seen, lines = set(), []
+    """JSONL 行级并集：同 id 的不同版本都保留，较新 ts 排在最后。
+
+    truthctl 的 `_latest_by_id` 按出现顺序取最后一条作为当前状态；如果并集把状态根
+    的旧副本追加在 main 新记录之后，旧记录会反过来变成「当前」。所以这里只在同一
+    id 的记录槽内按 ts 升序重排，不同 id 的首现顺序仍按输入顺序保留。
+    """
+    seen = set()
+    entries = []
     for text in (a, b):
         for line in text.splitlines():
-            if line and line not in seen:
-                seen.add(line)
-                lines.append(line)
+            if not line or line in seen:
+                continue
+            seen.add(line)
+            rid, ts = None, ""
+            try:
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    if row.get("id") is not None:
+                        rid = str(row["id"])
+                    ts = str(row.get("ts") or row.get("closed") or "")
+            except (ValueError, TypeError):
+                pass
+            entries.append({"line": line, "id": rid, "ts": ts})
+
+    by_id = {}
+    for entry in entries:
+        if entry["id"] is not None:
+            by_id.setdefault(entry["id"], []).append(entry)
+    for rid, group in by_id.items():
+        positions = [i for i, entry in enumerate(entries) if entry["id"] == rid]
+        for pos, newest_last in zip(positions, sorted(group, key=lambda e: e["ts"])):
+            entries[pos] = newest_last
+
+    lines = [entry["line"] for entry in entries]
     return "\n".join(lines) + ("\n" if lines else "")
 
 
@@ -3183,6 +4813,11 @@ def _resolve_truth_merge(wt: Path) -> bool:
         target = wt / rel
         if rel.endswith(".jsonl"):
             target.write_text(_union_jsonl_text(ours, theirs), encoding="utf-8")
+        elif rel in APPEND_ONLY_MARKDOWN:
+            # 追加型台账：stage1 = 共同祖先，stage2 = 本地真相，stage3 = origin/main。
+            # 按二级标题做并集，两条链上的每一拍都保留，绝不「远端优先」压掉本地新增。
+            base = _stage_blob(wt, 1, rel)
+            target.write_text(_union_markdown_sections(base, ours, theirs), encoding="utf-8")
         elif rel.endswith(".json"):
             if rel in TRUTH_KEEP_IF_BASELINE_MISSING:
                 # Product evidence snapshots are generated by real repo commands;
@@ -3291,6 +4926,52 @@ def push_truth_state() -> None:
         _release_lock()
 
 
+def _resolve_record_rank(task: dict) -> tuple:
+    """同一冲突任务多行并存时，选真正代表当前状态的记录。
+
+    landed/abandoned 是已裁决终态，必须压过早期 needs_agent/gate_fail；同优先级
+    再比 updated，最后用完整内容做确定性 tie-break。真相层并集保留历史行时，
+    读取层归一化能让队列、派活和收口都看到同一份当前状态。
+    """
+    status = task.get("status")
+    settled = 1 if status in ("landed", "abandoned") else 0
+    updated = str(task.get("updated") or "")
+    content = json.dumps(task, ensure_ascii=False, sort_keys=True)
+    return (settled, updated, content)
+
+
+def _dedupe_resolve_tasks(tasks: list) -> list:
+    valid = [t for t in (tasks or []) if isinstance(t, dict)]
+    if len(valid) <= 1:
+        return valid
+    parent = list(range(len(valid)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    by_slug, by_branch = {}, {}
+    for i, task in enumerate(valid):
+        slug, branch = task.get("slug"), task.get("branch")
+        if slug:
+            union(i, by_slug.setdefault(slug, i))
+        if branch:
+            union(i, by_branch.setdefault(branch, i))
+
+    groups = {}
+    for i in range(len(valid)):
+        groups.setdefault(find(i), []).append(i)
+    return [max((valid[i] for i in indices), key=_resolve_record_rank)
+            for indices in groups.values()]
+
+
 def load_resolve() -> dict:
     if not RESOLVE.exists():
         return {"tasks": []}
@@ -3300,7 +4981,7 @@ def load_resolve() -> dict:
         return {"tasks": []}
     if not isinstance(data, dict):
         return {"tasks": []}
-    data.setdefault("tasks", [])
+    data["tasks"] = _dedupe_resolve_tasks(data.get("tasks"))
     return data
 
 
@@ -3480,8 +5161,15 @@ def _write_resolve_task_md(rec: dict) -> None:
     write_text(RESOLVE_DIR / f"{rec['slug']}.md", "\n".join(lines) + "\n")
 
 
-def _resolve_land(rec: dict, wt: Path) -> None:
-    """把 resolve 分支交给 land 走完整门禁；过了落盘并回收 worktree，不过则留作任务。"""
+def _resolve_land(rec: dict, wt: Path) -> int:
+    """把 resolve 分支交给 land 走完整门禁；过了落盘并回收 worktree，不过则留作任务。
+
+    返回进程退出码（0=已落盘，非 0=门禁未过），由 CLI 入口翻译成退出码。
+    这里以前用 `sys.exit(res.returncode or 1)` 报失败，等于直接把整个解释器干掉：
+    任何同进程调用者（selftest、import kgctl 的脚本）都会被它截断，连自己的断言
+    都来不及跑完——门禁于是变成「静默红」，land 链路跟着一起堵死。失败靠返回值加
+    打印表达，不靠杀进程。
+    """
     resolve_branch = rec["resolve_branch"]
     res = proc_run([sys.executable, str(Path(__file__).resolve()), "land", resolve_branch],
                          capture_output=True, text=True)
@@ -3504,7 +5192,7 @@ def _resolve_land(rec: dict, wt: Path) -> None:
         else:
             print(f"✓ {resolve_branch} 已通过门禁并落盘；worktree 已回收，源分支 {rec['branch']} 未改动。")
         print(f"RESOLVE_RESULT branch={rec['branch']} outcome=landed")
-        return
+        return 0
     rec["status"] = "gate_fail"
     rec["gate_output"] = out[-1500:]
     _write_resolve_record(rec)
@@ -3512,7 +5200,7 @@ def _resolve_land(rec: dict, wt: Path) -> None:
     print(f"× 门禁未通过：{resolve_branch} 留在 {wt}，已登记任务 {rec['slug']}（gate_fail）。")
     print(f"  在该工作树修到过门禁，再 kgctl resolve --finish {rec['slug']} --go。")
     print(f"RESOLVE_RESULT branch={rec['branch']} outcome=gate_fail")
-    sys.exit(res.returncode or 1)
+    return res.returncode or 1
 
 
 def _resolve_prepare(args) -> None:
@@ -3532,11 +5220,11 @@ def _resolve_prepare(args) -> None:
                 pass
     branch = None if auto else next((a for a in args if not a.startswith("--")), None)
     if branch and not branch.startswith(BRANCH_PREFIX):
-        sys.exit(f"只允许 resolve {BRANCH_PREFIX}* 分支")
+        raise KgctlError(f"只允许 resolve {BRANCH_PREFIX}* 分支")
     oversize = []
     if branch:
         if not git("rev-parse", "--verify", branch):
-            sys.exit(f"找不到分支 {branch}")
+            raise KgctlError(f"找不到分支 {branch}")
         if branch in _landed_resolve_branches():
             print(f"{branch} 已经 resolve 落盘过（见 ops/tasks/resolve.json），不重复拆。")
             return
@@ -3571,7 +5259,7 @@ def _resolve_prepare(args) -> None:
               "kgctl resolve --finish <slug> --go 走同一道门禁后落盘。")
         return
     if _lock_blocked():
-        sys.exit(f"已有 land/port/converge/resolve 在进行（{LOCK}）")
+        raise KgctlError(f"已有 land/port/converge/resolve 在进行（{LOCK}）")
     slug = _resolve_slug(branch)
     resolve_branch = _resolve_branch_name(slug)
     wt = _resolve_worktree_path(slug)
@@ -3640,7 +5328,7 @@ def _resolve_prepare(args) -> None:
     add = proc_run(["git", "-C", str(REPO), "worktree", "add", "-b", resolve_branch,
                           str(wt), base], capture_output=True, text=True)
     if add.returncode != 0:
-        sys.exit(f"建 worktree 失败：{(add.stdout + add.stderr).strip()[:400]}")
+        raise KgctlError(f"建 worktree 失败：{(add.stdout + add.stderr).strip()[:400]}")
     _link_side_dirs(wt)
     rec = {
         "slug": slug, "branch": branch, "resolve_branch": resolve_branch, "worktree": str(wt),
@@ -3695,11 +5383,11 @@ def _resolve_prepare(args) -> None:
 def _resolve_finish(target: str, go: bool) -> None:
     rec = _find_resolve_task(target)
     if not rec:
-        sys.exit(f"找不到进行中的 resolve 任务：{target}（用 kgctl resolve --list 看）")
+        raise KgctlError(f"找不到进行中的 resolve 任务：{target}（用 kgctl resolve --list 看）")
     wt = Path(rec["worktree"])
     resolve_branch = rec["resolve_branch"]
     if not wt.exists():
-        sys.exit(f"任务 {rec['slug']} 的 worktree 不存在：{wt}")
+        raise KgctlError(f"任务 {rec['slug']} 的 worktree 不存在：{wt}")
     unresolved = proc_run(["git", "-C", str(wt), "diff", "--name-only", "--diff-filter=U"],
                                 capture_output=True, text=True).stdout.splitlines()
     if unresolved:
@@ -3735,13 +5423,13 @@ def _resolve_abandon(target: str, go: bool, reason: str = "") -> None:
         # land/reap 的分支，避免把能落地的工作误标成放弃。
         branch = target if target.startswith(BRANCH_PREFIX) else ""
         if not branch:
-            sys.exit(f"找不到进行中的 resolve 任务：{target}（用 kgctl resolve --list 看）")
+            raise KgctlError(f"找不到进行中的 resolve 任务：{target}（用 kgctl resolve --list 看）")
         ahead, _behind = counts(branch)
         if ahead == 0:
-            sys.exit(f"{branch} 已完全合并，无需 abandon（可用 kgctl reap --go 回收）。")
+            raise KgctlError(f"{branch} 已完全合并，无需 abandon（可用 kgctl reap --go 回收）。")
         conf = conflict_files(branch)
         if not conf:
-            sys.exit(f"{branch} 与 {MAIN} 无冲突文件：应走 kgctl land {branch}，不要 abandon。")
+            raise KgctlError(f"{branch} 与 {MAIN} 无冲突文件：应走 kgctl land {branch}，不要 abandon。")
         if not go:
             print(f"{branch}：没有进行中的 resolve 任务（属于「有冲突·未拆解」）。")
             print("  加 --go 会写一条 abandoned 决定：源分支原样不动，只是不再计入冲突队列；")
@@ -3887,12 +5575,21 @@ def cmd_land(args):
         wt = _trunk_worktree()
         reset_trunk_head(wt)
         _mirror_truth_into_trunk(wt)
-        dirty = [line for line in trunk_status(wt) if not is_truth_path(line)]
+        head_regenerable = _regenerable_head_paths(wt)
+        dirty = [line for line in trunk_status(wt)
+                 if not is_truth_path(line)
+                 and not _is_zero_loss_noise(line, head_regenerable)]
         if dirty:
             print(f"× 主干工作树有非真相层改动，拒绝 land：{wt}")
             print("\n".join(dirty[:20])[:800])
             sys.exit(1)
         sync_trunk_truth(wt, "sync state before landing")
+        pm_ok, pm_result = _pm_gate_for_branch(REPO, branch)
+        if not pm_ok:
+            print("× PM 产品决策门未通过，未执行主干 merge，源分支与 main 不动：")
+            print(json.dumps(pm_result, ensure_ascii=False, indent=2)[:3000])
+            sys.exit(1)
+        print("  PM 产品决策门 ok")
         m = proc_run(["git", "-C", str(wt), "merge", "--no-ff", branch,
                             "-m", f"train: merge {branch}"], capture_output=True, text=True)
         if m.returncode != 0:
@@ -3913,7 +5610,7 @@ def cmd_land(args):
                                       capture_output=True, text=True).stdout.strip()
         manifest = _land_manifest(wt, branch, merge_commit, pre)
         _record_land_progress(wt, branch, merge_commit, gate_results, manifest, pre)
-        pushed = _push_main_with_one_retry(wt)
+        pushed = _push_main_with_offline_fallback(wt)
         if pushed:
             print("  " + pushed.replace("\n", "\n  "))
         new = proc_run(["git", "-C", str(wt), "rev-parse", "HEAD"],
@@ -3967,10 +5664,39 @@ def cmd_status(args):
             except Exception:
                 pass
     print("=== 自动挡一屏 ===")
+    health = binding_health()
+    print(binding_line(health))
+    try:
+        import control_state
+        _ctrl = control_state.load()
+    except Exception:
+        _ctrl = {}
+    print(liveness_line(daemon_liveness(REPO), _ctrl.get("daemon_enabled")))
     print(f"状态根         {REPO}")
     print(f"共享检出       {SHARED}（只读诊断，不当账本）")
     print(f"主干           {MAIN} @ {git('log','-1','--format=%h %s',MAIN)[:56]}")
     print(f"唯一入口       待路由 {unrouted} / 累计 {total} 条")
+    # 判不清归属的投稿不写进任何项目账本，只进全局待路由箱。**必须在这里露面**：
+    # 一条需求如果既不在项目账本里、也不在面板上，就等于丢了。
+    try:
+        _backlog_path = project_router.routing_inbox_path()
+        _backlog = (project_router.pending_routing_records(_backlog_path)
+                    if _backlog_path.exists() else [])
+    except Exception:
+        _backlog, _backlog_path = [], None
+    if _backlog:
+        print(f"全局待路由箱   {len(_backlog)} 条待复核（未写进任何项目账本）：{_backlog_path}")
+        for _item in _backlog[-3:]:
+            _r = _item["record"]
+            print(f"  ├ [{str(_r.get('ts',''))[-11:]}] {str(_r.get('text',''))[:60]}")
+        print("  └ 指派：kgctl route-inbox 查看指纹；确认后 --fingerprint <指纹> --project <项目名> --go")
+    try:
+        _registered = project_router.load_registry()
+    except Exception:
+        _registered = []
+    if _registered:
+        _names = "、".join(p["name"] for p in _registered[:6])
+        print(f"已注册项目     {len(_registered)} 个（{_names}）")
     print(f"codex 分支     {len(rows)}")
     print(f"  ├ 已合并可回收 {sum(1 for r in rows if r['kind']=='MERGED')}")
     print(f"  ├ 可入队落盘   {sum(1 for r in rows if row_is_landable(r))}")
@@ -4049,9 +5775,62 @@ def _truth(sub, *extra):
     path = _truthctl_path()
     env = os.environ.copy()
     env["KG_REPO"] = str(REPO)
-    rc = proc_run([sys.executable, str(path), sub, *extra],
-                        cwd=str(path.parent.parent), env=env)
-    return rc.returncode
+    res = proc_run([sys.executable, str(path), sub, *extra],
+                   cwd=str(path.parent.parent), env=env,
+                   capture_output=True, text=True)
+    if res.stdout:
+        sys.stdout.write(res.stdout)
+        sys.stdout.flush()
+    if res.stderr:
+        sys.stderr.write(res.stderr)
+        sys.stderr.flush()
+    return res.returncode
+
+
+def _relay_route_to_project(target_root, route) -> bool:
+    """把一条已归属别的项目的投稿，在**那个项目里**当场归类。
+
+    为什么要接力（2026-11-16）：早先 `intake` 遇到「属于别的项目」只把记录写进目标
+    `inbox.jsonl` 就返回，指望「那个项目自己的守护」接手分类。但守护是**全局单例**，
+    只认一个状态根（`KG_REPO` 或插件 `.mcp.json`），本机也已经停着没跑；于是这条需求
+    既不在任何项目的看板上、也没人分类，永远停在「待路由」——路由只做了一半。
+
+    这里只跑 `truthctl route --go`（写目标项目自己的泳道 + 问题台账 + 回写 routed），
+    不 land、不 merge、不碰代码，也不动当前绑定项目的任何账本。失败不抛：记录已经
+    落进目标 inbox，下轮仍会被接住，但要如实报出来。
+    """
+    if target_root is None or route is None:
+        return False
+    target_root = Path(target_root)
+    try:
+        if target_root.resolve() == REPO.resolve():
+            return False
+    except OSError:
+        pass
+    # 目标项目自带 truthctl 就用它那份（可能比插件新），否则回退到插件运行时这一份
+    # ——自包含安装下项目里根本没有 ops/ 运行时代码。KG_REPO 显式指到目标项目，
+    # 让账本落到它自己的 truth/ 里。
+    own = target_root / "ops" / "truthctl.py"
+    path = own if own.is_file() else (RUNTIME_OPS / "truthctl.py")
+    if not path.is_file():
+        print(f"  ! 接力跳过：找不到 truthctl（{path}）", flush=True)
+        return False
+    env = os.environ.copy()
+    env["KG_REPO"] = str(target_root)
+    # 目标项目的落盘主干不一定是当前绑定的那个；交给它自己的配置去解析。
+    env.pop("KG_TRUNK", None)
+    out = proc_run([sys.executable, str(path), "route", "--go"],
+                   cwd=str(target_root), env=env,
+                   capture_output=True, text=True)
+    text = (out.stdout or "") + (out.stderr or "")
+    for line in text.strip().splitlines():
+        if line.strip():
+            print("  " + line, flush=True)
+    if out.returncode != 0:
+        print(f"  ! 接力归类没跑通（exit {out.returncode}）；记录已在目标 inbox，"
+              "下次 tick 会再接一次。", flush=True)
+        return False
+    return True
 
 
 def cmd_next(args):
@@ -4112,7 +5891,9 @@ def cmd_tick(args):
     _stage(2, "refresh project status")
     _truth("snapshot")
     _stage(3, "synthesize product mainline")
-    _truth("synthesize")
+    # 常驻自追踪每拍都会到这里。内容没变时不重写生成时间，避免共享主干被
+    # 「看起来更新了、实际什么都没发生」的假进展反复弄脏。
+    _truth("synthesize", "--if-changed")
 
     if os.environ.get("KG_TICK_LIGHT") == "1":
         rows = []
@@ -4171,6 +5952,53 @@ def cmd_doctor(args):
     """
     problems: list[str] = []
     INFOS: list[str] = []
+    import control_state  # noqa: F401  (doctor ④ 需要用户级开关)
+
+    # ⓪ 安装绑定：装的是一份、账本落在哪是另一份；两者断开时其他检查都可能假绿。
+    h = binding_health()
+    if h.get("status") == "broken":
+        for p in h.get("problems") or ["原因未知"]:
+            problems.append("⓪ 安装绑定失效：" + p)
+        INFOS.append("⓪ 安装绑定：失效（" + str(h.get("repo") or "未绑定") + "）")
+    elif h.get("status") == "ok":
+        INFOS.append("⓪ 安装绑定：正常（" + str(h.get("repo")) + "）")
+    else:
+        INFOS.append("⓪ 安装绑定：传统布局（无 .mcp.json，跳过）")
+
+    # ④ 常驻守护进程：开关可以显示「开」，而进程早就不在了。
+    # 这类静默死亡此前只有面板看得到，CLI 诊断面从头到尾不提，用户就
+    # 会以为「装了=在跑」。
+    try:
+        _ctrl = control_state.load()
+    except Exception:
+        _ctrl = {}
+    _live = daemon_liveness(REPO)
+    _lp = liveness_problem(_live, _ctrl.get("daemon_enabled"))
+    if _lp:
+        problems.append(_lp)
+    INFOS.append("④ 常驻守护进程：" + {
+        "running": "在跑（pid %s）" % _live.get("pid"),
+        "loaded_not_running": "未起来（job 在但无 pid）",
+        "not_installed": "未安装",
+    }.get(_live.get("status"), "看不清"))
+
+    # ⑤ 真相同步闸门：陈旧 index.lock 会让 tick 的 `[7/8] git add` 每拍失败，而
+    # 旧实现不看返回码 —— 真相层静默空转、面板全绿。这条只读地把锁的状态说出来。
+    try:
+        _locks = index_lock_state(REPO)
+    except Exception as exc:
+        _locks = {"present": True, "blocked": True,
+                  "reason": f"索引锁探针失败（{type(exc).__name__}: {exc}）——体检工具自己坏了"}
+    if not _locks.get("present"):
+        INFOS.append("⑤ 真相同步闸门：无 index.lock，可正常暂存")
+    elif _locks.get("holders"):
+        INFOS.append("⑤ 真相同步闸门：git 正在持有 index.lock（正常短暂状态）")
+    elif _locks.get("blocked"):
+        problems.append("⑤ 真相同步被 index.lock 挡住：" + str(_locks.get("reason")))
+        INFOS.append("⑤ 真相同步闸门：被陈旧/未知 index.lock 挡住")
+    else:
+        INFOS.append("⑤ 真相同步闸门：index.lock 陈旧可隔离（"
+                     f"{_locks.get('age')}s 未动）")
 
     # ① automation 漂移
     auto_root = Path.home() / ".codex" / "automations"
@@ -4284,6 +6112,10 @@ def cmd_doctor(args):
             problems.append("③ 窗口预算：一个线程都没探测成功——探针失效，别把「无输出」当正常")
 
     print("=== 自动挡体检 ===")
+    if not looks_like_state_root(REPO):
+        print(f"  × 编排状态根不可用：{REPO}")
+        print(f"    （需要 {REPO}/ops/tasks 与 {REPO}/ops/truth 同时存在；"
+              "自动挡现在无法落账）")
     for line in INFOS:
         print("  " + line)
     print()
@@ -4306,7 +6138,10 @@ def cmd_doctor(args):
     return 1 if problems else 0
 
 
-CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route, "suggest": cmd_suggest,
+CMDS = {"inbox": cmd_inbox, "intake": cmd_intake, "route": cmd_route,
+        "route-preview": cmd_route_preview, "route-inbox": cmd_route_inbox,
+        "suggest": cmd_suggest,
+        "projects": cmd_projects,
         "matrix": cmd_matrix, "queue": cmd_queue, "gate": cmd_gate, "converge": cmd_converge,
         "replan": cmd_replan,
         "context": cmd_context, "dash": cmd_dash,
@@ -4324,5 +6159,11 @@ if __name__ == "__main__":
     # 只有显式返回 int 才作为进程退出码；返回 None 一律当 0。
     # 注意：命令内部的用法提示（sys.exit("用法: ...")）本来就会以非 0 退出，
     # 这是原有行为，不在这里改写。
-    _rc = CMDS[sys.argv[1]](sys.argv[2:])
+    try:
+        _rc = CMDS[sys.argv[1]](sys.argv[2:])
+    except KgctlError as exc:
+        # 库函数不再用 sys.exit 终止进程：错误在 CLI 边界翻译成「stderr + 退出码」，
+        # 同进程调用者（selftest 等）因此能跑到自己的断言，CLI 对外行为不变。
+        print(str(exc), file=sys.stderr)
+        sys.exit(exc.code or 1)
     sys.exit(_rc if isinstance(_rc, int) else 0)

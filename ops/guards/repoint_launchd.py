@@ -27,6 +27,8 @@
 * 显式：改了哪条、从哪改到哪逐条打印；找不到脚本就报错退出，不装作成功。
 * 不越界：只碰 registry.json 里登记的 label，别人的 launchd 任务一律不动。
 """
+from __future__ import annotations
+
 import json
 import os
 import plistlib
@@ -37,6 +39,14 @@ import time
 from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
+
+# 与 hyapi_secrets.py 同目录：脚本直跑、importlib 加载两种方式都能找到。
+try:
+    if str(OPS) not in sys.path:
+        sys.path.insert(0, str(OPS))
+    import hyapi_secrets as _hyapi_secrets  # type: ignore
+except Exception:  # 旧版本没有这个文件时要能给出明确失败，而不是 import 崩溃
+    _hyapi_secrets = None
 
 
 def _home() -> Path:
@@ -49,6 +59,25 @@ def _registry_path() -> Path:
     """registry.json 的位置。单测可用环境变量指到临时目录。"""
     raw = os.environ.get("KG_GUARD_REGISTRY")
     return Path(raw).expanduser() if raw else OPS / "registry.json"
+
+
+def _missing_secrets(entry: dict) -> list[str]:
+    """返回这条任务缺少的密钥名；只查有无，绝不回显值。"""
+    required = entry.get("requires_secrets") or []
+    if not required:
+        return []
+    missing: list[str] = []
+    for raw in required:
+        name = str(raw)
+        value = ""
+        if _hyapi_secrets is not None:
+            try:
+                value = _hyapi_secrets.resolve_secret(name)
+            except Exception:
+                value = ""
+        if not value:
+            missing.append(name)
+    return missing
 
 
 def _script_base() -> Path:
@@ -97,11 +126,15 @@ def _plist_dir(home: Path) -> Path:
     return home / "Library" / "LaunchAgents"
 
 
-def _existing_program_args(plist_path: Path) -> list[str]:
+def _existing_plist(plist_path: Path) -> dict:
     try:
-        data = plistlib.loads(plist_path.read_bytes())
+        return plistlib.loads(plist_path.read_bytes())
     except Exception:
-        return []
+        return {}
+
+
+def _existing_program_args(plist_path: Path) -> list[str]:
+    data = _existing_plist(plist_path)
     args = data.get("ProgramArguments")
     if isinstance(args, list):
         return [str(a) for a in args]
@@ -200,11 +233,19 @@ def plan(home: Path, only: list[str] | None = None) -> list[dict]:
         script = base / entry["script"]
         row = {"label": label, "plist": plist_path, "script": script,
                "class": entry.get("class", "managed"),
-               "state": "absent", "current": [], "desired": []}
+               "state": "absent", "current": [], "desired": [],
+               "current_interval": None, "desired_interval": None,
+               "missing_secrets": []}
         if not plist_path.exists():
             rows.append(row)
             continue
-        row["current"] = _existing_program_args(plist_path)
+        plist_data = _existing_plist(plist_path)
+        args = plist_data.get("ProgramArguments")
+        if isinstance(args, list):
+            row["current"] = [str(a) for a in args]
+        else:
+            prog = plist_data.get("Program")
+            row["current"] = [str(prog)] if prog else []
         if entry.get("class") == "managed":
             # 由 install.sh 的 5.5 段负责；这里只核验它确实指着当前版本。
             ok = any(str(script) == arg for arg in row["current"])
@@ -219,8 +260,27 @@ def plan(home: Path, only: list[str] | None = None) -> list[dict]:
             row["state"] = "missing-script"
             rows.append(row)
             continue
+        row["missing_secrets"] = _missing_secrets(entry)
         row["desired"] = desired_program_args(script, row["current"])
-        row["state"] = "ok" if row["current"] == row["desired"] else "stale"
+        desired_interval = int(entry.get("interval_s") or 0)
+        if desired_interval > 0:
+            row["desired_interval"] = desired_interval
+            current_interval = plist_data.get("StartInterval")
+            row["current_interval"] = (
+                int(current_interval)
+                if isinstance(current_interval, (int, float))
+                else None
+            )
+        args_ok = row["current"] == row["desired"]
+        interval_ok = (
+            row["desired_interval"] is None
+            or row["current_interval"] == row["desired_interval"]
+        )
+        row["state"] = "ok" if args_ok and interval_ok else "stale"
+        if row["state"] == "stale" and row["missing_secrets"]:
+            # 只在真的要改指时才拦：已经指向版本目录的任务不该因为密钥
+            # 暂缺而被误报成 freshness 红灯。
+            row["state"] = "missing-secrets"
         rows.append(row)
     return rows
 
@@ -237,9 +297,16 @@ def check(home: Path, only: list[str] | None = None) -> int:
         bad += 1
         if row["state"] == "missing-script":
             print(f"  FAIL     {row['label']} 指向的脚本不在版本目录：{row['script']}")
+        elif row["state"] == "missing-secrets":
+            print(f"  FAIL     {row['label']} 缺少密钥：{', '.join(row['missing_secrets'])}")
+            print("           先运行：python3 "
+                  "$(当前安装版本)/ops/guards/hyapi_secrets.py --migrate")
         else:
-            print(f"  FAIL     {row['label']} 仍在跑旧路径：{row['current']}")
+            print(f"  FAIL     {row['label']} 未跟上当前配置：")
+            print(f"           当前：{row['current']} interval={row['current_interval']}")
             print(f"           应指向：{row['desired']}")
+            if row["desired_interval"] is not None:
+                print(f"           应间隔：{row['desired_interval']} 秒")
     if bad:
         print(f"\n{bad} 条定时任务没有跟上当前安装版本。")
         print("修法：在干净快照里跑一次 ./install.sh（它会重写这些 plist 并 reload）。")
@@ -255,14 +322,22 @@ def install(home: Path, only: list[str] | None = None,
     for row in plan(home, only):
         if row["state"] in ("absent", "ok"):
             continue
+        if row["state"] == "missing-secrets":
+            print(f"× {row['label']}：本地缺少 {', '.join(row['missing_secrets'])}；"
+                  "不改写 plist、不 reload。")
+            print("  先迁移密钥：python3 "
+                  "$(当前安装版本)/ops/guards/hyapi_secrets.py --migrate"
+                  "（只写本地 secrets.env，不回显值）")
+            bad += 1
+            continue
         if row["state"] == "missing-script":
             print(f"× {row['label']}：版本目录里没有 {row['script']}，先修打包再装。")
             bad += 1
             continue
         plist_path: Path = row["plist"]
         print(f"→ {row['label']}")
-        print(f"   旧：{row['current']}")
-        print(f"   新：{row['desired']}")
+        print(f"   旧：{row['current']} interval={row['current_interval']}")
+        print(f"   新：{row['desired']} interval={row['desired_interval']}")
         if dry_run:
             changed += 1
             continue
@@ -271,6 +346,8 @@ def install(home: Path, only: list[str] | None = None,
             plist_path.name + time.strftime(".bak-%Y%m%d-%H%M%S-guard-repoint"))
         backup.write_bytes(plist_path.read_bytes())
         data["ProgramArguments"] = row["desired"]
+        if row["desired_interval"] is not None:
+            data["StartInterval"] = row["desired_interval"]
         tmp = plist_path.with_name(plist_path.name + ".tmp")
         tmp.write_bytes(plistlib.dumps(data, sort_keys=False))
         os.replace(tmp, plist_path)

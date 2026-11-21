@@ -60,7 +60,9 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 - **判断逻辑蒸馏**：每轮收口后回看人额外说了什么，只把「为什么这么判断」写进 `judgments.jsonl`（`truthctl distill add`）。记的是判断逻辑，不是一次性细节——下次换个地方也不用重新讲。
 - **问题闭环**：用户报的 bug / 视觉 / 体验 / 架构问题收进 `ledger.jsonl` 后，由 agent 推进修复 -> 验证 -> `truthctl close <L-id> "<结论>"`。关闭时带 commit、证据，并自动追加一条进展；回归了用 `truthctl open` 重开。问题不会一直挂在 `open`，也不靠用户自己记。
 - **自动实现需求**（`auto_exec`，默认关闭）：打开后，没关闭的台账条目会由自动挡在独立 worktree 里启动一个真实 `codex exec` 会话去实现；实现完显式提交，过 `kgctl land` 的同一道验证门禁后落盘，再自动 `truthctl close` 收口。每轮最多派一条；超时、门禁失败会保留分支和 worktree，不丢在途工作。它仍然遵守三条边界：不改产品方向、不删数据、不发布。
+- **项目自主运行**：面板里的“启用”只表示允许项目使用自主运行能力；只有切到“开始运行”，才会在用户不盯着时持续派发、验收和收口。运行中的项目会把任务、worker lease 和结果写入 `~/.codex-autopilot/projects/<project-key>/`，不把运行状态写进项目工作区，因此不会因为点面板产生 Git 脏改动。遇到产品方向、删数据、发布、权限或人工验收时会停在“等待确认”；“暂停”只停止新派发，已在途任务安全收口。
 - **主线综合**：每轮收口跑一次 `truthctl synthesize`，把决策 / 进展 / 问题 / 验收 / 产品状态综合成 `docs/PRODUCT_MAINLINE.md`。产品讨论和零散需求自动长成产品叙事，人只读这一页就知道现状、最近在推什么、还差什么。
+- **PM 研究决策**：新能力按 L0-L3 风险分级；L2/L3 自动建立研究请求，先记录竞品/开源来源、许可证和维护信号，再形成 `adopt / adapt / build / defer / reject` 决策。研究和决策没有完成时，施工泳道不能合流；搜索由宿主或人工适配器提供，不把某家 provider 写死。
 - **产品路线与验收分堆**：`mainline.json` 里的 `roadmap` 记录产品预期怎么一步步走完；验收台账分出「需要人拍板」和「机器已自证」。人只需要看人工项，并照着 `steps` 复核，不用从实现和日志里倒推。
 
 它们一起形成「做完 → 验证 → 收口 → 综合 → 蒸馏」的闭环：产品行为可 diff、验收可复核、问题可闭环、主线可综合、判断可累积。
@@ -89,6 +91,27 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 
 > 注意：Codex 的 personal marketplace 以 `$HOME` 为根，插件实体必须在 `~/plugins/<name>/`，清单在 `~/.agents/plugins/marketplace.json`，这是两个目录，别写混。
 
+### 换一台机器
+
+整套环境（配置、凭据、skills、插件、账本运行态）可以用一条命令搬到另一台机器，**同名用户名的机器最快**：两台连同一个 WiFi，源机起一个临时 HTTP，目标机 `curl | tar` 边收边解，源机不落任何中间产物（源机常常磁盘告急，打包再传会把它顶爆）。
+
+```bash
+# 源机（自动挡仓库里）
+python3 ops/portable_migrate.py plan            # 先算账：传哪些、多大、哪些再生件不传
+python3 ops/portable_migrate.py serve           # 起临时 HTTP，打印目标机要跑的那条命令
+#   ↑ 输出里那条 curl 的链接带一次性随机令牌（本次口令，Ctrl-C 即失效）
+
+# 目标机：粘贴源机打印的 curl | tar 命令，然后
+python3 ~/.codex-autopilot/portable_migrate.py remap --to "$HOME" --go   # 目标机用户名不同时才需要
+```
+
+三档粒度：`--tier core`（只带必需）/ `standard`（默认，+运行时，本机实测约 420M）/ `all`（含 ~12G 再生件，一般不用）。会话历史这类再生件默认不传。
+
+两点要知道：
+
+- 包里含 `~/.codex/auth.json`（登录凭据），走的是**明文 HTTP**，只在可信 WiFi 上跑，传完立刻 `Ctrl-C`。链接里的随机令牌就是本次口令，没带令牌的请求一律 404。
+- `remap` 负责把写死的绝对路径从源机 `$HOME` 改到目标机 `$HOME`（本机实测命中 430+ 文件、4600+ 处）。源机与目标机用户名相同就跳过它。工具本体随包自带，落地后就能跑 `remap`。
+
 ## 怎么用
 
 装好之后，**那个普通的 Codex 输入框就是总输入框**。你只做一件事：把感受原样说出来。分类、路由、排期、追踪由它接手。
@@ -98,6 +121,38 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 > 左边导航 rail 的排版坏了，图标贴到左缘，被裁掉了。
 
 对话会把它记进唯一入口，归类、排期、追踪，然后告诉你现在最该动哪条。
+
+### 多个项目：入口归一，但归属现算
+
+你可以在同一个 Codex 窗口里混着说不同项目的事，系统不要求你自己挑对话或分支。
+但**「这条属于哪个项目」必须是现算的，不能靠安装时写死的那一个**。
+
+插件的 `.mcp.json` 一次只能写一个 `KG_REPO`。2026-11-16 实测过一个坏路径：
+在别的项目窗口里说话，记录全部落进那一个账本。修法是投稿时按**分层证据**判归属：
+
+```text
+  L1 原话点名项目（「beta 项目那个搜索面板…」）   ← 最强，压过其它一切
+  L2 文件路径（你贴了某个项目里的文件）
+  L3 会话目录 cwd（你人在哪个项目窗口）
+  L4 该项目注册过的线索词                        ← 最弱
+```
+
+取第一个非空的层；**只有唯一胜出才算认出来**。同时提到两个项目、或者同层咬得太近，
+一律判 `ambiguous`：记录进全局待路由箱 `~/.codex-autopilot/routing/inbox.jsonl`，
+**不写进任何项目账本**，并在 `kgctl status` 第一屏列出来。
+
+```bash
+# 看已知项目，以及有没有判不清的投稿
+python3 ops/kgctl.py projects list
+# 登记第二个项目（装的时候会自动登记，这里也能手动加）
+python3 ops/kgctl.py projects register 知识图谱 /path/to/knowledge-graph 图谱 伴读
+# 扫描某个目录下所有带账本的项目（只读，不自动注册）
+python3 ops/kgctl.py projects scan ~/.newmax/workspace
+```
+
+调用 MCP 工具时带上 `cwd`（当前会话目录）能大幅提高判定准确率；用户明说了是哪个
+项目就带 `project`。判不清时系统会说「分不清属于哪个项目，已放进待路由箱」，
+不会假装看懂。
 
 ### 怎么知道它真的在起作用
 
@@ -114,6 +169,15 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 - **非常驻（默认）**：插件在，skill / MCP 就随叫随到；会话结束就停，不占后台。
 - **常驻（可选）**：装一个 launchd 守护，没开会话时也按周期推进安全子集。开是 `--install`，关是 `--uninstall`。
 - **彻底关掉**：在 Plugins 页禁用 / 卸载插件即可。账本还留在项目里，随时能再装回来。
+
+### 项目自主运行怎么用
+
+1. 在普通 Codex 对话里直接说需求，或调用 `render_autopilot_panel` 打开自动挡面板；面板首屏的“项目自主运行”区域就是项目级控制，不需要另开对话或分支。
+2. 第一次使用先点“仅启用”。这会保存项目授权，但不会自行启动新的实现任务。
+3. 确认希望项目在你离开窗口时继续推进，再点“开始运行”。看到状态变成“运行中”，并且待派 / 运行中 / 卡住 / 待确认计数出现，即表示项目级状态已加载。
+4. 想暂时停新活时点“暂停”；想保留授权但不自动推进时点“仅启用”。需要你确认的产品方向、发布、删除数据或人工验收会显示在“待确认”，不会被自动挡擅自越过。
+
+状态也可从对话里核验：`project_autonomy_status` 查看当前项目，`project_autonomy_control` 的 `enable` / `run` / `pause` / `wait` / `disable` 分别对应仅启用、开始运行、暂停、等待确认和关闭。旧项目没有项目级状态文件时，仍兼容原有 `auto_exec` 开关；一旦使用项目级控制，该项目状态优先于旧全局开关。
 
 也可以让对话直接调 MCP 工具：`intake_request`（一句话走完整条链，首选）/ `sync_control_plane` / `next_actions` / `project_status` / `route_inbox` / `resolve_list` / `resolve_plan` / `resolve_start` / `resolve_finish` / `convergence_plan` / `generate_context` / `dashboard` / `capture_request` / `suggest_branch` / `product_state` / `product_update` / `distill_review` / `distill_add` / `synthesize_mainline` / `register_acceptance` / `close_item` / `reopen_item`。
 

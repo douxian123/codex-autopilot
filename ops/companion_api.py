@@ -19,6 +19,8 @@
   native-probe                    真跑一次原生直连自检并记下结果
 """
 
+from __future__ import annotations
+
 import json
 import os
 import subprocess
@@ -28,7 +30,17 @@ from pathlib import Path
 OPS = Path(__file__).resolve().parent
 sys.path.insert(0, str(OPS))
 import control_state  # noqa: E402
-from plugin_binding import apply_plugin_env  # noqa: E402
+from plugin_binding import apply_plugin_env, current_ops  # noqa: E402
+
+
+def _live_ops():
+    """这一次调用当下「真正装好的那份 ops/」。
+
+    本入口由菜单栏每次新起进程拉起，所以它的风险比常驻 MCP 低；但用的是同一套
+    「随插件目录走」的写法，升级删掉旧目录后同样会指到不存在的路径。这里与
+    central_mcp / central_daemon 统一走 current_ops()，不留第二套解析口径。
+    """
+    return current_ops()
 
 apply_plugin_env()
 
@@ -46,7 +58,8 @@ def _companion_config():
 
 def _repo():
     configured = _companion_config().get("project")
-    return Path(os.environ.get("KG_REPO") or configured or OPS.parent).expanduser().resolve()
+    return Path(os.environ.get("KG_REPO") or configured
+                or _live_ops().parent).expanduser().resolve()
 
 
 def _result(payload, code=0):
@@ -76,7 +89,7 @@ def _run_kgctl(args, repo, extra_env=None):
     env["KG_REPO"] = str(repo)
     if extra_env:
         env.update(extra_env)
-    return subprocess.run([sys.executable, str(OPS / "kgctl.py"), *args],
+    return subprocess.run([sys.executable, str(_live_ops() / "kgctl.py"), *args],
                           cwd=str(repo), env=env, capture_output=True, text=True)
 
 

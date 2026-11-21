@@ -6,17 +6,17 @@
 <title>Codex Autopilot</title>
 <style>
   :root{
-    /* 主题：优先读宿主（Codex）注入的 CSS 变量，取不到才回落到自带浅色。
-       面板因此和 Codex 同底色、同字色、同描边、同圆角，不再是一块风格
-       独立的外挂网页；在普通浏览器里也有一套完整的兜底。 */
-    --bg:var(--color-background-secondary,#F3F4F8);
-    --surface:var(--color-background-primary,#FFFFFF);
-    --surface-2:var(--color-background-secondary,#F8F9FC);
-    --surface-3:var(--color-background-tertiary,#EDEFF5);
-    --ink:var(--color-text-primary,#111420);
+    /* 主题：先读 @openai/apps-sdk-ui / Codex 宿主注入的官方语义 token，
+       再读旧宿主变量，最后才是独立浏览器里的兜底色。这样插件在宿主里
+       跟原生容器同一套底色、字色和描边，离开宿主也不会变成一块黑底外挂。 */
+    --bg:var(--color-surface-secondary,var(--color-background-secondary,#F3F4F8));
+    --surface:var(--color-surface,var(--color-background-primary,#FFFFFF));
+    --surface-2:var(--color-surface-secondary,var(--color-background-secondary,#F8F9FC));
+    --surface-3:var(--color-surface-tertiary,var(--color-background-tertiary,#EDEFF5));
+    --ink:var(--color-text,var(--color-text-primary,#111420));
     --ink-2:var(--color-text-secondary,#4C5464);
     --ink-3:var(--color-text-tertiary,#737B8C);
-    --line:var(--color-border-primary,#E6E9F0);
+    --line:var(--color-border,var(--color-border-primary,#E6E9F0));
     --line-2:var(--color-border-subtle,#EEF1F6);
 
     /* brand · OpenAI 绿 */
@@ -34,14 +34,14 @@
 
     /* semantic · 同样优先宿主语义色 */
     --ok:var(--color-text-success,#0E7A57);
-    --ok-soft:var(--color-background-success,#E7F4EE);
-    --ok-line:var(--color-border-success,#CDE8DD);
+    --ok-soft:var(--color-background-success-surface,var(--color-background-success,#E7F4EE));
+    --ok-line:var(--color-border-success-surface,var(--color-border-success,#CDE8DD));
     --warn:var(--color-text-warning,#8F5F0B);
-    --warn-soft:var(--color-background-warning,#FAF2E1);
-    --warn-line:var(--color-border-warning,#EFDDBB);
+    --warn-soft:var(--color-background-warning-surface,var(--color-background-warning,#FAF2E1));
+    --warn-line:var(--color-border-warning-surface,var(--color-border-warning,#EFDDBB));
     --err:var(--color-text-danger,#B93A31);
-    --err-soft:var(--color-background-danger,#FAEBE9);
-    --err-line:var(--color-border-danger,#F0D1CD);
+    --err-soft:var(--color-background-danger-surface,var(--color-background-danger,#FAEBE9));
+    --err-line:var(--color-border-danger-surface,var(--color-border-danger,#F0D1CD));
     --neutral:var(--color-text-secondary,#69707E);
     --neutral-soft:var(--surface-3);
     --neutral-line:var(--line);
@@ -62,6 +62,8 @@
   body.s-blocked,body.s-session_only{--acc:var(--warn);--accsoft:var(--warn-soft);--accline:var(--warn-line)}
   body.s-error{--acc:var(--err);--accsoft:var(--err-soft);--accline:var(--err-line)}
   body.s-idle{--acc:var(--ok);--accsoft:var(--ok-soft);--accline:var(--ok-line)}
+  body.s-enabled,body.s-waiting_human{--acc:var(--warn);--accsoft:var(--warn-soft);--accline:var(--warn-line)}
+  body.s-disabled{--acc:var(--ink-3);--accsoft:var(--surface-2);--accline:var(--line)}
   .wrap{max-width:780px;margin:0 auto;padding:18px 16px 34px}
   svg{display:block}
   button{font-family:inherit}
@@ -79,6 +81,10 @@
   .iconbtn:hover{background:var(--surface-2);color:var(--ink);border-color:var(--neutral-line)}
   .iconbtn svg{width:15px;height:15px}
   body.adv .iconbtn.adv{background:var(--brand-50);border-color:var(--brand-200);color:var(--brand-700)}
+
+  /* 入口说明：常驻但不抢三问的注意力。只说用途，不暴露线程 ID 或内部术语。 */
+  .entrymap{display:flex;flex-wrap:wrap;gap:4px 14px;margin:-2px 0 12px;padding:8px 11px;background:var(--surface-2);border:1px solid var(--line-2);border-left:2px solid var(--brand-200);border-radius:var(--r-sm);font-size:11.5px;color:var(--ink-3)}
+  .entrymap b{color:var(--ink-2);font-weight:600}
 
   /* ---- hero ---- */
   .hero{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:var(--r);padding:16px 18px 15px;margin-bottom:11px;box-shadow:var(--shadow-2)}
@@ -98,6 +104,33 @@
   .northstar .ns-d{font-size:11.5px;color:var(--ink-3);margin-left:auto;font-variant-numeric:tabular-nums}
   .northstar.unknown .ns-v{color:var(--ink-2);font-weight:500}
   .northstar.missing{opacity:.6}
+
+  /* ---- 首屏三问 ---- */
+  .q{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px 13px;margin-bottom:11px;box-shadow:var(--shadow-1)}
+  .qhead{display:flex;align-items:center;gap:9px;margin-bottom:11px}
+  .qhead .qn{width:20px;height:20px;border-radius:50%;background:var(--surface-3);color:var(--ink-3);display:grid;place-items:center;font-size:11px;font-weight:700;flex:0 0 auto;font-variant-numeric:tabular-nums}
+  .qhead h2{margin:0;font-size:14px;font-weight:650;color:var(--ink)}
+  .qhead .qstate{margin-left:auto;font-size:11.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .q .alert{margin-bottom:10px}
+  .q .hero,.q .card{box-shadow:none;border-radius:var(--r-sm);margin-bottom:0}
+  .q .card .chead{margin-bottom:10px}
+  .q .card + .card,.q .northstar,.q .sysline{margin-top:10px}
+  .sysline{font-size:11.5px;color:var(--ink-3);line-height:1.6;overflow-wrap:anywhere}
+  .need-evidence[hidden]{display:none}
+  /* 管家健康条：首屏只留一行摘要和短名状态条，完整解释走 title / aria-label。
+     attention 才用警告色；off 是用户自己关的，用中性灰，不冒充故障。 */
+  .stewards{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);display:flex;align-items:center;flex-wrap:wrap;gap:5px 10px}
+  .steward-summary{font-size:11.5px;color:var(--ink-3);white-space:nowrap}
+  .steward-strip{display:flex;align-items:center;flex-wrap:wrap;gap:4px 9px}
+  .steward{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--ink-2);line-height:1.4;white-space:nowrap}
+  .steward .sdot{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:var(--ink-3);opacity:.55}
+  .steward.s-ok .sdot{background:var(--ok);opacity:.85}
+  .steward.s-attention .sdot{background:var(--warn);opacity:1}
+  .steward.s-attention{color:var(--warn)}
+  .steward.s-off{color:var(--ink-3)}
+  .steward.s-unknown{color:var(--ink-3)}
+  .steward.s-unknown .sdot{background:var(--ink-3);opacity:.4}
+
   .hero-bar{height:3px;border-radius:999px;background:var(--surface-3);margin-top:13px;overflow:hidden}
   .hero-bar span{display:block;height:100%;width:34%;border-radius:999px;background:var(--acc);opacity:0}
   body.s-working .hero-bar span{opacity:1;animation:slide 1.7s ease-in-out infinite}
@@ -114,48 +147,6 @@
   @keyframes fade{0%,100%{opacity:1}50%{opacity:.25}}
   .execnow .etx{min-width:0;line-height:1.5}
   .execnow .emeta{display:block;color:var(--brand-600);font-size:11.5px;margin-top:3px}
-
-  /* ---- branded project overview ---- */
-  .brand-kicker{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:700}
-  .project-overview{display:grid;grid-template-columns:152px minmax(0,1fr);gap:20px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px;margin-bottom:11px;box-shadow:var(--shadow-2)}
-  .progress-ring{--progress:0%;width:128px;height:128px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--brand-600) var(--progress),var(--surface-3) 0);position:relative;margin:auto}
-  .progress-ring::after{content:"";position:absolute;inset:9px;border-radius:50%;background:var(--surface)}
-  .progress-ring .ring-value{position:relative;z-index:1;text-align:center;line-height:1}
-  .ring-value strong{display:block;font-size:27px;font-weight:720;font-variant-numeric:tabular-nums;color:var(--ink)}
-  .ring-value span{display:block;margin-top:7px;font-size:10.5px;color:var(--ink-3)}
-  .overview-copy{min-width:0}
-  .overview-copy h1{font-size:19px;line-height:1.25;margin:4px 0 5px;font-weight:700;letter-spacing:0;color:var(--ink)}
-  .overview-copy .lede{font-size:13px;color:var(--ink-2);line-height:1.5;margin:0;overflow-wrap:anywhere}
-  .overview-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:15px}
-  .overview-metric{min-width:0;border-top:1px solid var(--line-2);padding-top:8px}
-  .overview-metric strong{display:block;font-size:15px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
-  .overview-metric span{display:block;margin-top:2px;font-size:10.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .attention{display:flex;gap:9px;align-items:flex-start;margin-top:14px;padding:10px 11px;border-left:3px solid var(--warn);background:var(--warn-soft);border-radius:var(--r-xs)}
-  .attention .attention-dot{width:8px;height:8px;border-radius:50%;background:var(--warn);margin-top:5px;flex:0 0 auto}
-  .attention strong{display:block;font-size:12px;color:var(--warn);font-weight:700}
-  .attention span{display:block;margin-top:2px;font-size:11.5px;color:var(--ink-2);line-height:1.4;overflow-wrap:anywhere}
-  .map-card{padding:16px 18px 13px}
-  .map-head{display:flex;align-items:baseline;gap:9px;margin-bottom:13px}
-  .map-head h2{margin:0;font-size:15px;font-weight:680}
-  .map-head .map-meta{margin-left:auto;color:var(--ink-3);font-size:11px;font-variant-numeric:tabular-nums}
-  .map-summary{height:6px;border-radius:99px;background:var(--surface-3);overflow:hidden;margin-bottom:14px}
-  .map-summary span{display:block;height:100%;border-radius:99px;background:var(--brand-600);transition:width .45s ease}
-  .project-card{border-top:1px solid var(--line-2);padding:13px 0 2px}
-  .project-card:first-child{border-top:0;padding-top:0}
-  .project-card-head{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:9px;align-items:center}
-  .project-card-dot{width:9px;height:9px;border-radius:50%;background:var(--neutral);box-shadow:0 0 0 3px var(--neutral-soft)}
-  .project-card-dot.done{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
-  .project-card-dot.doing{background:var(--brand-600);box-shadow:0 0 0 3px var(--brand-50)}
-  .project-card-dot.blocked{background:var(--warn);box-shadow:0 0 0 3px var(--warn-soft)}
-  .project-card-title{min-width:0;font-size:13px;font-weight:650;color:var(--ink);overflow-wrap:anywhere}
-  .project-card-state{font-size:11px;color:var(--ink-3);white-space:nowrap}
-  .project-card-bar{height:4px;border-radius:99px;background:var(--surface-3);margin:9px 0 7px 19px;overflow:hidden}
-  .project-card-bar span{display:block;height:100%;border-radius:99px;background:var(--brand-500);min-width:0}
-  .project-card.done .project-card-bar span{background:var(--ok)}
-  .project-card.blocked .project-card-bar span{background:var(--warn)}
-  .project-card-foot{display:flex;gap:8px;justify-content:space-between;margin-left:19px;font-size:11px;color:var(--ink-3)}
-  .project-card-foot .detail{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .project-card-foot .percent{font-variant-numeric:tabular-nums;color:var(--ink-2);font-weight:650;white-space:nowrap}
 
   /* ---- alert ---- */
   .alert{--lv:var(--brand-600);display:flex;gap:11px;align-items:flex-start;border-radius:var(--r-sm);padding:12px 15px;margin-bottom:11px;font-size:13px;background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--lv);box-shadow:var(--shadow-1);color:var(--ink)}
@@ -216,12 +207,6 @@
   .route-arrow{display:grid;place-items:center;color:var(--ink-3);font-size:15px}
 
   @media(max-width:520px){
-    .project-overview{grid-template-columns:1fr;gap:14px;padding:15px}
-    .progress-ring{width:108px;height:108px}
-    .progress-ring::after{inset:8px}
-    .ring-value strong{font-size:24px}
-    .overview-copy{text-align:left}
-    .overview-copy h1{font-size:17px}
     .route-hierarchy{grid-template-columns:minmax(0,1fr);gap:4px}
     .route-arrow{height:13px;transform:rotate(90deg)}
     .triple{grid-template-columns:1fr}
@@ -257,6 +242,19 @@
   .route-group:last-child{border-bottom:0}
   .route-group .t{font-size:12px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
   .tiny{font-size:11.5px;color:var(--ink-3)}
+
+  /* ---- 工单状态表：来源 → 项目 → 泳道 → 分支 → stage → 证据 ---- */
+  .wt{list-style:none;margin:0;padding:0}
+  .wt li{padding:9px 0;border-bottom:1px solid var(--line-2)}
+  .wt li:last-child{border-bottom:0}
+  .wt .t{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+  .wt .wid{font-size:10.5px;color:var(--ink-3);font-variant-numeric:tabular-nums;flex:0 0 auto}
+  .wt .stl{margin-left:auto;font-size:10.5px;font-weight:650;border-radius:999px;padding:2px 9px;background:var(--neutral-soft);color:var(--neutral);white-space:nowrap;flex:0 0 auto}
+  .wt .stl.doing{background:var(--brand-50);color:var(--brand-700)}
+  .wt .stl.review{background:var(--warn-soft);color:var(--warn)}
+  .wt .stl.stuck{background:var(--err-soft);color:var(--err)}
+  .wt .d{margin-top:4px;color:var(--ink-3);font-size:11.5px;overflow-wrap:anywhere}
+  .wt .ev{margin-top:3px;color:var(--ink-3);font-size:11.5px;opacity:.86;overflow-wrap:anywhere}
 
   /* ---- chips ---- */
   .chips{display:flex;flex-wrap:wrap;gap:7px}
@@ -304,6 +302,10 @@
   .acc ol{margin:7px 0 0;padding-left:20px;font-size:12.5px;color:var(--ink-2)}
   .acc ol li{padding:2px 0}
   .accnote{margin-top:10px;font-size:11.5px;color:var(--ink-3)}
+  .accact{margin-top:10px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;border-top:1px solid var(--line-2);padding-top:10px}
+  .accmsg{font-size:11.5px;color:var(--ink-3);flex:1 1 210px;min-width:0;line-height:1.5}
+  .accact .btn{padding:6px 13px;font-size:12.5px;border-radius:8px;flex:0 0 auto}
+  .accbtns{display:flex;gap:8px;align-items:center;flex:0 0 auto}
   .accfold{margin-top:12px;border-top:1px solid var(--line-2)}
   .accfold>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:12px 0 2px;font-size:12px;font-weight:600;color:var(--ink-3)}
   .accfold>summary::-webkit-details-marker{display:none}
@@ -315,6 +317,10 @@
   .list{margin:0;padding:0;list-style:none}
   .list li{padding:8px 0;border-bottom:1px solid var(--line-2);font-size:12.5px;display:flex;gap:8px;align-items:baseline}
   .list li:last-child{border-bottom:0}
+  /* 卡点行要带一条「下一步动作」。动作行是块级子元素，行本身必须能换行，
+     否则它会被当成第三个 flex item 挤在 tag/正文之间，视觉上错位。 */
+  .list li.blkitem{flex-wrap:wrap;align-items:flex-start}
+  .list li.blkitem>.accact{flex:1 1 100%;margin-top:2px}
   .tag{font-size:10.5px;border-radius:6px;padding:2px 8px;background:var(--brand-50);color:var(--brand-700);white-space:nowrap;font-weight:650;flex:0 0 auto;line-height:1.5}
   .tag.warn{background:var(--warn-soft);color:var(--warn)}
   .tag.err{background:var(--err-soft);color:var(--err)}
@@ -358,6 +364,7 @@
   .intake textarea:focus{outline:2px solid var(--brand-500);outline-offset:1px}
   .intake-actions{display:flex;align-items:center;gap:10px;margin-top:8px}
   .intake-actions .btn{border-radius:8px}
+  .intake-route{font-size:11.5px;line-height:1.45;color:var(--ink-3);margin-top:6px;min-height:16px;overflow-wrap:anywhere}
   .nativeline{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
   .projline{margin-top:8px;overflow-wrap:anywhere}
   .nativeline #nativeState{font-size:12.5px;color:var(--ink-2);line-height:1.5}
@@ -367,6 +374,56 @@
   .overview-detail>summary{list-style:none;cursor:pointer;padding:11px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:13px;font-weight:600;color:var(--ink)}
   .overview-detail>summary::-webkit-details-marker{display:none}
   .overview-detail[open]>summary{margin-bottom:12px}
+  .autonomy{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 18px;margin-bottom:11px;box-shadow:var(--shadow-1)}
+  .autonomy-head{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+  .autonomy-title{font-size:13.5px;font-weight:650}
+  .autonomy-mode{font-size:11.5px;color:var(--ink-3)}
+  .autonomy-copy{margin-top:5px;color:var(--ink-2);font-size:12.5px}
+  .autonomy-stats{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;color:var(--ink-3);font-size:11.5px}
+  .autonomy-stats b{color:var(--ink);font-weight:650;margin-right:3px}
+  .autonomy-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+  .autonomy-actions .btn{padding:6px 10px;font-size:12px}
+
+  /* ---- Codex Autopilot project brief ---- */
+  .brand-kicker{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:700}
+  .project-overview{display:grid;grid-template-columns:152px minmax(0,1fr);gap:20px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px;margin-bottom:11px;box-shadow:var(--shadow-2)}
+  .progress-ring{--progress:0%;width:128px;height:128px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--brand-600) var(--progress),var(--surface-3) 0);position:relative;margin:auto}
+  .progress-ring::after{content:"";position:absolute;inset:9px;border-radius:50%;background:var(--surface)}
+  .progress-ring .ring-value{position:relative;z-index:1;text-align:center;line-height:1}
+  .ring-value strong{display:block;font-size:27px;font-weight:720;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .ring-value span{display:block;margin-top:7px;font-size:10.5px;color:var(--ink-3)}
+  .overview-copy{min-width:0}
+  .overview-copy h1{font-size:19px;line-height:1.25;margin:4px 0 5px;font-weight:700;color:var(--ink)}
+  .overview-copy .lede{font-size:13px;color:var(--ink-2);line-height:1.5;margin:0;overflow-wrap:anywhere}
+  .overview-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:15px}
+  .overview-metric{min-width:0;border-top:1px solid var(--line-2);padding-top:8px}
+  .overview-metric strong{display:block;font-size:15px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+  .overview-metric span{display:block;margin-top:2px;font-size:10.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .attention{display:flex;gap:9px;align-items:flex-start;margin-top:14px;padding:10px 11px;border-left:3px solid var(--warn);background:var(--warn-soft);border-radius:var(--r-xs)}
+  .attention[hidden]{display:none}
+  .attention .attention-dot{width:8px;height:8px;border-radius:50%;background:var(--warn);margin-top:5px;flex:0 0 auto}
+  .attention strong{display:block;font-size:12px;color:var(--warn);font-weight:700}
+  .attention span{display:block;margin-top:2px;font-size:11.5px;color:var(--ink-2);line-height:1.4;overflow-wrap:anywhere}
+  .map-card{padding:16px 18px 13px}
+  .map-head{display:flex;align-items:baseline;gap:9px;margin-bottom:13px}
+  .map-head h2{margin:0;font-size:15px;font-weight:680}
+  .map-head .map-meta{margin-left:auto;color:var(--ink-3);font-size:11px;font-variant-numeric:tabular-nums}
+  .map-summary{height:6px;border-radius:99px;background:var(--surface-3);overflow:hidden;margin-bottom:14px}
+  .map-summary span{display:block;height:100%;border-radius:99px;background:var(--brand-600);transition:width .45s ease}
+  .project-card{border-top:1px solid var(--line-2);padding:13px 0 2px}
+  .project-card:first-child{border-top:0;padding-top:0}
+  .project-card-head{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:9px;align-items:center}
+  .project-card-dot{width:9px;height:9px;border-radius:50%;background:var(--neutral);box-shadow:0 0 0 3px var(--neutral-soft)}
+  .project-card-dot.done{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+  .project-card-dot.doing{background:var(--brand-600);box-shadow:0 0 0 3px var(--brand-50)}
+  .project-card-title{min-width:0;font-size:13px;font-weight:650;color:var(--ink);overflow-wrap:anywhere}
+  .project-card-state{font-size:11px;color:var(--ink-3);white-space:nowrap}
+  .project-card-bar{height:4px;border-radius:99px;background:var(--surface-3);margin:9px 0 7px 19px;overflow:hidden}
+  .project-card-bar span{display:block;height:100%;border-radius:99px;background:var(--brand-500)}
+  .project-card.done .project-card-bar span{background:var(--ok)}
+  .project-card-foot{display:flex;gap:8px;justify-content:space-between;margin-left:19px;font-size:11px;color:var(--ink-3)}
+  .project-card-foot .detail{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .project-card-foot .percent{font-variant-numeric:tabular-nums;color:var(--ink-2);font-weight:650;white-space:nowrap}
 
   /* switches */
   .switchrow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line-2)}
@@ -405,7 +462,7 @@
     </span>
     <div class="hdr-tx">
       <div class="hdr-title">Codex Autopilot</div>
-      <div class="hdr-sub" id="subtitle">项目进展与交付状态</div>
+      <div class="hdr-sub" id="subtitle">正在读取状态…</div>
     </div>
     <div class="hdr-act">
       <button class="iconbtn" id="refresh" aria-label="刷新" title="刷新状态">
@@ -417,6 +474,76 @@
     </div>
   </header>
 
+  <!-- 首屏只回答三件事，其余一律下沉。健康时不占空间。 -->
+  <div class="entrymap" id="entryMap" aria-label="入口说明">
+    <span><b>主入口</b>：Codex 总输入框，万法归一</span>
+    <span><b>执行入口</b>：后台任务窗口，只汇报状态</span>
+    <span><b>兜底入口</b>：高级区输入框</span>
+  </div>
+
+  <section class="q" id="q1">
+    <div class="qhead"><span class="qn">1</span><h2>有东西需要我吗？</h2><span class="qstate" id="q1State"></span></div>
+    <div class="alert lv-ok" id="need">
+      <span class="al-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/></svg></span>
+      <span class="al-tx" id="needText">读取中…</span>
+    </div>
+    <section class="card" id="acceptCard">
+      <div class="chead"><h2>待确认事项</h2><span class="count" id="accNote"></span></div>
+      <div id="acceptBox"></div>
+    </section>
+  </section>
+
+  <section class="q" id="q2">
+    <div class="qhead"><span class="qn">2</span><h2>系统在干对的事吗？</h2><span class="qstate" id="q2State"></span></div>
+    <section class="hero">
+      <div class="hero-top">
+        <span class="pulse"></span>
+        <span class="hero-state" id="stateLabel">读取中</span>
+        <span class="hero-time" id="statusTime"></span>
+      </div>
+      <div class="triple" aria-label="当前状态与进度">
+        <div class="cell">
+          <span class="k">现在是什么状态</span>
+          <span class="v" id="focusStatus">读取中…</span>
+        </div>
+        <div class="cell work">
+          <span class="k">现在在干嘛</span>
+          <span class="v" id="focusDoing">读取中…</span>
+        </div>
+        <div class="cell">
+          <span class="k">现在在哪个步骤</span>
+          <span class="v" id="focusStep">读取中…</span>
+        </div>
+      </div>
+      <div class="hero-bar" aria-hidden="true"><span></span></div>
+      <div class="execnow" id="execNow" hidden><span class="edot"></span><span class="etx" id="execNowText"></span></div>
+    </section>
+    <div class="sysline" id="sysLine">正在读取常驻与调度…</div>
+    <div class="stewards" id="stewardBar" aria-label="管家状态与全局健康"></div>
+    <div class="sysline" id="autonomyLine" hidden></div>
+    <details class="card fold engineering-detail" id="systemEvidenceFold">
+      <summary>系统为什么这么判断</summary>
+      <div class="foldbody"><div class="sysline" id="systemDetail">正在读取运行指标…</div></div>
+    </details>
+    <details class="card fold" id="globalRoutingFold" hidden>
+      <summary id="globalRoutingSummary">全局待路由</summary>
+      <div class="foldbody"><div id="globalRoutingBox"></div></div>
+    </details>
+  </section>
+
+  <section class="q" id="q3">
+    <div class="qhead"><span class="qn">3</span><h2>它替我完成了什么？</h2><span class="qstate" id="q3State"></span></div>
+    <div class="northstar missing" id="northStar">
+      <span class="ns-k">首问闭环率</span>
+      <span class="ns-v" id="nsValue">取不到</span>
+      <span class="ns-d" id="nsDetail"></span>
+    </div>
+    <section class="card" id="recentCard">
+      <div class="chead"><h2>最近收口</h2><span class="count" id="recentNote"></span></div>
+      <div id="recentBox"></div>
+    </section>
+  </section>
+
   <section class="card" style="padding:11px 14px;margin-bottom:10px">
     <div class="switchrow" style="padding:0;border:0">
       <div><div class="t">Autopilot</div><div class="d" id="masterState">正在读取状态…</div></div>
@@ -425,33 +552,9 @@
     <div class="d projline" id="projectLine">绑定项目：读取中…</div>
   </section>
 
-  <section class="hero">
-    <div class="hero-top">
-      <span class="pulse"></span>
-      <span class="hero-state" id="stateLabel">读取中</span>
-      <span class="hero-time" id="statusTime"></span>
-    </div>
-    <div class="triple" aria-label="一眼三问">
-      <div class="cell">
-        <span class="k">① 现在是什么状态</span>
-        <span class="v" id="focusStatus">读取中…</span>
-      </div>
-      <div class="cell work">
-        <span class="k">② 现在在干嘛</span>
-        <span class="v" id="focusDoing">读取中…</span>
-      </div>
-      <div class="cell">
-        <span class="k">③ 现在在哪个步骤</span>
-        <span class="v" id="focusStep">读取中…</span>
-      </div>
-    </div>
-    <div class="northstar missing" id="northStar">
-      <span class="ns-k">首问闭环率</span>
-      <span class="ns-v" id="nsValue">取不到</span>
-      <span class="ns-d" id="nsDetail"></span>
-    </div>
-    <div class="hero-bar" aria-hidden="true"><span></span></div>
-    <div class="execnow" id="execNow" hidden><span class="edot"></span><span class="etx" id="execNowText"></span></div>
+  <section class="card" id="folderCard">
+    <div class="chead"><h2>项目文件夹</h2><span class="count" id="folderNote"></span></div>
+    <div class="folders" id="folderBox"></div>
   </section>
 
   <section class="project-overview" id="projectOverview" aria-label="项目总览">
@@ -473,29 +576,38 @@
     </div>
   </section>
 
-  <div class="alert lv-ok" id="need">
-    <span class="al-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/></svg></span>
-    <span class="al-tx">读取中…</span>
-  </div>
-
-  <section class="intake">
-    <label for="intakeText">交给 Autopilot</label>
-    <textarea id="intakeText" placeholder="说说你发现的问题或想完成的事"></textarea>
-    <div class="intake-actions">
-      <button class="btn primary" id="intakeSubmit">提交任务</button>
-      <span class="intake-state" id="intakeState" role="status" aria-live="polite"></span>
-    </div>
-  </section>
-
-  <section class="card" id="folderCard">
-    <div class="chead"><h2>项目文件夹</h2><span class="count" id="folderNote"></span></div>
-    <div class="folders" id="folderBox"></div>
-  </section>
-
   <section class="card map-card" id="mapCard">
     <div class="map-head"><h2>施工地图</h2><span class="map-meta" id="mapMeta">正在计算</span></div>
     <div class="map-summary"><span id="mapFill" style="width:0%"></span></div>
     <div id="mapBox"><div class="empty">正在读取路线。</div></div>
+  </section>
+
+    <details class="card fold need-evidence" id="needEvidenceFold">
+      <summary>当前提醒的工程详情</summary>
+      <div class="foldbody"><div id="needEvidenceBox"></div></div>
+    </details>
+  <section class="autonomy" id="autonomyCard">
+    <div class="autonomy-head">
+      <span class="autonomy-title">项目自主运行</span>
+      <span class="autonomy-mode" id="autonomyMode">读取中</span>
+    </div>
+    <div class="autonomy-copy" id="autonomyCopy">项目级授权决定 Autopilot 是否会在你不盯着时继续推进。</div>
+    <div class="autonomy-stats">
+      <span><b id="autonomyQueued">0</b>待派</span>
+      <span><b id="autonomyRunning">0</b>运行中</span>
+      <span><b id="autonomyBlocked">0</b>卡住</span>
+      <span><b id="autonomyWaiting">0</b>待确认</span>
+    </div>
+    <div class="autonomy-actions">
+      <button class="btn primary" data-autonomy-action="run" id="autonomyRun">开始运行</button>
+      <button class="btn danger" data-autonomy-action="pause" id="autonomyPause">暂停项目</button>
+      <button class="btn" data-autonomy-action="enable" id="autonomyEnable">仅启用</button>
+    </div>
+  </section>
+
+  <section class="card" id="acceptCard">
+    <div class="chead"><h2>需要你验收</h2><span class="count" id="accNote"></span></div>
+    <div id="acceptBox"></div>
   </section>
 
   <section class="orientation" id="routeOverview">
@@ -530,18 +642,9 @@
     <div class="orientation-note" id="orientationNote">正在读取当前路线…</div>
   </section>
 
-  <section class="card" id="acceptCard">
-    <div class="chead"><h2>待确认事项</h2><span class="count" id="accNote"></span></div>
-    <div id="acceptBox"></div>
-  </section>
-
-  <section class="card" id="recentCard">
-    <div class="chead"><h2>最近收口</h2><span class="count" id="recentNote"></span></div>
-    <div id="recentBox"></div>
-  </section>
-
   <details class="overview-detail">
     <summary>验收证据与 Codex 工作区</summary>
+    <div class="sysline" id="autonomyAudit" hidden></div>
     <section class="track">
       <div class="stages">
         <div class="stage" id="stageTodo"><div class="n" id="stTodo">0</div><div class="l">待处理</div></div>
@@ -560,11 +663,15 @@
       <div class="chead"><h2>全部工作项</h2><span class="count" id="workCount"></span></div>
       <div class="meta" id="workContext" style="margin-top:-5px;margin-bottom:10px"></div>
       <div id="progressBox"></div>
+      <details class="fold" style="margin-top:12px" id="workTableFold">
+        <summary>每一条的来龙去脉（来源 · 泳道 · 分支 · 到哪一步 · 证据）</summary>
+        <div class="foldbody"><div id="workTableBox"></div></div>
+      </details>
     </section>
 
     <section class="card">
-      <div class="chead"><h2>Codex 工作区</h2><span class="count">原生连接</span></div>
-      <div class="route-summary" id="routeSummary">任务由项目账本、工作区和 Codex 原生会话共同推进。</div>
+      <div class="chead"><h2>任务路线</h2><span class="count">Codex 原生工作区</span></div>
+      <div class="route-summary" id="routeSummary">任务由项目账本、工作区和 Codex 原生会话共同推进；Codex thread 的实时列表由宿主提供时再显示。</div>
       <div class="nativeline">
         <span id="nativeState">原生直连：正在读取…</span>
         <button class="btn" id="nativeProbe" type="button">原生自检</button>
@@ -596,7 +703,7 @@
     <div class="foldbody">
       <ol class="steps">
         <li><span class="stepn">1</span><div>把看到的零散问题<b>原样说出来</b>就行——视觉不对、体验别扭、冒出一个 bug，可以一起丢过来。</div></li>
-        <li><span class="stepn">2</span><div>Autopilot 负责<b>归类、记录、追踪</b>，并把和主线不冲突、检查通过的改动<b>自动合好</b>。</div></li>
+        <li><span class="stepn">2</span><div>Autopilot 负责<b>归类、记录、追踪</b>，并把和主线不冲突、检查通过的改动<b>自己合好</b>。</div></li>
         <li><span class="stepn">3</span><div>只有<b>改产品方向、删数据、发布</b>这类要拍板的事，它才会停下来问你。</div></li>
       </ol>
       <div class="callout">
@@ -607,6 +714,21 @@
   </details>
 
   <div id="advanced">
+    <details class="card fold">
+      <summary>交给 Autopilot</summary>
+      <div class="foldbody">
+        <section class="intake">
+          <label for="intakeText">写给 Autopilot 的一句话</label>
+          <textarea id="intakeText" placeholder="说说你发现的问题或想完成的事"></textarea>
+          <div class="intake-route" id="intakeRoute" role="status" aria-live="polite">写一句话后显示它会落到哪个项目</div>
+          <div class="intake-actions">
+            <button class="btn primary" id="intakeSubmit">提交任务</button>
+            <span class="intake-state" id="intakeState" role="status" aria-live="polite"></span>
+          </div>
+        </section>
+      </div>
+    </details>
+
     <details class="card fold" open>
       <summary>自动动作</summary>
       <div class="foldbody">
@@ -634,7 +756,7 @@
     </details>
 
     <details class="card fold">
-      <summary>运行信息</summary>
+      <summary>运行状态</summary>
       <div class="foldbody">
         <div class="grid2">
           <div class="kv"><div class="l">后台常驻进程</div><div class="v" id="daemonLive">—</div></div>
@@ -645,6 +767,26 @@
           <div class="kv"><div class="l">移植暂缓</div><div class="v" id="qPorted">—</div></div>
         </div>
       </div>
+    </details>
+
+    <details class="card fold" id="pmBriefingFold">
+      <summary>PM 简报 · 预期、让路与追问候选</summary>
+      <div class="foldbody"><div id="pmBriefingBox"></div></div>
+    </details>
+
+    <details class="card fold" id="contextArchiveFold">
+      <summary>上下文档案 · 自动收录与确认去向</summary>
+      <div class="foldbody"><div id="contextArchiveBox"></div></div>
+    </details>
+
+    <details class="card fold" id="relationshipGoalsFold">
+      <summary>关系目标 · 跨项目长期目标</summary>
+      <div class="foldbody"><div id="relationshipGoalsBox"></div></div>
+    </details>
+
+    <details class="card fold" id="outcomeScoreFold">
+      <summary>结果代理分 · 用户结果有没有变好</summary>
+      <div class="foldbody"><div id="outcomeScoreBox"></div></div>
     </details>
 
     <details class="card fold">
@@ -663,17 +805,17 @@
     </details>
 
     <details class="card fold">
-      <summary>最近一次自验证 · 真跑真写真拦</summary>
+      <summary>验收台账 · 最近一次自验证</summary>
       <div class="foldbody"><div id="verifyBox"></div></div>
     </details>
 
     <details class="card fold">
-      <summary>需要你拍板 / 异常</summary>
+      <summary>需要你验收 / 拍板 / 异常</summary>
       <div class="foldbody"><ul class="list" id="blockedList"></ul></div>
     </details>
 
     <details class="card fold">
-      <summary>最近发生了什么</summary>
+      <summary>执行记录</summary>
       <div class="foldbody">
         <ul class="list" id="eventList"></ul>
         <p class="tiny" style="margin-top:10px">完整日志：<span id="logPath">~/.codex-autopilot/daemon.log</span></p>
@@ -682,7 +824,7 @@
     </details>
   </div>
 
-  <div class="foot">你平时使用的 Codex 输入框，就是 Autopilot 的入口。</div>
+  <div class="foot">你平时使用的 Codex 总输入框，就是 Autopilot 的入口。</div>
 </div>
 
 <script>
@@ -732,6 +874,10 @@
     });
   }
 
+  function currentCwd(){
+    return (state && state.project && state.project.path) || undefined;
+  }
+
   function loadStatus(fast){
     return callTool("autopilot_status", {fast: fast !== false}).then(function(sc){
       if (sc && sc.state) { state = sc; loadError = null; render(state); }
@@ -767,6 +913,7 @@
       var icn = box.querySelector(".al-ic"); if (icn) icn.innerHTML = IC_WARN;
       var tx = box.querySelector(".al-tx"); if (tx) tx.textContent = "读不到 Autopilot 状态：" + reason;
     }
+    var routingFold = el("globalRoutingFold"); if (routingFold) routingFold.hidden = true;
     var en = el("execNow"); if (en) en.hidden = true;
   }
 
@@ -791,6 +938,7 @@
     var box = el("need"); if(!box) return;
     var lv = "lv-brand", ic = IC_INFO;
     var txt = s.need_action || "—";
+    var detail = s.need_action_detail || "";
     var quiet = /不需要|无需|不用你/.test(txt);
     if (s.state === "error") { lv = "lv-err"; ic = IC_WARN; }
     else if (s.state === "blocked") { lv = "lv-warn"; ic = IC_WARN; }
@@ -798,6 +946,17 @@
     box.className = "alert " + lv;
     var icn = box.querySelector(".al-ic"); if (icn) icn.innerHTML = ic;
     var tx = box.querySelector(".al-tx"); if (tx) tx.textContent = txt;
+    if (txt) box.title = detail || txt;
+    box.setAttribute("aria-label", detail ? (txt + "。详情：" + detail) : txt);
+    renderNeedEvidence(detail);
+  }
+
+  // 工程路径、PID、修复命令只进折叠区和可访问属性；首屏保留用户结论。
+  function renderNeedEvidence(detail){
+    var fold = el("needEvidenceFold"); if (!fold) return;
+    var box = el("needEvidenceBox");
+    if (box) box.textContent = detail || "";
+    fold.hidden = !detail;
   }
 
   function render(s){
@@ -807,6 +966,8 @@
     setText("statusTime", "更新于 " + fmtTime(s.generated_at));
     renderNorthStar(s.closure_rate);
     setAlert(s);
+    renderGlobalRouting(s.global_routing);
+    renderAutonomy(s.project_autonomy || {});
     renderExecNow(s.exec_now);
     var c = s.counters || {};
     num("cReceived", c.received); num("cLanded", c.landed); num("cResolved", c.resolved);
@@ -815,12 +976,18 @@
     var todoCount = s.todo_count || 0;
     var humanAcc = s.human_acceptance || [];
     var bl = s.blocked || {};
-    var doingN = doingItems.length + (s.exec_now ? 1 : 0);
-    var stuckN = (bl.failures ? bl.failures.length : 0) + (bl.resolve ? bl.resolve.length : 0) + (bl.exec ? bl.exec.length : 0);
-    num("stTodo", todoCount); num("stDoing", doingN); num("stReview", humanAcc.length); num("stStuck", stuckN);
-    el("stageTodo").className = "stage" + (todoCount > 0 ? " que" : "");
+    // 四个格子只在后台算一次（stage_table），面板照抄。宿主没给 counts
+    // （例如安装绑定失效那条极简 payload）才退回本地现算，保证不会显示成 0。
+    var cnt = s.counts || {};
+    var doingN = (cnt.doing != null) ? cnt.doing : doingItems.length + (s.exec_now ? 1 : 0);
+    var todoN = (cnt.todo != null) ? cnt.todo : todoCount;
+    var reviewN = (cnt.review != null) ? cnt.review : humanAcc.length;
+    var stuckN = (cnt.stuck != null) ? cnt.stuck
+      : (bl.failures ? bl.failures.length : 0) + (bl.resolve ? bl.resolve.length : 0) + (bl.exec ? bl.exec.length : 0);
+    num("stTodo", todoN); num("stDoing", doingN); num("stReview", reviewN); num("stStuck", stuckN);
+    el("stageTodo").className = "stage" + (todoN > 0 ? " que" : "");
     el("stageDoing").className = "stage" + (doingN > 0 ? " live" : "");
-    el("stageReview").className = "stage" + (humanAcc.length > 0 ? " rev" : "");
+    el("stageReview").className = "stage" + (reviewN > 0 ? " rev" : "");
     el("stageStuck").className = "stage" + (stuckN > 0 ? " hot" : "");
 
     var pb = el("pauseBtn");
@@ -876,8 +1043,14 @@
     renderFolders(s.project_folders || {}, s);
     renderOrientation(s);
     renderAcceptance(humanAcc, s.machine_verified || []);
+    renderPmBriefing(s.pm_briefing, s.authorized_followups);
+    renderContextArchive(s.context_archive);
+    renderRelationshipGoals(s.relationship_goals);
+    renderOutcomeScore(s.outcome_score);
     renderRecent(s.recent_completed || []);
+    renderThreeQuestions(s, humanAcc, doingItems, stuckN);
     renderProgress(doingItems, s.todo_items || [], todoCount);
+    renderWorkTable(s.work_rows || []);
     renderRoute(s.route || {});
     renderMainline(s.mainline || {});
     var intakeButton = el("intakeSubmit");
@@ -959,8 +1132,520 @@
     });
   }
 
+  // 首屏三问的右侧小字：只说「要不要人、系统忙不忙、最近有没有产出」，
+  // 不重复正文，也不在健康时制造噪音。
+  function renderThreeQuestions(s, human, doing, stuckN){
+    var need = human.length + stuckN;
+    var action = String(s.need_action || "");
+    var actionQuiet = /不需要|无需|不用你/.test(action);
+    var needAttention = need > 0 || (!actionQuiet && !!action);
+    var q1Lead = "";
+    if (/验收/.test(action)) q1Lead = "要你验收";
+    else if (/拍板|决定/.test(action)) q1Lead = "要你拍板";
+    else if (/说一句|不知道|判不清|归属/.test(action)) q1Lead = "要说一句";
+    else if (/服务别的项目|轮次|常驻|守护/.test(action)) q1Lead = "等自己的轮次";
+    else if (human.length) q1Lead = "要你验收";
+    var q1Hint = q1Lead || "需关注";
+    var q1State = human.length
+      ? (q1Lead ? q1Lead + " · " + human.length + " 项等你" : human.length + " 项等你")
+      : stuckN
+        ? ((q1Lead && q1Lead !== "需关注" ? q1Lead + " · " : "") + stuckN + " 个卡点")
+        : (needAttention ? q1Hint : "不用你");
+    setText("q1State", q1State);
+    var q1 = el("q1"); if (q1) q1.className = "q" + (needAttention ? " has-need" : "");
+
+    var d = s.daemon || {};
+    var busy = doing.length + (s.exec_now ? 1 : 0);
+    setText("q2State", s.error ? "异常" : !s.enabled ? "已关闭" :
+      (s.lifecycle === "draining" ? "收尾中" : busy ? "推进中" : "待命"));
+    var q2 = el("q2"); if (q2) q2.className = "q" + (s.error ? " has-error" : busy ? " is-live" : "");
+
+    var q = s.queue || {};
+    var bits = [];
+    bits.push(d.live ? ("常驻运行中" + (d.pid ? " #" + d.pid : "")) : "常驻未运行");
+    if (d.last_cycle) bits.push("上一轮 " + fmtTime(d.last_cycle));
+    var cleanText = q.clean == null ? "取不到" : q.clean;
+    var conflictText = q.conflict == null ? "取不到" : q.conflict;
+    bits.push("可落盘 " + cleanText + " / 冲突 " + conflictText);
+    if (!s.enabled) bits.push("自动动作已关闭");
+    else if (s.paused) bits.push("已暂停推进");
+    var hh = s.harness_health || {};
+    var healthText = hh.status === "ok"
+      ? (hh.headline || "上下文健康：正常")
+      : ("上下文健康：" + (hh.reason || "取不到"));
+    bits.push(healthText);
+    var sl = el("sysLine");
+    if (sl) {
+      // 首屏只留用户结论：系统现在是否值得信任、要不要行动。
+      // 队列/守护/逐条原因属于工程证据，放进折叠区，不占首屏注意力。
+      sl.textContent = healthText;
+      sl.title = bits.join("；");
+    }
+    var detail = el("systemDetail");
+    if (detail) {
+      detail.textContent = bits.join(" · ");
+      detail.title = (hh.reasons && hh.reasons.length) ? hh.reasons.join("；") : bits.join("；");
+    }
+    // 授权情况：只在这一轮真跑过工序时出现，说明哪些已明确授权、多少还在观察、
+    // 多少等你转正。取不到就明确说取不到，不印「0 条」假装正常。
+    var au = s.autonomy || {};
+    var al = el("autonomyLine");
+    if (al) {
+      if (au.status === "ok" && au.label) {
+        al.textContent = au.label;
+        al.title = "逐条授权来源见验收证据与 Codex 工作区";
+        al.hidden = false;
+      } else if (au.status === "unknown") {
+        al.textContent = au.label || "授权情况：本轮记录取不到";
+        al.title = "逐条授权来源取不到";
+        al.hidden = false;
+      } else {
+        al.textContent = "";
+        al.title = "";
+        al.hidden = true;
+      }
+    }
+    var audit = el("autonomyAudit");
+    if (audit) {
+      var MODE_LABEL = {auto:"自动", propose:"提案", observe:"观察"};
+      var AUTH_LABEL = {explicit:"明确授权", inferred:"系统推断"};
+      var EFFECT_LABEL = {read:"只读", proposal:"提案", reversible:"可逆", destructive:"破坏性"};
+      var STATUS_LABEL = {ok:"完成", skipped:"跳过", proposed:"待转正", errored:"出错", over_budget:"超预算"};
+      var passRows = Array.isArray(au.passes) ? au.passes : [];
+      if (passRows.length) {
+        var lines = passRows.map(function(p) {
+          p = p || {};
+          var mode = MODE_LABEL[p.mode] || p.mode || "取不到";
+          var auth = AUTH_LABEL[p.authorization] || p.authorization || "取不到";
+          var effect = EFFECT_LABEL[p.effect] || p.effect || "取不到";
+          var status = STATUS_LABEL[p.status] || p.status || "取不到";
+          return (p.name || "未命名工序") + " · " + mode + " · 授权来源 " + auth + " · 副作用 " + effect + " · " + status;
+        });
+        audit.textContent = "本轮逐条授权来源：" + lines.join("；");
+        audit.hidden = false;
+      } else if (au.status === "unknown") {
+        audit.textContent = "本轮逐条授权来源：取不到";
+        audit.hidden = false;
+      } else {
+        audit.textContent = "";
+        audit.hidden = true;
+      }
+    }
+    renderStewards(s.stewards);
+
+    var recent = s.recent_completed || [];
+    var cl = s.closure_rate || {};
+    setText("q3State", cl.status === "ok" ? (Number(cl.rate_pct).toFixed(1) + "% 闭环")
+      : (recent.length ? (recent.length + " 项收口") : "暂无产出"));
+  }
+
   var LANE_LABEL = {design:"体验 / 视觉", bug:"Bug", arch:"架构", gate:"门禁", reprocess:"待重排"};
   function laneLabel(lane){ return LANE_LABEL[lane] || lane || "未分泳道"; }
+  // 管家健康条：首屏只显示摘要和短名状态条；完整解释放在 title / aria-label，
+  // 鼠标悬停或读屏器可以拿到，但不占用户默认注意力。四态语义仍由控制层给出，
+  // 面板照抄顺序，不自己重排判据。
+  var STEWARD_SHORT = {context:"上下文", route:"路由", merge:"合并", tune:"状态",
+    exec:"实现", pm:"项目", accept:"验收", health:"全局健康"};
+  var STEWARD_STATE = {ok:"正常", attention:"需关注", off:"已关闭", unknown:"取不到"};
+  function renderStewards(st){
+    var box = el("stewardBar"); if (!box) return;
+    box.innerHTML = "";
+    var rows = (st && st.rows) || [];
+    if (!rows.length){
+      var empty = document.createElement("div");
+      empty.className = "steward-summary"; empty.textContent = "管家状态取不到";
+      box.appendChild(empty);
+      return;
+    }
+    var summary = document.createElement("div");
+    summary.className = "steward-summary";
+    var counts = (st && st.counts) || {};
+    var order = ["attention", "unknown", "off", "ok"];
+    var parts = [];
+    order.forEach(function(key){
+      var n = counts[key];
+      if (typeof n === "number") parts.push(n + " " + (STEWARD_STATE[key] || key));
+    });
+    summary.textContent = "管家状态：" + (parts.length ? parts.join(" · ") : "取不到");
+    box.appendChild(summary);
+    var strip = document.createElement("div"); strip.className = "steward-strip";
+    rows.forEach(function(r){
+      var li = document.createElement("span");
+      li.className = "steward s-" + (r.state || "unknown");
+      var full = (r.label || "") + "（" + (STEWARD_STATE[r.state] || (r.state || "取不到")) + "）";
+      li.title = full;
+      li.setAttribute("aria-label", full);
+      li.setAttribute("data-key", r.key || "");
+      var dot = document.createElement("span"); dot.className = "sdot";
+      var tx = document.createElement("span");
+      tx.className = "sname";
+      tx.textContent = STEWARD_SHORT[r.key] || (r.label || "").split("：")[0];
+      li.appendChild(dot); li.appendChild(tx); strip.appendChild(li);
+    });
+    box.appendChild(strip);
+  }
+
+  // 全局待路由箱不属于当前项目，所以只在真有未复核项时出现；0 条不占首屏，
+  // 取不到则明确说取不到。指派默认预演，只有第二个按钮带 confirm=true。
+  function renderGlobalRouting(gr){
+    var fold = el("globalRoutingFold"); if (!fold) return;
+    var box = el("globalRoutingBox");
+    var summary = el("globalRoutingSummary");
+    if (!gr || gr.status === "unknown"){
+      fold.hidden = false;
+      if (summary) summary.textContent = "全局待路由取不到";
+      if (box) {
+        box.innerHTML = "";
+        var warn = document.createElement("div");
+        warn.className = "empty";
+        warn.textContent = (gr && gr.text) || "全局待路由箱取不到；不会当成 0 条。";
+        box.appendChild(warn);
+      }
+      return;
+    }
+    if (gr.status !== "ok" || typeof gr.count !== "number"){
+      fold.hidden = true;
+      return;
+    }
+    if (!gr.count){
+      fold.hidden = true;
+      if (summary) summary.textContent = "全局待路由";
+      if (box) box.innerHTML = "";
+      return;
+    }
+    fold.hidden = false;
+    if (summary) summary.textContent = "全局待路由 " + gr.count + " 条待复核";
+    if (!box) return;
+    box.innerHTML = "";
+    var note = document.createElement("div");
+    note.className = "meta";
+    note.textContent = "这些原始投稿没有进任何项目账本。确认只追加目标项目 inbox 和复核凭证，不改原始记录；预演不写任何账本。";
+    box.appendChild(note);
+    (gr.items || []).forEach(function(item){
+      var row = document.createElement("div");
+      row.className = "steward-summary";
+      row.style.marginTop = "10px";
+      var title = document.createElement("div");
+      title.textContent = (item.text || "未命名投稿")
+        + ((item.candidates && item.candidates.length)
+           ? "（候选：" + item.candidates.join("、") + "）" : "");
+      title.title = "指纹 " + (item.fingerprint || "取不到");
+      row.appendChild(title);
+
+      var preferred = (item.candidates || [])[0]
+        || ((gr.projects || [])[0] || {}).name || "";
+      var select = document.createElement("select");
+      select.value = preferred;
+      (gr.projects || []).forEach(function(p){
+        var option = document.createElement("option");
+        option.value = p.name;
+        option.textContent = p.name;
+        select.appendChild(option);
+      });
+      row.appendChild(select);
+
+      var reason = document.createElement("input");
+      reason.type = "text";
+      reason.value = "面板复核确认归属";
+      reason.title = "复核依据会写进 append-only 凭证";
+      row.appendChild(reason);
+
+      [false, true].forEach(function(confirmed){
+        var btn = document.createElement("button");
+        btn.className = confirmed ? "btn primary" : "btn";
+        btn.type = "button";
+        btn.textContent = confirmed ? "确认指派" : "预演指派";
+        btn.addEventListener("click", function(){
+          var project = select.value || preferred;
+          if (!project || !item.fingerprint){
+            toast("这条缺指纹或可选项目，不能指派", "err");
+            return;
+          }
+          btn.disabled = true;
+          var old = btn.textContent;
+          btn.textContent = confirmed ? "正在写入…" : "正在预演…";
+          callTool("routing_review_assign", {
+            fingerprint: item.fingerprint,
+            project: project,
+            reason: reason.value || "面板复核确认归属",
+            confirm: confirmed,
+          }).then(function(res){
+            toast((res && res.__text__) || "已完成", "ok");
+            if (confirmed) return loadStatus(false);
+            return null;
+          }).catch(function(e){
+            toast("操作失败：" + (e && e.message || e), "err");
+          }).then(function(){
+            btn.disabled = false;
+            btn.textContent = old;
+          });
+        });
+        row.appendChild(btn);
+      });
+      box.appendChild(row);
+    });
+  }
+
+  // PM 简报：预期磨到哪、谁给谁让路、哪条该追进度。候选只照抄控制层结论；
+  // 只有人在这里逐项点头才写授权账本，守护发送前还会再校验。取不到就说取不到。
+  function pmCount(value){
+    return (value === undefined || value === null) ? "取不到" : String(value);
+  }
+  function pmRow(list, tagText, text){
+    var li = document.createElement("li");
+    var tag = document.createElement("span"); tag.className = "tag"; tag.textContent = tagText;
+    var grow = document.createElement("span"); grow.className = "grow"; grow.textContent = text;
+    li.appendChild(tag); li.appendChild(grow); list.appendChild(li);
+  }
+  function renderPmBriefing(pb, authSummary){
+    var box = el("pmBriefingBox"); if (!box) return; box.innerHTML = "";
+    if (!pb){
+      box.innerHTML = '<div class="empty">PM 简报取不到；不把不知道当成正常。</div>';
+      return;
+    }
+    var exp = pb.expectations || {};
+    var ac = pb.acceptance_criteria || {};
+    var hold = pb.overlap_holds || {};
+    var follow = pb.follow_up_candidates || {};
+    var closure = pb.closure || {};
+    var auth = authSummary || {};
+    var authCounts = auth.counts || {};
+    var research = pb.research || {};
+    var approvedByTicket = {};
+    ((auth.status === "ok" && auth.items) || []).forEach(function(a){
+      if (a.state === "approved" && a.ticket_id) approvedByTicket[a.ticket_id] = a;
+    });
+    var list = document.createElement("ul"); list.className = "list";
+    var expText = "待确认：" + pmCount(exp.pending_count) + " 条 · 已生效："
+      + pmCount(exp.active_count) + " 条";
+    if (exp.mainline_stage) expText += " · 主线阶段：" + exp.mainline_stage;
+    pmRow(list, "预期", expText);
+    var researchItems = research.items || [];
+    var researchLabel = research.status === "unknown" ? "取不到"
+      : (research.attention_count ? "需要关注" : (research.count ? "有研究记录" : "暂无研究"));
+    var researchText = research.status === "unknown"
+      ? "研究状态取不到，不把不知道当成没有成熟方案。"
+      : researchLabel;
+    if (research.status !== "unknown" && research.count != null) {
+      researchText += " · " + pmCount(research.count) + " 项";
+    }
+    pmRow(list, "PM 判断", researchText);
+    researchItems.slice(0, 2).forEach(function(r){
+      var decision = ({adopt:"复用", adapt:"适配", build:"自建", defer:"暂缓", reject:"不采用"})[r.choice]
+        || ({awaiting_external_research:"等研究", awaiting_approval:"等你确认", decision_needed:"待判断",
+            decision_ready:"可判断", blocked:"受阻"})[r.decision_status]
+        || "研究中";
+      var detail = (r.question || r.research_id || "研究事项") + " · " + decision;
+      if (r.decision_status === "awaiting_approval") detail += " · 需要你确认";
+      else if (r.decision_status === "awaiting_external_research") detail += " · 等待研究证据";
+      pmRow(list, r.research_id || "研究", detail);
+    });
+    var closurePaths = closure.paths || [];
+    pmRow(list, "施工路径", pmCount(closure.status === "unknown" ? null : closurePaths.length)
+      + " 条 · " + (closure.status === "unknown"
+        ? "施工路径取不到，不把不知道当成 0 条。"
+        : "原话到施工、依赖、路线、追问、关闭只做只读投影"));
+    closurePaths.slice(0, 2).forEach(function(r){
+      var w = r.work_item || {};
+      pmRow(list, w.id || "施工", (w.title || "未命名施工项")
+        + " · " + (w.status || "unknown")
+        + " · 文件占地" + (w.occupancy === "unknown" ? "取不到" : "已声明"));
+    });
+    (exp.pending || []).slice(0, 2).forEach(function(r){
+      pmRow(list, "待确认", r.text || r.id || "（无文案）");
+    });
+    var acItems = ac.items || [];
+    pmRow(list, "验收标准", pmCount(ac.status === "ok" ? ac.pending_count : null)
+      + " 条候选 · " + (ac.note || "验收标准候选取不到"));
+    acItems.slice(0, 2).forEach(function(r){
+      pmRow(list, r.id || "候选", (r.needs_human ? "需要人看 · " : "先跑门禁 · ")
+        + (r.text || "（无文案）"));
+    });
+    var holdItems = hold.items || [];
+    pmRow(list, "让路", pmCount(hold.status === "ok" ? holdItems.length : null)
+      + " 条在排队 · " + (hold.note || "让路信号取不到"));
+    holdItems.slice(0, 2).forEach(function(r){
+      var waiting = (r.holders || []).map(function(h){ return h.id || "未知"; }).join("、") || "未知";
+      var files = (r.files || []).join("、") || "无文件线索";
+      pmRow(list, r.id || "排队", (r.title || "工作项") + " 等 " + waiting + " · " + files);
+    });
+    var followItems = follow.items || [];
+    pmRow(list, "追问", pmCount(follow.status === "ok" ? followItems.length : null)
+      + " 条候选 · " + (follow.note || "追问候选取不到"));
+    pmRow(list, "追问授权", pmCount(auth.status === "ok" ? authCounts.approved : null)
+      + " 条待发 · " + (auth.note || "追问授权账本取不到"));
+    followItems.slice(0, 2).forEach(function(r){
+      var li = document.createElement("li");
+      var tag = document.createElement("span"); tag.className = "tag"; tag.textContent = r.id || "候选";
+      var grow = document.createElement("span"); grow.className = "grow";
+      grow.textContent = "空闲 " + pmCount(r.idle_minutes) + " 分钟 · "
+        + (r.thread_id || "无窗口绑定");
+      li.appendChild(tag); li.appendChild(grow);
+      if (r.thread_id && follow.status === "ok") {
+        var ring = document.createElement("span"); ring.className = "accbtns";
+        var authorize = document.createElement("button");
+        authorize.className = "btn"; authorize.type = "button"; authorize.textContent = "授权追问";
+        var prompt = r.suggested_prompt
+          || ("继续处理 " + (r.id || "工作项") + "：回报当前卡点和下一步。");
+        authorize.addEventListener("click", function(){
+          authorize.disabled = true;
+          var was = authorize.textContent; authorize.textContent = "正在登记…";
+          callTool("followup_authorize", {
+            ticket_id: r.id, thread_id: r.thread_id, prompt: prompt,
+            reason: "面板：用户明确同意追问", confirm: true,
+          }).then(function(){
+            toast("已登记逐项授权；发送前还会再校验。", "ok");
+            return loadStatus(false);
+          }).catch(function(e){
+            toast("操作没成功：" + (e && e.message || e), "err");
+            authorize.disabled = false; authorize.textContent = was;
+          });
+        });
+        ring.appendChild(authorize);
+        var approved = approvedByTicket[r.id];
+        if (approved) {
+          var cancel = document.createElement("button");
+          cancel.className = "btn ghost"; cancel.type = "button"; cancel.textContent = "撤销授权";
+          cancel.addEventListener("click", function(){
+            cancel.disabled = true;
+            var was = cancel.textContent; cancel.textContent = "正在撤销…";
+            callTool("followup_cancel", {
+              request_id: approved.request_id,
+              reason: "面板：用户撤销未发送的追问",
+            }).then(function(){
+              toast("已撤销未发送的授权；历史记录保留。", "ok");
+              return loadStatus(false);
+            }).catch(function(e){
+              toast("操作没成功：" + (e && e.message || e), "err");
+              cancel.disabled = false; cancel.textContent = was;
+            });
+          });
+          ring.appendChild(cancel);
+        }
+        li.appendChild(ring);
+      }
+      list.appendChild(li);
+    });
+    box.appendChild(list);
+    var missing = (exp.missing || []).concat(follow.missing || []);
+    if (missing.length){
+      var meta = document.createElement("div"); meta.className = "meta";
+      meta.textContent = "取不到：" + missing.join("、") + "；这些项不计入正常。";
+      box.appendChild(meta);
+    }
+  }
+
+  // 上下文档案：只读展示自动收录、已确认、已驳回和生效记录。确认动作只在
+  // 「需要你拍板 / 异常」区出现，避免同一条候选有两套互相打架的按钮。
+  function renderContextArchive(ca){
+    var box = el("contextArchiveBox"); if (!box) return; box.innerHTML = "";
+    if (!ca || ca.status !== "ok"){
+      var why = (ca && (ca.reason || (ca.unknown || []).join("、")))
+        || "上下文档案取不到";
+      if (why.indexOf("不把不知道当成 0 条") < 0) why += "；不把不知道当成 0 条。";
+      box.innerHTML = '<div class="empty">' + why + '</div>';
+      return;
+    }
+    var list = document.createElement("ul"); list.className = "list";
+    var c = ca.counts || {};
+    pmRow(list, "已收录", "待确认 " + pmCount(c.proposed) + " · 已确认 "
+      + pmCount(c.promoted) + " · 已驳回 " + pmCount(c.dismissed)
+      + " · 生效 " + pmCount(c.active));
+    (ca.items || []).forEach(function(x){
+      var source = x.source === "context_learning"
+        ? "自学习：同一诉求出现 " + pmCount(x.mentions) + " 次 / 跨 "
+          + pmCount(x.threads) + " 个会话"
+        : "入口原话" + ((x.signals && x.signals.length)
+          ? " · 命中 " + x.signals.join("、") : "");
+      var detail = (x.id || "") + " · " + (x.text || x.title || "") + " · " + source;
+      if (x.evidence && x.evidence.length){
+        var ev = x.evidence[0];
+        detail += " · 证据：" + ((ev.thread) ? ev.thread + "：" : "") + (ev.text || "");
+      }
+      if (x.constraint_id) detail += " · 已落成 " + x.constraint_id;
+      if (x.reason) detail += " · 驳回原因：" + x.reason;
+      pmRow(list, x.status === "proposed" ? "待确认"
+        : x.status === "promoted" ? "已确认"
+        : x.status === "dismissed" ? "已驳回" : "生效", detail);
+    });
+    (ca.unknown || []).forEach(function(x){ pmRow(list, "取不到", x); });
+    box.appendChild(list);
+    var meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = ca.note || "自动收录只生成候选，不自动生效。";
+    box.appendChild(meta);
+  }
+
+  // 关系层：只照抄显式登记的目标摘要。它不自动派活，也不把「需要人」变成追问动作。
+  function renderRelationshipGoals(rg){
+    var box = el("relationshipGoalsBox"); if (!box) return; box.innerHTML = "";
+    if (!rg || rg.status !== "ok"){
+      box.innerHTML = '<div class="empty">'
+        + (rg && rg.headline ? rg.headline : "跨项目目标取不到；不把不知道当成 0 条。")
+        + '</div>';
+      return;
+    }
+    var list = document.createElement("ul"); list.className = "list";
+    pmRow(list, "摘要", rg.headline || "跨项目目标摘要取不到");
+    (rg.items || []).slice(0, 5).forEach(function(r){
+      var label = r.id || "目标";
+      var priority = ({high: "高", normal: "普通", low: "低"})[r.priority] || "取不到";
+      var status = ({proposed: "待确认", active: "进行中", waiting_human: "需要人",
+        paused: "暂停", done: "完成"})[r.status] || "取不到";
+      var projects = (r.projects || []).join("、") || "项目取不到";
+      pmRow(list, label, priority + " · " + status + " · " + projects
+        + " · " + (r.title || "无标题"));
+      if (r.north_star){
+        pmRow(list, "北极星", r.north_star);
+      }
+      var links = [];
+      var ledgers = r.linked_ledger || [];
+      var accepts = r.linked_acceptance || [];
+      if (ledgers.length) links.push("工作项 " + ledgers.join("、"));
+      if (accepts.length) links.push("验收 " + accepts.join("、"));
+      if (links.length){
+        pmRow(list, "关联", links.join(" · "));
+      }
+      if (r.source_thread){
+        pmRow(list, "来源窗口", r.source_thread);
+      }
+      if (r.needs_human){
+        pmRow(list, "需要人", r.reason || "原因未写明");
+      }
+      if (r.status === "done" && r.evidence){
+        pmRow(list, "收口证据", r.evidence);
+      }
+    });
+    box.appendChild(list);
+    var meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = rg.note || "关系层只记录显式目标，不自动派活。";
+    box.appendChild(meta);
+  }
+
+  // 结果代理分：只照抄控制层结论。命令跑绿不等于用户结果变好，取不到也不按 0 分算。
+  function renderOutcomeScore(os){
+    var box = el("outcomeScoreBox"); if (!box) return; box.innerHTML = "";
+    if (!os || os.status !== "ok"){
+      box.innerHTML = '<div class="empty">'
+        + (os && os.headline ? os.headline
+           : "结果代理分取不到；不把不知道当成 0 分。")
+        + '</div>';
+      return;
+    }
+    var list = document.createElement("ul"); list.className = "list";
+    pmRow(list, "总分", os.headline || "结果代理分取不到");
+    (os.components || []).forEach(function(c){
+      if (!c || c.status !== "ok"){
+        pmRow(list, c ? c.label : "判据", "取不到，不计分");
+        return;
+      }
+      pmRow(list, c.label, c.score + " 分 · 权重 " + c.weight + "% · " + (c.detail || ""));
+    });
+    box.appendChild(list);
+    var meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = os.note || "这是台账结果代理分；机器命令通过不等于用户结果变好。";
+    box.appendChild(meta);
+  }
+
   function renderFolders(folders, s){
     var box = el("folderBox"); if (!box) return;
     box.innerHTML = "";
@@ -983,9 +1668,10 @@
       var step = document.createElement("div"); step.className = "folder-step";
       step.textContent = "当前步骤：" + (f.current_step || "路线待拆解");
       var source = document.createElement("div"); source.className = "folder-source";
-      var sourceThread = f.source_thread_id || "";
-      source.textContent = "来源对话 " + (sourceThread ? sourceThread.slice(0, 12) : "未标注来源") +
-        " · 路线 " + (f.current_step || "待拆解");
+      source.textContent = "路线 " + (f.current_step || "待拆解");
+      source.title = f.source_thread_id
+        ? "来源对话 " + f.source_thread_id
+        : "未标注来源";
       info.appendChild(title); info.appendChild(meta); info.appendChild(step); info.appendChild(source);
       if (f.readable === false){
         var err = document.createElement("div"); err.className = "folder-error";
@@ -1058,12 +1744,14 @@
       } else {
         rows.slice(0, 4).forEach(function(row){
           var line = document.createElement("div"); line.className = "folder-work-row";
-          var id = document.createElement("span"); id.className = "id"; id.textContent = row.x.id || "";
           var name = document.createElement("span"); name.className = "name";
-          name.textContent = (laneLabel(row.x.lane || row.x.kind)) + " · " + (row.x.title || row.x.detail || "未命名工作项") +
-            (row.x.source_thread_id ? " · 来自对话 " + String(row.x.source_thread_id).slice(0, 12) : "");
+          name.textContent = (laneLabel(row.x.lane || row.x.kind)) + " · " + (row.x.title || row.x.detail || "未命名工作项");
+          line.title = [
+            row.x.id ? "工作项 " + row.x.id : "",
+            row.x.source_thread_id ? "来源对话 " + row.x.source_thread_id : "",
+          ].filter(Boolean).join(" · ");
           var state = document.createElement("span"); state.className = "state"; state.textContent = row.state;
-          line.appendChild(id); line.appendChild(name); line.appendChild(state); work.appendChild(line);
+          line.appendChild(name); line.appendChild(state); work.appendChild(line);
         });
       }
       card.appendChild(work); box.appendChild(card);
@@ -1076,12 +1764,15 @@
     var road = s.roadmap || [];
     var current = road.filter(function(r){ return r.status === "doing"; })[0]
       || road.filter(function(r){ return r.status === "next"; })[0];
+    var next = road.filter(function(r){ return r.status === "next"; })[0];
+    if (next === current) next = null;
     var doingItems = s.doing_items || [];
     var todoItems = s.todo_items || [];
     var doing = doingItems.length || (s.exec_now ? 1 : 0);
     var human = (s.human_acceptance || []).length;
     var blocked = s.state === "blocked" || s.state === "error";
     var stage = current ? (current.step || "当前路线") : "路线待拆解";
+    var routeNow = stage + (next ? " · 下一步：" + (next.step || "待拆解") : "");
     var product = ml.product || proj.name || "当前项目";
     var projectName = proj.name || (proj.path ? proj.path.split("/").pop() : "未绑定项目");
     var currentWork = doingItems[0] || s.exec_now || todoItems[0] || null;
@@ -1092,12 +1783,13 @@
     var roadNodeLabel = el("hierRoad");
     var workNodeLabel = el("hierWork");
     if (projectNode) { projectNode.textContent = projectName; projectNode.title = proj.path || projectName; }
-    if (roadNodeLabel) { roadNodeLabel.textContent = product + " · " + stage; roadNodeLabel.title = product + " · " + stage; }
+    if (roadNodeLabel) { roadNodeLabel.textContent = product + " · " + routeNow; roadNodeLabel.title = product + " · " + routeNow; }
     if (workNodeLabel) { workNodeLabel.textContent = workTitle; workNodeLabel.title = workTitle; }
     var note = el("orientationNote");
     if (note){
       var action = doing ? "正在推进工作项" : human ? "等待你验收" : blocked ? "卡住，等待处理" : "等待下一条需求";
-      note.textContent = product + " · 当前路线：" + stage + " · " + action + "。";
+      note.textContent = product + " · 当前路线：" + stage +
+        (next ? " · 下一步：" + (next.step || "待拆解") : "") + " · " + action + "。";
     }
     var ids = ["journeyNeed","journeyProduct","journeyRoad","journeyWork","journeyAccept"];
     ids.forEach(function(id){ var n = el(id); if (n) n.className = "journey-step"; });
@@ -1133,7 +1825,10 @@
     else if (s.exec_now) workText = (s.exec_now.id ? s.exec_now.id + " · " : "") + (s.exec_now.title || "正在自动实现");
     else if (doingItems.length) workText = doingItems[0].title || doingItems[0].detail || "正在处理工作项";
     else if (hasBlock) workText = "等待处理卡点";
-    else workText = "当前没有进行中的工作";
+    // 兜底必须落到控制层算出的权威 doing：它已经处理了「守护绑定别的项目」「已检查
+    // 一轮没有可合分支」「暂停/关闭」这些情况。旧版这里硬写「当前没有进行中的工作」，
+    // 于是 control plane 说了实话、面板却显示空白态 —— 面板渲染门禁实测抓到这条。
+    else workText = s.doing || "当前没有进行中的工作";
     var stepText = activeRoad
       ? (activeRoad.step || "当前路线") + " · " + (activeRoad.status === "doing" ? "进行中" : "下一步")
       : "路线待拆解 · 项目：" + (proj.name || "未绑定");
@@ -1159,6 +1854,34 @@
       setText("nsDetail", cr.status === "no_data" ? "还没有需求台账" : "指标算不出来");
       box.title = cr.reason || "闭环率取不到，不能当成 0% 或正常";
     }
+  }
+
+  var AUTONOMY_LABEL = {
+    disabled: "已关闭",
+    enabled: "已启用，尚未运行",
+    running: "运行中",
+    paused: "已暂停",
+    waiting_human: "等待你确认"
+  };
+  function renderAutonomy(a){
+    var mode = a.mode || "enabled";
+    setText("autonomyMode", AUTONOMY_LABEL[mode] || mode);
+    var copy = {
+      enabled: "项目已登记。切到“开始运行”后，Autopilot 才会持续规划、派活、验收和合并。",
+      running: "项目正在持续推进；没有待办时会安静等待，遇到必须由你决定的事会停下来。",
+      paused: a.reason || "项目暂停中；已有 worker 和工作区会保留，不再启动新的工作。",
+      waiting_human: a.reason || "Autopilot 已停在需要你确认的位置。确认后再恢复运行。"
+      ,disabled: a.reason || "项目自主运行已关闭。重新启用后才会恢复项目级授权。"
+    };
+    setText("autonomyCopy", copy[mode] || "项目自主运行状态已更新。");
+    var counts = a.counts || {};
+    num("autonomyQueued", counts.queued); num("autonomyRunning", counts.running);
+    num("autonomyBlocked", counts.blocked); num("autonomyWaiting", counts.waiting_human);
+    var run = el("autonomyRun"), pause = el("autonomyPause"), enable = el("autonomyEnable");
+    if (run) run.disabled = mode === "running";
+    if (pause) pause.disabled = mode === "paused" || mode === "enabled";
+    if (enable) enable.disabled = mode === "enabled";
+    if (run) run.textContent = mode === "waiting_human" ? "确认后运行" : "开始运行";
   }
 
   function renderExecNow(en){
@@ -1362,6 +2085,54 @@
     }
   }
 
+  // 工单状态表：控制层已经按 ops/stage_table.py 那一张表算好每行的 stage，
+  // 面板只负责把「来源 → 项目 → 泳道 → 分支 → stage → 证据」照抄出来，
+  // 不再自己算一遍状态，避免出现「面板说在做、CLI 说没事」两套口径。
+  var WORK_STAGE_CLASS = {
+    "person/review":"review", "doing":"doing", "stuck":"stuck",
+    "todo":"", "review":""
+  };
+  function renderWorkTable(rows){
+    var box = el("workTableBox"); if (!box) return; box.innerHTML = "";
+    var fold = el("workTableFold");
+    rows = rows || [];
+    if (fold) fold.hidden = !rows.length;
+    if (!rows.length) return;
+    var ul = document.createElement("ul"); ul.className = "wt";
+    rows.forEach(function(r){
+      var li = document.createElement("li");
+      var t = document.createElement("div"); t.className = "t";
+      var wid = document.createElement("span"); wid.className = "wid";
+      wid.textContent = r.id || "";
+      var name = document.createElement("span"); name.textContent = r.title || "未命名工作项";
+      var stl = document.createElement("span");
+      stl.className = "stl " + (WORK_STAGE_CLASS[r.stage] || "");
+      stl.textContent = r.stage_label || "待处理";
+      t.appendChild(wid); t.appendChild(name); t.appendChild(stl);
+      li.appendChild(t);
+      var bits = [];
+      if (r.source) bits.push("来源 " + r.source);
+      if (r.project) bits.push("项目 " + r.project);
+      if (r.lane) bits.push("泳道 " + r.lane);
+      if (r.branch && r.branch !== r.lane) bits.push("分支 " + r.branch);
+      var d = document.createElement("div"); d.className = "d";
+      d.textContent = bits.join(" · ");
+      if (bits.length) li.appendChild(d);
+      if (r.evidence){
+        var ev = document.createElement("div"); ev.className = "ev";
+        ev.textContent = "证据：" + r.evidence;
+        li.appendChild(ev);
+      }
+      if (r.acceptance_summary){
+        var acc = document.createElement("div"); acc.className = "ev";
+        acc.textContent = r.acceptance_summary;
+        li.appendChild(acc);
+      }
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+  }
+
   function renderNative(s){
     var box = el("nativeState"); if (!box) return;
     var native = (s && s.native) || {};
@@ -1448,14 +2219,44 @@
     var box = el("recentBox"); if (!box) return; box.innerHTML = "";
     var note = el("recentNote");
     list = list || [];
-    if (note) note.textContent = list.length ? (list.length + " 项") : "";
+    if (note) note.textContent = list.length ? ("最近 " + Math.min(list.length, 3) + " 项") : "";
     if (!list.length){
       box.innerHTML = '<div class="empty">还没有收口记录。走完一次「修复 → 验证 → 关闭台账」后会出现在这里。</div>';
       return;
     }
+    function humanText(raw){
+      var s = String(raw || "").trim();
+      s = s.replace(/^[A-Z]+-\d+\s+已收口：\s*/, "").replace(/^已收口：\s*/, "");
+      if (/已合入$/.test(s)) return "代码已合入";
+      var topicBox = s.match(/^【([^】]+)】/);
+      var topic = topicBox ? topicBox[1] : "";
+      var rest = topicBox ? s.slice(topicBox[0].length) : s;
+      var shortTopic = topic.split("·").pop() || topic;
+      if (/面板首屏|首屏只回答/.test(topic + rest)) {
+        return "面板首屏：改为只看三问";
+      }
+      if (/防丢失|真相镜像/.test(topic + rest)) {
+        return "防丢失：落盘状态已和主干同步";
+      }
+      if (/门禁环境/.test(topic + rest)) {
+        return "门禁环境：可直接验证发布目录";
+      }
+      rest = rest.replace(/(?:~|\/Users\/|\/private\/|\/var\/folders\/)[^\s，,；;]+/g, "")
+        .replace(/kgctl\s+land/gi, "落盘")
+        .replace(/progress\.json\s*\/\s*acceptance\.json/gi, "状态台账")
+        .replace(/\bmain\b/gi, "主干")
+        .replace(/\s+/g, " ")
+        .replace(/^[：:\s]+|[：:\s]+$/g, "");
+      if (shortTopic && rest) return shortTopic + "：" + rest;
+      if (shortTopic) return shortTopic + "：已完成";
+      return rest.length > 42 ? (rest.slice(0, 42) + "…") : (rest || "一项工作已完成");
+    }
     var ul = document.createElement("ul"); ul.className = "list";
-    list.slice(0,5).forEach(function(text){
+    list.slice(0,3).forEach(function(raw){
       var li = document.createElement("li");
+      var text = humanText(raw);
+      li.setAttribute("title", String(raw || ""));
+      li.setAttribute("aria-label", "收口详情：" + String(raw || ""));
       var g = document.createElement("span"); g.className = "grow"; g.textContent = text;
       li.appendChild(g); ul.appendChild(li);
     });
@@ -1485,6 +2286,13 @@
           var hint = document.createElement("div"); hint.className = "accnote"; hint.textContent = "（还没写明复核步骤）";
           li.appendChild(hint);
         }
+        var shots = a.screenshots || [];
+        if (shots.length){
+          var shotLine = document.createElement("div"); shotLine.className = "accnote";
+          shotLine.textContent = "复核截图：" + shots.join(" · ");
+          li.appendChild(shotLine);
+        }
+        li.appendChild(buildAcceptanceAction(a));
         ul.appendChild(li);
       });
       box.appendChild(ul);
@@ -1503,6 +2311,47 @@
       });
       body.appendChild(mu); det.appendChild(sm); det.appendChild(body); box.appendChild(det);
     }
+  }
+
+  // 每条人工验收都要带「下一个动作」，并写清点了会怎样 / 不点会怎样。
+  // 只列复核步骤、不给出口，是这批验收项长期挂着不动的直接原因。
+  function buildAcceptanceAction(a){
+    var row = document.createElement("div"); row.className = "accact";
+    var msg = document.createElement("span"); msg.className = "accmsg";
+    msg.textContent = "补图只追加附件，不会替你收口；确认通过才会把这条从首屏移走；不点就继续占着「待确认事项」。";
+    var actions = document.createElement("div"); actions.className = "accbtns";
+    var shotBtn = document.createElement("button");
+    shotBtn.className = "btn"; shotBtn.type = "button";
+    shotBtn.textContent = "补一张复核截图";
+    shotBtn.addEventListener("click", function(){
+      if (!a.id) { toast("这条验收缺 id，补不了截图，先补台账", "err"); return; }
+      shotBtn.disabled = true; shotBtn.textContent = "正在打开截图…";
+      callTool("capture_acceptance_screenshot", {id:a.id, confirm:true}).then(function(){
+        toast("已记下复核截图；这条仍等你确认", "ok");
+        return loadStatus(false);
+      }).catch(function(e){
+        toast("补图失败：" + (e && e.message || e), "err");
+        shotBtn.disabled = false; shotBtn.textContent = "补一张复核截图";
+      });
+    });
+    var btn = document.createElement("button");
+    btn.className = "btn primary"; btn.type = "button";
+    btn.textContent = "我确认通过，收口这条";
+    btn.addEventListener("click", function(){
+      if (!a.id) { toast("这条验收缺 id，收口不了，先补台账", "err"); return; }
+      btn.disabled = true; btn.textContent = "正在收口…";
+      callTool("resolve_acceptance",
+               {id:a.id, status:"verified", note:"用户在面板确认通过"}).then(function(){
+        toast("已收口 " + a.id, "ok");
+        return loadStatus(false);
+      }).catch(function(e){
+        toast("收口失败：" + (e && e.message || e), "err");
+        btn.disabled = false; btn.textContent = "我确认通过，收口这条";
+      });
+    });
+    actions.appendChild(shotBtn); actions.appendChild(btn);
+    row.appendChild(msg); row.appendChild(actions);
+    return row;
   }
 
   function renderMainline(ml){
@@ -1586,19 +2435,132 @@
     var ul = el("blockedList"); if(!ul) return; ul.innerHTML = "";
     var items = [];
     var f = (s.blocked && s.blocked.failures) || [];
-    f.forEach(function(x){ items.push({tag:"需拍板", cls:"warn", text:x.target + " · " + x.kind}); });
+    f.forEach(function(x){ items.push({tag:"需拍板", cls:"warn", text:x.target + " · " + x.kind,
+      act:"retry", why:"点它会立刻让Autopilot 再检查一轮（不改代码、不动 main）；不点就继续挂着，等下一拍自己重试。"}); });
     var r = (s.blocked && s.blocked.resolve) || [];
-    r.forEach(function(x){ items.push({tag:"冲突暂缓", cls:"", text:x.branch + (x.reason? " · "+x.reason : "")}); });
+    r.forEach(function(x){ items.push({tag:"冲突暂缓", cls:"", text:x.branch + (x.reason? " · "+x.reason : ""),
+      act:"resolve", branch:x.branch,
+      why:"Autopilot 按默认闸门拆不动它。点它会放宽到 16 个冲突文件 / 3000 行，在独立 worktree 里再拆一次，main 和源分支都不动；不点就继续跳过这条。"}); });
     var xe = (s.blocked && s.blocked.exec) || [];
-    xe.forEach(function(x){ items.push({tag:"实现暂缓", cls:"", text:(x.id||"") + (x.reason? " · "+x.reason : "")}); });
-    if (s.error) items.unshift({tag:"异常", cls:"err", text:s.error});
+    xe.forEach(function(x){ items.push({tag:"实现暂缓", cls:"", text:(x.id||"") + (x.reason? " · "+x.reason : ""),
+      act:"retry", why:"点它会立刻让Autopilot 再检查一轮（不改代码、不动 main）；不点就继续挂着，等下一拍自己重试。"}); });
+    // 状态管家提出的 harness 调整卡：改配置会影响你接下来的所有会话，所以它
+    // 绝不自动应用 —— 卡片只列在这里，你点了才改，改前按字节备份、随时可一键回滚。
+    var ht = s.harness_tune || {};
+    (ht.items || []).forEach(function(x){
+      items.push({tag:"待你点头", cls:"warn",
+        text:(x.id||"") + " · " + (x.label||x.key) + "：" + x.old + " → " + x.new,
+        act:"tune", id:x.id, why:(x.why||"") +
+          "；点它会改这一项（改前自动备份，随时可一键回滚）；不点就保持现状，config 一个字都不动。"});
+    });
+    // 上下文管家提出的约束候选：系统按你说的规范性措辞（「绝不/必须/不许/以后都/
+    // 记住」等）自动提名，但**绝不自动生效**。生效后会进落盘门禁，所以只列在这里，
+    // 你点「算」才收进项目规范；点「不算」它就不会再弹回来。
+    var cc = s.constraint_candidates || {};
+    (cc.items || []).forEach(function(x){
+      var scope = (x.scope && x.scope.length) ? x.scope.join("、") : "全局";
+      var sig = (x.signals && x.signals.length) ? x.signals.join("、") : "规范措辞";
+      var src = x.source === "context_learning"
+        ? "自学习：同一诉求出现 " + (x.mentions || 0) + " 次 / 跨 " + (x.threads || 0) + " 个会话；"
+        : "命中信号：" + sig + "；";
+      items.push({tag:"待你确认", cls:"warn",
+        text:(x.id||"") + " · " + (x.text||x.title||""),
+        act:"constraint", id:x.id,
+        why:src + "适用范围：" + scope +
+          "。点「算」会把它收进项目规范，之后落盘门禁与执行者都按它办事；点「不算」这条不再出现，什么都不生效。"});
+    });
+    // 验收管家提出的验收标准候选：先把“怎么算完成”编译成可判定标准，但确认前
+    // 不写验收台账；确认后也只登记验收项，机器项仍要真门禁证据，人工项先自验。
+    var ac = s.acceptance_criteria || {};
+    (ac.items || []).forEach(function(x){
+      var who = x.needs_human ? "需要人看" : "先跑门禁自证";
+      var sig = (x.signals && x.signals.length) ? x.signals.join("、") : "预期信号";
+      items.push({tag:"待你确认", cls:"warn",
+        text:(x.id||"") + " · " + (x.text||x.title||""),
+        act:"acceptance", id:x.id,
+        why:"建议：" + who + "；命中信号：" + sig +
+          "。点「确认成验收项」只登记验收项，不写证据；机器项仍要真门禁，人工项先自验才提醒你。点「不算」这条不再出现，验收台账什么都不写。"});
+    });
+    if (s.error) items.unshift({tag:"异常", cls:"err", text:s.error, act:"retry",
+      why:"点它会立刻让Autopilot 再检查一轮（不改代码、不动 main）；不点就继续停在异常。"});
     if (!items.length){ ul.innerHTML = '<div class="empty">没有需要你决策的，也没有异常。</div>'; return; }
     items.forEach(function(it){
       var li = document.createElement("li");
+      li.className = "blkitem";
       var tag = document.createElement("span"); tag.className = "tag " + (it.cls||""); tag.textContent = it.tag;
       var g = document.createElement("span"); g.className="grow"; g.textContent = it.text;
-      li.appendChild(tag); li.appendChild(g); ul.appendChild(li);
+      li.appendChild(tag); li.appendChild(g);
+      li.appendChild(buildBlockedAction(it));
+      ul.appendChild(li);
     });
+  }
+
+  // 每条卡点都要带「下一个动作」，并写清点了会怎样 / 不点会怎样。
+  // 只列出卡住的东西、不给出口，和验收项当时是同一个毛病：看到了也推不动。
+  function buildBlockedAction(it){
+    var row = document.createElement("div"); row.className = "accact";
+    var msg = document.createElement("span"); msg.className = "accmsg";
+    msg.textContent = it.why || "点它会推进一步；不点就继续挂着。";
+    // 约束候选 / 验收标准候选都有两个方向：确认 / 明确不算。
+    // 其余卡点只有单一出口，照旧一个按钮。
+    if (it.act === "constraint" || it.act === "acceptance"){
+      var yes = document.createElement("button");
+      yes.className = "btn primary"; yes.type = "button"; yes.textContent = "算，收进规范";
+      var no = document.createElement("button");
+      no.className = "btn"; no.type = "button"; no.textContent = "不算";
+      if (it.act === "acceptance") yes.textContent = "确认成验收项";
+      var ring = document.createElement("span");
+      ring.className = "accbtns";
+      ring.appendChild(yes); ring.appendChild(no);
+      yes.addEventListener("click", function(){
+        yes.disabled = true; no.disabled = true; yes.textContent = "正在收…";
+        var call = it.act === "acceptance"
+          ? callTool("acceptance_criteria_promote", {id: it.id, confirm: true})
+          : callTool("constraint_candidate_promote", {id: it.id, confirm: true});
+        call.then(function(){
+          toast(it.act === "acceptance" ? "已登记验收项，证据仍需真跑" : "已收进项目规范，之后按它办事", "ok");
+          return loadStatus(false);
+        })
+          .catch(function(e){ toast("操作没成功：" + (e && e.message || e), "err");
+            yes.disabled = false; no.disabled = false;
+            yes.textContent = it.act === "acceptance" ? "确认成验收项" : "算，收进规范"; });
+      });
+      no.addEventListener("click", function(){
+        yes.disabled = true; no.disabled = true; no.textContent = "正在处理…";
+        var call = it.act === "acceptance"
+          ? callTool("acceptance_criteria_dismiss", {id: it.id, reason: "panel: 用户点了不算"})
+          : callTool("constraint_candidate_dismiss", {id: it.id, reason: "panel: 用户点了不算"});
+        call.then(function(){ toast("这条不算，以后不会再出现", "ok"); return loadStatus(false); })
+          .catch(function(e){ toast("操作没成功：" + (e && e.message || e), "err");
+            yes.disabled = false; no.disabled = false; no.textContent = "不算"; });
+      });
+      row.appendChild(msg); row.appendChild(ring);
+      return row;
+    }
+    var btn = document.createElement("button");
+    btn.className = "btn primary"; btn.type = "button";
+    btn.textContent = it.act === "resolve" ? "放宽闸门再拆一次"
+      : it.act === "tune" ? "同意，改这一项" : "立刻再检查一轮";
+    btn.addEventListener("click", function(){
+      btn.disabled = true;
+      var was = btn.textContent; btn.textContent = "正在处理…";
+      var call = (it.act === "resolve")
+        ? callTool("resolve_start", {branch: it.branch, confirm: true, max_files: 16, max_lines: 3000})
+        : (it.act === "tune")
+          ? callTool("harness_tune_apply", {id: it.id, confirm: true})
+          : callTool("autopilot_run_once", {});
+      call.then(function(){
+        toast(it.act === "resolve" ? ("已按更大闸门重拆 " + (it.branch || ""))
+          : it.act === "tune" ? "已改这一项，可随时一键回滚"
+          : "已跑完一轮", "ok");
+        return loadStatus(false);
+      }).catch(function(e){
+        toast("操作没成功：" + (e && e.message || e), "err");
+        btn.disabled = false; btn.textContent = was;
+      });
+    });
+    row.appendChild(msg); row.appendChild(btn);
+    return row;
   }
 
   function toast(msg, cls){
@@ -1646,8 +2608,10 @@
     var button = el("intakeSubmit");
     button.disabled = true;
     el("intakeState").textContent = "正在加入 Autopilot 任务…";
-    callTool("intake_request", {text:text, kind:"unknown"}).then(function(result){
+    callTool("intake_request", {text:text, kind:"unknown", cwd:currentCwd()}).then(function(result){
       field.value = "";
+      el("intakeRoute").textContent = "写一句话后显示它会落到哪个项目";
+      el("intakeRoute").title = "";
       el("intakeState").textContent = result.__text__ || "已加入任务并开始归类";
       return loadStatus(false);
     }).catch(function(error){
@@ -1661,6 +2625,32 @@
       event.preventDefault();
       el("intakeSubmit").click();
     }
+  });
+  el("intakeText").addEventListener("input", function(){
+    var field = this;
+    var route = el("intakeRoute");
+    clearTimeout(field._routeTimer);
+    var text = field.value.trim();
+    if (!text) {
+      route.textContent = "写一句话后显示它会落到哪个项目";
+      route.title = "";
+      return;
+    }
+    route.textContent = "正在判断落点…";
+    field._routeTimer = setTimeout(function(){
+      var wanted = field.value.trim();
+      callTool("route_preview", {text:wanted, cwd:currentCwd()})
+        .then(function(result){
+          if (field.value.trim() !== wanted) return;
+          route.textContent = result.__text__ || "落点取不到；不会假装正常";
+          route.title = (result.reasons || []).join("\n");
+        })
+        .catch(function(error){
+          if (field.value.trim() !== wanted) return;
+          route.textContent = "落点取不到；不会假装正常";
+          route.title = (error && error.message) || String(error);
+        });
+    }, 250);
   });
 
   Array.prototype.forEach.call(document.querySelectorAll(".sw"), function(sw){
@@ -1676,6 +2666,19 @@
         toast("已" + (target ? "打开" : "关闭") + " " + key, "ok");
       }).catch(function(e){ toast("操作失败：" + (e && e.message || e), "err"); })
         .then(function(){ sw.disabled = false; });
+    });
+  });
+
+  Array.prototype.forEach.call(document.querySelectorAll("[data-autonomy-action]"), function(btn){
+    btn.addEventListener("click", function(){
+      var action = btn.getAttribute("data-autonomy-action");
+      btn.disabled = true;
+      callTool("project_autonomy_control", {action: action}).then(function(sc){
+        if (sc && sc.state) { state = sc; render(state); }
+        else { return loadStatus(); }
+        toast(action === "run" ? "项目已开始持续运行" : action === "pause" ? "项目已暂停" : "项目已启用", "ok");
+      }).catch(function(e){ toast("操作失败：" + (e && e.message || e), "err"); })
+        .then(function(){ btn.disabled = false; });
     });
   });
 

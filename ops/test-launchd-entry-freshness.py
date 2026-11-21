@@ -186,6 +186,12 @@ def main():
 
     # 5) registry 自身必须是有效的、每个 script 都真实存在于源码里
     real_reg = json.loads((OPS / "guards" / "registry.json").read_text(encoding="utf-8"))
+    disk_reap = next(
+        entry for entry in real_reg["entries"]
+        if entry.get("label") == "com.danta.codex-disk-reap")
+    check("磁盘回收任务不会在升级时被重置回每分钟扫描",
+          disk_reap.get("interval_s") == 900,
+          f"实际 {disk_reap.get('interval_s')}")
     for entry in real_reg["entries"]:
         script = OPS.parent / entry["script"]
         check(f"registry 里的 {entry['script']} 真实存在于本仓", script.exists(), str(script))
@@ -197,6 +203,11 @@ def main():
     check("install.sh 会打包 ops/guards", 'cp -R "$REPO/ops/guards" "$STAGE/ops/"' in install_sh)
     check("install.sh 会统一改指定时任务",
           'repoint_launchd.py" --install' in install_sh)
+    migrate_at = install_sh.find("hyapi_secrets.py\" --migrate")
+    repoint_at = install_sh.find("repoint_launchd.py\" --install")
+    check("install.sh 先迁移本地密钥、后改指 launchd",
+          migrate_at >= 0 and repoint_at > migrate_at,
+          f"migrate_at={migrate_at}, repoint_at={repoint_at}")
 
     if failures:
         print("\n失败项：")

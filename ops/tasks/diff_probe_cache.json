@@ -1,2402 +1,474 @@
 {
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@c02ed8b970d12dca720ce436871d4a8ca8f212dd": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@c02ed8b970d12dca720ce436871d4a8ca8f212dd": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@c02ed8b970d12dca720ce436871d4a8ca8f212dd": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@0b2764e8389e03761a8795cd69c1cba16c438cae": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@0b2764e8389e03761a8795cd69c1cba16c438cae": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@0b2764e8389e03761a8795cd69c1cba16c438cae": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@375a4f394dca55343d57c6e85365beb3670275a4": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@375a4f394dca55343d57c6e85365beb3670275a4": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@375a4f394dca55343d57c6e85365beb3670275a4": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@e841aa303b616cb31463140a8e05ec517836546a": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@e841aa303b616cb31463140a8e05ec517836546a": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@e841aa303b616cb31463140a8e05ec517836546a": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@ada9f30e925173314e3f68b81b1ca8192fb934f3": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@ada9f30e925173314e3f68b81b1ca8192fb934f3": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@ada9f30e925173314e3f68b81b1ca8192fb934f3": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@5db3d9178bee735d1631865b8f8d88cebe4d9355": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@5db3d9178bee735d1631865b8f8d88cebe4d9355": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@5db3d9178bee735d1631865b8f8d88cebe4d9355": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@eae0bdb0d2c1b6eff80ef2a6ebe9ee1207bc233d": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@eae0bdb0d2c1b6eff80ef2a6ebe9ee1207bc233d": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@eae0bdb0d2c1b6eff80ef2a6ebe9ee1207bc233d": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@15d1b7c8d49cbe5ae4af5173a571443ec278598f": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@15d1b7c8d49cbe5ae4af5173a571443ec278598f": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@15d1b7c8d49cbe5ae4af5173a571443ec278598f": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@f7ac2161fe8e72f242b91dd2d5075a71a7bdf5de": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@f7ac2161fe8e72f242b91dd2d5075a71a7bdf5de": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@f7ac2161fe8e72f242b91dd2d5075a71a7bdf5de": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@3a2a2692139a8b3133b68d6ec3a53335f10e6367": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@3a2a2692139a8b3133b68d6ec3a53335f10e6367": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@3a2a2692139a8b3133b68d6ec3a53335f10e6367": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@f76716e2490d94a293b6fb63c35eca515c024ec2": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@f76716e2490d94a293b6fb63c35eca515c024ec2": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@f76716e2490d94a293b6fb63c35eca515c024ec2": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@4a2358291eaad4d972ffceed2c431cb6d680911d": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@4a2358291eaad4d972ffceed2c431cb6d680911d": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@4a2358291eaad4d972ffceed2c431cb6d680911d": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@1991bd42410cc55ed6fd97fe175e70428204827b": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@1991bd42410cc55ed6fd97fe175e70428204827b": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@1991bd42410cc55ed6fd97fe175e70428204827b": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@d8c9b69ee15131cdb831a61b04da256fe45a3453": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@d8c9b69ee15131cdb831a61b04da256fe45a3453": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@d8c9b69ee15131cdb831a61b04da256fe45a3453": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@3838cbc3f505324200bc5ef0e349bcbd5fa916ea": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@3838cbc3f505324200bc5ef0e349bcbd5fa916ea": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@3838cbc3f505324200bc5ef0e349bcbd5fa916ea": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@3597dbe497804731ae191b1114bbb32204c0f6f1": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@3597dbe497804731ae191b1114bbb32204c0f6f1": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@3597dbe497804731ae191b1114bbb32204c0f6f1": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@dcbf5b6aa6ae912827d94997bad9d2bd6060e7d5": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@dcbf5b6aa6ae912827d94997bad9d2bd6060e7d5": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@dcbf5b6aa6ae912827d94997bad9d2bd6060e7d5": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@5c2aa294c0cea8b788f06f9cfaa0f92af79ce217": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@5c2aa294c0cea8b788f06f9cfaa0f92af79ce217": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@5c2aa294c0cea8b788f06f9cfaa0f92af79ce217": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@f1951a1fa7783c653728e7db90635926641fea3f": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@f1951a1fa7783c653728e7db90635926641fea3f": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@f1951a1fa7783c653728e7db90635926641fea3f": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@d8c7c9c37bc5af1728d77ead29705fbd87c8b19a": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@d8c7c9c37bc5af1728d77ead29705fbd87c8b19a": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@d8c7c9c37bc5af1728d77ead29705fbd87c8b19a": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@630d93a0aeb1e4b7c3a3e780452704cfcbf06a6c": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@630d93a0aeb1e4b7c3a3e780452704cfcbf06a6c": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@630d93a0aeb1e4b7c3a3e780452704cfcbf06a6c": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@76a7ec3eed6f99172eb121a7fc730d5ec949674f": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@76a7ec3eed6f99172eb121a7fc730d5ec949674f": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@76a7ec3eed6f99172eb121a7fc730d5ec949674f": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@4fb1483ec9f5519cdddf1f878661d635968c5fed": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@4fb1483ec9f5519cdddf1f878661d635968c5fed": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@4fb1483ec9f5519cdddf1f878661d635968c5fed": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@cafb101d78f8c580a85ed9c54b38064be4b028be": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@cafb101d78f8c580a85ed9c54b38064be4b028be": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@cafb101d78f8c580a85ed9c54b38064be4b028be": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@6ff69810cab6730e235b9481d9abb79a10521893": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@6ff69810cab6730e235b9481d9abb79a10521893": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@6ff69810cab6730e235b9481d9abb79a10521893": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@4abc84b08c804f35c0893d803f8993f667859194": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@4abc84b08c804f35c0893d803f8993f667859194": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@4abc84b08c804f35c0893d803f8993f667859194": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@df7de4e21fa7fe1ba6e53aa76a2ab39e52bca677": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@df7de4e21fa7fe1ba6e53aa76a2ab39e52bca677": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@df7de4e21fa7fe1ba6e53aa76a2ab39e52bca677": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@64fa6cb2de9018311717a30841e10272c22e950e": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@64fa6cb2de9018311717a30841e10272c22e950e": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@64fa6cb2de9018311717a30841e10272c22e950e": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@339176a6149bb7eeec68fa4c0001125b17c993f3": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@339176a6149bb7eeec68fa4c0001125b17c993f3": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@339176a6149bb7eeec68fa4c0001125b17c993f3": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@b124eb3d7b120406f971c4996d87200f87f3f2f2": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@b124eb3d7b120406f971c4996d87200f87f3f2f2": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@b124eb3d7b120406f971c4996d87200f87f3f2f2": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@c0c445a3c76075bfcb4a4cdaf9e7e7e448e0a7c0": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@c0c445a3c76075bfcb4a4cdaf9e7e7e448e0a7c0": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@c0c445a3c76075bfcb4a4cdaf9e7e7e448e0a7c0": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@b99f7063c7454392d2a6130b0639879dfd61dc2a": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@b99f7063c7454392d2a6130b0639879dfd61dc2a": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@b99f7063c7454392d2a6130b0639879dfd61dc2a": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@6505d6fcd9531024659d95d61f54656311286cdf": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@6505d6fcd9531024659d95d61f54656311286cdf": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@6505d6fcd9531024659d95d61f54656311286cdf": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@8aaef260289db36afeb1fecdd10873c2f0f87228": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@8aaef260289db36afeb1fecdd10873c2f0f87228": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@8aaef260289db36afeb1fecdd10873c2f0f87228": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@4e150affa2430c160c0c154de044985fd471ffc4": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@4e150affa2430c160c0c154de044985fd471ffc4": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@4e150affa2430c160c0c154de044985fd471ffc4": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@4e0e7b8ec86be06d7cf73cbbcce2d2c789805f88": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@4e0e7b8ec86be06d7cf73cbbcce2d2c789805f88": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@4e0e7b8ec86be06d7cf73cbbcce2d2c789805f88": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@b736bbfd9cc0039e6538500f8c7bce3abc0ada0d": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@b736bbfd9cc0039e6538500f8c7bce3abc0ada0d": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@b736bbfd9cc0039e6538500f8c7bce3abc0ada0d": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@78c3857cddbf06c05034049746ffaeaa24a7d92b": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@78c3857cddbf06c05034049746ffaeaa24a7d92b": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@78c3857cddbf06c05034049746ffaeaa24a7d92b": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@eea4ce8ab8a0bfa9665eca93d5bf15431ec17e5b": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@eea4ce8ab8a0bfa9665eca93d5bf15431ec17e5b": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@eea4ce8ab8a0bfa9665eca93d5bf15431ec17e5b": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@4ae555a56a5b51e7d7f973b0c9c9f4b552f70724": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@4ae555a56a5b51e7d7f973b0c9c9f4b552f70724": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@4ae555a56a5b51e7d7f973b0c9c9f4b552f70724": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@3b9ab735d4f0be7edd47be05970d86318c24875e": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@3b9ab735d4f0be7edd47be05970d86318c24875e": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@3b9ab735d4f0be7edd47be05970d86318c24875e": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@4ba805b3d650f24517915066098835d259d59ecf": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@4ba805b3d650f24517915066098835d259d59ecf": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@4ba805b3d650f24517915066098835d259d59ecf": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@9492b17d8a11d627f38029d6695fac1089a62bc3": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@9492b17d8a11d627f38029d6695fac1089a62bc3": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@9492b17d8a11d627f38029d6695fac1089a62bc3": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@07fe2764d85c12967f21d7c9d8345fdd441c4258": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@07fe2764d85c12967f21d7c9d8345fdd441c4258": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@07fe2764d85c12967f21d7c9d8345fdd441c4258": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@8120803a19ea0a5efd91bab5f6b7b87336d4f9de": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@8120803a19ea0a5efd91bab5f6b7b87336d4f9de": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@8120803a19ea0a5efd91bab5f6b7b87336d4f9de": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@10d37dc5b6a5e2a086df0fb390a483e3a0e2e1b1": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@10d37dc5b6a5e2a086df0fb390a483e3a0e2e1b1": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@10d37dc5b6a5e2a086df0fb390a483e3a0e2e1b1": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@7fd9c7926f0892ffcc47b65eeaa83ab8b0f36470": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@7fd9c7926f0892ffcc47b65eeaa83ab8b0f36470": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@7fd9c7926f0892ffcc47b65eeaa83ab8b0f36470": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@10dab3435e07a89d83984d7511686b9ac1c37c23": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@10dab3435e07a89d83984d7511686b9ac1c37c23": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@10dab3435e07a89d83984d7511686b9ac1c37c23": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@065ef9d294556fd596f4127f53353b8a9fa38718": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@065ef9d294556fd596f4127f53353b8a9fa38718": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@065ef9d294556fd596f4127f53353b8a9fa38718": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@9186a1334023fd6b975e561938d08414f8c3812f": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@9186a1334023fd6b975e561938d08414f8c3812f": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@9186a1334023fd6b975e561938d08414f8c3812f": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@c21cb4beb1e5a45d9a3fbf893f1f3e20766aee40": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@c21cb4beb1e5a45d9a3fbf893f1f3e20766aee40": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@c21cb4beb1e5a45d9a3fbf893f1f3e20766aee40": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@bc494ff3f0bbadd8a6acfdfd8d3b052d2b7d7ecf": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@bc494ff3f0bbadd8a6acfdfd8d3b052d2b7d7ecf": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@bc494ff3f0bbadd8a6acfdfd8d3b052d2b7d7ecf": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@9d4e7893b632f10d09ca58e82f450f5f2aaf5a5e": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@9d4e7893b632f10d09ca58e82f450f5f2aaf5a5e": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@9d4e7893b632f10d09ca58e82f450f5f2aaf5a5e": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@dc203d6a70505f83c6c8554b5dffaed12120a252": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@dc203d6a70505f83c6c8554b5dffaed12120a252": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@dc203d6a70505f83c6c8554b5dffaed12120a252": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@fabe0fce856cff969299f5c1cbef821218262fcc": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@fabe0fce856cff969299f5c1cbef821218262fcc": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@fabe0fce856cff969299f5c1cbef821218262fcc": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@4f6c2c83f276c63d57ac71732db270424fc02978": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@4f6c2c83f276c63d57ac71732db270424fc02978": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@4f6c2c83f276c63d57ac71732db270424fc02978": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@52b7730ab690eb5112656edef46d2b67b128d949": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@52b7730ab690eb5112656edef46d2b67b128d949": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@52b7730ab690eb5112656edef46d2b67b128d949": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@0989549426e82e6c40af2230c538d35445717713": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@0989549426e82e6c40af2230c538d35445717713": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@0989549426e82e6c40af2230c538d35445717713": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@dc6ce4cddf9fdb037cbf7b18208d55a51ff71ca0": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@dc6ce4cddf9fdb037cbf7b18208d55a51ff71ca0": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@dc6ce4cddf9fdb037cbf7b18208d55a51ff71ca0": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@4bb02c132cc1f7cee302291062060a6fd065a87a": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@4bb02c132cc1f7cee302291062060a6fd065a87a": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@4bb02c132cc1f7cee302291062060a6fd065a87a": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@cb9365527c8e767a24d46166f480d899edb803d2": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@cb9365527c8e767a24d46166f480d899edb803d2": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@cb9365527c8e767a24d46166f480d899edb803d2": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@7b04352f806081e9f0a2b16d32cc57e93ee1aef5": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@7b04352f806081e9f0a2b16d32cc57e93ee1aef5": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@7b04352f806081e9f0a2b16d32cc57e93ee1aef5": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@60e7333da51551f7938b78979c390db79c0d137e": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@60e7333da51551f7938b78979c390db79c0d137e": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@60e7333da51551f7938b78979c390db79c0d137e": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@2bd2010e072273cbb05307b900dca9912886f8ae": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@2bd2010e072273cbb05307b900dca9912886f8ae": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@2bd2010e072273cbb05307b900dca9912886f8ae": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@3c252c391bc5fcaf293a41302bdca1ba025e606d": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@3c252c391bc5fcaf293a41302bdca1ba025e606d": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@3c252c391bc5fcaf293a41302bdca1ba025e606d": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@1e1ec6a69e8946667dac7751718877b6d585de1b": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@1e1ec6a69e8946667dac7751718877b6d585de1b": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@1e1ec6a69e8946667dac7751718877b6d585de1b": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@8e3daeecfa02fbd581558da61db81c041d0648fd": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@8e3daeecfa02fbd581558da61db81c041d0648fd": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@8e3daeecfa02fbd581558da61db81c041d0648fd": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@9ed08596d9d4e7c19a40b735689d75ccf3c3f2b6": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@9ed08596d9d4e7c19a40b735689d75ccf3c3f2b6": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@9ed08596d9d4e7c19a40b735689d75ccf3c3f2b6": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@937cda67264f8e2d5eef53689e2310d5e3ccde5a": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@937cda67264f8e2d5eef53689e2310d5e3ccde5a": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@937cda67264f8e2d5eef53689e2310d5e3ccde5a": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@cc219f148207b17e01b1a0a1b5b6e0d49bcb0420": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@cc219f148207b17e01b1a0a1b5b6e0d49bcb0420": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@cc219f148207b17e01b1a0a1b5b6e0d49bcb0420": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@f68f8e46fa9593f6a74ad203263c7a8ff6dd0e67": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@f68f8e46fa9593f6a74ad203263c7a8ff6dd0e67": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@f68f8e46fa9593f6a74ad203263c7a8ff6dd0e67": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@1df3df9263d2369cd095c3d6212e5e9d8297c185": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@1df3df9263d2369cd095c3d6212e5e9d8297c185": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@1df3df9263d2369cd095c3d6212e5e9d8297c185": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@6b85b20338dbed58a040ba04594728ef2bee1bec": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@6b85b20338dbed58a040ba04594728ef2bee1bec": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@6b85b20338dbed58a040ba04594728ef2bee1bec": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@f9d19a9d62e4cdf0ebb0281d860bfbdea1eae87f": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@f9d19a9d62e4cdf0ebb0281d860bfbdea1eae87f": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@f9d19a9d62e4cdf0ebb0281d860bfbdea1eae87f": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@e13d91dae22c40dac5a7956ac13b01e17fde8c2f": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@e13d91dae22c40dac5a7956ac13b01e17fde8c2f": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@e13d91dae22c40dac5a7956ac13b01e17fde8c2f": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@75858a8b23511aa279dbcbc6d676b5868d5ec215": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@75858a8b23511aa279dbcbc6d676b5868d5ec215": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@75858a8b23511aa279dbcbc6d676b5868d5ec215": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@52140b8cd7d41ff30c10e52162161e8b7ff2ce72": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@52140b8cd7d41ff30c10e52162161e8b7ff2ce72": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@52140b8cd7d41ff30c10e52162161e8b7ff2ce72": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@64944c915328eca1f978bf1ba2481bafe9ef9b99": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@64944c915328eca1f978bf1ba2481bafe9ef9b99": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@64944c915328eca1f978bf1ba2481bafe9ef9b99": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@e372481b19d47dafa9ac46adec280e775c0d85ed": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@e372481b19d47dafa9ac46adec280e775c0d85ed": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@e372481b19d47dafa9ac46adec280e775c0d85ed": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@d6ad2f29f270b47e7a976fbf9ea866818c4f773b": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@d6ad2f29f270b47e7a976fbf9ea866818c4f773b": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@d6ad2f29f270b47e7a976fbf9ea866818c4f773b": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@f4b2847fea30434daf48aa3e020c6e72c9965330": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@f4b2847fea30434daf48aa3e020c6e72c9965330": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@f4b2847fea30434daf48aa3e020c6e72c9965330": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@955922a51f5a73c864ba46c13df8797a1366cd09": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@955922a51f5a73c864ba46c13df8797a1366cd09": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@955922a51f5a73c864ba46c13df8797a1366cd09": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@213869902bb29bf8ef5d2b31424ad9c0ec1be814": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@213869902bb29bf8ef5d2b31424ad9c0ec1be814": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@213869902bb29bf8ef5d2b31424ad9c0ec1be814": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@ecd870ff6540e7c071916107662a087d1de5fa5d": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@ecd870ff6540e7c071916107662a087d1de5fa5d": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@ecd870ff6540e7c071916107662a087d1de5fa5d": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@1ab63a80e35b7cafe9f52425eb29e7563d655c5c": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@1ab63a80e35b7cafe9f52425eb29e7563d655c5c": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@1ab63a80e35b7cafe9f52425eb29e7563d655c5c": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@6eccbab754263133ca3bdd13d4460f9e652a0ff4": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@6eccbab754263133ca3bdd13d4460f9e652a0ff4": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@6eccbab754263133ca3bdd13d4460f9e652a0ff4": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@d469860082a834f013390bba47452c95b2930b76": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@d469860082a834f013390bba47452c95b2930b76": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@d469860082a834f013390bba47452c95b2930b76": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@7dafd36b3b7e1746322b17c478fd01c9f9cdf08b": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@7dafd36b3b7e1746322b17c478fd01c9f9cdf08b": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@7dafd36b3b7e1746322b17c478fd01c9f9cdf08b": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@54f3b9aaedf35c364b4f0c7e6e8c7dc9b77ea80a": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@54f3b9aaedf35c364b4f0c7e6e8c7dc9b77ea80a": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@54f3b9aaedf35c364b4f0c7e6e8c7dc9b77ea80a": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@532d9d50795f0143c4fb399f6840e3b3b3b89a30": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@532d9d50795f0143c4fb399f6840e3b3b3b89a30": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@532d9d50795f0143c4fb399f6840e3b3b3b89a30": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@8ba0013eb885a5ef2b3ce55a6aceef90beac96dd": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@8ba0013eb885a5ef2b3ce55a6aceef90beac96dd": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@8ba0013eb885a5ef2b3ce55a6aceef90beac96dd": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@f1f1e7942236d41271944291562df671917f932f": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@f1f1e7942236d41271944291562df671917f932f": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@f1f1e7942236d41271944291562df671917f932f": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@9e5cce15ad41e49dfe616b3dea5a553ef38c8885": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@9e5cce15ad41e49dfe616b3dea5a553ef38c8885": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@9e5cce15ad41e49dfe616b3dea5a553ef38c8885": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@a1a5327a530db9add4207cbf9b4b5c16ae1c3aae": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@a1a5327a530db9add4207cbf9b4b5c16ae1c3aae": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@a1a5327a530db9add4207cbf9b4b5c16ae1c3aae": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@65a27f60c80b4917801e23d4b5b1e232327a683c": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@65a27f60c80b4917801e23d4b5b1e232327a683c": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@65a27f60c80b4917801e23d4b5b1e232327a683c": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@893e269a575d88e36a33d47977b2e09f19fb2ecb": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@893e269a575d88e36a33d47977b2e09f19fb2ecb": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@893e269a575d88e36a33d47977b2e09f19fb2ecb": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@15f5d0902f66bdc4c701afa7440867ca0eca9e84": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@15f5d0902f66bdc4c701afa7440867ca0eca9e84": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@15f5d0902f66bdc4c701afa7440867ca0eca9e84": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@8058723156eea7f4772dd100baabbb4319c437eb": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@8058723156eea7f4772dd100baabbb4319c437eb": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@8058723156eea7f4772dd100baabbb4319c437eb": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@cf3679178040ec93c73c4223c0758f14d84e32ad": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@cf3679178040ec93c73c4223c0758f14d84e32ad": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@cf3679178040ec93c73c4223c0758f14d84e32ad": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@3dd4fb053f89140860686847868e6896b909809a": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@3dd4fb053f89140860686847868e6896b909809a": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@3dd4fb053f89140860686847868e6896b909809a": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@0672d18c6f1f938464e96e61c71c3e9d5a47e982": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@0672d18c6f1f938464e96e61c71c3e9d5a47e982": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@0672d18c6f1f938464e96e61c71c3e9d5a47e982": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@7f3a16a4ce7f97a1054d12e43922fd02a81c2378": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@7f3a16a4ce7f97a1054d12e43922fd02a81c2378": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@7f3a16a4ce7f97a1054d12e43922fd02a81c2378": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@c536fc0b6a0dd435a8628fab7f519d2b5eca06e2": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@c536fc0b6a0dd435a8628fab7f519d2b5eca06e2": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@c536fc0b6a0dd435a8628fab7f519d2b5eca06e2": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@5e94b5a9c89387b860a0bd3352dc6ebfd82fce1b": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@5e94b5a9c89387b860a0bd3352dc6ebfd82fce1b": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@5e94b5a9c89387b860a0bd3352dc6ebfd82fce1b": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@3ccc4dfa90102dca7d747d4e103615d41d234bd2": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@3ccc4dfa90102dca7d747d4e103615d41d234bd2": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@3ccc4dfa90102dca7d747d4e103615d41d234bd2": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@9555023a2fd29b718890bf17df6db42c40c521f1": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@9555023a2fd29b718890bf17df6db42c40c521f1": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@9555023a2fd29b718890bf17df6db42c40c521f1": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@c418a878ed39328c5df0bfda0c06c2de262be60e": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@c418a878ed39328c5df0bfda0c06c2de262be60e": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@c418a878ed39328c5df0bfda0c06c2de262be60e": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@e42ca82e942f7c17a35b2827f6d035811f7026d1": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@e42ca82e942f7c17a35b2827f6d035811f7026d1": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@e42ca82e942f7c17a35b2827f6d035811f7026d1": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@e2b772cc5f73f59447ee15de73f01b81ade3a98a": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@e2b772cc5f73f59447ee15de73f01b81ade3a98a": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@e2b772cc5f73f59447ee15de73f01b81ade3a98a": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@873a370eee360974c8bfac88522483cfad8ac1be": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@873a370eee360974c8bfac88522483cfad8ac1be": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@873a370eee360974c8bfac88522483cfad8ac1be": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@9dabe83fa88cc69d3efd8ffda98d044effabe16d": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@9dabe83fa88cc69d3efd8ffda98d044effabe16d": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@9dabe83fa88cc69d3efd8ffda98d044effabe16d": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@77bc79cb40df07a07f2b5cc1adc5854930494f2d": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@77bc79cb40df07a07f2b5cc1adc5854930494f2d": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@77bc79cb40df07a07f2b5cc1adc5854930494f2d": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@137c13dcc385ac0ec111313eaadfda43ec92ab52": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@137c13dcc385ac0ec111313eaadfda43ec92ab52": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@137c13dcc385ac0ec111313eaadfda43ec92ab52": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@d2b0329b01a80c06829884bce6246a1107cde976": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@d2b0329b01a80c06829884bce6246a1107cde976": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@d2b0329b01a80c06829884bce6246a1107cde976": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@b8e2473a25ab89225a9186f9d7acf67bb2c410f0": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@b8e2473a25ab89225a9186f9d7acf67bb2c410f0": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@b8e2473a25ab89225a9186f9d7acf67bb2c410f0": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@6ef137f593fc7544c719a1b5feef0200eeccd7a0": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@6ef137f593fc7544c719a1b5feef0200eeccd7a0": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@6ef137f593fc7544c719a1b5feef0200eeccd7a0": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@247d6dbe6f2ad340694efff95ce61778066c06f4": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@247d6dbe6f2ad340694efff95ce61778066c06f4": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@247d6dbe6f2ad340694efff95ce61778066c06f4": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@1cebc2a7a0ad7ad90b209069ef100c945fe6f145": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@1cebc2a7a0ad7ad90b209069ef100c945fe6f145": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@1cebc2a7a0ad7ad90b209069ef100c945fe6f145": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@73804762740b29ca3bdf49352ac1e6a62346714b": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@73804762740b29ca3bdf49352ac1e6a62346714b": {
-  "files": 14,
-  "lines": 1923
+ "codex/autopilot-close-gate-20261026@80afdc3670903d66e9187e534661cc7c97775f27@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
+  "files": 6,
+  "lines": 241
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@73804762740b29ca3bdf49352ac1e6a62346714b": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@43c72538330a4611c1d6d4be1187e6af39826577": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@43c72538330a4611c1d6d4be1187e6af39826577": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@43c72538330a4611c1d6d4be1187e6af39826577": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@2d5118bfcb2431d11fc2b8fc82c3d1b8bd29a958": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@2d5118bfcb2431d11fc2b8fc82c3d1b8bd29a958": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@2d5118bfcb2431d11fc2b8fc82c3d1b8bd29a958": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@cb1ab03f48d9875890233a7e3339d1d5f2524efd": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@cb1ab03f48d9875890233a7e3339d1d5f2524efd": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@cb1ab03f48d9875890233a7e3339d1d5f2524efd": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@97a7e379a63cf2c9aad0990703c28654dd565c07": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@97a7e379a63cf2c9aad0990703c28654dd565c07": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@97a7e379a63cf2c9aad0990703c28654dd565c07": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@e70b2e9503d8d9aff1ca4bfd356382e91571e17c": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@e70b2e9503d8d9aff1ca4bfd356382e91571e17c": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@e70b2e9503d8d9aff1ca4bfd356382e91571e17c": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@e5f570988a01f5583828c4670a8e38092829e070": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@e5f570988a01f5583828c4670a8e38092829e070": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@e5f570988a01f5583828c4670a8e38092829e070": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@36ddc727160aaf52064df08954810292eb11004a": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@36ddc727160aaf52064df08954810292eb11004a": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@36ddc727160aaf52064df08954810292eb11004a": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@f9692adc347e07146e96bea4f672e800d1f38f48": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@f9692adc347e07146e96bea4f672e800d1f38f48": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@f9692adc347e07146e96bea4f672e800d1f38f48": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@3780e34e1e3027ca994314c0fae370b1d475adab": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@3780e34e1e3027ca994314c0fae370b1d475adab": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@3780e34e1e3027ca994314c0fae370b1d475adab": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@5a929e414383f440ddd8ddda0326bd3e5d2a9de1": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@5a929e414383f440ddd8ddda0326bd3e5d2a9de1": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@5a929e414383f440ddd8ddda0326bd3e5d2a9de1": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@87f25756937dfb6d4322b5a992a7286b7eaead55": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@87f25756937dfb6d4322b5a992a7286b7eaead55": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@87f25756937dfb6d4322b5a992a7286b7eaead55": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@35815b873ceb648215b5645f14de9a330293757d": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@35815b873ceb648215b5645f14de9a330293757d": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@35815b873ceb648215b5645f14de9a330293757d": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@d3a32bb861046baca040f97206234d44743ea6b8": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@d3a32bb861046baca040f97206234d44743ea6b8": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@d3a32bb861046baca040f97206234d44743ea6b8": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@2f0108d8fa72bf3bb5e6b72b8aea8986e85c4f93": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@2f0108d8fa72bf3bb5e6b72b8aea8986e85c4f93": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@2f0108d8fa72bf3bb5e6b72b8aea8986e85c4f93": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@3f0e5a0ce9b17a1d88dd7b5e758b5fae71e093e2": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@3f0e5a0ce9b17a1d88dd7b5e758b5fae71e093e2": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@3f0e5a0ce9b17a1d88dd7b5e758b5fae71e093e2": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@363e251fb9566a5a69cc55a104e7ba2559991c8c": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@363e251fb9566a5a69cc55a104e7ba2559991c8c": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@363e251fb9566a5a69cc55a104e7ba2559991c8c": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@9f4889fb022857b7c5a63a694de2f09c34b85ddb": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@9f4889fb022857b7c5a63a694de2f09c34b85ddb": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@9f4889fb022857b7c5a63a694de2f09c34b85ddb": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@97b2b7ed59ac86f2d7c18b806ced05182b3c8af7": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@97b2b7ed59ac86f2d7c18b806ced05182b3c8af7": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@97b2b7ed59ac86f2d7c18b806ced05182b3c8af7": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@beae3a53da9f8604d9d05b77882613d4ac884b25": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@beae3a53da9f8604d9d05b77882613d4ac884b25": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@beae3a53da9f8604d9d05b77882613d4ac884b25": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@b5e9e4b8a48c1199315f21526e05f1a55e06865a": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@b5e9e4b8a48c1199315f21526e05f1a55e06865a": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@b5e9e4b8a48c1199315f21526e05f1a55e06865a": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@5aa38933859d88ac5a102d312015101c9aba2023": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@5aa38933859d88ac5a102d312015101c9aba2023": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@5aa38933859d88ac5a102d312015101c9aba2023": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@7fc7d79cf52e73a52b8bc8f8b6c789cd360374f8": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@7fc7d79cf52e73a52b8bc8f8b6c789cd360374f8": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@7fc7d79cf52e73a52b8bc8f8b6c789cd360374f8": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@da94a2bfb00f0cc5f9206bcbba4ce6077ece4830": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@da94a2bfb00f0cc5f9206bcbba4ce6077ece4830": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@da94a2bfb00f0cc5f9206bcbba4ce6077ece4830": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@3ca2199d121c24e251a66a28cd369ff2ad46392f": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@3ca2199d121c24e251a66a28cd369ff2ad46392f": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@3ca2199d121c24e251a66a28cd369ff2ad46392f": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@0dbb2f5d89b811dcbb9e14b7383899dea6f2461c": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@0dbb2f5d89b811dcbb9e14b7383899dea6f2461c": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@0dbb2f5d89b811dcbb9e14b7383899dea6f2461c": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@66e5fa72f27851ac03eb1b6d919c9ae267cb9625": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@66e5fa72f27851ac03eb1b6d919c9ae267cb9625": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@66e5fa72f27851ac03eb1b6d919c9ae267cb9625": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@ed0049898123cec17e4e3644e4fda51fcf1cb0bf": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@ed0049898123cec17e4e3644e4fda51fcf1cb0bf": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@ed0049898123cec17e4e3644e4fda51fcf1cb0bf": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@d77171c7f71fb8f93cf553fa53411a07a6129929": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@d77171c7f71fb8f93cf553fa53411a07a6129929": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@d77171c7f71fb8f93cf553fa53411a07a6129929": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@1dec84e4fd7dcf30c5882ffb5349c4821ec982e4": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@1dec84e4fd7dcf30c5882ffb5349c4821ec982e4": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@1dec84e4fd7dcf30c5882ffb5349c4821ec982e4": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@94efdc4b63d4a863c7164725bca18089bc770876": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@94efdc4b63d4a863c7164725bca18089bc770876": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@94efdc4b63d4a863c7164725bca18089bc770876": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@bf26003a8e883becb9dd0cbc7dc0342f8b2a727c": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@bf26003a8e883becb9dd0cbc7dc0342f8b2a727c": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@bf26003a8e883becb9dd0cbc7dc0342f8b2a727c": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@b65c9b0e091b499a2a4993090915292241bc9134": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@b65c9b0e091b499a2a4993090915292241bc9134": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@b65c9b0e091b499a2a4993090915292241bc9134": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@bf399563141ee9419df81056f99c75946bd0c2e1": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@bf399563141ee9419df81056f99c75946bd0c2e1": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@bf399563141ee9419df81056f99c75946bd0c2e1": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@811f70f4a1fd3acb12024f2f8531709982dc7ebf": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@811f70f4a1fd3acb12024f2f8531709982dc7ebf": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@811f70f4a1fd3acb12024f2f8531709982dc7ebf": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@669439018bbe4b2f2cf346e6a013ca3019d23a28": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@669439018bbe4b2f2cf346e6a013ca3019d23a28": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@669439018bbe4b2f2cf346e6a013ca3019d23a28": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@b9c84ceefe66d29cb55c0de1240ed2a6d6e30d23": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@b9c84ceefe66d29cb55c0de1240ed2a6d6e30d23": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@b9c84ceefe66d29cb55c0de1240ed2a6d6e30d23": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@48cbe3d32e83cc3c955f5ac9a40334f0b584e719": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@48cbe3d32e83cc3c955f5ac9a40334f0b584e719": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@48cbe3d32e83cc3c955f5ac9a40334f0b584e719": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@9f999f4d96177c6456bc1338d338212585ae3bb8": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@9f999f4d96177c6456bc1338d338212585ae3bb8": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@9f999f4d96177c6456bc1338d338212585ae3bb8": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@2591c07a932e7e4c7a2b34905df4ac2a3d1bf416": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@2591c07a932e7e4c7a2b34905df4ac2a3d1bf416": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@2591c07a932e7e4c7a2b34905df4ac2a3d1bf416": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@1b81ebc8e104b9281937419393f7424e0a06724a": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@1b81ebc8e104b9281937419393f7424e0a06724a": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@1b81ebc8e104b9281937419393f7424e0a06724a": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@4c08255f0d6af7b370d2237a84dd99718d4bf060": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@4c08255f0d6af7b370d2237a84dd99718d4bf060": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@4c08255f0d6af7b370d2237a84dd99718d4bf060": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@a53bbf04164e26b43622b74e069d603c94cbc690": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@a53bbf04164e26b43622b74e069d603c94cbc690": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@a53bbf04164e26b43622b74e069d603c94cbc690": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@740ddcf141e13003cee8553b346c7417da736dee": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@740ddcf141e13003cee8553b346c7417da736dee": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@740ddcf141e13003cee8553b346c7417da736dee": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@842144631f46dcd4ca9cc2d1c9893381a21e908c": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@842144631f46dcd4ca9cc2d1c9893381a21e908c": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@842144631f46dcd4ca9cc2d1c9893381a21e908c": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@1c6b7f34c0def953926383453c406ae61575aa1f": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@1c6b7f34c0def953926383453c406ae61575aa1f": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@1c6b7f34c0def953926383453c406ae61575aa1f": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@1d8a7d394ec03020da7b4590d7ef1bb013d966b0": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@1d8a7d394ec03020da7b4590d7ef1bb013d966b0": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@1d8a7d394ec03020da7b4590d7ef1bb013d966b0": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@729733b35094a43bfd2e39bdbc462e5c617890f2": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@729733b35094a43bfd2e39bdbc462e5c617890f2": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@729733b35094a43bfd2e39bdbc462e5c617890f2": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@80e3e13b6871368822fb354025d85df905dacb37": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@80e3e13b6871368822fb354025d85df905dacb37": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@80e3e13b6871368822fb354025d85df905dacb37": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@e76462ab04a7645dcbd507e86cac121200617ed5": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@e76462ab04a7645dcbd507e86cac121200617ed5": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@e76462ab04a7645dcbd507e86cac121200617ed5": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@4a80234bb1936eac0f5e85d12ac729c3b4be20ff": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@4a80234bb1936eac0f5e85d12ac729c3b4be20ff": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@4a80234bb1936eac0f5e85d12ac729c3b4be20ff": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@a28eb4322320fe6bbdf876b513bd571b6d5e3f8d": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@a28eb4322320fe6bbdf876b513bd571b6d5e3f8d": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@a28eb4322320fe6bbdf876b513bd571b6d5e3f8d": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@ac76066301d2b6b4bd17fa50564fd25541894e1f": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@ac76066301d2b6b4bd17fa50564fd25541894e1f": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@ac76066301d2b6b4bd17fa50564fd25541894e1f": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@ca4d86522eadf7a0c468c4cdcb5e01ee636e861d": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@ca4d86522eadf7a0c468c4cdcb5e01ee636e861d": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@ca4d86522eadf7a0c468c4cdcb5e01ee636e861d": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@4a7d78938ffee49a7aaeb044a60f5806f6b7bf13": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@4a7d78938ffee49a7aaeb044a60f5806f6b7bf13": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@4a7d78938ffee49a7aaeb044a60f5806f6b7bf13": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@fa3e46afc133b6571f1bbf5d1f4681c937fd825a": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@fa3e46afc133b6571f1bbf5d1f4681c937fd825a": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@fa3e46afc133b6571f1bbf5d1f4681c937fd825a": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@4d9d9c256ab96d0698a4f94e3399198fdef96ac9": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@4d9d9c256ab96d0698a4f94e3399198fdef96ac9": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@4d9d9c256ab96d0698a4f94e3399198fdef96ac9": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@deb0d1c8bb2be9aaaec5807d00a6ccb53f3f4bb4": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@deb0d1c8bb2be9aaaec5807d00a6ccb53f3f4bb4": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@deb0d1c8bb2be9aaaec5807d00a6ccb53f3f4bb4": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@30b803a5a0908675d1f350686f76738b73307cc1": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@30b803a5a0908675d1f350686f76738b73307cc1": {
-  "files": 14,
-  "lines": 1923
- },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@30b803a5a0908675d1f350686f76738b73307cc1": {
-  "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@1143625d419871ce0bb24197cad5dade07185347": {
-  "files": 28,
-  "lines": 12929
+ "codex/autopilot-exec-recover-min-20261020@9c5f53f80858de40418294585dc0af81fbd6b25b@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
+  "files": 2,
+  "lines": 847
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@1143625d419871ce0bb24197cad5dade07185347": {
-  "files": 14,
-  "lines": 1923
+ "codex/autopilot-health-20261019@c711255000695f1773b9573a46d51966131a2b16@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
+  "files": 1,
+  "lines": 727
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@1143625d419871ce0bb24197cad5dade07185347": {
-  "files": 4,
-  "lines": 5372
+ "codex/autopilot-parallel-runtime-fix-20261019@38aed5c0e38e3cf92dc147982e2e68a35e37ec68@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
+  "files": 2,
+  "lines": 160
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@97b6d063904e9f3fc621b745c0fe35e1a7851a9b": {
-  "files": 28,
-  "lines": 12929
+ "codex/autopilot-resolve-stderr@3ab07ffa9ff49fd140b55f73e3272fa5277d6915@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
+  "files": 2,
+  "lines": 51
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@97b6d063904e9f3fc621b745c0fe35e1a7851a9b": {
-  "files": 14,
-  "lines": 1923
+ "codex/autopilot-truth-sync-failclosed@e63c220e3a6da8877a8ef196a7169e3d3b4b2f4e@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
+  "files": 2,
+  "lines": 64
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@97b6d063904e9f3fc621b745c0fe35e1a7851a9b": {
+ "codex/daemon-liveness-20261110@fc8773ee4dd038ebabf552769f1f755e5a7b6c52@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
   "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@659404803816460d45df6b1ca34f9e63fcb2cd66": {
-  "files": 28,
-  "lines": 12929
+  "lines": 263
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@659404803816460d45df6b1ca34f9e63fcb2cd66": {
-  "files": 14,
-  "lines": 1923
+ "codex/disk-production-admission-20261112@34296b378968b3164b732eecebcaee65a75c28df@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
+  "files": 3,
+  "lines": 128
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@659404803816460d45df6b1ca34f9e63fcb2cd66": {
-  "files": 4,
-  "lines": 5372
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@678441ca917c1dfe0cc3454f2fa585404a780f63": {
-  "files": 28,
-  "lines": 12929
+ "codex/reap-branch-preserve-20261111@b4d56939cf323ba107e321ade73fe96e8247ca06@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
+  "files": 3,
+  "lines": 259
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@678441ca917c1dfe0cc3454f2fa585404a780f63": {
-  "files": 14,
-  "lines": 1923
+ "codex/resource-admission-verify-narrowing-20261115@cf6e7668f10ac03ac42ccf258192d39fa0c15666@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
+  "files": 7,
+  "lines": 327
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@678441ca917c1dfe0cc3454f2fa585404a780f63": {
-  "files": 4,
-  "lines": 5372
+ "codex/snapshot-budget-archive-20261113@ad220fb88c2b2546a3c807dd4229971473f806c7@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
+  "files": 8,
+  "lines": 438
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@de1365a2a84e622ca2211481d4d420658fe4b877": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@d22efa139c572ab227ef06e16f16be70064765cc": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@de1365a2a84e622ca2211481d4d420658fe4b877": {
-  "files": 14,
-  "lines": 1923
+ "codex/pm-truth-closure-20261118@784dd43fcdc777f65d8af58a9cf2f8f54e43256b@d22efa139c572ab227ef06e16f16be70064765cc": {
+  "files": 10,
+  "lines": 621
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@de1365a2a84e622ca2211481d4d420658fe4b877": {
-  "files": 4,
-  "lines": 5372
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@d36087b804b052de2e40cd0e655bc432b11541f5": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@670072abf09ee492f06a80b794af6e30a4332ed3": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@0fd2177bea6a39fa0f26822a6064529b44ee2a30": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@670072abf09ee492f06a80b794af6e30a4332ed3": {
-  "files": 14,
-  "lines": 1923
+ "codex/truth-close-pm-truth-closure-20261118@c8b9f37b322a7cf772b4974c6ed1ce60ff8e4602@0fd2177bea6a39fa0f26822a6064529b44ee2a30": {
+  "files": 7,
+  "lines": 82
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@670072abf09ee492f06a80b794af6e30a4332ed3": {
-  "files": 4,
-  "lines": 5372
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@fe2c0f33d5f593b9fb5d01d340f83142152ec985": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@b9df13d1f041ce07b75406c9afab69952116b55f": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@9ff339b92f9079018131ef26cee0f3a867f187d7": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@b9df13d1f041ce07b75406c9afab69952116b55f": {
-  "files": 14,
-  "lines": 1923
+ "codex/truth-dedupe-pm-closure-20261118@cbef1c0e1346908225e71686655a337b988248a6@9ff339b92f9079018131ef26cee0f3a867f187d7": {
+  "files": 9,
+  "lines": 259
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@b9df13d1f041ce07b75406c9afab69952116b55f": {
-  "files": 4,
-  "lines": 5372
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@95ff40ac62a58629381e846aae97b4f56d07a238": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@ab52b58f4f2add39ffcc8385bb56ee2ad59bbd2e": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@4ee15aaa53f5d8785d8fc06cee028a06d924313e": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@ab52b58f4f2add39ffcc8385bb56ee2ad59bbd2e": {
-  "files": 14,
-  "lines": 1923
+ "codex/acceptance-criteria-closure-20261118@99283f276e57c4fb56327d0a50cc242b79fdda45@4ee15aaa53f5d8785d8fc06cee028a06d924313e": {
+  "files": 15,
+  "lines": 818
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@ab52b58f4f2add39ffcc8385bb56ee2ad59bbd2e": {
-  "files": 4,
-  "lines": 5372
+ "codex/acceptance-criteria-compiler-20261118@96f177802653d3bfb879a0b47deff4395a53c083@68c89020bd72d107c34e969c84ed902f43039fd3": {
+  "files": 9,
+  "lines": 399
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@091efa28cd0ba60d117bdf050a658002b501ff68": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@68c89020bd72d107c34e969c84ed902f43039fd3": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@091efa28cd0ba60d117bdf050a658002b501ff68": {
-  "files": 14,
-  "lines": 1923
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@bbce76e894f0a7e888df239a154bf678a04760f8": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@31c213b6663be4c9514f478d65dbdf7dc7cf6415": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@ed4b6d64dcb2e797136dc62e6975faafbf887470": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@59366650b1c858131976de8806409766b60a2031": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@d10dd4c88e67806f907f80082f9ba09bf2645eb8": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@d30fedfb76e1e44163ed1b34ff1b7a55900fffb6": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@cc4905ad8e3278de47850828fd32ea050128a6eb": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@bfde65f98d4caca8e1d6082150a8cfac1ec07a8a": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@634d33d9f8086e6fabed443994ae5d872d74eb67": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@0c4f47e14db8211b79e5ed9d26cda2fa009bdee4": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@ea531ef3ab4554846c7a4f490941077d6e304923": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@ebe9b4e3434a8393834bc46e19f4f560f603fa9f": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@2dd4466e411f37a42ccf84fdc2324dad5521f015": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@b6d9d429018207537f8cd4b252f0c46af308b869": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@0634714cd36cff46e115b2a513d56545f910a34e": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@b07f83174b7fe235807dd96f9b73702fc44341d6": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@7f22f9a0acef2b32b25fdec7adf5f53f0ea5c8b9": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@cdf93e1a2d3bd1c6c6270bc4d8389421d1592346": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@7db4f0c9088b7f6007616331f6ec38c514e2c203": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@2a1856827559187173d76ee2052a8b9bfb6ba0a4": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@7b726f7a5aa8cf17568fff691f520559b4db4cc8": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/panel-windshield-20261119@2502826140494a75701169847097b55f0de8045a@7b726f7a5aa8cf17568fff691f520559b4db4cc8": {
+  "files": 8,
+  "lines": 295
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@16f4a77a87c868aacbf74d83cdb16b64b5b9f711": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@d5e7c7afece82d659b9a02ecba2340e08fcb3f1e": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/panel-route-contract-20261119@de892575160d2af811541abe7144ecd99e2e306e@d5e7c7afece82d659b9a02ecba2340e08fcb3f1e": {
+  "files": 5,
+  "lines": 94
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@f2fb33150948e9fe62322c64e2ef5a213a58eced": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@7ef93627729fb390b5d62d11616ecee275474dcb": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/guard-release-version-20261119@fe5cd24406e9d127a68f9354bf9f15f938e11650@7ef93627729fb390b5d62d11616ecee275474dcb": {
+  "files": 2,
+  "lines": 18
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@4ed1bd83f8c4e5a65801f507f859fcdcef12149a": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@136619619ae460f7716d3cb74ebb54230fbd00c9": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/selftrack-mainline-20261119@14950da60035f612d129c96f9e61157748ec4e8c@136619619ae460f7716d3cb74ebb54230fbd00c9": {
+  "files": 8,
+  "lines": 241
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@b22a8242374342f82453cf73d2767084c2295b8e": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@0bea60a692a6cd5c1cb0b43e25cf3b44bce07f2e": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@c55084cbf42badb86cadc10bccc15e1db4dbe368": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/route-health-20261119@743923849f9a4eba05fdc031cae8694f3baf6b72@c55084cbf42badb86cadc10bccc15e1db4dbe368": {
+  "files": 7,
+  "lines": 472
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@874c4a9ba438db402a555c2c3be10bc2c69db7e4": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@995b7b1f75a1791650886f725bfd4e5cb18f79e7": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/authorized-followup-20261119@f8ccb60abfd78ca73fd6ac76b438c9c761013e23@14076f84abf960708ed11ca623a4415af4f0e081": {
+  "files": 11,
+  "lines": 697
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@14076f84abf960708ed11ca623a4415af4f0e081": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@e66dcfcf45316f873a9aa6caac972effb91b5820": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@e85ee904feaf946f152ad2700f126cbffb3fd460": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@04bcdd8bc28526b3db24a352a29b11a3b3023d0f": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@7766d3a165cba077e363bb1afbe772e73338686a": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@73819106ed85fb9a7116aac5889387e505935c8f": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@6a4afce4ad22ed8c8f391005802b3926dd8a81c4": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@37d005e1be6cdcb35ee1e4d920edcb9383c8e74f": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@e0255bea2172b9be92fb7fe2ddbb1323ff71aae1": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@a53fc607b0abfa85dcf7424a371dc44049cdbd49": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@c0a5b914e90a0276df4e7a97843025ce1f9db92a": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@50babfd286ee9c6236b1025346cc27ffa90274bf": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@931da6de54588dd10bd440706ffc1109f4d87e81": {
+  "files": 15,
+  "lines": 1221
+ },
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@6be96356ab874f40cee7617058abc6f100abd57e": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@091efa28cd0ba60d117bdf050a658002b501ff68": {
-  "files": 4,
-  "lines": 5372
+ "codex/route-review-20261119@63f51f27644215980608712a0d30470d7506209e@6be96356ab874f40cee7617058abc6f100abd57e": {
+  "files": 9,
+  "lines": 511
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@2fc74563e336dd3fc754ff0b527ea48deb98fdb1": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@eef910d43b70101612938d113ded9c7027e95faf": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@2fc74563e336dd3fc754ff0b527ea48deb98fdb1": {
-  "files": 14,
-  "lines": 1923
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@1ac09e15cafc92b6fbdfb63df4951b081a29b0f9": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@2fc74563e336dd3fc754ff0b527ea48deb98fdb1": {
-  "files": 4,
-  "lines": 5372
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@c178e20155470f2b6d0226298c6e73adcff8b5f7": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@5852579405b9e6ade0cb6d8e9bc70f40e757ca86": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@1553069e195b9ba6296107b4d543f00a865fdc80": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@5852579405b9e6ade0cb6d8e9bc70f40e757ca86": {
-  "files": 14,
-  "lines": 1923
+ "codex/arch-boundaries-port-20261119@34eb923c461586367c506348679ca1a97653c048@6dca0241bb522e2e902f9e536256370cc244aa64": {
+  "files": 1,
+  "lines": 144
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@5852579405b9e6ade0cb6d8e9bc70f40e757ca86": {
-  "files": 4,
-  "lines": 5372
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@6dca0241bb522e2e902f9e536256370cc244aa64": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@2bbe9c83db516588df8fa8cb137a4f6fb141662f": {
-  "files": 28,
-  "lines": 12929
+ "codex/arch-boundaries-port-20261119@34eb923c461586367c506348679ca1a97653c048@9dbb3e8865cf987185221577b55d55173f963463": {
+  "files": 1,
+  "lines": 144
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@2bbe9c83db516588df8fa8cb137a4f6fb141662f": {
-  "files": 14,
-  "lines": 1923
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@9dbb3e8865cf987185221577b55d55173f963463": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@2bbe9c83db516588df8fa8cb137a4f6fb141662f": {
-  "files": 4,
-  "lines": 5372
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@1488e99685a2f3d590cd015321312aefba2b6eb6": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@db4b52f6118803ca30a2389b7d6898061bf19a5c": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@ab5141cc9c8bbbd84bfdc3ec1519dbbdc4ac9440": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@db4b52f6118803ca30a2389b7d6898061bf19a5c": {
-  "files": 14,
-  "lines": 1923
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@c211ab7c59257eb4258c3b783faf0c06d9d4d6fa": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@db4b52f6118803ca30a2389b7d6898061bf19a5c": {
-  "files": 4,
-  "lines": 5372
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@8a82c53a02e31dc38932e02d285f80c998bed444": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@fefe5bbda3a8df75ecffd9f11a8ce7d7219bba93": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@ce7a11091261a4d2ab6471db66048dcda5fd1f37": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@fefe5bbda3a8df75ecffd9f11a8ce7d7219bba93": {
-  "files": 14,
-  "lines": 1923
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@e1e5e5d17df7585947fac1eee588e6816f3f850a": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@fefe5bbda3a8df75ecffd9f11a8ce7d7219bba93": {
-  "files": 4,
-  "lines": 5372
+ "codex/install-architecture-doc-20261119@a05ac9e229b83f9a44791d3918cb0b241b8bf30e@e1e5e5d17df7585947fac1eee588e6816f3f850a": {
+  "files": 16,
+  "lines": 658
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@134d3d068b613424a6144860af8bff24c71a0d74": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@f9b0dc7e8e7c59b4a6d6ebf4f00fa154e045c8db": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@134d3d068b613424a6144860af8bff24c71a0d74": {
-  "files": 14,
-  "lines": 1923
+ "codex/runtime-freshness-20261119b@139e528e64005b4e4654dd0ff0019bed45210191@f9b0dc7e8e7c59b4a6d6ebf4f00fa154e045c8db": {
+  "files": 8,
+  "lines": 183
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@134d3d068b613424a6144860af8bff24c71a0d74": {
-  "files": 4,
-  "lines": 5372
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@0236f861a0d09b8b7891ce76b96c53199c6039ce": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@354d8015e57840fd84e8022e3d64286067f3902c": {
-  "files": 28,
-  "lines": 12929
+ "codex/runtime-freshness-20261119b@0919a111ad2b9ff9e1cb322fab272bc0d15ad37f@0236f861a0d09b8b7891ce76b96c53199c6039ce": {
+  "files": 8,
+  "lines": 185
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@354d8015e57840fd84e8022e3d64286067f3902c": {
-  "files": 14,
-  "lines": 1923
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@fb4f705ece47197528912f2796680dbe82e91ac1": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@354d8015e57840fd84e8022e3d64286067f3902c": {
-  "files": 4,
-  "lines": 5372
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@3acac80e164b0768db130d453b7041c4fc67cbb2": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@5ddf31c1a041e296809ec344999bc215c92bdf41": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@88500674991fd899ec0a64fc5805eca1cae84a03": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@5ddf31c1a041e296809ec344999bc215c92bdf41": {
-  "files": 14,
-  "lines": 1923
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@598c39dcfd886e48cacbd3b2b4f5c95db35cf5dc": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@5ddf31c1a041e296809ec344999bc215c92bdf41": {
+ "codex/autopilot-routing-context-20261119@e30a2cce1de1db5c60db0b7f8a0b647482575496@598c39dcfd886e48cacbd3b2b4f5c95db35cf5dc": {
   "files": 4,
-  "lines": 5372
- },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@1099e29863bb19cf016aa6d13f34953edd730f5c": {
-  "files": 28,
-  "lines": 12929
- },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@1099e29863bb19cf016aa6d13f34953edd730f5c": {
-  "files": 14,
-  "lines": 1923
+  "lines": 149
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@1099e29863bb19cf016aa6d13f34953edd730f5c": {
+ "codex/autopilot-routing-context-20261119@e30a2cce1de1db5c60db0b7f8a0b647482575496@ac0efe238cee99065e011832459a44eefafa97d1": {
   "files": 4,
-  "lines": 5372
+  "lines": 149
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@73ea6323a73e360ad38555fcbd537348f0e7493c": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@ac0efe238cee99065e011832459a44eefafa97d1": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@73ea6323a73e360ad38555fcbd537348f0e7493c": {
-  "files": 14,
-  "lines": 1923
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@43f83433afb95e3a6d88dda4bbd2971d359bb36e": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@73ea6323a73e360ad38555fcbd537348f0e7493c": {
-  "files": 4,
-  "lines": 5372
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@7b36075d91a2121e986d5d7ec461ff3907424d97": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@1e40a9ffeb09ca1f40a0b473f4f69cbc6826fd65": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@1dd1a110c254d04f0823938eef550e218844970e": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@1e40a9ffeb09ca1f40a0b473f4f69cbc6826fd65": {
-  "files": 14,
-  "lines": 1923
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@0fa64eea5794cf1eebc07ecd28e2386d5fafaff9": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@1e40a9ffeb09ca1f40a0b473f4f69cbc6826fd65": {
-  "files": 4,
-  "lines": 5372
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@7dcbc8ad18f35d2d8af0704f9e545236538303eb": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@13afb185e96d4202f5c67c2d70f9bb85251a781f": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@5b09eb9f6739e3c001a4904e9d92bb38494fce0e": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@13afb185e96d4202f5c67c2d70f9bb85251a781f": {
-  "files": 14,
-  "lines": 1923
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@ad33983947bafe339f834c0c5ded07ca02250f2d": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@13afb185e96d4202f5c67c2d70f9bb85251a781f": {
-  "files": 4,
-  "lines": 5372
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@c1a50b8b71d1f75c3c40c9602684438ada36a54d": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@c28f171a3bbe852afc0410c79832775ed215148a": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@972a818fe6ce66b9547283e4f670fe8f8e3b2d5d": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@c28f171a3bbe852afc0410c79832775ed215148a": {
-  "files": 14,
-  "lines": 1923
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@f45a7a22a98ad312262c6b5c46e91cfc82f2eadd": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@c28f171a3bbe852afc0410c79832775ed215148a": {
-  "files": 4,
-  "lines": 5372
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@274bd40ba3e52b87a3312e622a7017ce174ee84a": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@55a16e2561578fdd86f366359a1353ec2878c68a": {
-  "files": 28,
-  "lines": 12929
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@502212efc659074a5a898e00856c65baecab36aa": {
+  "files": 15,
+  "lines": 1221
  },
- "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@55a16e2561578fdd86f366359a1353ec2878c68a": {
-  "files": 14,
-  "lines": 1923
+ "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@02ad0ab72ec3f4137659949f29a8385c68668520": {
+  "files": 12,
+  "lines": 958
  },
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@55a16e2561578fdd86f366359a1353ec2878c68a": {
-  "files": 4,
-  "lines": 5372
+ "codex/project-autonomy-mode-20261121@1aebb35c6630b5e7fcaf3605b26766d1d7785532@16606666f76aebbab5f48317827a731146f066a1": {
+  "files": 7,
+  "lines": 621
  }
 }

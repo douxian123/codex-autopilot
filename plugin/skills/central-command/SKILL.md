@@ -25,6 +25,10 @@ description: Codex 自动挡。当用户在同一项目里提出零散、即时�
 7. 每轮蒸馏：收口后回看这轮人额外说了什么，把「为什么这么判断」写回判断逻辑台账；只记判断逻辑，不记一次性细节。
 8. 产品讨论自动成主线：每轮收口 `truthctl synthesize`，把决策/进展/问题/验收综合成 `docs/PRODUCT_MAINLINE.md`。人只读这一页，就知道现状、最近在推什么、还差什么；不用人肉把零散对话归类成 PRD。
 9. 问题一次提出就闭环：bug/视觉/体验/架构收进台账后，由你主动推进修复 -> 验证 -> `truthctl close <L-id> "<结论>"`。关闭要带 commit/证据；不许修完了还挂在 `open`，也不许没验证就标 `done`。
+9.1 **「done」这一格只能由人翻**：执行层（磨「离目标多远」）归你，判断层（「这个目标本身对不对」）归人。视觉、体验这两类，以及登记时标了 `needs_human` 的条目，`close` 会停在 `awaiting_human`（「等你确认」），**这是正确结果，不是失败**：不要重试、不要换个说法再 close、不要自己加 `--confirm-human`。只有用户亲口说「看过 / 可以了」，才用 `truthctl close <L-id> "看过，可以" --confirm-human` 或 `close_item` 带 `confirm_human: true` 翻成 `done`。
+    - 为什么：机器能把「离目标多远」磨到零，但判不了「26°C 是不是今天该设的温度」。把最后一票交给机器，等于删掉高层反馈——它会又快又狠地冲向一个没人质疑过的错误目标，而台账上看起来「全部完成」。
+    - bug / gate / arch 不在此列：它们有客观判据（退出码、断言、diff），收口直达 `done`，不要把它们也拿去问人，那会把闭环拖死。
+    - 误报怎么办：判错了 kind（本该是 bug 被归成 visual）就先用 `truthctl add ledger` 记一条正确的，别硬改状态绕过门禁。
 10. **「没有」与「不知道」必须说成两句不同的话**：报告任何统计量时，取数失败要明说「取不到」，不能输出成「0 / 无 / 正常」。探针自己坏了本身就是一个要上报的问题——静默降级成「没问题」是最难发现的假阴性。
 11. **纪律要能机器验证**：新增任何「要求模型别做什么 / 必须做什么」的规则，同一轮必须回答「谁来查、查不到怎么办、误报了怎么办」。只有文字没有门禁的规则按未修处理——本插件自己的教训：**规范是文字，文字输给顺手**。
 12. **长驻窗口有生命周期**：挂 heartbeat/automation 的窗口会被每拍的工具输出永久喂大，越长越倾向「用最短的话结束轮次」。默认规则是**高频 heartbeat 不挂在中央司令窗/产品总监窗**，而是挂在专用监督窗；中央窗只接收四段结论、拍板请求和路线变化。挂载检查与轮换仍看 `ops/cockpit_pulse.py --automation <名字>`：体检报「已越轮换线」就按 `ops/cockpit_rotate.py` 预演轮换，并把结论写进给人看的那一页。**不要假装窗口可以无限期跑下去**。
@@ -77,6 +81,13 @@ description: Codex 自动挡。当用户在同一项目里提出零散、即时�
   `generate_context`、`dashboard`、`capture_request`（只追加）、`suggest_branch`、
   `product_state` / `product_update`（产品状态）、`distill_review` / `distill_add`（判断逻辑蒸馏）、
   `synthesize_mainline`（综合成产品主线）、`register_acceptance`（登记验收，分人验收/机器自证）、`close_item` / `reopen_item`（问题收口）。
+
+  **调用 `intake_request` / `capture_request` 时务必带上 `cwd`（当前会话所在目录）。**
+  插件安装时只绑定了一个项目，MCP 进程又是全局单例、看不到是哪个窗口在调用；归属
+  判定完全依赖调用方把上下文传下来。带 `cwd` 才能把记录落进你正在说的那个项目；
+  不带就可能判不清，那时系统会把它放进全局待路由箱（`~/.codex-autopilot/routing/inbox.jsonl`）
+  并在 `project_status` 里列出来，**不会**硬塞进某个项目账本。用户明说了是哪个项目，
+  就再带一个 `project`（项目名或状态根路径）。
 - 否则走 CLI。运行时代码在插件里（自包含安装：`~/plugins/codex-autopilot/ops/`），
   项目里只留账本；手敲时先设 `KG_REPO` 指到项目（MCP 调用时插件已自动注入）：
 

@@ -1,7 +1,7 @@
 {
   "main_branch": "main",
   "branch_prefix": "codex/",
-  "trunk_dir": "/Users/danta/Documents/Codex/codex-autopilot-native-autopilot-trunk",
+  "trunk_dir": null,
   "shared_dir": null,
   "link_dirs": [],
   "build": {
@@ -31,7 +31,7 @@
   },
   "default_lane": "bug",
   "auto_exec": {
-    "enabled": true,
+    "enabled": false,
     "max_per_cycle": 1,
     "timeout": 3600,
     "sandbox": "workspace-write",

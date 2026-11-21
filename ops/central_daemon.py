@@ -43,7 +43,11 @@
 方向、不发布。这些仍然要停下来问人。
 """
 
+from __future__ import annotations
+
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -73,14 +77,48 @@ proc_run = _proc.run
 
 HERE = Path(__file__).resolve().parent
 CODE_ROOT = HERE.parent
-KGCTL = HERE / "kgctl.py"
 
 
-from plugin_binding import apply_plugin_env  # noqa: E402
+from plugin_binding import apply_plugin_env, binding_path, current_ops  # noqa: E402
+
+
+def _live_ops() -> Path:
+    """这一次子进程调用当下「真正装好的那份 ops/」。
+
+    守护是 launchd 常驻进程，形态和 MCP 一样：它在某个版本目录还健在时启动，之后
+    那份目录若被删掉（手清 / 外部回收），任何在 import 时算死的路径都会让每一拍
+    `kgctl` / `truthctl` 静默失败 —— 不抛异常、只是不干活（见 2026-11-16 的
+    central_mcp 同类事故）。所以子进程路径必须在那一次调用的当下解析。
+
+    注意 HERE 保留给 plist 身份判定用：那问的是「装的是哪一份、launchd 指着谁」，
+    和「这一拍该拿哪份代码干活」是两件事，不能混。
+    """
+    return current_ops()
 
 import central_config  # noqa: E402
 import control_state  # noqa: E402
+import project_autonomy  # noqa: E402
+import codex_native  # noqa: E402
+import pass_registry  # noqa: E402
+from pass_registry import (
+    AUTH_EXPLICIT,
+    EFFECT_DESTRUCTIVE,
+    EFFECT_REVERSIBLE,
+    MODE_AUTO,
+    Pass,
+    Registry,
+)  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
+import constraints as constraints_mod  # noqa: E402
+import acceptance_criteria_compiler  # noqa: E402
+import exec_overlap  # noqa: E402
+import exec_lifecycle  # noqa: E402
+import route_health_runtime  # noqa: E402
+import route_review  # noqa: E402
+import wake_resume  # noqa: E402
+import authorized_followup  # noqa: E402
+import daemon_liveness  # noqa: E402
+import live_guard  # noqa: E402
 import workspace_guard  # noqa: E402
 
 # KG_REPO（账本）/ KG_TRUNK（落盘主干）优先取显式环境变量，其次读插件 .mcp.json。
@@ -134,12 +172,18 @@ EXEC_DEFAULT_MAX_WORKERS = 10
 # 自动派发必须有磁盘准入：停止线以下不启动新 worker，恢复线以上才放行。
 # 双阈值避免磁盘余量在边界附近抖动时反复停开；在途 worker 不会被终止。
 EXEC_DISK_STOP_FREE_GB = float(
-    os.environ.get("KG_EXEC_DISK_STOP_FREE_GB", "6"))
+    os.environ.get("KG_EXEC_DISK_STOP_FREE_GB", "20"))
 EXEC_DISK_RESUME_FREE_GB = float(
-    os.environ.get("KG_EXEC_DISK_RESUME_FREE_GB", "10"))
+    os.environ.get("KG_EXEC_DISK_RESUME_FREE_GB", "24"))
 if EXEC_DISK_RESUME_FREE_GB < EXEC_DISK_STOP_FREE_GB:
     EXEC_DISK_RESUME_FREE_GB = EXEC_DISK_STOP_FREE_GB
 EXEC_DISK_HOLD_IN_MEMORY = False
+# The existing disk gate controls Codex workers. This second gate controls the
+# source of the expensive artifact itself: a Git worktree. A machine can have
+# adequate free space and still be unable to support another checkout. The cap
+# includes the main worktree, and the same lock file is used by the project's
+# new-task helper so two processes cannot both take the last slot.
+EXEC_WORKTREE_CAP = int(os.environ.get("KG_EXEC_WORKTREE_CAP", "160"))
 # 基础设施抖动 vs 需求真做不出来：底层模型代理（127.0.0.1:15721）偶发 502 /
 # Transport channel closed，会让 codex 进程以非 0 退出，但需求本身没问题。同一
 # worktree 上指数退避重跑即可，默认 3 次；重试仍失败记 codex_infra_fail，与
@@ -230,12 +274,13 @@ def run_kgctl(args, timeout=TICK_TIMEOUT, env_extra=None, stream=True):
     超时一律 killpg 收整个进程组（只 kill 直接子进程会留下 git 孙进程，
     就是历史上那类「僵尸服务存活几小时」的形态）。
     """
-    cmd = [sys.executable, str(KGCTL), *args]
+    ops = _live_ops()
+    cmd = [sys.executable, str(ops / "kgctl.py"), *args]
     env = {**os.environ, **env_extra} if env_extra else None
     started = time.monotonic()
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, errors="replace", cwd=str(CODE_ROOT),
+                                text=True, errors="replace", cwd=str(ops.parent),
                                 env=env, start_new_session=True)
     except OSError as exc:
         return 125, f"调用 kgctl 失败: {exc}"
@@ -349,13 +394,65 @@ def _state_repo():
     if repo:
         return Path(repo).expanduser()
     try:
-        data = json.loads((HERE.parent / ".mcp.json").read_text(encoding="utf-8"))
+        # 走 binding_path()：本目录被删掉时它会去当前安装版本读那份 .mcp.json，
+        # 而不是拿着一个已经不存在的路径空手而归。
+        data = json.loads(binding_path().read_text(encoding="utf-8"))
         env = (data.get("mcpServers") or {}).get("codex-autopilot", {}).get("env") or {}
         if env.get("KG_REPO"):
             return Path(env["KG_REPO"]).expanduser()
     except (OSError, ValueError):
         pass
     return None
+
+
+def _project_autonomy_summary(repo=None) -> dict:
+    """Return project mode without making a missing setup look like running."""
+    repo = repo or _state_repo()
+    if not repo:
+        return {"configured": False, "mode": "enabled", "reason": "未绑定项目"}
+    try:
+        return project_autonomy.summary(repo)
+    except Exception as exc:
+        log(f"[autonomy] 读取项目运行状态失败（按停止处理）：{exc!r}")
+        return {"configured": True, "mode": "paused", "reason": "状态读取失败，已安全暂停"}
+
+
+def _renew_project_leases(repo, workers) -> None:
+    """Keep durable task leases alive while the daemon still owns live workers."""
+    if not repo:
+        return
+    for rid, job in (workers.get("exec_jobs") or {}).items():
+        if job.get("recover") or not _worker_alive(job.get("pid")):
+            continue
+        worker = job.get("autonomy_worker") or ("daemon:%s" % os.getpid())
+        try:
+            project_autonomy.heartbeat(repo, rid, worker)
+        except Exception as exc:
+            log(f"[autonomy] {rid} 续租失败（保留 worker，不重复派发）：{exc!r}")
+
+
+def _record_project_results(results, workers) -> None:
+    """Mirror worker outcomes into the scheduling queue, never into project truth."""
+    for result in results or []:
+        rid = result.get("id")
+        if not rid:
+            continue
+        job = (workers.get("exec_jobs") or {}).get(rid) or {}
+        repo = Path(job.get("repo") or "")
+        if not repo:
+            continue
+        outcome = result.get("outcome")
+        try:
+            if outcome == "landed":
+                project_autonomy.finish(repo, rid, "done")
+            elif outcome in ("channel_unavailable", "land_locked", "relaunched"):
+                project_autonomy.finish(repo, rid, "queued", outcome)
+            elif outcome in ("resolve_gate_fail", "land_gate_fail", "land_conflict",
+                             "land_error", "codex_fail", "codex_fail_preserved",
+                             "nested_clone_preserved", "landed_close_fail"):
+                project_autonomy.finish(repo, rid, "blocked", outcome)
+        except Exception as exc:
+            log(f"[autonomy] {rid} 更新任务队列失败（不影响已完成代码）：{exc!r}")
 
 
 def auto_port_config() -> dict:
@@ -600,8 +697,11 @@ def auto_exec_config() -> dict:
         out["fast_model"] = os.environ["KG_EXEC_FAST_MODEL"]
     if os.environ.get("KG_EXEC_MODEL"):
         out["slow_model"] = os.environ["KG_EXEC_MODEL"]
-    # 用户级开关拥有最终否决权（默认关）。
-    if not control_state.load().get("auto_exec", False):
+    # 新项目的 running 是项目级显式授权；未配置自主运行状态的旧项目继续
+    # 服从历史 auto_exec 开关。这样打开一个项目不会误伤其它项目。
+    autonomy = _project_autonomy_summary(repo)
+    if (not autonomy.get("configured")
+            and not control_state.load().get("auto_exec", False)):
         out["enabled"] = False
     # 预算熔断（fail-open）：用量越过硬上限时只停「派活」（auto_exec），
     # 不停 tick / land / resolve —— 不丢在途工作，降回来自动恢复。
@@ -840,8 +940,8 @@ def _resolve_task_item(slug):
         "slug": slug,
         "title": f"解决冲突任务 {slug}",
         "detail": (
-            f"源分支：{rec.get("branch")}；执行分支：{rec.get("resolve_branch")}；"
-            f"工作树：{wt}；待解文件：{chr(44).join(files) or "无"}。保留冲突两侧的真实意图，不要机械二选一。"
+            f"源分支：{rec.get('branch')}；执行分支：{rec.get('resolve_branch')}；"
+            f"工作树：{wt}；待解文件：{chr(44).join(files) or '无'}。保留冲突两侧的真实意图，不要机械二选一。"
         ),
         "files": files,
         "resolve_branch": rec.get("resolve_branch"),
@@ -1090,6 +1190,17 @@ def _prune_exec_blocked(blocked: dict) -> list:
                     log(f"[exec] {rid} 先前的落盘锁/网络抖动已过，分支仍有未落提交，放行重试")
     except Exception as exc:
         log(f"[exec] 清理瞬时落盘阻塞失败（忽略）：{exc!r}")
+    # overlap_hold 是「这一拍谁在改同一批文件」的调度结论，不是需求的固有属性。
+    # 持有者一旦收口、被卡住或文件线索变了，这条排队就必须消失；否则一条本来
+    # 只该等十分钟的需求会被永久钉在原地。这里一律清掉，下一拍按当时现场重算。
+    try:
+        for rid, rec in list(blocked.items()):
+            if isinstance(rec, dict) and rec.get("reason") == exec_overlap.REASON_OVERLAP_HOLD:
+                blocked.pop(rid, None)
+                stale.append(rid)
+                log(f"[exec] {rid} 的文件占地每拍重算，清掉上一拍的排队结论")
+    except Exception as exc:
+        log(f"[exec] 清理文件占地排队失败（忽略）：{exc!r}")
     # 「同一组冲突需人工裁决」的停手有期限：到期放行一次，免得改完代码也永远不动。
     now_ts = time.time()
     for rid, rec in list(blocked.items()):
@@ -1134,11 +1245,12 @@ def _prune_exec_blocked(blocked: dict) -> list:
 
 
 def _run_truthctl(args, extra_env=None, timeout=120):
-    cmd = [sys.executable, str(HERE / "truthctl.py"), *args]
+    ops = _live_ops()
+    cmd = [sys.executable, str(ops / "truthctl.py"), *args]
     env = {**os.environ, **extra_env} if extra_env else None
     try:
         r = proc_run(cmd, capture_output=True, text=True, errors="replace",
-                           cwd=str(CODE_ROOT), timeout=timeout, env=env)
+                           cwd=str(ops.parent), timeout=timeout, env=env)
         return r.returncode, (r.stdout or "") + (r.stderr or "")
     except (OSError, subprocess.TimeoutExpired) as exc:
         return 124, f"调用 truthctl 失败/超时: {exc}"
@@ -1202,6 +1314,23 @@ def _resolve_exec_prompt(item: dict) -> str:
     return "\n".join(lines)
 
 
+def _constraints_for(files) -> list:
+    """按改动文件挑出相关约束；读不到台账就返回空表，绝不假装「没有约束」。
+
+    约束台账在状态根下（`_state_repo()`），和 truthctl 写的是同一份文件。
+    取不到（状态根没解析出来、文件不存在、读失败）时返回空表——调用方据此
+    不写「无约束」那一句，避免把「取不到」说成「没有」。
+    """
+    try:
+        repo = _state_repo()
+        if not repo:
+            return []
+        path = Path(repo) / "ops" / "truth" / "constraints.jsonl"
+        return constraints_mod.matching_constraints(path, files or [])
+    except Exception:
+        return []
+
+
 def _exec_prompt(item: dict) -> str:
     if item.get("kind") == "resolve":
         return _resolve_exec_prompt(item)
@@ -1216,6 +1345,19 @@ def _exec_prompt(item: dict) -> str:
         lines += ["", "补充说明：", str(item["detail"])]
     if files:
         lines += ["", "相关文件线索：" + "、".join(str(f) for f in files)]
+    # 上下文管家：把用户说过的、和这次改动相关的约束直接给到执行者，不让它自己
+    # 想起来。scope 为空的约束是全局红线（恒命中）；取不到台账时这一段为空，
+    # 不阻断派活——但不能假装「没有约束」，所以取不到时不写「无约束」这句。
+    _constraints = _constraints_for(files)
+    if _constraints:
+        lines += ["", "本项目已确认的约束（用户说过一次，必须遵守）："]
+        lines += [constraints_mod.render_line(r) for r in _constraints]
+    # 规划层已经在路由时把验收标准编译进 ledger；执行器只读这份结果，不在这里
+    # 重新编译，避免 worker 自己解释「怎么算完成」。没有 plan 时不写「无标准」，
+    # 因为取不到不等于没有。
+    _acceptance_plan = item.get("acceptance_plan")
+    if isinstance(_acceptance_plan, dict):
+        lines += acceptance_criteria_compiler.render_for_prompt(_acceptance_plan)
     lines += [
         "",
         "硬规则（必须遵守）：",
@@ -1884,12 +2026,13 @@ def _prepare_exec(item: dict, cfg: dict, blocked: dict,
     if force_session and _git(repo, "rev-parse", "--verify", branch)[0] == 0:
         if not existing_wt.exists():
             _git(repo, "worktree", "prune")
-            _rc, _out, _err = _git(repo, "worktree", "add", str(existing_wt), branch)
-            if _rc != 0:
+            _added = _add_worktree_admitted(repo, existing_wt, branch)
+            if not _added["ok"]:
+                _reason = _added.get("admission", {}).get("reason") or "worktree_add_fail"
                 blocked[rid] = {"reason": "worktree_preserved",
                                 "worktree": str(existing_wt), "branch": branch,
-                                "ts": _now()}
-                log(f"[exec] {rid} 限流后重挂 worktree 失败：{_err[:200]}")
+                                "admission": _added.get("admission"), "ts": _now()}
+                log(f"[exec] {rid} 限流后重挂 worktree 被拒（{_reason}）：{_added['err'][:200]}")
                 return {"id": rid, "outcome": "worktree_preserved",
                         "branch": branch, "worktree": str(existing_wt)}
             _link_side_dirs(existing_wt, conf)
@@ -1923,8 +2066,8 @@ def _prepare_exec(item: dict, cfg: dict, blocked: dict,
                 # same branch instead of blocking dispatch forever on a
                 # phantom path; nothing is deleted.
                 _git(repo, "worktree", "prune")
-                _rc, _out, _err = _git(repo, "worktree", "add", str(existing_wt), branch)
-                if _rc == 0:
+                _added = _add_worktree_admitted(repo, existing_wt, branch)
+                if _added["ok"]:
                     log(f"[exec] {rid} 复用保留分支 {branch}（原 worktree 已不存在）")
                     _link_side_dirs(existing_wt, conf)
                     _codex2 = _codex_bin()
@@ -1940,10 +2083,12 @@ def _prepare_exec(item: dict, cfg: dict, blocked: dict,
                             "result": {"id": rid, "branch": branch,
                                        "worktree": str(existing_wt)}}
                 else:
+                    _reason = _added.get("admission", {}).get("reason") or "worktree_add_fail"
                     blocked[rid] = {"reason": "worktree_preserved",
                                     "worktree": str(existing_wt), "branch": branch,
-                                    "ts": _now()}
-                    log(f"[exec] {rid} 复用分支建 worktree 失败：{_err[:200]}")
+                                    "admission": _added.get("admission"), "ts": _now()}
+                    log(f"[exec] {rid} 复用分支建 worktree 被拒（{_reason}）："
+                        f"{_added['err'][:200]}")
                     return {"id": rid, "outcome": "worktree_preserved",
                             "branch": branch, "worktree": str(existing_wt)}
             blocked[rid] = {
@@ -1964,11 +2109,15 @@ def _prepare_exec(item: dict, cfg: dict, blocked: dict,
     _, base, _ = _git(repo, "rev-parse", f"origin/{main_branch}")
     if not base:
         _, base, _ = _git(repo, "rev-parse", main_branch)
-    rc, out, err = _git(repo, "worktree", "add", "-b", branch, str(wt), base)
-    if rc != 0:
-        log(f"[exec] 建 worktree 失败 {rid}: {err[:300]}")
-        blocked[rid] = {"reason": "worktree_fail", "ts": _now()}
-        return {"id": rid, "outcome": "worktree_fail"}
+    added = _add_worktree_admitted(repo, wt, branch, base=base)
+    if not added["ok"]:
+        admission = added.get("admission") or {}
+        reason = admission.get("reason") or "worktree_fail"
+        log(f"[exec] 建 worktree 被拒 {rid}: {reason} "
+            f"free={admission.get('free_gb')} count={admission.get('worktree_count')} "
+            f"cap={admission.get('worktree_cap')} err={added['err'][:300]}")
+        blocked[rid] = {"reason": reason, "admission": admission, "ts": _now()}
+        return {"id": rid, "outcome": reason}
     _link_side_dirs(wt, conf)
 
     codex = _codex_bin()
@@ -2038,11 +2187,71 @@ def _exec_command(job: dict) -> list:
     return cmd
 
 
+def _abort_launched(launched: dict, err: str) -> None:
+    """生命周期落账失败后，绝不留一个没有账本的活进程。"""
+    proc = launched.get("proc")
+    if proc is not None:
+        try:
+            if proc.poll() is None:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except OSError:
+                    proc.kill()
+        except Exception as exc:
+            log(f"[exec] 回收未落账 worker 失败（继续报错）：{exc!r}")
+    fh = launched.get("fh")
+    if fh is not None:
+        try:
+            fh.close()
+        except OSError:
+            pass
+    log(f"[exec] 生命周期落账失败，已回收本次启动：{err}")
+
+
+def _spawn_with_lifecycle(job: dict, log_path: Path, note: str) -> tuple | None:
+    """重试/降级/无改动重派共用的启动口：先升 generation，再 Popen。"""
+    launched: dict[str, object] = {}
+
+    def launch() -> int:
+        fh = log_path.open("a", encoding="utf-8")
+        if note:
+            fh.write(note)
+            fh.flush()
+        try:
+            proc = subprocess.Popen(
+                _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
+                stderr=subprocess.STDOUT, cwd=str(job["worktree"]),
+                start_new_session=True)
+        except Exception:
+            fh.close()
+            raise
+        launched["fh"] = fh
+        launched["proc"] = proc
+        return proc.pid
+
+    _projection, err = exec_lifecycle.start_or_resume(
+        job, launch, runtime=RUNTIME, reason=note.strip() or "auto_exec 重试")
+    if err:
+        log(f"[exec] {job.get('id') or '?'} 重试启动被生命周期闸拦住：{err}")
+        _abort_launched(launched, err)
+        job["start_error"] = str(err)
+        return None
+    job.pop("start_error", None)
+    proc = launched["proc"]
+    job["proc"], job["fh"], job["pid"] = proc, launched["fh"], proc.pid
+    return proc, launched["fh"]
+
+
 def _start_exec(job: dict) -> dict | None:
     """Start one prepared Codex worker without waiting for it."""
     if job.get("recover"):
         # No new session is needed; make the existing branch immediately
         # reapable so the same supervisor performs add/commit/land.
+        _projection, err = exec_lifecycle.mark_recovered(job, runtime=RUNTIME)
+        if err:
+            log(f"[exec] {job.get('id') or '?'} 恢复现场生命周期落账失败：{err}")
+            job["start_error"] = str(err)
+            return None
         job["proc"] = _finished_proc()
         return job
     wt = Path(job["worktree"])
@@ -2050,19 +2259,34 @@ def _start_exec(job: dict) -> dict | None:
     cmd = _exec_command(job)
     log(f"[exec] 派发 {job['id']} -> {job['branch']}（worktree={wt}, "
         f"codex={job['codex'][0]}, model={job.get('model') or 'default'}）")
-    try:
+    launched: dict[str, object] = {}
+
+    def launch() -> int:
         fh = log_path.open("w", encoding="utf-8")
-        proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=fh,
-                                stderr=subprocess.STDOUT, cwd=str(wt),
-                                start_new_session=True)
-    except OSError as exc:
-        log(f"[exec] 无法启动 codex: {exc}")
-        job["start_error"] = str(exc)
+        try:
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=fh,
+                                    stderr=subprocess.STDOUT, cwd=str(wt),
+                                    start_new_session=True)
+        except Exception:
+            fh.close()
+            raise
+        launched["fh"] = fh
+        launched["proc"] = proc
+        return proc.pid
+
+    # 账本先落 start.requested/worker.started，launch 只由 lifecycle 内部调用。
+    # 账本损坏、授权不合法或状态冲突时这里直接返回错误，绝不裸 Popen。
+    _projection, err = exec_lifecycle.start_or_resume(
+        job, launch, runtime=RUNTIME)
+    if err:
+        log(f"[exec] {job.get('id') or '?'} 无法启动 worker：{err}")
+        _abort_launched(launched, err)
+        job["start_error"] = str(err)
         return None
     job.pop("start_error", None)
-    job["proc"] = proc
-    job["fh"] = fh
-    job["pid"] = proc.pid
+    job["proc"] = launched["proc"]
+    job["fh"] = launched["fh"]
+    job["pid"] = int(launched["proc"].pid)
     return job
 
 
@@ -2104,28 +2328,22 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
                 return result
             log(f"[exec] {rid} {retry_note}"
                 f"（同一 worktree={wt}，日志 {log_path}）")
-            try:
-                fh = log_path.open("a", encoding="utf-8")
-                if job.get("model_fallback_used"):
-                    fh.write(f"\n===== auto_exec 模型通道额度失败，"
-                             f"切换到 slow_model 重试（{_now()}，"
-                             f"model={job.get('model') or 'default'}）=====\n")
-                elif job.get("no_change_retry"):
-                    fh.write(f"\n===== auto_exec 无改动重试 {attempt}/{total} 次"
-                             f"（{_now()}，上一次退出码={code}）=====\n")
-                else:
-                    fh.write(f"\n===== auto_exec 重试 第 {attempt}/{total} 次"
-                             f"（{_now()}，上一次退出码={code}，"
-                             f"判定为基础设施抖动）=====\n")
-                fh.flush()
-                proc = subprocess.Popen(
-                    _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
-                    stderr=subprocess.STDOUT, cwd=str(wt), start_new_session=True)
-            except OSError as exc:
-                log(f"[exec] 无法启动 codex: {exc}")
+            if job.get("model_fallback_used"):
+                note = (f"\n===== auto_exec 模型通道额度失败，"
+                        f"切换到 slow_model 重试（{_now()}，"
+                        f"model={job.get('model') or 'default'}）=====\n")
+            elif job.get("no_change_retry"):
+                note = (f"\n===== auto_exec 无改动重试 {attempt}/{total} 次"
+                        f"（{_now()}，上一次退出码={code}）=====\n")
+            else:
+                note = (f"\n===== auto_exec 重试 第 {attempt}/{total} 次"
+                        f"（{_now()}，上一次退出码={code}，"
+                        f"判定为基础设施抖动）=====\n")
+            spawned = _spawn_with_lifecycle(job, log_path, note)
+            if spawned is None:
                 code = 125
                 break
-            job["proc"], job["fh"] = proc, fh
+            job["proc"], job["fh"] = spawned
         try:
             code = job["proc"].wait(timeout=cfg["timeout"])
         except subprocess.TimeoutExpired:
@@ -2182,20 +2400,14 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
                                "retry_reason": "disk_held",
                                "model": job.get("model")})
                 return result
-            try:
-                fh = log_path.open("a", encoding="utf-8")
-                fh.write(
-                    "\n===== auto_exec 模型通道额度失败，切换到 slow_model 重试"
+            note = ("\n===== auto_exec 模型通道额度失败，切换到 slow_model 重试"
                     f"（{_now()}，model={job.get('model') or 'default'}）=====\n")
-                fh.flush()
-                proc = subprocess.Popen(
-                    _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
-                    stderr=subprocess.STDOUT, cwd=str(wt), start_new_session=True)
-            except OSError as exc:
-                job["start_error"] = str(exc)
+            spawned = _spawn_with_lifecycle(job, log_path, note)
+            if spawned is None:
                 code = 125
                 break
-            job["proc"], job["fh"], job["pid"] = proc, fh, proc.pid
+            job["proc"], job["fh"] = spawned
+            job["pid"] = job["proc"].pid
             job["detached"] = False
             job["relaunched_at"] = _now()
             job["attempts"] = attempt
@@ -2222,19 +2434,14 @@ def _reap_exec(job: dict, blocked: dict) -> dict:
                     job["attempts"] = attempt
                     log(f"[exec] {rid} 退出 0 但无改动，异步重派 "
                         f"{tries + 1}/{no_change_retries}（工作区和槽位都保留）")
-                    try:
-                        fh = log_path.open("a", encoding="utf-8")
-                        fh.write(f"\n===== auto_exec 退出 0 但无改动，异步重派 "
-                                 f"{tries + 1}/{no_change_retries}（{_now()}）=====\n")
-                        fh.flush()
-                        proc = subprocess.Popen(
-                            _exec_command(job), stdin=subprocess.DEVNULL, stdout=fh,
-                            stderr=subprocess.STDOUT, cwd=str(wt), start_new_session=True)
-                    except OSError as exc:
-                        job["start_error"] = str(exc)
+                    note = (f"\n===== auto_exec 退出 0 但无改动，异步重派 "
+                            f"{tries + 1}/{no_change_retries}（{_now()}）=====\n")
+                    spawned = _spawn_with_lifecycle(job, log_path, note)
+                    if spawned is None:
                         code = 125
                     else:
-                        job["proc"], job["fh"], job["pid"] = proc, fh, proc.pid
+                        job["proc"], job["fh"] = spawned
+                        job["pid"] = job["proc"].pid
                         job["relaunched_at"] = _now()
                         result.update({"attempts": attempt, "outcome": "relaunched",
                                        "retry_reason": "no_changes"})
@@ -2423,8 +2630,15 @@ def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked,
 
 
 def _cleanup_exec(repo, wt: Path, branch: str) -> None:
+    # 判活：交付后收尾也可能撞上「用户此刻正站在这棵树里」。只认内核 cwd
+    # （精确、不会因为一个安静的会话就永久拦住收尾），命中就保留现场，
+    # 分支照样留给后续落盘。
+    if workspace_guard.live_guard_blocker(wt, "cwd"):
+        log(f"[exec] worktree cleanup skipped (live-cwd): {wt}")
+        return
     assessment = workspace_guard.worktree_removable(
-        Path(repo), wt, branch, "main", commands="", backup_unique=False)
+        Path(repo), wt, branch, "main", commands="", backup_unique=False,
+        live_guard_mode="off")
     if assessment.get("reason") == "missing":
         # 工作区已经不在了（上一轮收尾/压力回收把它删了），但分支还在。
         # 内容已全部进 main 时应当把分支一起清掉，否则每落一条就在本地留一个
@@ -2842,7 +3056,7 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
                 continue
             job["item"] = item
         ledger_status = str((job.get("item") or {}).get("status") or "")
-        if ledger_status in ("done", "closed", "cancelled", "superseded"):
+        if ledger_status in TERMINAL_LEDGER_STATUSES:
             jobs.pop(rid, None)
             continue
         # 台账里这条已经 done/closed 时，job["item"] 可能是上一轮缓存下来的旧
@@ -2851,16 +3065,14 @@ def _hydrate_exec_jobs(workers: dict) -> dict:
         # 真正要跑模型的位置只剩 1 个。
         try:
             _lts = open_items.get(rid)
-            if _lts is not None and str(_lts.get("status") or "") in (
-                    "done", "closed", "cancelled", "superseded"):
+            if _lts is not None and str(_lts.get("status") or "") in TERMINAL_LEDGER_STATUSES:
                 jobs.pop(rid, None)
                 continue
         except Exception:
             pass
         try:
             _live_status = (_ledger_latest() or {}).get(rid, {}).get("status")
-            if str(_live_status or "") in ("done", "closed", "cancelled",
-                                           "superseded"):
+            if str(_live_status or "") in TERMINAL_LEDGER_STATUSES:
                 jobs.pop(rid, None)
                 continue
         except Exception:
@@ -2954,6 +3166,10 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
             continue
         result = _reap_exec(job, blocked)
         if result.get("outcome") == "relaunched":
+            _projection, _lifecycle_err = exec_lifecycle.report(
+                job, result, runtime=RUNTIME)
+            if _lifecycle_err:
+                log(f"[exec] {rid} 重试生命周期落账失败（继续回收）：{_lifecycle_err}")
             results.append(result)
             continue
         jobs.pop(rid, None)
@@ -2968,6 +3184,10 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
                                       Path(job["repo"]), Path(job["worktree"]),
                                       job["branch"], rid, result, blocked,
                                       Path(job["log"]))
+        _projection, _lifecycle_err = exec_lifecycle.report(
+            job, result, runtime=RUNTIME)
+        if _lifecycle_err:
+            log(f"[exec] {rid} 回收生命周期落账失败（结果不变）：{_lifecycle_err}")
         results.append(result)
         # One land per cycle; another completed worker is collected next
         # cycle. This keeps the critical section serial and auditable.
@@ -2990,6 +3210,11 @@ def _collect_exec(workers: dict, blocked: dict) -> list:
             break
     return results
 
+
+# 台账里这些状态代表「不需要机器再动手」：留着并发槽位只会挤掉真正要跑的任务。
+# awaiting_human = 代码已落盘、等用户确认视觉/手感，机器这边已经收工。
+TERMINAL_LEDGER_STATUSES = ("done", "closed", "cancelled", "superseded",
+                            "awaiting_human")
 
 EXEC_REPEAT_CAP = 3            # 同一需求在窗口内最多派 3 次
 EXEC_REPEAT_WINDOW = 6 * 3600  # 6 小时
@@ -3105,6 +3330,12 @@ RESOLVE_CONFLICT_CAP = 2       # 同一组冲突文件连续撞 N 次 → 停手
 RESOLVE_CONFLICT_BLOCK_H = 6   # 停手时长（小时），到期自动允许再试一次
 REAP_MIN_IDLE_H = float(os.environ.get("KG_REAP_MIN_IDLE_H", "3"))
 REAP_IDLE_PRESSURE_H = float(os.environ.get("KG_REAP_IDLE_PRESSURE_H", "0.25"))
+# 创建宽限期：一棵刚建好的 worktree 就算 idle 已过闸、分支 ahead=0、工作区干净，也先别回收。
+# 专治「新建/迁移刚完成、人还没开始写、会话短暂离开」的空档 —— 压力模式闲置门槛只有
+# 15 分钟（REAP_IDLE_PRESSURE_H=0.25），新现场会在人还没落任何改动前就落进回收视角。
+# 只按目录创建时间放行，不放松任何安全判据：它只可能让回收器少删，绝不会让它多删。
+# 与其它开关一致，可用 KG_REAP_CREATION_GRACE_H 调（0 即关闭）。
+REAP_CREATION_GRACE_H = float(os.environ.get("KG_REAP_CREATION_GRACE_H", "1"))
 # 回收扫描必须是「切片」而不是「每拍全扫」。实测：242 个现场全扫一遍，
 # 每个还要跑 4~6 次 git 子进程，在 15s 的守护循环里等于常驻一个 CPU 黑洞，
 # load 会被自己顶到上百，机器反而更不稳。改成按游标轮流扫一片。
@@ -3124,7 +3355,15 @@ REAP_TIME_BUDGET_PRESSURE_S = float(
                                # worktree 至少闲置这么久才回收（按目录 mtime 与分支最后提交取较新者）
 REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "5"))
 # 空间自救阈值：可用低于它就回收零损失现场 + git gc（**不降低并发**）。
-REAP_PRESSURE_FREE_GB = float(os.environ.get("KG_REAP_PRESSURE_FREE_GB", "12"))
+#
+# 2026-11-12 死区根因：准入闸在 EXEC_DISK_STOP_FREE_GB=20 以下关闭新派发、
+# 到 EXEC_DISK_RESUME_FREE_GB=24 才恢复；而压力阈值默认 12，远低于准入停止线。
+# 磁盘落在 12~20GiB 时，准入已关闭（工作停摆），回收器却认为「没压力」，继续
+# 按 600s 常规节奏慢扫 —— 这正是「周期性爆盘叠着周期性停摆」。默认值跟随准入
+# 恢复线，让回收器在准入关闭的同一时刻就进入紧张节奏（更短间隔/更大预算/
+# 更多每轮上限），安全判据一条不放松；仍可用 KG_REAP_PRESSURE_FREE_GB 覆盖。
+REAP_PRESSURE_FREE_GB = float(os.environ.get(
+    "KG_REAP_PRESSURE_FREE_GB", str(EXEC_DISK_RESUME_FREE_GB)))
 
 
 def _safety_path() -> Path:
@@ -3279,8 +3518,14 @@ def _disk_pressure() -> int:
             log("[exec] 磁盘余量读取失败，按 fail-closed 暂停派发新 worker")
         return 1
     now_held = free < threshold
-    if now_held != held or "exec_disk_held" not in state:
-        EXEC_DISK_HOLD_IN_MEMORY = now_held
+    transitioned = now_held != held or "exec_disk_held" not in state
+    reading_changed = any(
+        state.get(key) != value for key, value in (
+            ("exec_disk_held", now_held),
+            ("exec_disk_free_gb", round(free, 2)),
+            ("exec_disk_threshold_gb", threshold),
+        ))
+    if transitioned or reading_changed:
         state["exec_disk_held"] = now_held
         state["exec_disk_free_gb"] = round(free, 2)
         state["exec_disk_threshold_gb"] = threshold
@@ -3289,6 +3534,8 @@ def _disk_pressure() -> int:
             save_state(state)
         except OSError as exc:
             log(f"[exec] 磁盘闸状态暂不能持久化：{exc}")
+    if transitioned:
+        EXEC_DISK_HOLD_IN_MEMORY = now_held
         if now_held:
             log(f"[exec] 磁盘准入关闭（可用 {free:.2f}GB，"
                 f"恢复线 {EXEC_DISK_RESUME_FREE_GB:.2f}GB），"
@@ -3309,48 +3556,345 @@ def _disk_free_gb() -> float | None:
         return None
 
 
+def _worktree_count(repo) -> int | None:
+    """Count every live worktree, including the shared checkout."""
+    try:
+        rc, out, _err = _git(repo, "worktree", "list", "--porcelain", timeout=30)
+        if rc != 0:
+            return None
+        return sum(1 for line in out.splitlines() if line.startswith("worktree "))
+    except Exception:
+        return None
+
+
+@contextlib.contextmanager
+def _worktree_admission_lock(repo):
+    """Serialize capacity check + worktree creation across daemon processes."""
+    rc, out, err = _git(repo, "rev-parse", "--git-common-dir", timeout=30)
+    if rc != 0 or not out.strip():
+        raise RuntimeError(err.strip() or "cannot resolve git common dir")
+    common = Path(out.strip())
+    if not common.is_absolute():
+        common = Path(repo) / common
+    lock_path = common / ".codex-worktree-admission.lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def _worktree_admission(repo) -> tuple[bool, dict]:
+    """Fail closed when disk or inventory cannot support another checkout."""
+    free = _disk_free_gb()
+    count = _worktree_count(repo)
+    detail = {"free_gb": free, "worktree_count": count,
+              "worktree_cap": EXEC_WORKTREE_CAP}
+    if free is None:
+        return False, {**detail, "reason": "disk_unknown"}
+    if _disk_pressure():
+        return False, {**detail, "reason": "disk_pressure"}
+    if count is None:
+        return False, {**detail, "reason": "worktree_count_unknown"}
+    if count >= EXEC_WORKTREE_CAP:
+        return False, {**detail, "reason": "worktree_cap"}
+    return True, detail
+
+
+def _add_worktree_admitted(repo, worktree: Path, branch: str,
+                           base: str | None = None) -> dict:
+    """Create a worktree only while holding the shared admission lock.
+
+    ``base`` means create the branch as part of the add. Without it, branch
+    already exists and the worktree is being re-attached.
+    """
+    try:
+        with _worktree_admission_lock(repo):
+            allowed, detail = _worktree_admission(repo)
+            if not allowed:
+                return {"ok": False, "admission": detail,
+                        "rc": 75, "out": "", "err": detail["reason"]}
+            if base is None:
+                rc, out, err = _git(repo, "worktree", "add", str(worktree), branch)
+            else:
+                rc, out, err = _git(
+                    repo, "worktree", "add", "-b", branch, str(worktree), base)
+            return {"ok": rc == 0, "rc": rc, "out": out, "err": err,
+                    "admission": detail}
+    except Exception as exc:
+        return {"ok": False, "rc": 75, "out": "", "err": str(exc),
+                "admission": {"reason": "admission_lock_error"}}
+
+
+# 工作区里由 `npm run dev` / `tsx watch` / `vite` 拉起来、却早已没人用的 dev server。
+#
+# 为什么要单列这段（2026-11-12 实测）：这些进程的 argv 里**不含树路径**
+# （形如 `node .../kg-x/backend/node_modules/.bin/tsx watch src/index.ts`），
+# 旧判据要求命令行含 `dist/index.js` **且** 内核 cwd 带 `-exec-`，两条都匹配不上，
+# 于是每小时日志恒为「孤儿后端 0 个」，而它们已经空转 8 小时。实测这些 `tsx watch`
+# 连子进程都没有（`pgrep -P` 为空）—— 启动失败后只剩 watcher 在原地打转。
+# 判据因此改为读内核 cwd（argv 骗不了），再逐条加保守条件。
+BACKEND_DEV_MARKERS = (
+    "tsx watch",
+    "vite",
+    "next dev",
+    "dist/index.js",
+    "npm run dev",
+)
+# 一个 dev server 闲置这么久且没有任何在用信号，才允许回收。
+BACKEND_MIN_IDLE_H = float(os.environ.get("KG_REAP_BACKEND_IDLE_H", "3"))
+# 每轮最多回收几棵树，以及最多检查几棵。回收是渐进的，派活不能被它饿死。
+BACKEND_MAX_PER_ROUND = int(os.environ.get("KG_REAP_BACKEND_MAX_PER_ROUND", "4"))
+BACKEND_MAX_SCAN = int(os.environ.get("KG_REAP_BACKEND_MAX_SCAN", "12"))
+BACKEND_TIME_BUDGET_S = float(os.environ.get("KG_REAP_BACKEND_BUDGET_S", "20"))
+
+
+def _workspace_dev_servers() -> list:
+    """工作区内还在跑的 dev server：[{pid, cwd, wt, cmd}]。
+
+    证据全部取自内核：cwd 来自 `lsof`，命令行来自 `ps`；缺任何一条就丢弃。
+    只认 cwd 落在 `~/.newmax/workspace/<机器建的任务树>` 下的进程（名字判据见
+    `workspace_guard.is_task_worktree_name`），用户在别的目录起的服务（哪怕是
+    同一个 node）永远进不了这个列表。
+    """
+    root = _workspace_root()
+    try:
+        root_r = root.resolve()
+    except Exception:
+        return []
+    try:
+        ps_out = proc_run(["ps", "-axo", "pid=,command="], capture_output=True,
+                          text=True, timeout=10).stdout or ""
+    except Exception:
+        return []
+    cmd_by_pid = {}
+    for line in ps_out.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2 and parts[0].isdigit():
+            cmd_by_pid[parts[0]] = parts[1]
+    cwd_by_pid = live_guard.cwd_map()
+    if not cwd_by_pid:
+        return []
+    found = []
+    for pid, cwd in cwd_by_pid.items():
+        cmd = cmd_by_pid.get(pid, "")
+        if not cmd or not any(m in cmd for m in BACKEND_DEV_MARKERS):
+            continue
+        try:
+            c = Path(cwd).resolve()
+        except Exception:
+            continue
+        if c != root_r and root_r not in c.parents:
+            continue
+        rel = c.relative_to(root_r)
+        # 共享谓词，与 disk_reap 的剥离通道同源（2026-11-12）。放宽这里只会
+        # 让判活扫到更多树 —— 方向是「宁可少杀」，不是少保护。
+        if not rel.parts or not workspace_guard.is_task_worktree_name(rel.parts[0]):
+            continue
+        found.append({"pid": pid, "cwd": str(c),
+                      "wt": root_r / rel.parts[0], "cmd": cmd})
+    return found
+
+
+def _process_family(pids) -> set:
+    """把这些 pid 连同它们的**后代**一起展开成一个集合。
+
+    目的只有一个：判断「这棵树里还有没有别的活人」。dev server 自己（拉它的
+    `npm run dev`、它 fork 出来的 esbuild 子进程）的 cwd 也落在这棵树里，如果不先
+    把它们认出来，它们就会给「自己」作证 —— 2026-11-12 实测：加上判活之后，12 个
+    候选进程里 11 个都因为「cwd 在树里」被自己否决，回收器又变回空转。
+
+    只向下展开，**刻意不向祖先走**：一个 cwd 落在这棵树里的 shell（人或 agent 起的）
+    就是「这里有人在」的真实信号，把它算进「自己人」而放过回收，方向就反了。
+    只向下展开同样能解掉自证问题，而且只会让回收更少。
+    """
+    out = set()
+    try:
+        ps_out = proc_run(["ps", "-axo", "pid=,ppid="], capture_output=True,
+                          text=True, timeout=10).stdout or ""
+    except Exception:
+        return {str(p) for p in pids}
+    kids: dict = {}
+    for line in ps_out.splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            kids.setdefault(parts[1], []).append(parts[0])
+    stack = [str(p) for p in pids]
+    while stack:
+        cur = stack.pop()
+        if cur in out:
+            continue
+        out.add(cur)
+        stack.extend(kids.get(cur, []))
+    return out
+
+
+def _dev_server_in_use(pids, tree_pids, wt: Path) -> str:
+    """这台 dev server 还有人在用就返回原因，没人用返回 ""。
+
+    `pids` 是这棵树里属于 dev server 家族的进程，`tree_pids` 是 cwd 落在树里的
+    全部 pid。判活时要先把 dev server 自己摘出去，否则它会否决自己。
+
+    每一条都是「宁可少杀」的方向：命中任何一条就跳过这一棵，别的照常。
+    """
+    if (wt.name in workspace_guard.PROTECTED_NAMES
+            or wt.name.startswith(workspace_guard.PROTECTED_PREFIXES)):
+        return "protected"
+    # 有活跃会话（含只读会话）把这棵树当 cwd —— 2026-11-10 删掉 18 棵在用的树
+    # 就是漏了这条；这里用最强模式，且不依赖调用方记得传参。
+    try:
+        if live_guard.sessions_working_in(wt):
+            return "live-session"
+    except Exception:
+        pass
+    # 树里还有 dev server 家族之外的活进程（人工 shell、门禁、编辑器）-> 放过。
+    family = _process_family(pids)
+    strangers = sorted(set(tree_pids) - family)
+    if strangers:
+        return f"live-pid:{' '.join(strangers[:4])}"
+    # 树上还挂着 `codex exec` -> 它自己会拉起后端，轮不到回收器动手。
+    if any(f"-{wt.name}-" in f"-{s}-" for s in _live_exec_slugs()):
+        return "exec"
+    # 有人在连它（浏览器页面、HMR websocket、curl 长连接）-> 立刻停手。
+    for pid in pids:
+        try:
+            est = proc_run(["lsof", "-a", "-p", str(pid), "-iTCP",
+                            "-sTCP:ESTABLISHED", "-P", "-n"],
+                           capture_output=True, text=True, timeout=8).stdout or ""
+        except Exception:
+            return "probe-failed"
+        if len(est.strip().splitlines()) > 1:
+            return "connected"
+    return ""
+
+
 def _reap_backend_orphans() -> int:
-    """杀掉挂在「已无 codex exec 的 exec worktree」上的 node 后端。
+    """回收工作区内已经没人用的 node dev server（`tsx watch` / `vite` / `next dev`）。
 
     2026-10-22 实录：两个 `node dist/index.js` 各自 100% CPU 烧了 6 小时，
     父进程早死、worktree 没人管，直到把整机拖到 load 11。
-    只认 cwd 在 *-exec-* worktree 里的 node，绝不碰用户在别的目录起的服务。
-    fail-open：任何异常只记日志。
+    2026-11-12 实录：旧判据（只认 `dist/index.js` 且 cwd 带 `-exec-`）漏掉了
+    工作区里的 `tsx watch` / `vite`，它们空转 8 小时、`SIGTERM` 还杀不动
+    （用户在会话里发的 `kill 83627` 挂了 2 小时没返回），每小时日志恒为 0。
+
+    判据全部是「宁可少杀」：保护前缀、活跃会话、在跑的 exec、有人在连、
+    闲置不足阈值，命中任一条就放过。fail-open：任何异常只记日志。
     """
     if not _knob("reap_backends", True):
         return 0
+    if BACKEND_MIN_IDLE_H <= 0:
+        return 0
     killed = 0
     try:
-        live = _live_exec_slugs()
-        out = proc_run(["ps", "-axo", "pid=,command="], capture_output=True,
-                             text=True, timeout=10).stdout
-        for line in out.splitlines():
-            if "dist/index.js" not in line:
-                continue
-            pid = line.strip().split(None, 1)[0]
-            if not pid.isdigit():
-                continue
-            cwd = ""
+        cutoff = time.time() - BACKEND_MIN_IDLE_H * 3600
+        # 按树归并：同一棵树上可能有 backend + frontend 两个 dev server。
+        by_tree: dict = {}
+        for item in _workspace_dev_servers():
+            by_tree.setdefault(str(item["wt"]), []).append(item)
+        # 预算：回收排在派活之前同步跑。每棵闲置树要跑一次 git + 一次 lsof，
+        # 无上限地扫完几十棵树会把 tick 拖住，所以既限个数也限时间。
+        deadline = time.time() + BACKEND_TIME_BUDGET_S
+        examined = 0
+        for items in by_tree.values():
+            if killed >= BACKEND_MAX_PER_ROUND or examined >= BACKEND_MAX_SCAN:
+                break
+            if time.time() > deadline:
+                log(f"[safety] dev server 回收达时间预算 "
+                    f"{BACKEND_TIME_BUDGET_S:.0f}s（已回收 {killed} 棵）")
+                break
+            examined += 1
+            wt = items[0]["wt"]
             try:
-                cw = proc_run(["lsof", "-a", "-p", pid, "-d", "cwd", "-Fn"],
-                                    capture_output=True, text=True, timeout=8).stdout
-                cwd = next((l[1:] for l in cw.splitlines() if l.startswith("n")), "")
+                if not wt.is_dir():
+                    continue
+                # 树本身还热（目录 mtime / 最后一次提交）就不动：判活之外再加一道
+                # 与 worktree 回收同源的粗筛，避免把刚起来还在初始化的服务当成孤儿。
+                if _wt_last_activity(wt) > cutoff:
+                    continue
+                tree_pids = live_guard.live_processes_in(wt)
             except Exception:
                 continue
-            if "-exec-" not in cwd:
+            pids = [it["pid"] for it in items]
+            reason = _dev_server_in_use(pids, tree_pids, wt)
+            if reason:
+                log(f"[safety] 闲置 dev server 保留（{wt.name}）：{reason}")
                 continue
-            wt_name = Path(cwd).parts[-2] if cwd.endswith("backend") else Path(cwd).name
-            if any(f"-{wt_name}-" in f"-{s}-" for s in live):
-                continue  # 还有 exec 在跑，不能杀
-            try:
-                os.kill(int(pid), signal.SIGTERM)
-                killed += 1
-                log(f"[safety] 回收孤儿后端 pid={pid}（worktree 已无 exec）：{cwd}")
-            except Exception as exc:
-                log(f"[safety] 回收孤儿后端 pid={pid} 失败：{exc}")
+            # 每个 pid 都要确认真的退出：TERM 收不动就用 KILL 兜底，
+            # 不能出现「日志说回收了、进程还在」。
+            stopped = [p for p in pids if _terminate_pid(p)]
+            if len(stopped) != len(pids):
+                log(f"[safety] 闲置 dev server 未能全部回收（{wt.name}）："
+                    f"已停 {len(stopped)}/{len(pids)}")
+                continue
+            killed += 1
+            log(f"[safety] 回收闲置 dev server {len(pids)} 个进程"
+                f"（{wt.name}，闲置 >{BACKEND_MIN_IDLE_H:.0f}h）：{items[0]['cwd']}")
     except Exception as exc:  # fail-open
         log(f"[safety] 孤儿后端扫描失败（忽略）：{exc}")
     return killed
+
+
+def _proc_exited(pid) -> bool:
+    """这个 pid 是否已经不是一个活着的进程（僵尸也算已退出）。
+
+    不能用 `os.kill(pid, 0)`：被 SIGKILL 之后进程会先变成僵尸（等父进程收尸），
+    而 `kill -0` 对僵尸依然成功 —— 2026-11-12 单测实测，回收明明成功，判定却
+    返回「还活着」，于是日志写「未能全部回收」而现场其实是干净的。这里读
+    `ps -o stat=`：拿不到就是没了；拿到 `Z` 开头同样算没了。
+    读不到状态时按「还活着」处理，宁可少报成功。
+
+    刻意不复用本模块既有的 `_pid_alive`（那是给守护自身单实例锁用的）：
+    把它改成「僵尸算死」会改变锁的语义，不属于本次回收修复的范围。
+    """
+    try:
+        out = proc_run(["ps", "-p", str(int(pid)), "-o", "stat="],
+                       capture_output=True, text=True, timeout=8).stdout or ""
+    except Exception:
+        return True
+    state = out.strip()
+    if not state:
+        return True   # ps 查不到这个 pid：已经没了
+    return state.startswith("Z")   # 僵尸 = 已经死了，等父进程收尸而已
+
+
+def _terminate_pid(pid: str, grace_s: float = 10.0) -> bool:
+    """先 TERM 再 KILL。返回 True 表示确认已退出。
+
+    为什么要 KILL 兜底（2026-11-12 实测）：`tsx watch` 不理会 SIGTERM，
+    用户在会话里发的 `kill 83627` 因此卡在 `while kill -0` 里 2 小时没返回。
+    只发 TERM 的回收器会「报告回收成功、进程还在」—— 比不回收更坏。
+    只对这一个 pid 动手，不碰它的进程组，绝不会误伤组里别的进程。
+    """
+    try:
+        target = int(pid)
+    except Exception:
+        return False
+    try:
+        os.kill(target, signal.SIGTERM)
+    except ProcessLookupError:
+        return True
+    except Exception:
+        return False
+    deadline = time.time() + max(0.0, grace_s)
+    while time.time() < deadline:
+        time.sleep(0.2)
+        if _proc_exited(target):
+            return True
+    try:
+        os.kill(target, signal.SIGKILL)
+    except ProcessLookupError:
+        return True
+    except Exception:
+        return False
+    # SIGKILL 之后内核回收 pid 需要一小段时间，给它一点确认窗口。
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        time.sleep(0.2)
+        if _proc_exited(target):
+            return True
+    return False
 
 
 def _wt_last_activity(wt: Path) -> float:
@@ -3371,6 +3915,36 @@ def _wt_last_activity(wt: Path) -> float:
     except Exception:
         pass
     return ts
+
+
+def _wt_created_at(wt: Path) -> float:
+    """worktree 目录的创建时间（秒级）。
+
+    取 st_birthtime（macOS 上文件系统的真实创建时间）；旧内核对目录不提供时退回
+    st_ctime。读不到就返回当前时间 —— 与判活一致，没有证据不构成删除许可，宽限期
+    因此把这棵树当成「刚创建」而放行保留，方向永远偏保守。
+    """
+    try:
+        st = wt.stat()
+        birth = getattr(st, "st_birthtime", None)
+        return float(birth if birth else st.st_ctime)
+    except Exception:
+        return time.time()
+
+
+def _within_creation_grace(wt: Path, now: float | None = None) -> bool:
+    """True 表示这棵树还在「创建宽限期」内，回收扫描必须先跳过它。
+
+    只读创建时间，不参与任何安全判据：它只让回收器少删，绝不让它多删。
+    KG_REAP_CREATION_GRACE_H<=0 时恒为 False（等于关闭这条加固）。
+    """
+    if REAP_CREATION_GRACE_H <= 0:
+        return False
+    now = time.time() if now is None else now
+    age_h = (now - _wt_created_at(wt)) / 3600
+    # 负数（读不到创建时间时回落到「现在」，或时钟回拨）一律当作「刚创建」：
+    # 宽限期只负责少删，方向永远偏保守。
+    return age_h < REAP_CREATION_GRACE_H
 
 
 def _worktree_repo(wt: Path) -> Path | None:
@@ -3402,7 +3976,8 @@ def _git_gc_maintenance() -> None:
     log("[safety] automatic git gc --prune=now is disabled; no objects were pruned")
 
 
-def _reap_dead_worktrees() -> int:
+def _reap_dead_worktrees(dry: bool = False,
+                       candidates: list | None = None) -> int:
     """回收闲置且安全的 worktree（无改动、分支无未落提交、没人在用）。
 
     2026-10-22 实录：autopilot 累计留下 336 个 worktree / 24.5GB（一天新增 22 个），
@@ -3415,6 +3990,23 @@ def _reap_dead_worktrees() -> int:
     # 只回收「零损失」的现场 —— 分支无未落提交、工作区无未提交改动、无活着的会话、
     # 闲置够久，且**只删工作目录、保留分支**。任何一条不满足就不动。
     # 用 KG_REAP_ON_DISK_PRESSURE=0 / safety.json 关掉这一层。
+    def _note(msg: str) -> None:
+        # dry 演练（ops/disk_reap.py --dry-run 走这条）只回显到 stdout，
+        # 绝不写生产 daemon.log。否则「会回收」被下一班人读成「已回收」，
+        # 而现场其实还在 —— 实测 2026-11-11 的 ca-fix-fileurl-20261111 就是这样。
+        if dry:
+            print(f"{_now()} [dry-run] {msg}", flush=True)
+        else:
+            log(msg)
+
+    def _skip(msg: str) -> None:
+        # 跳过原因只在演练时回显。生产路径每 15s 扫一片、每片几十棵树，逐条打印
+        # 会把 daemon.log 刷成噪声还多写盘 —— 而 daemon.log 正是「磁盘为什么一直
+        # 满」时最该保持干净可读的东西。dry-run 是人手动跑的，回显到 stdout 恰好
+        # 让人看见「卡在哪、为什么一个都没回收」。
+        if dry:
+            print(f"{_now()} [dry-run] 跳过 {msg}", flush=True)
+
     _pressure_reap = False
     if not _knob("reap_worktrees", True):
         if not _knob("reap_on_disk_pressure", True):
@@ -3423,8 +4015,8 @@ def _reap_dead_worktrees() -> int:
         if _free is not None and _free >= REAP_PRESSURE_FREE_GB:
             return 0          # 空间够用就不动任何现场
         _pressure_reap = True
-        log(f"[safety] 磁盘可用 {(_free if _free is not None else -1):.2f}GB "
-            f"< {REAP_PRESSURE_FREE_GB}GB：对零损失现场做回收（只删目录，分支保留）")
+        _note(f"[safety] 磁盘可用 {(_free if _free is not None else -1):.2f}GB "
+              f"< {REAP_PRESSURE_FREE_GB}GB：对零损失现场做回收（只删目录，分支保留）")
     # 磁盘紧张度必须独立判断，不能只在「常规回收被关掉」时才成立。
     # 2026-10-27 实测：safety.json 里 reap_worktrees=true 时，上面的分支整个被
     # 跳过 → _pressure_reap 永远是 False → 一直用常规的 25s 预算 / 600s 间隔，
@@ -3434,8 +4026,8 @@ def _reap_dead_worktrees() -> int:
     _disk_tight = _free_now is not None and _free_now < REAP_PRESSURE_FREE_GB
     if _disk_tight and not _pressure_reap:
         _pressure_reap = True
-        log(f"[safety] 磁盘可用 {_free_now:.2f}GB < {REAP_PRESSURE_FREE_GB}GB："
-            f"回收改用紧张节奏（更短间隔/更大时间预算；判据不变，仍只删零损失现场）")
+        _note(f"[safety] 磁盘可用 {_free_now:.2f}GB < {REAP_PRESSURE_FREE_GB}GB："
+              f"回收改用紧张节奏（更短间隔/更大时间预算；判据不变，仍只删零损失现场）")
     reaped = 0
     reap_state = _load_reap_state()
     try:
@@ -3452,6 +4044,10 @@ def _reap_dead_worktrees() -> int:
         reap_state["last_ts"] = time.time()
         _save_reap_state(reap_state)
         live = _live_exec_slugs()
+        # 进程命令表整轮只取一次：`process_reference` 原本在调用点传 commands=""
+        # 把命令行扫描整个关掉了（见下），这里改成一次性快照后复用，既恢复
+        # 那道检查，又不至于每个候选树各 fork 一次 `ps ax`。
+        _proc_cmds = workspace_guard.process_commands()
         # 磁盘偏紧时放宽「闲置多久算可回收」：默认 3 小时是为了不打扰正在
         # 进行的活；但今天刚收口完的现场只闲置 2 小时，卡在门槛上就一个都
         # 回收不了，磁盘照样往下走。压力模式下用 30 分钟 —— 安全判据
@@ -3468,43 +4064,68 @@ def _reap_dead_worktrees() -> int:
         budget = (REAP_TIME_BUDGET_PRESSURE_S if _pressure_reap
                   else REAP_TIME_BUDGET_S)
         deadline = time.time() + budget
-        candidates = sorted(root.iterdir())
+        # Keep the caller-owned output list separate from the scan input. A
+        # same-name local used to overwrite it, so dry-run logged "would reap"
+        # while disk_reap.py still received an empty candidate list.
+        scan_candidates = sorted(root.iterdir())
         # 游标切片：每次只扫一片，扫完从头轮回。242 个现场全扫要 4~6 次 git/个，
         # 放在 15s 循环里就是常驻 CPU 黑洞；切片后单轮成本恒定，且每个现场最终都会被扫到。
-        start = int(reap_state.get("cursor") or 0) % max(1, len(candidates))
-        window = (candidates[start:] + candidates[:start])[:REAP_SCAN_SLICE]
-        reap_state["cursor"] = (start + len(window)) % max(1, len(candidates))
+        start = int(reap_state.get("cursor") or 0) % max(1, len(scan_candidates))
+        window = (scan_candidates[start:] + scan_candidates[:start])[:REAP_SCAN_SLICE]
+        reap_state["cursor"] = (start + len(window)) % max(1, len(scan_candidates))
         reap_state["last_scan_n"] = len(window)
-        reap_state["last_scan_total"] = len(candidates)
+        reap_state["last_scan_total"] = len(scan_candidates)
         _save_reap_state(reap_state)
         for d in window:
             if reaped >= max_round:
                 break
             if time.time() > deadline:
-                log(f"[safety] worktree 回收达时间预算 {budget:.0f}s"
-                    f"（已回收 {reaped} 个），余下留给下一轮，先回去派活")
+                _note(f"[safety] worktree 回收达时间预算 {budget:.0f}s"
+                      f"（已回收 {reaped} 个），余下留给下一轮，先回去派活")
                 break
             if not d.is_dir():
                 continue
             if "resolve" in d.name:
+                _skip(f"{d.name}：名字带 resolve，交给冲突裁决流程")
                 continue
             if any(f"-{d.name}-" in f"-{s}-" for s in live):
+                _skip(f"{d.name}：有活着的 codex exec 在用")
+                continue
+            # 判活（2026-11-10 事故）：桌面会话的 cwd 就是这棵树，但它既不会
+            # 被 `_live_exec_slugs` 认出来（那只看 `codex exec -C <tree>`），
+            # 只读分析也不会刷新目录 mtime —— 于是「正在用」和「已废弃」读起来
+            # 一模一样。压力模式闲置门槛只有 15 分钟，一天因此删掉 18 棵在用的树
+            # （分支保留才捞得回来）。信号取自内核 cwd 与会话日志，不依赖
+            # 调用方记得传 commands，所以传参失误也不会再关掉它。
+            _blocker = workspace_guard.live_guard_blocker(d, "all")
+            if _blocker:
+                _skip(f"{d.name}：判活命中（{_blocker}）")
                 continue
             # 廉价预筛：先看目录 mtime。一个 worktree 只要有文件被写过，顶层目录
             # 或子目录 mtime 就会前进；先按 mtime 砍掉明显「刚动过」的现场，
             # 能省掉后面 4~6 次 git 子进程。最终判定仍由下面的 git 检查兜底。
             try:
                 if d.stat().st_mtime > cutoff:
+                    _skip(f"{d.name}：目录 mtime 未过闲置门槛")
                     continue
             except OSError:
                 continue
             repo = _worktree_repo(d)
             if repo is None:
+                _skip(f"{d.name}：不是可识别的 worktree（no-repo）")
                 continue
             if _wt_last_activity(d) > cutoff:
+                _skip(f"{d.name}：分支最近活动未过闲置门槛")
+                continue
+            # 创建宽限期：刚建好的现场先不回收，哪怕它此刻 clean 且 ahead=0。
+            # 压力模式下 idle 门槛只有 15 分钟，新建/迁移完成后人还没来得及写字的
+            # 空档最危险；宽限只看创建时间，只减少回收、不增加回收。
+            if _within_creation_grace(d):
+                _skip(f"{d.name}：仍在创建宽限期内")
                 continue
             brc, branch, _ = _git(d, "rev-parse", "--abbrev-ref", "HEAD")
             if brc != 0 or not branch or branch in ("HEAD", "main"):
+                _skip(f"{d.name}：分支名为 {branch or '?'}（HEAD/main 不回收）")
                 continue
             # drop_scratch 只在这一条路径上打开，而且只在压力模式打开。
             # 位置很重要：这里是「回收闲置现场」的扫描，判据是「这棵树还有没有
@@ -3517,18 +4138,47 @@ def _reap_dead_worktrees() -> int:
             # frontend/.verify-tmp 21 棵）—— 任意一个就让 git status 非空。
             # 打开后只有「全部脏项都是未跟踪机器残留」才放行，已跟踪内容一律不变。
             assessment = workspace_guard.worktree_removable(
-                repo, d, branch, "main", commands="", backup_unique=False,
+                repo, d, branch, "main", commands=_proc_cmds, backup_unique=False,
+                live_guard_mode="all",
                 drop_scratch=_pressure_reap,
                 # 压力回收路径：如果一棵树唯一「脏」的是 backend/evidence 这类
                 # 已跟踪但可重建的产物（每个 worktree 各存一份 ~131MB，实测
                 # 50+ 现场合计约 6GB 完全重复），就从 HEAD 还原再判脏。
                 # 安全判据一条没放松：未跟踪的人间产物、未落提交、活进程
                 # 仍全部保留；还原后仍有任何脏项，这棵树照样留下。
-                restore_regenerable=_pressure_reap)
+                restore_regenerable=_pressure_reap,
+                # 2026-11-09: 不再「还原」这些副本（那是每轮 235MB 的写-删抖动），
+                # 改为把与 HEAD 逐字节相同的副本真正剥离，释放 86 棵树约 15.6GB
+                # 的纯重复。安全判据没放松：可再生产物之外只要还有一处改动，
+                # 整棵树原地不动。`git checkout -- <dir>` 可随时原样还原。
+                accept_stripped_regenerable=_pressure_reap)
             if not assessment.get("ok"):
+                _skip(f"{d.name}：安全判据未通过"
+                      f"（{assessment.get('reason') or 'dirty'}）")
                 continue
-            ok, detail = workspace_guard.remove_worktree(repo, d)
+            if dry:
+                # 演练：绝不调用删除。dry 的安全性必须由这条分支自己保证，不能
+                # 依赖调用方先猴补一个假的 remove_worktree —— 一旦漏补，演练就会
+                # 真删现场（实测 2026-11-11：dry 误删探针目录）。候选名通过
+                # candidates 回给调用方（ops/disk_reap.py 用它打印清单）。
+                reaped += 1
+                if candidates is not None:
+                    candidates.append(d.name)
+                _note(f"[safety] 会回收闲置 worktree {d.name}"
+                      f"（分支 {branch} 无未落提交；演练不动现场）")
+                if _pressure_reap:
+                    _note(f"[safety] 会保留分支 {branch}（压力回收不删分支）")
+                continue
+            ok, detail = workspace_guard.remove_worktree(
+                repo, d, force_regenerable=_pressure_reap)
             if ok:
+                # remove_worktree 的返回值只是 git 的退出码，它不校验目录是否真消失。
+                # 实测 2026-11-11：日志写「回收闲置 worktree」而现场仍在。真删之后
+                # 必须复核一次，否则日志会把「没删掉」记成「已回收」。
+                if d.exists():
+                    log(f"[safety] 回收 worktree 未生效 {d.name}"
+                        f"（git 报成功但目录仍在）：{detail}")
+                    continue
                 reaped += 1
                 scratch = assessment.get("scratch") or ""
                 note = f"；已清机器残留 {scratch}" if scratch else ""
@@ -3538,9 +4188,9 @@ def _reap_dead_worktrees() -> int:
                     # 只回收目录，分支一律保留：重装/回溯时仍能从分支找回全部内容。
                     log(f"[safety] 保留分支 {branch}（压力回收不删分支）")
             else:
-                log(f"[safety] 回收 worktree 跳过 {d.name}：{detail}")
+                _note(f"[safety] 回收 worktree 跳过 {d.name}：{detail}")
     except Exception as exc:  # fail-open
-        log(f"[safety] worktree 回收失败（忽略）：{exc}")
+        _note(f"[safety] worktree 回收失败（忽略）：{exc}")
     return reaped
 
 
@@ -3614,12 +4264,32 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
     cfg = auto_exec_config()
     if not cfg["enabled"]:
         return [], workers or {}
+    repo = _state_repo()
+    autonomy = _project_autonomy_summary(repo)
+    open_items = list(_exec_open_items())
+    if repo:
+        try:
+            # 队列同步不等于派活：即使项目暂停，也要让面板看见真实待办。
+            project_autonomy.sync_tasks(repo, open_items)
+        except Exception as exc:
+            log(f"[autonomy] 同步项目任务队列失败（不派新活）：{exc!r}")
+            return [], workers or {}
+    if repo and not project_autonomy.should_dispatch(repo, legacy_enabled=True):
+        # A mode change must stop new work without abandoning a worker that is
+        # already finishing. Reap existing jobs, then leave the queue intact.
+        workers = _hydrate_exec_jobs(workers if workers is not None else {})
+        existing_jobs = dict(workers.get("exec_jobs") or {})
+        results = _collect_exec(workers, blocked)
+        _record_project_results(results, {"exec_jobs": existing_jobs})
+        log("[autonomy] 项目未处于 running：不派发新 worker，保留已有现场")
+        return results, workers
     codex = _codex_bin()
     if not codex:
         log("[exec] auto_exec 已开，但找不到 codex 可执行文件，跳过")
         return [], workers or {}
     workers = _hydrate_exec_jobs(workers if workers is not None else {})
     jobs = workers.setdefault("exec_jobs", {})
+    _renew_project_leases(repo, workers)
     # 先按台账真实状态清掉已完成槽位。hydrate 只在启动时跑一次，而一轮里
     # 可能有多个槽位刚收口完；不在这里清，它们会一直占着并发名额。
     try:
@@ -3632,9 +4302,11 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
         pass
     # 只差落盘的 recover 槽位不耗模型，先把它们收口可以立刻腾出「需要会话」
     # 的名额，也不会和正在跑的 worker 争资源。
+    existing_jobs = dict(jobs)
     results = _collect_exec(workers, blocked)
     # 先收口已有的 recover/worker，再检查新派发准入。磁盘不足只挡新 worker，
     # 绝不终止已经在跑的任务。
+    _record_project_results(results, {"exec_jobs": existing_jobs})
     disk_held = bool(_disk_pressure())
     if disk_held:
         free = _disk_free_gb()
@@ -3647,6 +4319,11 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
     # A completed worker frees one slot immediately. Keep filling in the same
     # cycle instead of idling until the next 10-minute heartbeat.
     active_ids = {rid for rid, job in jobs.items() if not job.get("recover")}
+    # ``open_items`` is intentionally read before collection so the dispatcher
+    # can fill several slots in one pass. A worker that just landed is still
+    # present in that snapshot, though; do not start it again in the same
+    # cycle before the next truth refresh observes its closed ledger row.
+    handled_this_cycle = {r.get("id") for r in results if r.get("id")}
     # If _collect_exec just wrote a resolve gate_fail into blocked, it must not
     # be retried until the next cycle. Retrying inside the same cycle can race
     # another resolve worker that has already been dispatched for the same slug.
@@ -3654,7 +4331,42 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
                          if r.get("outcome") == "resolve_gate_fail"}
     force_session_ids = set()
     open_items = list(_exec_open_items())
+    items_by_id = {it.get("id"): it for it in open_items if it.get("id")}
+    _inflight_cache = {}
 
+    def _inflight(it):
+        """这条需求是否已有在途成果（只读，同一条一拍只查一次）。"""
+        _rid = it.get("id") or ""
+        if _rid not in _inflight_cache:
+            try:
+                _inflight_cache[_rid] = _exec_has_inflight_work(
+                    it, cfg, _state_repo())
+            except Exception:
+                _inflight_cache[_rid] = False
+        return _inflight_cache[_rid]
+
+    # 「文件占地」判据的持有者：正在跑会话的 + 已有在途成果、且这一拍会继续
+    # 推进的条目。**已经卡住的不算持有者** —— 让一条永远推不动的需求长期占着
+    # 文件，等于把别的活一起锁死，那是死锁不是调度。
+    #
+    # 这里**不能**在同一次派发循环里缓存：刚派发的 worker 立刻就是下一条的
+    # 持有者。缓存一次会让同一拍里后一条看不见前一条，闸门等于没接。
+    def _holders_now():
+        holders = []
+        seen = set()
+        for _rid, _job in jobs.items():
+            if _rid in blocked or _rid in seen:
+                continue
+            _it = _job.get("item") or items_by_id.get(_rid) or {}
+            holders.append((_rid, exec_overlap.declared_files(_it)))
+            seen.add(_rid)
+        for _rid, _it in items_by_id.items():
+            if _rid in blocked or _rid in seen:
+                continue
+            if _inflight(_it):
+                holders.append((_rid, exec_overlap.declared_files(_it)))
+                seen.add(_rid)
+        return holders
     def _session_slots() -> int:
         # 只数「真在跑/真要用模型」的槽位；recover 只是等落盘，不占算力名额。
         return _active_exec_session_count(jobs)
@@ -3668,7 +4380,7 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
     for item in sorted(open_items,
                        key=lambda it: (it.get("id") in blocked, it.get("ts", ""))):
         rid = item.get("id")
-        if rid in jobs or rid in active_ids:
+        if rid in jobs or rid in active_ids or rid in handled_this_cycle:
             continue
         if _session_slots() >= limit:
             break
@@ -3703,6 +4415,15 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
                 blocked.pop(rid, None)
                 force_session_ids.add(rid)
                 log(f"[exec] {rid} 通道退避到期，重开模型会话")
+            elif blocked[rid].get("reason") == exec_overlap.REASON_OVERLAP_HOLD:
+                # 排队不是判死：每一拍都按当时的持有者重算一次。前一条已经收口、
+                # 或者持有者本身也卡住了，这条就该放行，而不是等下一个人来清。
+                _hold_again = exec_overlap.overlap_hold(item, _holders_now())
+                if _hold_again:
+                    blocked[rid] = dict(_hold_again, ts=_now())
+                    continue
+                blocked.pop(rid, None)
+                log(f"[exec] {rid} 撞的文件已经让开，放行开工")
             else:
                 if (_should_retry_resolve_finish(item, blocked[rid])
                         and rid not in failed_this_cycle):
@@ -3765,8 +4486,21 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
                         continue
             except Exception as _exc:
                 log(f"[exec] {rid} 自动收口判断失败（忽略）：{_exc!r}")
+        _has_inflight = _inflight(item)
+        # 已经有在途成果的，不会开新会话，也不该被「文件占地」挡住：它只是
+        # 继续走自己的收口门禁，不会和谁抢同一份文件的写入。
+        if item.get("kind") != "resolve" and not _has_inflight:
+            _hold = exec_overlap.overlap_hold(item, _holders_now())
+            if _hold:
+                _why = "、".join(
+                    f"{h['id']}（{'、'.join(h['files'][:3])}）"
+                    for h in _hold.get("holders") or [])
+                blocked[rid] = dict(_hold, ts=_now())
+                log(f"[exec] {rid} 与在途施工项撞同一批文件，先排队等"
+                    f"{_why} 落地（不占槽位，也不计失败）")
+                continue
         if (item.get("kind") != "resolve"
-                and not _exec_has_inflight_work(item, cfg, _state_repo())):
+                and not _has_inflight):
             _cap = _exec_attempt_gate(rid)
             if _cap:
                 blocked[rid] = _cap
@@ -3779,13 +4513,32 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
                                 force_session=rid in force_session_ids)
         if job.get("outcome") != "ready":
             results.append(job)
+            handled_this_cycle.add(rid)
             continue
         if not _ensure_live_model(job, blocked):
             results.append({"id": rid, "outcome": "channel_unavailable",
                             "retry_next_cycle": True})
             continue
-        _start_exec(job)
-        jobs[rid] = job
+        started = _start_exec(job)
+        if started is None:
+            err = str(job.get("start_error") or "worker_start_fail")
+            blocked[rid] = {"reason": "worker_start_fail", "error": err,
+                            "ts": _now()}
+            results.append({"id": rid, "outcome": "start_fail", "error": err})
+            continue
+        if repo:
+            try:
+                started["autonomy_worker"] = "daemon:%s" % os.getpid()
+                project_autonomy.claim(
+                    repo, rid, worker=started["autonomy_worker"],
+                    branch=started.get("branch") or "",
+                    worktree=started.get("worktree") or "")
+            except Exception as exc:
+                log(f"[autonomy] {rid} 租约未取得，跳过派发：{exc!r}")
+                # The worker has already started, so preserve it for normal
+                # collection instead of launching a duplicate next cycle.
+                started["autonomy_claim_error"] = repr(exc)
+        jobs[rid] = started
         # 槽位只统计「需要跑 codex 会话」的工作。recover 槽位不需要模型
         # （只是等落盘门禁按序收口），把它们算进并发上限等于用一条不需要
         # 算力的队列项去挤占真正要跑模型的位置 —— 实测 4 个槽位里 3 个是
@@ -3801,7 +4554,7 @@ def _exec_dir() -> Path:
     return d
 
 
-def run_cycle(dry: bool, max_land: int) -> dict:
+def run_cycle(dry: bool, max_land: int, only=None, mode=None) -> dict:
     """用户可见的一轮：先过「暂停」闸门，再调用真正的周期实现。
 
     暂停语义（面板「暂停」按钮就是写这个开关）：
@@ -3809,16 +4562,22 @@ def run_cycle(dry: bool, max_land: int) -> dict:
       * 正在跑的周期允许安全收尾，不会被从中间砍断（land 自带完整门禁）。
       * 因此这里是最外层也最可靠的闸门；`_run_cycle` 里的逐子系统闸门是第二道保险，
         防止别的调用方绕过本函数直接进内部实现。
+
+    `only` / `mode` 是临时观测口径（见 `_run_cycle`），只在 `--once` 类型的手动
+    触发下给；常驻循环里不带。
     """
     if not control_state.is_enabled():
         log("[disabled] 自动挡已关闭或控制文件异常：本轮不启动任何新工作")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
-                "disabled": True, "summary": {}, "landed": [], "failures": []}
+                "disabled": True, "summary": {}, "landed": [], "failures": [],
+                "passes": []}
     if control_state.is_paused():
         log("[pause] 已暂停：本轮不启动任何新工作（面板可恢复）")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
-                "paused": True, "summary": {}, "landed": [], "failures": []}
-    return _run_cycle(dry, max_land, deadline=time.monotonic() + CYCLE_BUDGET)
+                "paused": True, "summary": {}, "landed": [], "failures": [],
+                "passes": []}
+    return _run_cycle(dry, max_land, deadline=time.monotonic() + CYCLE_BUDGET,
+                      only=only, mode=mode)
 
 
 def _over_budget(deadline, step: str) -> bool:
@@ -3835,12 +4594,626 @@ def _over_budget(deadline, step: str) -> bool:
     return True
 
 
-def _run_cycle(dry: bool, max_land: int, deadline: float = None) -> dict:
-    """一个周期：刷新控制面 -> 串行落盘安全子集 -> 按需通知。返回本轮结果。
+# ------------------------------------------------------------------ 周期 pass
+#
+# 历史形态：`_run_cycle()` 是一个 350 行的大函数，route → dispatch_exec → 回收 →
+# tick → supersede → land → port → resolve 顺序串下来，靠几十个局部变量互相可见。
+# 它有三个结构性缺陷，都在真实事故里露过头：
+#   1. 任何一步抛异常，整拍后面一步都不跑 —— 用户看到的是「自动挡什么也没干」；
+#   2. 没有逐子系统开关，想只跑回收、只跑 land，只能改代码或加散落的 env；
+#   3. 预算检查是每个长步骤前手写的 if，漏写一处就是半小时黑洞。
+#
+# 现在每一步是注册表里的一个 pass（`ops/pass_registry.py`）：单步异常被隔离成一条
+# 失败记录、可以按名字单独跑（`--only`）、可以整体降成 propose/observe 观察期
+# （`--mode`），预算由注册表统一检查。pass 之间只通过下面这个 ctx 字典交换结果，
+# 「这一拍跑了哪些 pass、各自什么状态、花了多久」直接落进 state 和日志。
+#
+# **顺序是语义，不是风格**：route 必须在 exec 之前（否则新收进来的条目白等一整拍），
+# 回收必须在 exec 之后（它要扫几百个现场，跑在派活前面会挤掉一整轮派发）。
+# 注册顺序 = 执行顺序，注册表不做任何排序。
 
-    deadline 是这一整拍的硬预算（CYCLE_BUDGET）。每个长步骤前先问
-    `_over_budget()`：超了就不再开新步骤，把剩下的留给下一拍，并写明掐在哪。
+def _new_cycle_ctx(dry: bool, max_land: int, deadline) -> dict:
+    """一轮周期的共享状态。pass 之间只通过这个字典交换结果。"""
+    return {
+        "dry": dry,
+        "max_land": max_land,
+        "deadline": deadline,
+        "passes": [],
+        "wake": {},
+        "followup": {},
+        "route_rc": 0,
+        "route_out": "",
+        "exec_cfg": {},
+        "exec_results": [],
+        "exec_landed": [],
+        "exec_workers": {},
+        "exec_blocked": {},
+        "reaped": {},
+        "tick_rc": 0,
+        "tick_out": "",
+        "convergence": {"families": 0, "made": 0},
+        "superseded": 0,
+        "landed": [],
+        "failures": [],
+        "summary": {"other": 0, "merged": 0, "conflict": 0, "unresolved": 0},
+        "land_blocked": {},
+        "ported": [],
+        "port_blocked": {},
+        "resolve_landed_any": False,
+        "resolved_tasks": [],
+        "resolve_gate_fail": [],
+        "resolve_blocked": {},
+    }
+
+
+def _deliver_wake_to_inbox(text: str, spec: dict) -> str:
+    """把 timer / resume 请求写回唯一入口，不直接开 worker。"""
+    env_extra = {
+        "KG_INBOX_SOURCE": "timer" if spec.get("kind") == wake_resume.KIND_WAKE
+        else "resume",
+        "KG_INBOX_KIND": "unknown",
+    }
+    if spec.get("project"):
+        env_extra["KG_INBOX_PROJECT"] = str(spec["project"])
+    if spec.get("files"):
+        env_extra["KG_INBOX_FILES"] = ":".join(str(x) for x in spec["files"])
+    rc, out = run_kgctl(["inbox", text], timeout=TICK_TIMEOUT,
+                        env_extra=env_extra)
+    if rc != 0:
+        raise RuntimeError(f"kgctl inbox rc={rc}: {out.strip()[:500]}")
+    return out.strip()[-1000:]
+
+
+def _pass_wake(ctx: dict) -> dict:
+    """把到期的 timer / 显式恢复请求写回唯一入口。
+
+    放在 route 之前：这一拍刚写回的唤醒项应当立刻被同一拍路由，不必白等一轮。
+    这里只投递消息，不启动 worker、不改分支；worker 仍由 exec pass 按生命周期
+    账本派发。投递失败由 wake_resume 账本退避重试，坏账本 fail-closed。
+    """
+    if ctx["dry"]:
+        return {"dry": True}
+    service = wake_resume.WakeResume(RUNTIME)
+    fired: list[str] = []
+    failures: list[dict] = []
+    for projection in service.due():
+        rid = projection["request_id"]
+        result = service.fire(
+            rid,
+            lambda spec, current: wake_resume.deliver_to_inbox(
+                spec, current, _deliver_wake_to_inbox))
+        if result["state"] == wake_resume.STATE_DELIVERED:
+            fired.append(rid)
+        elif result["state"] == wake_resume.STATE_FAILED:
+            failures.append({"id": rid, "error": result.get("last_error", "")})
+    ctx["wake"] = {"fired": fired, "failures": failures}
+    return {"fired": len(fired), "failed": len(failures)}
+
+
+def _followup_ledger_rows(root: Path | None = None) -> list[dict]:
+    """追问资格校验用的问题台账快照；读不到返回空列表，不把 unknown 当成通过。"""
+    repo = Path(root) if root else _state_repo()
+    if not repo:
+        return []
+    path = repo / "ops" / "truth" / "ledger.jsonl"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    rows = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _followup_native_bindings(root: Path | None = None) -> dict[str, dict]:
+    """每个工作项最近一次原生窗口绑定。绑定台账可缺失，那是「0 条绑定」。"""
+    repo = Path(root) if root else _state_repo()
+    if not repo:
+        return {}
+    path = repo / "ops" / "truth" / "native_routes.jsonl"
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    latest = {}
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        ledger_id = (row or {}).get("ledger_id") if isinstance(row, dict) else None
+        if ledger_id:
+            latest[str(ledger_id)] = row
+    return latest
+
+
+def _followup_is_eligible(spec: dict, root: Path | None = None) -> bool:
+    """发送前再确认工作项还活着，且 thread 绑定仍是用户点头的那一个。
+
+    授权发生在面板点击时；从点击到守护下一拍之间，工作项可能收口、窗口可能重绑。
+    这里重新读真相层，避免把过期授权投递到新窗口或一个已完成的任务里。
+    """
+    ticket_id = str(spec.get("ticket_id") or "")
+    thread_id = str(spec.get("thread_id") or "")
+    if not ticket_id or not thread_id:
+        return False
+    item = latest_ledger_by_id(_followup_ledger_rows(root)).get(ticket_id)
+    if not item or item.get("status") not in ("open", "doing", "todo", "wip", "blocked"):
+        return False
+    binding = _followup_native_bindings(root).get(ticket_id) or {}
+    bound = binding.get("thread_id") or item.get("thread_id")
+    return str(bound or "") == thread_id
+
+
+def _pass_followup(ctx: dict) -> dict:
+    """投递逐项授权且发送前仍合格的进度追问；无授权时不碰宿主。"""
+    if ctx["dry"]:
+        return {"dry": True}
+    root = _state_repo()
+    if not root:
+        return {"skipped": "没有状态根，不发送任何追问"}
+    pending = authorized_followup.pending(root)
+    if not pending:
+        return {"approved": 0}
+    by_id = {row["request_id"]: row for row in pending}
+
+    def sender(request_id: str, prompt: str):
+        spec = by_id.get(request_id) or {}
+        thread_id = str(spec.get("thread_id") or "")
+        if not thread_id:
+            raise RuntimeError("授权记录缺少 thread 绑定")
+        result, error = codex_native.follow_up(thread_id, prompt)
+        if error:
+            raise RuntimeError(str(error))
+        return result
+
+    result = authorized_followup.deliver_approved(
+        sender,
+        is_eligible=lambda spec: _followup_is_eligible(spec, root),
+        root=root,
+    )
+    ctx["followup"] = result
+    return result
+
+
+def _pass_route(ctx: dict) -> dict:
+    """把新收进来的零散需求路由到泳道。必须在派活之前跑。
+
+    dispatch_exec 只看账本里已经存在的行；路由放在派活之后，会让刚收进来的
+    需求白等一整拍，而那时所有工作槽都空着。
+    """
+    # `--all`：守护是全局单例、只认一个 KG_REPO。不加这一层，用户在别的项目窗口
+    # 提的需求会写进那个项目的 inbox，却没有任何人在跑它的 route —— 永久停在
+    # 「待路由」，既不在看板上、也不进台账、也不报错（2026-11-18 实测：
+    # codex-autopilot 账本里 8 条躺了 7~20 天，而本守护每 15 分钟都报 rc=0）。
+    rc, out = run_kgctl(["route", "--all", "--go"], timeout=TICK_TIMEOUT)
+    log_block("route(pre-exec)", rc, out)
+    ctx["route_rc"], ctx["route_out"] = rc, out
+    return {"rc": rc}
+
+
+def _pass_exec(ctx: dict) -> dict:
+    """按台账派 worker 去实现，并把已落盘的结果收回。"""
+    ctx["exec_blocked"] = dict(load_state().get("exec_blocked") or {})
+    for stale in _prune_exec_blocked(ctx["exec_blocked"]):
+        log(f"[exec] 台账已收口，清掉实现暂缓：{stale}")
+    ctx["exec_cfg"] = auto_exec_config()
+    ctx["exec_workers"] = dict(load_state().get("exec_workers") or {})
+    if ctx["dry"]:
+        dispatch_exec(True, ctx["exec_blocked"], ctx["exec_workers"])
+        return {"dry": True}
+    if not ctx["exec_cfg"]["enabled"]:
+        log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
+        return {"enabled": False}
+    results, workers = dispatch_exec(False, ctx["exec_blocked"], ctx["exec_workers"])
+    ctx["exec_results"] = results
+    ctx["exec_workers"] = workers
+    ctx["exec_landed"] = [r for r in results if r.get("outcome") == "landed"]
+    return {"enabled": True, "started": len(results)}
+
+
+def _pass_reap(ctx: dict) -> dict:
+    """空间自救：清孤儿后端 + 零损失 worktree + 需要时 git gc。
+
+    放在派活之后是硬要求：这一步要扫几百个现场、每个还跑几次 git，跑在派活前面
+    时会挤掉一整轮派发。全部 fail-open，可一键关。
+    """
+    free_before = _disk_free_gb()
+    try:
+        _reap_backend_orphans()
+        _reap_dead_worktrees()
+        # 紧跟一条：回收失败的现场会变成「不在册的孤儿目录」，上面那条永远看不到它。
+        _reap_orphan_residue()
+        if free_before is None or free_before < REAP_PRESSURE_FREE_GB:
+            _git_gc_maintenance()
+    except Exception as exc:
+        log(f"[safety] 回收阶段异常（忽略，继续本轮）：{exc}")
+        ctx["reaped"] = {"error": repr(exc)}
+        return {"error": repr(exc)}
+    ctx["reaped"] = {"free_gb": _disk_free_gb()}
+    return ctx["reaped"]
+
+
+def _pass_checkpoint(ctx: dict) -> dict:
+    """把裁过的 exec_blocked / 工作槽元数据提前落盘。
+
+    The later save only refreshes worker metadata; otherwise a closed item can be
+    restored from stale state before tick completes and occupy an exec slot.
+    """
+    try:
+        early = load_state()
+        early["exec_blocked"] = ctx["exec_blocked"]
+        early["exec_workers"] = {
+            "exec_jobs": {
+                rid: {k: v for k, v in job.items()
+                      if k not in ("proc", "fh", "item", "cfg", "codex")}
+                for rid, job in (ctx["exec_workers"].get("exec_jobs") or {}).items()
+                if not job.get("partial")
+            }
+        }
+        save_state(early)
+    except Exception as exc:
+        log(f"[exec] 工作槽状态提前落盘失败（继续）：{exc!r}")
+        return {"error": repr(exc)}
+    return {"ok": True}
+
+
+def _route_health_exec_payloads(ctx: dict) -> list[dict]:
+    """把本拍仍在跑的实现槽位投影成巡检判据；不探测、不重派、不改 worker。"""
+    payloads = []
+    for rid, job in ((ctx.get("exec_workers") or {}).get("exec_jobs") or {}).items():
+        if not isinstance(job, dict) or job.get("partial") or job.get("recover"):
+            continue
+        if not _worker_alive(job.get("pid")):
+            continue
+        worktree = str(job.get("worktree") or "")
+        if not worktree or not Path(worktree).is_dir():
+            continue
+        payloads.append({"exec_now": {"id": rid, "worktree": worktree}})
+    return payloads
+
+
+def _pass_route_health(ctx: dict) -> dict:
+    """每拍只读检查路线与效用比：状态签名变化才留账/提示，不自动纠偏。"""
+    prior = route_health_runtime.last_summary(RUNTIME)
+    payloads = _route_health_exec_payloads(ctx)
+    route_state = {
+        "exec_workers": ctx.get("exec_workers") or {},
+        # 面板投影会丢掉 exec_blocked.ts；巡检必须读 daemon 原始记录，
+        # 否则「已经卡了多久」永远取不到，只能诚实报 unknown。
+        "exec_blocked": ctx.get("exec_blocked") or {},
+    }
+    summary = route_health_runtime.summarize_many(
+        payloads, state=route_state, runtime=RUNTIME)
+    exec_ids = sorted(
+        str(p.get("exec_now", {}).get("id") or "") for p in payloads)
+    written = route_health_runtime.append_if_changed(
+        RUNTIME, summary, prior=prior, exec_id=",".join(exec_ids))
+    record = dict(summary)
+    record["signature"] = written.get("signature")
+    # 复核状态机只追加「发现异常 → 复测仍异常/恢复」；它不改 worker、路线或配置。
+    # 状态签名变化才通知用户，问题键用来合并同一问题的分钟数增长。
+    level = str(summary.get("level") or "unknown")
+    owner = str(summary.get("issue_owner") or ",".join(exec_ids))
+    issue_keys = [str(x) for x in (summary.get("issue_keys") or []) if str(x).strip()]
+    issue_key = ""
+    if level == "attention":
+        if not issue_keys:
+            issue_key = route_health_runtime.issue_signature(summary, owner)
+    review = route_review.sync(
+        summary, written.get("signature"), issue_keys=issue_keys,
+        issue_key=issue_key,
+        observed_owners=summary.get("observed_owners"),
+        owner_levels=summary.get("owner_levels"),
+        root=RUNTIME)
+    record["review"] = review
+    ctx["route_health"] = record
+    if written.get("written") and level == "attention":
+        notify("自动挡：路线与效能需复核",
+               f"{summary.get('headline') or '发现路线偏离或低效空转'}"
+               "（只提复核；不会自动停 worker、改路线或改配置）")
+    elif written.get("written") and prior.get("level") == "attention":
+        notify("自动挡：路线与效能已恢复",
+               "上一轮的路线/效能复核信号已消失；判据与留账见 route_health.jsonl")
+    log(f"[route-health] level={level} action={summary.get('action')} "
+        f"headline={summary.get('headline')} written={written.get('written')}")
+    return record
+
+
+def _pass_tick(ctx: dict) -> dict:
+    """刷新真相层。
+
+    Refresh truth after local work has already started. A slow/unreachable
+    remote must not hold worker dispatch behind the network timeout.
+    """
+    rc, out = run_kgctl(["tick", "--no-converge"], env_extra={"KG_TICK_LIGHT": "1"})
+    log_block("tick", rc, out)
+    ctx["tick_rc"], ctx["tick_out"] = rc, out
+    ctx["convergence"] = parse_convergence(out)
+    log(f"[converge] 可收拢族 {ctx['convergence']['families']}，"
+        f"本轮新建 {ctx['convergence']['made']}")
+    if rc == 124:
+        # 超时必须算失败：旧实现里 tick 超时的 out 是一条说明文案（非空），于是既不进
+        # failures 也不报警——30 分钟的黑洞在面板上显示成 last_failures=0。
+        ctx["failures"].append(("(tick)", "tick_timeout"))
+    elif rc != 0 and not out.strip():
+        ctx["failures"].append(("(tick)", "tick_error"))
+    return {"rc": rc, "families": ctx["convergence"]["families"]}
+
+
+def _pass_supersede(ctx: dict) -> dict:
+    """归档「内容已全部在 main」的重复分支。
+
+    这一步只写台账（加法），不动任何代码，也不动任何源分支，所以放进守护的
+    安全子集。用 --fast（patch-id）保证秒级返回。
+    """
+    src, sout = run_kgctl(["supersede", "--go", "--fast"], timeout=SUPERSEDE_TIMEOUT,
+                          env_extra={"KG_SUPERSEDE_LIGHT": "1"})
+    log_block("supersede", src, sout)
+    made = SUPERSEDE_DONE_RE.search(sout)
+    if made:
+        ctx["superseded"] = int(made.group(1))
+    return {"superseded": ctx["superseded"]}
+
+
+def _pass_land(ctx: dict) -> dict:
+    """串行落盘安全子集：一次只 land 一个，落一个重算一次队列。"""
+    auto_land = control_state.load().get("auto_land", True)
+    ctx["land_blocked"] = dict(load_state().get("land_blocked") or {})
+    attempts = 0
+    while auto_land and attempts < ctx["max_land"]:
+        if _over_budget(ctx["deadline"], "下一轮 land"):
+            break
+        rc, qout = run_kgctl(["queue", "--light"])
+        clean, summary, files_by_branch = parse_queue(qout)
+        ctx["summary"] = summary
+        if rc != 0:
+            log_block("queue", rc, qout)
+            ctx["failures"].append(("(queue)", "queue_error"))
+            break
+        clean = [b for b in clean
+                 if b not in ctx["land_blocked"] and files_by_branch.get(b, 0) > 0]
+        if not clean:
+            log(f"[queue] 可落盘 0 个（merged={summary['merged']} "
+                f"conflict={summary['conflict']}）")
+            break
+        target = clean[0]
+        attempts += 1
+        if ctx["dry"]:
+            log(f"[dry] 本轮会 land: {target}（队列 {len(clean)} 个）")
+            break
+        lrc, lout = run_kgctl(["land", target], timeout=LAND_TIMEOUT)
+        kind = classify_land(lout, lrc)
+        log_block(f"land {target} -> {kind}", lrc, lout)
+        if kind == "landed":
+            ctx["landed"].append(target)
+            ctx["land_blocked"].pop(target, None)
+            continue
+        if kind == "already":
+            ctx["land_blocked"].pop(target, None)
+            continue
+        if kind in ("locked", "noop"):
+            break
+        ctx["failures"].append((target, kind))
+        if kind in ("merge_fail", "gate_fail", "conflict", "unresolved_markers"):
+            ctx["land_blocked"][target] = {"reason": kind, "ts": _now()}
+            log(f"[land] {target} 记进 land_blocked（{kind}），后续周期跳过，"
+                f"避免反复占用自动落盘")
+        break
+    return {"landed": list(ctx["landed"]), "attempts": attempts}
+
+
+def _tick_unhealthy(ctx: dict) -> bool:
+    """tick 明确失败时，后续依赖真相层的 pass 不该继续猜。"""
+    return ctx["tick_rc"] != 0 and not ctx["tick_out"].strip()
+
+
+def _pass_port(ctx: dict) -> dict:
+    """自动移植「只差几个提交」的冲突分支。
+
+    cherry-pick 到当前 main，过门禁才落盘，冲突即整体放弃。默认关闭，由状态根
+    ops/central.config.json 的 auto_port 打开。一周期内把所有候选试一遍：成功的
+    落盘并继续，冲突的进 port_blocked 后跳过，于是循环不断收窄，直到没有候选或
+    达到上限。试过且不行的分支后续周期不再重试。
+    """
+    cfg = auto_port_config()
+    if ctx["dry"]:
+        return {"dry": True}
+    if not cfg["enabled"]:
+        log("[port] auto_port 未开启（ops/central.config.json），跳过自动移植")
+        return {"enabled": False}
+    if _tick_unhealthy(ctx):
+        log("[port] 上一拍 tick 失败，跳过自动移植（避免基于旧真相挑分支）")
+        return {"tick_unhealthy": True}
+    ctx["port_blocked"] = dict(load_state().get("port_blocked") or {})
+    port_state = load_state()
+    port_scan_ts = float(port_state.get("last_port_scan_ts") or 0)
+    port_scan_hit = bool(port_state.get("last_port_scan_hit"))
+    if not port_scan_hit and time.time() - port_scan_ts < PORT_SCAN_COOLDOWN:
+        log(f"[port] 上一轮无候选扫描在 {PORT_SCAN_COOLDOWN}s 冷却期内，跳过本轮全量扫描")
+        return {"cooldown": True}
+    for _ in range(PORT_MAX_ATTEMPTS):
+        prc, pout = run_kgctl(["port", "--auto", "--go",
+                               "--max-unlanded", str(cfg["max_unlanded"])],
+                              timeout=PORT_TIMEOUT,
+                              env_extra={"KG_PORT_SKIP": ":".join(ctx["port_blocked"])})
+        log_block("port(auto)", prc, pout)
+        pm = PORT_RESULT_RE.search(pout)
+        if not pm:
+            # 没有候选 / 扫描超时：把扫描时间记回 state，下一轮不重扫同一批
+            # 无候选分支，也不让超时后的下一次循环再白等几分钟。
+            port_state = load_state()
+            port_state["last_port_scan_ts"] = str(int(time.time()))
+            port_state["last_port_scan_hit"] = False
+            save_state(port_state)
+            if prc == 124:
+                log(f"[port] 扫描超时后进入 {PORT_SCAN_COOLDOWN}s 冷却，避免下一轮重复全量扫描")
+            break
+        port_state["last_port_scan_hit"] = True
+        save_state(port_state)
+        pb, po = pm.group(1), pm.group(2)
+        if po == "landed":
+            ctx["ported"].append(pb)
+            ctx["port_blocked"].pop(pb, None)
+            continue  # main 已前进，下一轮重新挑
+        ctx["port_blocked"][pb] = {"reason": po, "ts": _now()}
+    # 移植推进了 main，可能让别的分支的改动「现在全部在 main 了」——再扫一次归档。
+    if ctx["ported"]:
+        src2, sout2 = run_kgctl(["supersede", "--go", "--fast"],
+                                timeout=SUPERSEDE_TIMEOUT,
+                                env_extra={"KG_SUPERSEDE_LIGHT": "1"})
+        log_block("supersede(post-port)", src2, sout2)
+        made2 = SUPERSEDE_DONE_RE.search(sout2)
+        if made2:
+            ctx["superseded"] += int(made2.group(1))
+    return {"ported": list(ctx["ported"]), "superseded": ctx["superseded"]}
+
+
+def _pass_resolve(ctx: dict) -> dict:
+    """把冲突分支拆成独立可执行单元，不推给用户逐条裁决。
+
+    每周期把一条「文件少、未落改动小」的冲突拆成独立单元。能被确定性解掉的
+    （append-only jsonl 行级并集）直接走门禁落盘；其余保留 marker，写出一份
+    任务书 + 独立 worktree，交给 agent 按 slug 收口。拆不动 / 门禁没过的分支记进
+    resolve_blocked，后续周期跳过，不反复拆同一条。
+    """
+    cfg = auto_resolve_config()
+    ctx["resolve_blocked"] = dict(load_state().get("resolve_blocked") or {})
+    if ctx["dry"]:
+        return {"dry": True}
+    if not cfg["enabled"]:
+        log("[resolve] auto_resolve 未开启（ops/central.config.json），跳过冲突拆分")
+        return {"enabled": False}
+    if _tick_unhealthy(ctx):
+        log("[resolve] 上一拍 tick 失败，跳过冲突拆分（避免基于旧真相挑分支）")
+        return {"tick_unhealthy": True}
+    for _ in range(RESOLVE_MAX_ATTEMPTS):
+        skip = ":".join(b for b in ctx["resolve_blocked"] if b)
+        rrc, rout = run_kgctl(["resolve", "--auto", "--go",
+                               "--max-files", str(cfg["max_files"]),
+                               "--max-lines", str(cfg["max_lines"])],
+                              timeout=RESOLVE_TIMEOUT,
+                              env_extra={"KG_RESOLVE_SKIP": skip,
+                                         "KG_RESOLVE_LIGHT": "1"})
+        log_block("resolve(auto)", rrc, rout)
+        rm = RESOLVE_RESULT_RE.search(rout)
+        if not rm:
+            break  # 没有候选了
+        rb, ro = rm.group(1), rm.group(2)
+        if ro == "landed":
+            ctx["resolve_landed_any"] = True
+        elif ro == "needs_agent":
+            ctx["resolved_tasks"].append(rb)
+        elif ro in ("too_big", "blocked", "clean"):
+            ctx["resolve_blocked"][rb] = {"reason": ro, "ts": _now()}
+        elif ro == "gate_fail":
+            ctx["resolve_gate_fail"].append(rb)
+            ctx["resolve_blocked"][rb] = {"reason": ro, "ts": _now()}
+        # 每条结果都让候选集变小（落盘 / 占用 / 跳过），继续拆下一条。
+        if ctx["resolve_landed_any"]:
+            break  # 落盘推进了 main，下一周期基于新 main 重挑
+    return {"landed": ctx["resolve_landed_any"],
+            "tasks": list(ctx["resolved_tasks"]),
+            "gate_fail": list(ctx["resolve_gate_fail"])}
+
+
+def _pass_tick_post(ctx: dict) -> dict:
+    """落过盘就再刷一次控制面，让看板/快照反映新 main。"""
+    if ctx["dry"]:
+        return {"dry": True}
+    moved = (ctx["landed"] or ctx["ported"] or ctx["resolve_landed_any"]
+             or ctx["exec_landed"])
+    if not moved:
+        return {"skipped": True}
+    rc2, out2 = run_kgctl(["tick", "--no-converge"], env_extra={"KG_TICK_LIGHT": "1"})
+    log_block("tick(post-land)", rc2, out2)
+    return {"rc": rc2}
+
+
+def _build_cycle_registry(ctx: dict):
+    """按语义顺序注册这一拍要跑的所有 pass。
+
+    注册顺序 = 执行顺序（见文件头注释）。
+
+    pass_registry 现在默认 `observe`：**没写 level 的 pass 只会观察，不执行副作用**。
+    下面这十二条是既有自动挡工序，逐条显式转正 —— 每条都声明 `level=auto` 加
+    `authorization=explicit`，表示「人已经授权这条工序自动跑」，不是系统自行升权。
+    这样新加的 pass 不会因为忘记声明就悄悄执行（fail-closed），而既有行为保持原样。
+    `effect` 区分可逆与破坏性：`route/checkpoint/tick/tick-post` 只改控制面与账本
+    （可逆），其余会动分支/工作区/磁盘（破坏性）。破坏性动作在授权来源变成 inferred
+    时会被注册表拦成提案，所以这里显式标注 `explicit`。
+    要观察某一步，用 `--only` + `--mode` 临时降权，不改默认值。
+    """
+    reg = Registry(log=log,
+                   over_budget=lambda step: _over_budget(ctx["deadline"], step))
+    reg.register(Pass("wake", lambda: _pass_wake(ctx), title="到期唤醒写回唯一入口",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("followup", lambda: _pass_followup(ctx),
+                      title="投递已逐项授权的进度追问",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("route", lambda: _pass_route(ctx), title="路由新收需求",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("exec", lambda: _pass_exec(ctx), title="派 worker 实现",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_DESTRUCTIVE))
+    reg.register(Pass("reap", lambda: _pass_reap(ctx), title="回收磁盘与死 worktree",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_DESTRUCTIVE))
+    reg.register(Pass("checkpoint", lambda: _pass_checkpoint(ctx),
+                      title="工作槽状态提前落盘",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("route-health", lambda: _pass_route_health(ctx),
+                      title="每拍只读巡检路线与效用比",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("tick", lambda: _pass_tick(ctx), title="刷新真相层",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    reg.register(Pass("supersede", lambda: _pass_supersede(ctx), title="归档重复分支",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_DESTRUCTIVE))
+    reg.register(Pass("land", lambda: _pass_land(ctx), title="串行落盘",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_DESTRUCTIVE))
+    reg.register(Pass("port", lambda: _pass_port(ctx), title="自动移植小差异分支",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_DESTRUCTIVE))
+    reg.register(Pass("resolve", lambda: _pass_resolve(ctx), title="冲突拆成任务",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_DESTRUCTIVE))
+    reg.register(Pass("tick-post", lambda: _pass_tick_post(ctx), title="落盘后刷新看板",
+                      level=MODE_AUTO, authorization=AUTH_EXPLICIT,
+                      effect=EFFECT_REVERSIBLE))
+    return reg
+
+
+def _run_cycle(dry: bool, max_land: int, deadline: float = None,
+               only=None, mode=None) -> dict:
+    """一个周期：注册表按序跑各 pass -> 落盘结果 -> 按需通知。返回本轮结果。
+
+    deadline 是这一整拍的硬预算（CYCLE_BUDGET）。超预算由注册表在**每个 pass 调用前**
+    统一检查，掐在哪一步会写进日志和 `passes[].status=over_budget`。
     单步各有时限不等于整拍有时限——历史上就是多步叠加吃掉半小时而日志一片空白。
+
+    `only` / `mode` 是给运维用的临时口径（`--once --only land --mode observe`）：
+      * `only`：只跑指定名字的 pass，顺序仍按注册顺序；
+      * `mode`：全局覆盖自治等级。`propose` / `observe` 下注册表**不会调用任何
+        副作用函数**，所以这是一条真正的只读预演路径，比 `--dry-run` 覆盖面更广。
+    两者都只影响这一轮，不改任何默认值。
     """
     if dry:
         # 真预演：只问队列，不 tick（tick 会提交并推送真相层）、不 land、不通知。
@@ -3851,228 +5224,50 @@ def _run_cycle(dry: bool, max_land: int, deadline: float = None) -> dict:
         log(f"[dry] 本轮会 land {min(len(clean), max_land)} / {len(clean)} 个: "
             f"{clean[:max_land]}")
         return {"ts": time.time(), "iso": _now(), "dry": True,
-                "summary": summary, "landed": [], "failures": []}
+                "summary": summary, "landed": [], "failures": [], "passes": []}
 
     log("--- cycle start (live) ---")
     if not control_state.is_enabled():
         log("[disabled] 周期开始前自动挡已关闭：不做路由/落盘")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
-                "disabled": True, "summary": {}, "landed": [], "failures": []}
+                "disabled": True, "summary": {}, "landed": [], "failures": [],
+                "passes": []}
     if control_state.is_paused():
         log("[pause] 周期开始前被暂停：只刷新状态，不做路由/落盘")
         return {"ts": time.time(), "iso": _now(), "dry": dry,
-                "paused": True, "summary": {}, "landed": [], "failures": []}
-    # 安全回收放到派活之后（见下方 dispatch 后的同名块）：回收要扫几百个现场、
-    # 每个还跑几次 git，曾把派活饿死一整个周期。
-    # Route new intake before filling worker slots. dispatch_exec only sees
-    # rows that already exist in the ledger; routing after dispatch makes a
-    # freshly captured task wait a full cycle while all slots sit idle.
-    route_rc, route_out = run_kgctl(["route", "--go"], timeout=TICK_TIMEOUT)
-    log_block("route(pre-exec)", route_rc, route_out)
-    exec_results, exec_landed = [], []
-    exec_blocked = dict(load_state().get("exec_blocked") or {})
-    for _stale in _prune_exec_blocked(exec_blocked):
-        log(f"[exec] 台账已收口，清掉实现暂缓：{_stale}")
-    exec_cfg = auto_exec_config()
-    exec_workers = dict(load_state().get("exec_workers") or {})
-    if dry:
-        dispatch_exec(True, exec_blocked, exec_workers)
-    elif exec_cfg["enabled"]:
-        exec_results, exec_workers = dispatch_exec(False, exec_blocked, exec_workers)
-        exec_landed = [r for r in exec_results if r.get("outcome") == "landed"]
-    else:
-        log("[exec] auto_exec 未开启（面板开关 / control.json），跳过自动实现")
+                "paused": True, "summary": {}, "landed": [], "failures": [],
+                "passes": []}
 
-    # 空间自救：清孤儿后端 + 零损失 worktree + git gc（全部 fail-open，可一键关）。
-    # 放在派活之后是硬要求：这一步要扫几百个现场，跑在派活前面时会挤掉一整轮派发。
-    try:
-        _reap_backend_orphans()
-        _reap_dead_worktrees()
-        # 紧跟一条：回收失败的现场会变成「不在册的孤儿目录」，上面那条永远看不到它。
-        _reap_orphan_residue()
-        _free = _disk_free_gb()
-        if _free is None or _free < REAP_PRESSURE_FREE_GB:
-            _git_gc_maintenance()
-    except Exception as exc:
-        log(f"[safety] 回收阶段异常（忽略，继续本轮）：{exc}")
+    ctx = _new_cycle_ctx(dry, max_land, deadline)
+    registry = _build_cycle_registry(ctx)
+    known = set(registry.names())
+    unknown = [n for n in (only or []) if n not in known]
+    if unknown:
+        # 名字写错时不能假装「只跑了这几个」——静默少跑一步是最难发现的失败方式。
+        log(f"[pass] --only 里有不认识的 pass：{', '.join(unknown)}；"
+            f"可用：{', '.join(registry.names())}")
+    results = registry.run(override=mode, only=only)
+    ctx["passes"] = [r.as_dict() for r in results]
+    counts = Registry.summarize(results)["counts"]
+    log(f"[pass] 本轮 {len(results)} 个 pass："
+        + " ".join(f"{k}={v}" for k, v in sorted(counts.items())))
 
-    # Persist the pruned blocked set before the first network refresh. The later
-    # save only refreshes worker metadata; otherwise a closed item can be
-    # restored from stale state before tick completes and occupy an exec slot.
-    try:
-        _early = load_state()
-        _early["exec_blocked"] = exec_blocked
-        _early["exec_workers"] = {
-            "exec_jobs": {
-                rid: {k: v for k, v in job.items()
-                      if k not in ("proc", "fh", "item", "cfg", "codex")}
-                for rid, job in (exec_workers.get("exec_jobs") or {}).items()
-                if not job.get("partial")
-            }
-        }
-        save_state(_early)
-    except Exception as exc:
-        log(f"[exec] 工作槽状态提前落盘失败（继续）：{exc!r}")
-
-    # Refresh truth after local work has already started. A slow/unreachable
-    # remote must not hold worker dispatch behind the network timeout.
-    rc, out = run_kgctl(["tick", "--no-converge"], env_extra={"KG_TICK_LIGHT": "1"})
-    log_block("tick", rc, out)
-    convergence = parse_convergence(out)
-    log(f"[converge] 可收拢族 {convergence['families']}，本轮新建 {convergence['made']}")
-
-    # 归档「内容已全部在 main」的重复分支。这一步只写台账（加法），不动任何代码，
-    # 也不动任何源分支，所以放进守护的安全子集。用 --fast（patch-id）保证秒级返回。
-    superseded = 0
-    src, sout = run_kgctl(["supersede", "--go", "--fast"], timeout=SUPERSEDE_TIMEOUT,
-                              env_extra={"KG_SUPERSEDE_LIGHT": "1"})
-    log_block("supersede", src, sout)
-    m = SUPERSEDE_DONE_RE.search(sout)
-    if m:
-        superseded = int(m.group(1))
-
-    landed, failures = [], []
-    if rc == 124:
-        # 超时必须算失败：旧实现里 tick 超时的 out 是一条说明文案（非空），于是既不进
-        # failures 也不报警——30 分钟的黑洞在面板上显示成 last_failures=0。
-        failures.append(("(tick)", "tick_timeout"))
-    elif rc != 0 and not out.strip():
-        failures.append(("(tick)", "tick_error"))
-
-    auto_land = control_state.load().get("auto_land", True)
-    summary = {"other": 0, "merged": 0, "conflict": 0, "unresolved": 0}
-    land_blocked = dict(load_state().get("land_blocked") or {})
-    attempts = 0
-    while auto_land and attempts < max_land:
-        if _over_budget(deadline, "下一轮 land"):
-            break
-        rc, qout = run_kgctl(["queue", "--light"])
-        clean, summary, files_by_branch = parse_queue(qout)
-        if rc != 0:
-            log_block("queue", rc, qout)
-            failures.append(("(queue)", "queue_error"))
-            break
-        clean = [b for b in clean if b not in land_blocked and files_by_branch.get(b, 0) > 0]
-        if not clean:
-            log(f"[queue] 可落盘 0 个（merged={summary['merged']} "
-                f"conflict={summary['conflict']}）")
-            break
-        target = clean[0]
-        attempts += 1
-        if dry:
-            log(f"[dry] 本轮会 land: {target}（队列 {len(clean)} 个）")
-            break
-        lrc, lout = run_kgctl(["land", target], timeout=LAND_TIMEOUT)
-        kind = classify_land(lout, lrc)
-        log_block(f"land {target} -> {kind}", lrc, lout)
-        if kind == "landed":
-            landed.append(target)
-            land_blocked.pop(target, None)
-            continue
-        if kind == "already":
-            land_blocked.pop(target, None)
-            continue
-        if kind in ("locked", "noop"):
-            break
-        failures.append((target, kind))
-        if kind in ("merge_fail", "gate_fail", "conflict", "unresolved_markers"):
-            land_blocked[target] = {"reason": kind, "ts": _now()}
-            log(f"[land] {target} 记进 land_blocked（{kind}），后续周期跳过，"
-                f"避免反复占用自动落盘")
-        break
-
-    # 自动移植「只差几个提交」的冲突分支：cherry-pick 到当前 main，过门禁才落盘，
-    # 冲突即整体放弃。默认关闭，由状态根 ops/central.config.json 的 auto_port 打开。
-    # 一周期内把所有候选试一遍：成功的落盘并继续，冲突的进 port_blocked 后跳过，
-    # 于是循环不断收窄，直到没有候选或达到上限。试过且不行的分支后续周期不再重试。
-    ported = []
-    port_blocked = dict(load_state().get("port_blocked") or {})
-    port_cfg = auto_port_config()
-    if not dry and port_cfg["enabled"] and not (rc != 0 and not out.strip()):
-        port_state = load_state()
-        port_scan_ts = float(port_state.get("last_port_scan_ts") or 0)
-        port_scan_hit = bool(port_state.get("last_port_scan_hit"))
-        now = time.time()
-        if not port_scan_hit and now - port_scan_ts < PORT_SCAN_COOLDOWN:
-            log(f"[port] 上一轮无候选扫描在 {PORT_SCAN_COOLDOWN}s 冷却期内，跳过本轮全量扫描")
-        else:
-            for _ in range(PORT_MAX_ATTEMPTS):
-                prc, pout = run_kgctl(["port", "--auto", "--go",
-                                       "--max-unlanded", str(port_cfg["max_unlanded"])],
-                                      timeout=PORT_TIMEOUT,
-                                      env_extra={"KG_PORT_SKIP": ":".join(port_blocked)})
-                log_block("port(auto)", prc, pout)
-                pm = PORT_RESULT_RE.search(pout)
-                if not pm:
-                    # 没有候选 / 扫描超时：把扫描时间记回 state，下一轮不重扫同一批
-                    # 无候选分支，也不让超时后的下一次循环再白等几分钟。
-                    port_state = load_state()
-                    port_state["last_port_scan_ts"] = str(int(time.time()))
-                    port_state["last_port_scan_hit"] = False
-                    save_state(port_state)
-                    if prc == 124:
-                        log(f"[port] 扫描超时后进入 {PORT_SCAN_COOLDOWN}s 冷却，避免下一轮重复全量扫描")
-                    break
-                port_state["last_port_scan_hit"] = True
-                save_state(port_state)
-                pb, po = pm.group(1), pm.group(2)
-                if po == "landed":
-                    ported.append(pb)
-                    port_blocked.pop(pb, None)
-                    continue  # main 已前进，下一轮重新挑
-                port_blocked[pb] = {"reason": po, "ts": _now()}
-        # 移植推进了 main，可能让别的分支的改动「现在全部在 main 了」——再扫一次归档。
-        if ported:
-            src2, sout2 = run_kgctl(["supersede", "--go", "--fast"], timeout=SUPERSEDE_TIMEOUT,
-                                       env_extra={"KG_SUPERSEDE_LIGHT": "1"})
-            log_block("supersede(post-port)", src2, sout2)
-            m2 = SUPERSEDE_DONE_RE.search(sout2)
-            if m2:
-                superseded += int(m2.group(1))
-    elif not port_cfg["enabled"]:
-        log("[port] auto_port 未开启（ops/central.config.json），跳过自动移植")
-
-    # 冲突分支不再推给用户逐条裁决：每周期把一条「文件少、未落改动小」的冲突拆成
-    # 独立可执行单元。能被确定性解掉的（append-only jsonl 行级并集）直接走门禁落盘；
-    # 其余保留 marker，写出一份任务书 + 独立 worktree，交给 agent 按 slug 收口。
-    # 拆不动 / 门禁没过的分支记进 resolve_blocked，后续周期跳过，不反复拆同一条。
-    resolved_tasks, resolve_gate_fail = [], []
-    resolve_blocked = dict(load_state().get("resolve_blocked") or {})
-    resolve_cfg = auto_resolve_config()
-    resolve_landed_any = False
-    if not dry and resolve_cfg["enabled"] and not (rc != 0 and not out.strip()):
-        for _ in range(RESOLVE_MAX_ATTEMPTS):
-            skip = ":".join(b for b in resolve_blocked if b)
-            rrc, rout = run_kgctl(["resolve", "--auto", "--go",
-                                   "--max-files", str(resolve_cfg["max_files"]),
-                                   "--max-lines", str(resolve_cfg["max_lines"])],
-                                  timeout=RESOLVE_TIMEOUT,
-                                  env_extra={"KG_RESOLVE_SKIP": skip,
-                                             "KG_RESOLVE_LIGHT": "1"})
-            log_block("resolve(auto)", rrc, rout)
-            rm = RESOLVE_RESULT_RE.search(rout)
-            if not rm:
-                break  # 没有候选了
-            rb, ro = rm.group(1), rm.group(2)
-            if ro == "landed":
-                resolve_landed_any = True
-            elif ro == "needs_agent":
-                resolved_tasks.append(rb)
-            elif ro in ("too_big", "blocked", "clean"):
-                resolve_blocked[rb] = {"reason": ro, "ts": _now()}
-            elif ro == "gate_fail":
-                resolve_gate_fail.append(rb)
-                resolve_blocked[rb] = {"reason": ro, "ts": _now()}
-            # 每条结果都让候选集变小（落盘 / 占用 / 跳过），继续拆下一条。
-            if resolve_landed_any:
-                break  # 落盘推进了 main，下一周期基于新 main 重挑
-    elif not resolve_cfg["enabled"]:
-        log("[resolve] auto_resolve 未开启（ops/central.config.json），跳过冲突拆分")
-
-    # 落过盘就再刷一次控制面，让看板/快照反映新 main。
-    if (landed or ported or resolve_landed_any or exec_landed) and not dry:
-        rc2, out2 = run_kgctl(["tick", "--no-converge"], env_extra={"KG_TICK_LIGHT": "1"})
-        log_block("tick(post-land)", rc2, out2)
+    landed = ctx["landed"]
+    failures = ctx["failures"]
+    summary = ctx["summary"]
+    superseded = ctx["superseded"]
+    ported = ctx["ported"]
+    port_blocked = ctx["port_blocked"]
+    resolved_tasks = ctx["resolved_tasks"]
+    resolve_gate_fail = ctx["resolve_gate_fail"]
+    resolve_landed_any = ctx["resolve_landed_any"]
+    resolve_blocked = ctx["resolve_blocked"]
+    land_blocked = ctx["land_blocked"]
+    exec_results = ctx["exec_results"]
+    exec_landed = ctx["exec_landed"]
+    exec_workers = ctx["exec_workers"]
+    exec_blocked = ctx["exec_blocked"]
+    convergence = ctx["convergence"]
 
     result = {"ts": time.time(), "iso": _now(), "dry": dry,
               "summary": summary, "landed": landed, "failures": failures,
@@ -4081,12 +5276,14 @@ def _run_cycle(dry: bool, max_land: int, deadline: float = None) -> dict:
               "resolved_tasks": resolved_tasks,
               "resolve_gate_fail": resolve_gate_fail,
               "exec_results": exec_results,
-              "convergence": convergence}
+              "convergence": convergence,
+              "passes": ctx["passes"],
+              "pass_counts": counts,
+              "mode": mode,
+              "only": sorted(only) if only else None}
 
     # ---- 通知：只在「完成 / 失败 / 新收拢出族」时出声，且去重 ----
     state = load_state()
-    prev = state.get("last_summary") or {}
-    prev_conflict = prev.get("conflict")
     prev_families = int(state.get("convergence_families", 0))
 
     if landed:
@@ -4164,6 +5361,12 @@ def _run_cycle(dry: bool, max_land: int, deadline: float = None) -> dict:
     state["last_exec"] = ([{"id": r.get("id"), "outcome": r.get("outcome")}
                            for r in exec_results] or state.get("last_exec", []))
     state["total_exec"] = int(state.get("total_exec", 0)) + len(exec_landed)
+    # 这一拍跑了哪些 pass、各自什么状态、花了多久：出问题时第一眼要看的东西。
+    state["last_passes"] = ctx["passes"]
+    state["last_pass_counts"] = counts
+    # pass 被关闭 / observe / 超预算时这一拍没有新摘要，不能把上一拍的巡检结论抹成 None。
+    if ctx.get("route_health") is not None:
+        state["route_health"] = ctx["route_health"]
     save_state(state)
 
     log(f"--- cycle done: landed={len(landed)} failures={len(failures)} "
@@ -4179,6 +5382,7 @@ def _run_cycle(dry: bool, max_land: int, deadline: float = None) -> dict:
         failures=[{"target": t, "kind": k} for t, k in failures],
         conflict=summary.get("conflict"),
         merged=summary.get("merged"),
+        passes=counts,
     )
     return result
 
@@ -4258,17 +5462,31 @@ def _python_for_plist() -> str:
     return sys.executable or "/usr/bin/python3"
 
 
-def plist_script_path():
-    """读已装 launchd plist 里实际会跑的那个脚本路径；没装/读不了返回 None。"""
+def plist_program_arguments():
+    """读已装 launchd plist 的 ProgramArguments；没装/读不了返回 None。"""
     try:
         with PLIST_PATH.open("rb") as fh:
             data = plistlib.load(fh)
     except (OSError, ValueError, plistlib.InvalidFileException):
         return None
-    for arg in data.get("ProgramArguments") or []:
+    args = data.get("ProgramArguments")
+    return [str(arg) for arg in args] if isinstance(args, list) else None
+
+
+def plist_script_path():
+    """读已装 launchd plist 里实际会跑的那个脚本路径；没装/读不了返回 None。"""
+    for arg in plist_program_arguments() or []:
         if str(arg).endswith("central_daemon.py"):
             return str(arg)
     return None
+
+
+def plist_maintenance_only():
+    """已装守护是否处于维护模式；没装/读不了返回 None（不冒充已知）。"""
+    args = plist_program_arguments()
+    if args is None:
+        return None
+    return "--maintenance-only" in args
 
 
 def plist_drift():
@@ -4292,7 +5510,36 @@ def plist_drift():
     return (not same), running, here
 
 
-def build_plist(interval_min: int) -> dict:
+def _env_flag(name: str):
+    """Read a tri-state boolean env knob: None when unset or empty."""
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return None
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _maintenance_only_choice(explicit):
+    """Decide the daemon mode without silently changing what is installed.
+
+    Precedence: explicit caller/CLI > environment override > installed plist >
+    full autopilot. The installed-plist step matters because preview.80 rewrote
+    the launchd job without `--maintenance-only`, so a routine reinstall turned
+    the zero-touch daemon back into a route/land daemon. Reading the installed
+    job makes the mode sticky; an explicit env value still lets an operator opt
+    out on purpose.
+    """
+    if explicit is not None:
+        return bool(explicit)
+    env_choice = _env_flag("KG_DAEMON_MAINTENANCE_ONLY")
+    if env_choice is not None:
+        return env_choice
+    installed = plist_maintenance_only()
+    if installed is not None:
+        return installed
+    return False
+
+
+def build_plist(interval_min: int, maintenance_only=None) -> dict:
     # 守护永远跑插件目录里的这份脚本。KG_TRUNK 是落盘用的主干 worktree，它的 ops/
     # 可能是旧副本；如果 plist 指向 `$KG_TRUNK/ops/central_daemon.py`，插件升级后
     # 守护又会跑旧代码 —— 这正是自包含安装要消掉的问题。KG_TRUNK 只作为运行时旋钮
@@ -4334,11 +5581,15 @@ def build_plist(interval_min: int) -> dict:
         env["KG_TRUNK"] = str(trunk)
     elif trunk_env:
         env["KG_TRUNK"] = str(Path(trunk_env).expanduser())
+    maintenance_only = _maintenance_only_choice(maintenance_only)
+    args = [_python_for_plist(), str(script),
+            "--loop", "--interval", str(interval_min),
+            "--max-land", str(DEFAULT_MAX_LAND)]
+    if maintenance_only:
+        args.append("--maintenance-only")
     return {
         "Label": PLIST_LABEL,
-        "ProgramArguments": [_python_for_plist(), str(script),
-                             "--loop", "--interval", str(interval_min),
-                             "--max-land", str(DEFAULT_MAX_LAND)],
+        "ProgramArguments": args,
         "RunAtLoad": True,
         "KeepAlive": True,
         "ThrottleInterval": 60,
@@ -4394,15 +5645,34 @@ def wait_for_job_gone(uid: int, timeout: float = 30.0) -> bool:
     return _job_pid(uid) is None
 
 
-def install(interval_min: int) -> int:
+def verify_job_running(timeout: float = 20.0) -> tuple[bool, dict]:
+    """bootstrap 之后回读 launchd，确认 job 真的拿到了 pid。
+
+    只看 `launchctl bootstrap` 的退出码不够：进程可能在 RunAtLoad 后立刻崩掉，
+    控制面板却会把 `daemon_enabled` 写成 true，重新制造「开关绿、进程无」。
+    判据复用面板/CLI 共用的 daemon_liveness，不在这里另写一套 launchctl 正则。
+    """
+    deadline = time.monotonic() + timeout
+    last = {"status": "unknown", "pid": None}
+    while True:
+        last = daemon_liveness.daemon_liveness()
+        if last.get("status") == "running" and last.get("pid") is not None:
+            return True, last
+        if time.monotonic() >= deadline:
+            return False, last
+        time.sleep(1.0)
+
+
+def install(interval_min: int, maintenance_only=None) -> int:
     if sys.platform != "darwin":
         log("install 只支持 macOS（launchd）。其它平台请用 `--loop` 自己托管。")
         return 1
     trunk = Path(os.environ.get("KG_TRUNK", str(CODE_ROOT))).expanduser()
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     before = plist_script_path()
+    plist_data = build_plist(interval_min, maintenance_only)
     with PLIST_PATH.open("wb") as fh:
-        plistlib.dump(build_plist(interval_min), fh)
+        plistlib.dump(plist_data, fh)
     log(f"已写 {PLIST_PATH}")
     if before and Path(before).resolve() != (HERE / "central_daemon.py").resolve():
         # 不静默：把「从哪一份切到哪一份」写进日志，事后能核对守护到底加载了谁。
@@ -4412,6 +5682,10 @@ def install(interval_min: int) -> int:
     if not wait_for_job_gone(uid):
         log("× 旧实例在 30s 内没退干净；稍后重试 --install")
         return 1
+    # launchd 会把被面板/系统禁用的 label 直接拒绝在 bootstrap 阶段
+    # (实测 2026-11-13：print-disabled 显示 disabled，bootstrap 返回 EIO=5)。
+    # enable 必须先于 bootstrap；放在后面会在这一阶段永远走不到。
+    launchctl("enable", f"gui/{uid}/{PLIST_LABEL}")
     # bootstrap 带 RunAtLoad，会直接把进程拉起；不要用 kickstart：
     # kickstart -k 要等常驻进程退出才返回，会一直挂住（实测）。
     rc = launchctl("bootstrap", f"gui/{uid}", str(PLIST_PATH))
@@ -4421,8 +5695,17 @@ def install(interval_min: int) -> int:
     if rc != 0:
         log("× launchctl bootstrap 失败；请检查上面的 plist 和 python 路径")
         return 1
-    launchctl("enable", f"gui/{uid}/{PLIST_LABEL}")
-    log(f"已启用 {PLIST_LABEL}（每 {interval_min} 分钟一轮，nice={os.environ.get('KG_DAEMON_NICE', '10')}）")
+    live, state = verify_job_running()
+    if not live:
+        log("× launchd 已加载 job，但回读不到运行中的守护进程"
+            f"（状态={state.get('status')}）；不把常驻开关写成已开启。"
+            f" 日志：{LOG}")
+        return 1
+    mode = ("维护模式"
+            if "--maintenance-only" in (plist_data.get("ProgramArguments") or [])
+            else "完整自动挡")
+    log(f"已启用 {PLIST_LABEL}（pid={state.get('pid')}，每 {interval_min} 分钟一轮，{mode}，"
+        f"nice={os.environ.get('KG_DAEMON_NICE', '10')}）")
     return 0
 
 
@@ -4475,6 +5758,13 @@ def show_status() -> int:
     print("=== 自动挡常驻（KgCentralDaemon）===")
     print(f"守护状态       {'launchd 已加载' if loaded else '未加载'}"
           f"{'' if loaded else '（用 --install 打开）'}")
+    installed_mode = plist_maintenance_only()
+    if installed_mode is True:
+        print("守护模式       维护模式（只刷新磁盘闸 + 零损失回收；不 route/land/exec）")
+    elif installed_mode is False:
+        print("守护模式       完整自动挡")
+    else:
+        print("守护模式       （未安装/读不到 plist）")
     drifted, running_script, this_script = plist_drift()
     if drifted:
         print(f"⚠ 版本不一致   守护跑的是 {running_script}")
@@ -4559,7 +5849,8 @@ def _exec_pool_busy() -> bool:
     return False
 
 
-def loop(interval_min: int, max_land: int, dry: bool) -> int:
+def loop(interval_min: int, max_land: int, dry: bool,
+         only=None, mode=None) -> int:
     if not acquire_lock():
         log(f"已有实例在跑（{DAEMON_LOCK}），本次退出")
         return 1
@@ -4576,7 +5867,7 @@ def loop(interval_min: int, max_land: int, dry: bool) -> int:
             heartbeat_lock()
             started = time.time()
             try:
-                run_cycle(dry, max_land)
+                run_cycle(dry, max_land, only=only, mode=mode)
             except Exception as exc:  # 单轮失败不能让守护退出
                 log(f"× 本轮异常（已吞掉，下轮继续）：{exc!r}")
             # 预算闸门（fail-open）：测量长驻窗口预算、按需自动换代、按需暂停派活。
@@ -4587,6 +5878,37 @@ def loop(interval_min: int, max_land: int, dry: bool) -> int:
                 budget_gate.daemon_hook(dry=dry, log_fn=log)
             except Exception as exc:
                 log(f"[budget] 闸门跳过（fail-open）：{exc!r}")
+            # 状态管家（fail-open）：按体检结论出「harness 调整卡」。这一钩子**只写
+            # 提案、从不改 config** —— 真正应用必须由人显式点头（见 harness_tune.py）。
+            # 与预算闸门同族：只读判定、动作显式、一键关、异常一律吞掉。
+            try:
+                import harness_tune
+                harness_tune.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[tune] 出卡跳过（fail-open）：{exc!r}")
+            # 上下文管家（fail-open）：扫已路由的入口原话，命中规范性措辞就出「约束候选卡」。
+            # 与状态管家同族：**只提名、从不写生效约束** —— 真正升成约束必须由人显式点头
+            # （见 constraint_candidates.py）。候选不参与落盘门禁，异常一律吞掉。
+            try:
+                import constraint_candidates
+                constraint_candidates.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[constraint] 提名跳过（fail-open）：{exc!r}")
+            # 上下文管家自学习（fail-open）：跨会话找反复出现的共性诉求，只出候选。
+            # 不自动追问、不写生效约束；人确认后才进现有 constraint 候选闸。
+            try:
+                import context_learning
+                context_learning.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[context-learning] 学习跳过（fail-open）：{exc!r}")
+            # 验收管家（fail-open）：把已路由的「怎么算完成」原话提名成验收标准候选。
+            # 这里只提名、绝不登记验收项：promote 必须人显式确认，且不得伪造证据。
+            # 顺序放在上下文候选之后，两个候选来源彼此独立；异常一律吞掉。
+            try:
+                import acceptance_criteria
+                acceptance_criteria.daemon_hook(dry=dry, log_fn=log)
+            except Exception as exc:
+                log(f"[acceptance] 提名跳过（fail-open）：{exc!r}")
             # 空转记分（fail-open）：给每一拍分类，连续空转就点名并把记分写进下一拍的 prompt。
             # 与预算闸门同族：只读判定、动作显式、一键关、异常一律吞掉。
             try:
@@ -4621,12 +5943,88 @@ def loop(interval_min: int, max_land: int, dry: bool) -> int:
     return 0
 
 
+def maintenance_loop(interval_min: int) -> int:
+    """Run the host-maintenance lane as a launchd-managed daemon."""
+    if not acquire_lock():
+        log(f"已有实例在跑（{DAEMON_LOCK}），本次退出")
+        return 1
+    signal.signal(signal.SIGTERM, _sigint)
+    signal.signal(signal.SIGINT, _sigint)
+    try:
+        try:
+            os.nice(int(os.environ.get("KG_DAEMON_NICE", "10")))
+        except (OSError, ValueError):
+            pass
+        log(f"维护守护启动 pid={os.getpid()} interval={interval_min}min；"
+            "不 route/land/port/resolve/exec")
+        while not _stop:
+            heartbeat_lock()
+            try:
+                run_maintenance_cycle()
+            except Exception as exc:
+                log(f"× 维护周期异常（守护继续运行）：{exc!r}")
+            sleep_for = max(5, interval_min * 60)
+            log(f"维护下一轮 {sleep_for/60:.1f} 分钟后")
+            slept = 0.0
+            while slept < sleep_for and not _stop:
+                time.sleep(min(5.0, sleep_for - slept))
+                slept += 5.0
+    finally:
+        release_lock()
+        log("维护守护退出")
+    return 0
+
+
+def run_maintenance_cycle() -> dict:
+    """Refresh the admission state and run zero-loss cleanup only.
+
+    Maintenance mode never routes intake or touches project branches. It
+    keeps the host healthy while broad auto-landing behavior stays disabled,
+    and still respects the global control gates.
+    """
+    if not control_state.is_enabled():
+        log("[maintenance] 自动挡已关闭：本轮不启动安全维护")
+        return {"ts": time.time(), "iso": _now(), "maintenance_only": True,
+                "disabled": True, "landed": [], "failures": []}
+    if control_state.is_paused():
+        log("[maintenance] 自动挡已暂停：本轮不启动安全维护")
+        return {"ts": time.time(), "iso": _now(), "maintenance_only": True,
+                "paused": True, "landed": [], "failures": []}
+
+    _disk_pressure()
+    maybe_reap()
+    failures = []
+    try:
+        _reap_backend_orphans()
+        _reap_dead_worktrees()
+        _reap_orphan_residue()
+        if (_disk_free_gb() or 0) < REAP_PRESSURE_FREE_GB:
+            _git_gc_maintenance()
+    except Exception as exc:
+        failures.append(("(maintenance)", repr(exc)))
+        log(f"[maintenance] 安全回收异常（已隔离，不触碰项目工作）：{exc!r}")
+
+    result = {"ts": time.time(), "iso": _now(), "maintenance_only": True,
+              "summary": {}, "landed": [], "failures": failures}
+    state = load_state()
+    state["last_run"] = result
+    try:
+        save_state(state)
+    except OSError as exc:
+        log(f"[maintenance] 本轮结果暂不能持久化：{exc}")
+    return result
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="自动挡常驻执行器（安全子集：合无冲突分支 + 移植小改动 + 拆冲突为任务）")
     ap.add_argument("--once", action="store_true", help="跑一个周期就退出")
     ap.add_argument("--loop", action="store_true", help="常驻，按 --interval 循环")
     ap.add_argument("--dry-run", action="store_true", help="只预演，不真的 land")
+    ap.add_argument(
+        "--maintenance-only", action="store_true",
+        help="常驻时只刷新磁盘闸并执行零损失回收；不 route/land/port/resolve/exec",
+    )
     ap.add_argument("--interval", type=int, default=int(
         os.environ.get("KG_DAEMON_INTERVAL", DEFAULT_INTERVAL_MIN)),
         help=f"常驻周期，分钟（默认 {DEFAULT_INTERVAL_MIN}）")
@@ -4635,19 +6033,49 @@ def main() -> int:
         help=f"每轮最多 land 几个（默认 {DEFAULT_MAX_LAND}）")
     ap.add_argument("--status", action="store_true", help="看守护 / 队列状态")
     ap.add_argument("--install", action="store_true", help="装成 launchd 守护并启用")
+    ap.add_argument(
+        "--install-maintenance-only", action="store_true",
+        help="安装时强制零触碰维护模式（不带则继承已装 plist 的模式）",
+    )
+    ap.add_argument(
+        "--install-full", action="store_true",
+        help="安装时强制完整自动挡模式（不带则继承已装 plist 的模式）",
+    )
     ap.add_argument("--uninstall", action="store_true", help="停用并删除 launchd 守护")
+    ap.add_argument(
+        "--only", default=os.environ.get("KG_DAEMON_ONLY"),
+        help="只跑指定的 pass（逗号分隔，如 route,land）；顺序仍按注册顺序",
+    )
+    ap.add_argument(
+        "--mode", default=os.environ.get("KG_DAEMON_MODE"), choices=None,
+        help="临时覆盖自治等级：auto | propose | observe（propose/observe 不执行任何副作用）",
+    )
     args = ap.parse_args()
+    only = [n.strip() for n in args.only.split(",") if n.strip()] if args.only else None
+    mode = args.mode.strip().lower() if args.mode else None
+    if mode is not None and mode not in pass_registry.MODES:
+        # 写错模式名不许 fail-silent：那会让人以为「观测期开着」其实还是 auto。
+        ap.error(f"--mode 只能是 {' | '.join(pass_registry.MODES)}，收到 {args.mode!r}")
 
+    if args.install_maintenance_only and args.install_full:
+        ap.error("--install-maintenance-only 与 --install-full 不能同时使用")
     if args.install:
-        return install(args.interval)
+        explicit = None
+        if args.install_maintenance_only:
+            explicit = True
+        elif args.install_full:
+            explicit = False
+        return install(args.interval, explicit)
     if args.uninstall:
         return uninstall()
     if args.status:
         return show_status()
     if args.loop:
-        return loop(args.interval, args.max_land, args.dry_run)
+        if args.maintenance_only:
+            return maintenance_loop(args.interval)
+        return loop(args.interval, args.max_land, args.dry_run, only=only, mode=mode)
     # 默认（含 --once）：跑一个周期。
-    run_cycle(args.dry_run, args.max_land)
+    run_cycle(args.dry_run, args.max_land, only=only, mode=mode)
     return 0
 
 

@@ -16,6 +16,11 @@ import subprocess
 import time
 from pathlib import Path
 
+try:  # sibling module in ops/; absent only in a partially copied install
+    import live_guard as _live_guard
+except Exception:  # a missing guard must never block a caller
+    _live_guard = None
+
 
 PROTECTED_NAMES = {"knowledge-graph", "kg-trunk", "kg-land-main"}
 # Directories that serve a live product surface rather than a task. They are not
@@ -23,6 +28,36 @@ PROTECTED_NAMES = {"knowledge-graph", "kg-trunk", "kg-land-main"}
 # `kg-live-3000` is the copy the owner actually runs on 3000/3001, and it would
 # otherwise have become reclaimable the moment it sat idle for a day.
 PROTECTED_PREFIXES = ("kg-live-",)
+
+# Naming test for "this directory is a machine-created task worktree".
+#
+# It exists as one shared predicate because two scanners used to hard-code their
+# own copy of the prefix, and the two copies drifted out of agreement with the
+# orphan-residue classifier (MACHINE_TASK_DIR_RE below). Measured 2026-11-12 on
+# the real machine: `kg29-mainchk` and `kg29-t01c` are registered worktrees,
+# each carrying a byte-identical 262MB `backend/evidence`+`evidence` copy,
+# pristine and long idle -- and no reap channel would ever look at them, because
+# both spell it `kg29-` rather than `kg-`. That is the same failure class as the
+# 2026-11-13 strip deadlock: capacity existed, the classifier refused to see it.
+#
+# The prefix must cover the spellings the tooling actually emits (`kg-`, `kg_`,
+# `kgNN-`, `kgNN_`) plus the older `knowledge-graph-*` family, and nothing else.
+# This is only the *name* test: protected names/prefixes are checked separately
+# by every caller, so widening this set cannot by itself bypass a protection.
+TASK_WORKTREE_NAME_RE = re.compile(r"^(?:kg[-_0-9]|knowledge-graph[-_])")
+
+
+def is_task_worktree_name(name: str) -> bool:
+    """Is `name` a machine-created task-worktree directory name?
+
+    Callers still owe the rest of the chain (has `.git`, not protected, idle,
+    no live process, and -- for content deletion -- pristine). This function
+    only replaces the ad-hoc `name.startswith("kg-")` prefix tests so all
+    channels finally agree on what a task worktree is called.
+    """
+    return bool(TASK_WORKTREE_NAME_RE.match(name))
+
+
 GENERATED_DIRS = (
     "frontend/node_modules",
     "backend/node_modules",
@@ -44,6 +79,182 @@ REGENERABLE_TRACKED_DIRS = (
     "backend/evidence",
     "evidence",
 )
+
+
+def regenerable_dirs_state(worktree: Path) -> dict[str, str]:
+    """Report, per regenerable dir, whether its working copy may be stripped.
+
+    Returns {rel_dir: "pristine" | "untracked" | "modified" | "absent"}.
+
+    Why this exists (2026-11-09, measured on the real machine): 86 live
+    worktrees each carry a full ~235MB copy of `backend/evidence` + `evidence`,
+    byte-identical to HEAD because the content is git-tracked. That is ~15.6GB
+    of pure duplication with zero information gain -- and the reaper never
+    touched it, because the only thing it knew how to do was *restore* those
+    copies from HEAD (see `restore_regenerable_tracked`), which re-materialises
+    the bytes instead of freeing them. So the disk drifted back to full every
+    few days no matter how often it was cleaned by hand.
+
+    "pristine" is the only state that may be stripped. A single untracked file
+    or a single tracked edit under the dir means a human or a gate wrote
+    something that exists nowhere else yet; that dir is left completely alone.
+    """
+    state: dict[str, str] = {}
+    for rel in REGENERABLE_TRACKED_DIRS:
+        path = worktree / rel
+        if not path.exists():
+            state[rel] = "absent"
+            continue
+        tracked = run_git(worktree, "ls-files", "--", rel)
+        if tracked.returncode != 0 or not (tracked.stdout or "").strip():
+            # Nothing from HEAD lives here, so there is nothing restorable.
+            state[rel] = "untracked"
+            continue
+        diff = run_git(worktree, "status", "--porcelain", "-uall",
+                       "--ignored=matching", "--", rel)
+        lines = [ln for ln in (diff.stdout or "").splitlines() if ln.strip()]
+        if not lines:
+            state[rel] = "pristine"
+            continue
+        # Any '??' entry is content git never recorded; any other entry is a
+        # live edit. Both mean "do not touch". A plain deletion is also left
+        # alone -- it may be someone mid-investigation.
+        if any(ln.startswith("??") or ln.startswith("!!") for ln in lines):
+            state[rel] = "untracked"
+        else:
+            state[rel] = "modified"
+    return state
+
+
+def strip_regenerable_tracked(worktree: Path) -> dict[str, int]:
+    """Delete pristine working copies of the regenerable tracked dirs.
+
+    Safe because the bytes still exist in git: `git -C <tree> checkout --
+    backend/evidence evidence` restores them byte-for-byte (verified by a
+    round-trip test). This is the only place in this codebase that deletes
+    tracked content, and it refuses unless `regenerable_dirs_state` says
+    "pristine" for the dir. Returns {rel_dir: freed_bytes}.
+
+    It writes nothing to HEAD, the index, or any branch, and it never stages,
+    commits, stashes or resets.
+    """
+    stripped: dict[str, int] = {}
+    state = regenerable_dirs_state(worktree)
+    for rel, how in state.items():
+        if how != "pristine":
+            continue
+        path = worktree / rel
+        try:
+            freed = sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+        except OSError:
+            freed = 0
+        try:
+            subprocess.run(
+                ["find", str(path), "-mindepth", "1", "-depth", "-delete"],
+                capture_output=True, timeout=120)
+            path.rmdir()
+        except OSError:
+            continue
+        stripped[rel] = freed
+    return stripped
+
+
+def regenerable_strippable_files(worktree: Path) -> dict[str, list[str]]:
+    """Tracked, byte-clean files under regenerable dirs that may be stripped.
+
+    Per-file refinement of `regenerable_dirs_state`: that function works at whole
+    directory granularity, so one untracked note or one edited file inside
+    `backend/evidence` used to pin the entire ~250MB duplicate. Measured on this
+    machine 2026-11-13: 15 live worktrees were each holding a full ~250MB copy
+    that was byte-identical to HEAD, blocked only by a single stray file next to
+    it -- 2.39GB that the whole-dir rule could never see.
+
+    This is strictly narrower than the directory rule, never a relaxation: a file
+    qualifies only when git tracks it, its status is clean (HEAD == index ==
+    worktree), so the exact bytes exist in HEAD and ``git checkout -- <file>``
+    restores them. Anything untracked, ignored, staged, modified or deleted is
+    reported nowhere and therefore never deleted. Returns {rel_dir: [rel_file]}.
+    """
+    strippable: dict[str, list[str]] = {}
+    for rel in REGENERABLE_TRACKED_DIRS:
+        if not (worktree / rel).exists():
+            continue
+        tracked = run_git(worktree, "ls-files", "-z", "--", rel)
+        if tracked.returncode != 0:
+            continue
+        names = [n for n in (tracked.stdout or "").split("\0") if n]
+        if not names:
+            continue
+        diff = run_git(worktree, "status", "--porcelain", "-uall",
+                       "--ignored=matching", "-z", "--", rel)
+        dirty = set()
+        records = (diff.stdout or "").split("\0")
+        i = 0
+        while i < len(records):
+            entry = records[i]
+            i += 1
+            if not entry:
+                continue
+            code = entry[:2]
+            path = entry[3:]
+            dirty.add(path)
+            # In `-z` a rename/copy splits into two records: the target here and
+            # the source in the next one. Mark both so neither can be stripped.
+            if code[:1] in ("R", "C") and i < len(records) and records[i]:
+                dirty.add(records[i])
+                i += 1
+        keep: list[str] = []
+        for name in names:
+            if name in dirty:
+                continue
+            path = worktree / name
+            if path.is_file() and not path.is_symlink():
+                keep.append(name)
+        if keep:
+            strippable[rel] = keep
+    return strippable
+
+
+def strip_regenerable_files(worktree: Path) -> dict[str, int]:
+    """Delete tracked byte-clean files under regenerable dirs, one file at a time.
+
+    The file-level counterpart of `strip_regenerable_tracked`. It never removes
+    an untracked, ignored, staged, modified or deleted file -- only files that
+    `regenerable_strippable_files` has confirmed exist identically in HEAD. It
+    then prunes only the directories that end up empty, so a stray human file
+    keeps its own directory. Restorable with `git checkout -- <dir>`. Returns
+    {rel_dir: freed_bytes}.
+    """
+    strippable = regenerable_strippable_files(worktree)
+    freed: dict[str, int] = {}
+    for rel, names in strippable.items():
+        total = 0
+        for name in names:
+            path = worktree / name
+            try:
+                total += path.stat().st_size
+                path.unlink()
+            except OSError:
+                continue
+        # Prune directories this strip emptied, deepest first. rmdir only removes
+        # empty dirs, so a parent still holding an untracked file survives.
+        base = worktree / rel
+        try:
+            for sub in sorted((p for p in base.rglob("*") if p.is_dir()),
+                              key=lambda p: -len(p.parts)):
+                try:
+                    sub.rmdir()
+                except OSError:
+                    pass
+            try:
+                base.rmdir()
+            except OSError:
+                pass
+        except OSError:
+            pass
+        if total:
+            freed[rel] = total
+    return freed
 
 
 def restore_regenerable_tracked(worktree: Path) -> list[str]:
@@ -105,6 +316,63 @@ def run_git(path: Path, *args: str, timeout: int = 30) -> subprocess.CompletedPr
     )
 
 
+def _canonical_worktree_path(path: Path) -> Path:
+    """Compare worktree paths by their real filesystem location."""
+    return Path(os.path.realpath(os.fspath(path)))
+
+
+def _worktree_records(repo: Path) -> tuple[list[dict[str, str]] | None, str]:
+    """Return structured `git worktree list --porcelain` records.
+
+    None means the lock state could not be inspected. Callers that delete must
+    treat that as a veto rather than as evidence that a worktree is unlocked.
+    """
+    result = run_git(repo, "worktree", "list", "--porcelain", "-z")
+    if result.returncode != 0:
+        detail = ((result.stdout or "") + (result.stderr or "")).strip()
+        return None, detail[-200:]
+
+    records: list[dict[str, str]] = []
+    current: dict[str, str] = {}
+    for field in (result.stdout or "").split("\0"):
+        if not field:
+            if current:
+                records.append(current)
+                current = {}
+            continue
+        key, _, value = field.partition(" ")
+        current[key] = value
+    if current:
+        records.append(current)
+    return records, ""
+
+
+def worktree_lock_reason(repo: Path, worktree: Path) -> str:
+    """Return why `worktree` is locked, or a fail-closed probe error.
+
+    An empty string means Git explicitly reports the worktree as unlocked.
+    `worktree_removable()` uses the same fail-closed check so a broken Git
+    command cannot silently turn "unknown" into permission to delete.
+    """
+    records, error = _worktree_records(repo)
+    if records is None:
+        detail = f": {error}" if error else ""
+        return f"worktree-lock-check-failed{detail}"
+
+    target = _canonical_worktree_path(worktree)
+    for record in records:
+        raw_path = record.get("worktree")
+        if not raw_path:
+            continue
+        if _canonical_worktree_path(Path(raw_path)) != target:
+            continue
+        if "locked" not in record:
+            return ""
+        reason = record.get("locked", "").strip()
+        return f"worktree-locked: {reason or 'no reason recorded'}"
+    return "worktree-lock-check-failed: worktree not registered"
+
+
 def process_commands() -> str:
     try:
         result = subprocess.run(
@@ -126,6 +394,14 @@ def process_reference(worktree: Path, commands: str | None = None) -> str:
         return ""
     candidates = {str(worktree), worktree.as_posix(), str(worktree.resolve())}
     candidates.add(os.path.realpath(worktree))
+    # macOS: /var、/tmp、/etc 都是 /private/* 的符号链接。git 报出的 worktree 路径常带
+    # /private，而进程 argv 里常写不带 /private 的那一份。两边都要算命中，否则一个正被
+    # dev server / gate 占用的树会被判成「闲置」——2026-11-11 实测过这条误删路径。
+    for path in tuple(candidates):
+        if path.startswith("/private/"):
+            candidates.add(path[len("/private"):])
+        else:
+            candidates.add("/private" + path)
     needles = {path.rstrip("/").lower() for path in candidates if path}
     for raw in commands.splitlines():
         line = raw.strip().lower()
@@ -139,6 +415,49 @@ def process_reference(worktree: Path, commands: str | None = None) -> str:
                 if end == len(line) or line[end] in "/ \t'\"=":
                     return line[:160]
                 start = pos + 1
+    return ""
+
+
+def live_guard_blocker(worktree: Path, mode: str = "cwd") -> str:
+    """Veto reason when something is still working inside `worktree`, else "".
+
+    `mode` is "off" | "cwd" | "all" and controls how much evidence counts:
+
+      * "cwd" -- a live process currently holds the tree as its working
+        directory. Precise and always safe, so it is the default: a dev server
+        or gate run whose argv never spells the tree path is still caught.
+      * "all" -- additionally treats a recently written Codex transcript whose
+        recorded cwd sits in the tree as live. This is the read-only-session
+        case: thinking between turns touches no file, so directory mtime and
+        command-line scans both read it as abandoned.
+
+    Why this is separate from `process_reference` (2026-11-10): the hourly
+    reaper called `worktree_removable(..., commands="")`, which switches that
+    command-line scan off entirely, and its 15-minute pressure idle gate then
+    deleted worktrees a desktop session was still working in -- 18 trees in one
+    day, recoverable only because the branches were kept. A liveness probe that
+    asks the kernel (cwd) and the session log (transcript cwd) cannot be turned
+    off by a caller forgetting to pass `commands`.
+
+    Fails open on purpose: if the probe is unavailable this returns "", i.e. no
+    evidence -- never a delete licence and never a spurious veto.
+    """
+    if _live_guard is None or mode in (None, "", "off"):
+        return ""
+    try:
+        pids = _live_guard.live_processes_in(worktree)
+    except Exception:
+        pids = []
+    if pids:
+        return f"live-cwd: pid {' '.join(pids[:6])}"
+    if mode != "all":
+        return ""
+    try:
+        sessions = _live_guard.sessions_working_in(worktree)
+    except Exception:
+        sessions = []
+    if sessions:
+        return f"live-session: {sessions[0][:160]}"
     return ""
 
 
@@ -186,6 +505,54 @@ def dirty_paths(worktree: Path) -> list[tuple[str, str]]:
             path = path.split(" -> ", 1)[1].strip().strip('"')
         out.append((code, path))
     return out
+
+
+def dirty_outside_regenerable(worktree: Path) -> list[tuple[str, str]]:
+    """Dirty entries that are NOT under a regenerable dir.
+
+    The gate for *reclaiming the whole tree*: as long as this is empty, nothing
+    but a byte-for-byte duplicate of content that lives in git stands between
+    this tree and reclamation. Anything else here means a human is mid-flight,
+    so the tree itself is left exactly as it is.
+
+    It is deliberately NOT the gate for *stripping the duplicate* (2026-11-13
+    root cause). Those are two different questions -- "may I remove the tree?"
+    and "may I drop this one reproducible copy?" -- and coupling them is what
+    kept the disk pinned: a tree with any real edit anywhere was skipped
+    entirely, so its 235MB evidence copy was never released either. Measured on
+    the real machine: 144 of 152 idle trees were blocked this way, and the strip
+    channel released 0.00GB hour after hour. Per-directory safety lives inside
+    `regenerable_dirs_state` / `strip_regenerable_tracked`, which still refuse
+    the moment the copy itself has a human edit or an untracked file.
+    """
+    out = []
+    for code, path in dirty_paths(worktree):
+        if any(path == r or path.startswith(r + "/")
+               for r in REGENERABLE_TRACKED_DIRS):
+            continue
+        out.append((code, path))
+    return out
+
+
+def only_regenerable_deletions(worktree: Path) -> bool:
+    """True when every dirty entry is a deletion of tracked regenerable output.
+
+    This is the exact state `strip_regenerable_tracked` leaves behind, and it is
+    what lets a stripped tree still be reaped instead of being pinned forever.
+    Those bytes are reproducible from HEAD by definition, so such a tree carries
+    zero human work. Deliberately strict in the other direction: one untracked
+    file, or one edit anywhere, returns False and the tree is left alone.
+    """
+    entries = dirty_paths(worktree)
+    if not entries:
+        return False
+    for code, path in entries:
+        if 'D' not in code:
+            return False
+        if not any(path == r or path.startswith(r + '/')
+                   for r in REGENERABLE_TRACKED_DIRS):
+            return False
+    return True
 
 
 def only_untracked_scratch(worktree: Path) -> bool:
@@ -236,6 +603,19 @@ def branch_ahead(repo: Path, branch: str, main: str = "main") -> int:
         return -1
 
 
+def worktree_head_sha(worktree: Path) -> str:
+    """The commit a worktree actually has checked out, branch or detached.
+
+    Separate from any branch *name* on purpose: a detached HEAD has no branch,
+    but it still holds commits -- and those are exactly what a caller must not
+    delete. Returns "" only when the worktree has no resolvable HEAD.
+    """
+    result = run_git(worktree, "rev-parse", "--verify", "HEAD")
+    if result.returncode != 0:
+        return ""
+    return (result.stdout or "").strip()
+
+
 def backup_branch(repo: Path, branch: str, stamp: str) -> tuple[bool, str]:
     """Push a branch, falling back to a unique backup ref on non-fast-forward."""
     remote_result = run_git(repo, "config", "--get", f"branch.{branch}.remote")
@@ -266,17 +646,37 @@ def worktree_removable(
     stamp: str = "",
     drop_scratch: bool = False,
     restore_regenerable: bool = False,
+    accept_stripped_regenerable: bool = False,
+    live_guard_mode: str = "cwd",
 ) -> dict:
     """Assess a worktree without deleting source."""
     if not worktree.exists():
         return {"ok": False, "reason": "missing", "ahead": 0, "backup": ""}
     if worktree.resolve() == repo.resolve() or worktree.name in PROTECTED_NAMES:
         return {"ok": False, "reason": "protected", "ahead": 0, "backup": ""}
+    lock_reason = worktree_lock_reason(repo, worktree)
+    if lock_reason:
+        return {"ok": False, "reason": lock_reason, "ahead": 0, "backup": ""}
     live = process_reference(worktree, commands)
     if live:
         return {"ok": False, "reason": f"process: {live}", "ahead": 0, "backup": ""}
+    guarded = live_guard_blocker(worktree, live_guard_mode)
+    if guarded:
+        return {"ok": False, "reason": guarded, "ahead": 0, "backup": ""}
 
+    # Unique-commit protection must follow the *commit actually checked out*,
+    # not only the branch name. A detached HEAD reports branch "" (the callers
+    # that read `rev-parse --abbrev-ref HEAD` get "HEAD"), yet it can still hold
+    # commits that exist nowhere else. Keying on the branch name alone made
+    # `ahead` read 0 for such a tree, so the "refuse when there are unique
+    # commits" gate below never fired -- and removing the worktree left those
+    # commits reachable from nothing, one `git gc` away from silent deletion.
+    # Measured 2026-11-17: a detached tree with a real `main..HEAD` of 1 was
+    # assessed `ok=True, ahead=0`; passing the HEAD sha instead gave
+    # `unique-commits`. Take the max so neither signal can under-count.
     ahead = branch_ahead(repo, branch, main) if branch else 0
+    head_ahead = branch_ahead(repo, worktree_head_sha(worktree), main)
+    ahead = max(ahead, head_ahead)
     if status(worktree):
         remove_generated_dirs(worktree)
         # Opt-in: when the *only* thing making this tree dirty is untracked
@@ -301,17 +701,53 @@ def worktree_removable(
         # it on. `drop_scratch` above only clears *untracked* scratch; this only
         # restores *tracked* content from HEAD. Neither touches human edits:
         # any remaining dirty entry still keeps the worktree alive.
-        if restore_regenerable:
+        # When the caller also accepts the stripped state, skip the restore: it
+        # would re-materialise the same 235MB and the strip below would delete
+        # it again, every single run. That write/delete churn is pure disk wear
+        # for zero benefit, and this machine's disks are already the scarce
+        # resource -- so restore is only for callers that want the copies back.
+        if restore_regenerable and not accept_stripped_regenerable:
             restored = restore_regenerable_tracked(worktree)
             if restored and not scratch_note:
                 scratch_note = "已从 HEAD 还原可重建产物 " + ", ".join(restored)
-        if status(worktree):
+        # Opt-in (pressure / disk-reap path): once every *human* entry is gone,
+        # the only thing still pinning this tree may be its byte-identical copy
+        # of `backend/evidence` (~235MB each, 86 copies, ~15.6GB total). Those
+        # bytes live in git and `git checkout -- <dir>` brings them back exactly
+        # (round-trip verified). So reclaim the duplicate instead of keeping it
+        # forever -- which is what the old restore-only behaviour did, and why
+        # the disk kept refilling. Runs ONLY when nothing outside the
+        # regenerable dirs is dirty; one edit or one stray file anywhere else
+        # and the tree is left untouched, evidence copies included.
+        if accept_stripped_regenerable and not dirty_outside_regenerable(worktree):
+            freed = strip_regenerable_tracked(worktree)
+            if freed and not scratch_note:
+                total = sum(freed.values())
+                scratch_note = (f"已剥离可重建副本 "
+                                f"{', '.join(freed)}（{total / 1e9:.2f}GB，"
+                                f"`git checkout --` 可还原）")
+        if status(worktree) and not (
+                accept_stripped_regenerable
+                and only_regenerable_deletions(worktree)):
             return {"ok": False, "reason": "dirty", "ahead": ahead, "backup": ""}
     else:
         scratch_note = ""
 
+    # The unique-commit gate must key on `ahead`, NOT on the branch *name*.
+    # `disk_reap._remove_one_kg_tmp` passes branch="" for a detached HEAD, so the
+    # old `if branch and ahead > 0` short-circuited on the empty name and let a
+    # tree with unique commits be reaped. Measured 2026-11-17:
+    #   live   branch="" -> ok=True  reason=clean          ahead=0
+    #   fixed  branch="" -> ok=True  reason=clean          ahead=1   (still reaped!)
+    # Only the second `ok` matters -- the count being right is not enough if the
+    # guard never fires. So: refuse whenever there are unique commits. When we
+    # do have a branch name we can still offer the backup escape hatch; with no
+    # branch there is nothing to push, so the tree simply stays.
     backup = ""
-    if branch and ahead > 0:
+    if ahead > 0:
+        if not branch:
+            return {"ok": False, "reason": "unique-commits-detached",
+                    "ahead": ahead, "backup": ""}
         if not backup_unique:
             return {"ok": False, "reason": "unique-commits", "ahead": ahead, "backup": ""}
         ok, backup = backup_branch(repo, branch, stamp)
@@ -322,17 +758,38 @@ def worktree_removable(
             "scratch": scratch_note}
 
 
-def remove_worktree(repo: Path, worktree: Path) -> tuple[bool, str]:
+def remove_worktree(repo: Path, worktree: Path,
+                    force_regenerable: bool = False) -> tuple[bool, str]:
+    """Remove a worktree directory. The branch is never touched by this.
+
+    `force_regenerable` is opt-in and narrow: after a strip, the tree reads
+    dirty (` D` on evidence paths) and plain `git worktree remove` refuses it.
+    With the flag on we retry with --force, but ONLY when the entire diff is
+    deletions inside the regenerable dirs -- i.e. the bytes are all in git and
+    we removed them on purpose. Any other diff keeps the original refusal, so
+    the default path (delivery cleanup) behaves exactly as before.
+    """
+    lock_reason = worktree_lock_reason(repo, worktree)
+    if lock_reason:
+        return False, lock_reason
     remove_generated_dirs(worktree)
     result = run_git(repo, "worktree", "remove", str(worktree))
+    if result.returncode == 0:
+        return True, ""
+    if force_regenerable and only_regenerable_deletions(worktree):
+        forced = run_git(repo, "worktree", "remove", "--force", str(worktree))
+        detail = ((forced.stdout or "") + (forced.stderr or "")).strip()
+        return forced.returncode == 0, detail[-300:]
     detail = ((result.stdout or "") + (result.stderr or "")).strip()
-    return result.returncode == 0, detail[-300:]
+    return False, detail[-300:]
 
 
 # Machine-generated task directory names. Only names matching this are eligible
 # for orphan-residue reclamation, so a hand-made directory that happens to be
 # empty (or that someone parked `logs/` in) is never touched.
-MACHINE_TASK_DIR_RE = re.compile(r"^(?:kg[-_]|knowledge-graph[-_])")
+# Same name set as `is_task_worktree_name`; kept as one compiled regex so the
+# orphan-residue channel cannot drift away from the two live-tree channels again.
+MACHINE_TASK_DIR_RE = TASK_WORKTREE_NAME_RE
 
 # Top-level dirs that are rebuildable build output when they appear at the root
 # of a worktree (not only under frontend/ or backend/). Vite writes the cache
@@ -413,6 +870,10 @@ def orphan_residue(worktree: Path, min_idle_h: float = 24.0) -> dict:
         return {"ok": False, "reason": "recent"}
     if process_reference(worktree):
         return {"ok": False, "reason": "process"}
+    # 判活用 "all"（2026-11-10）：孤儿残留一样可能是某个只读会话的工作目录；
+    # 只认内核 cwd 会把它判成无人使用。
+    if live_guard_blocker(worktree, "all"):
+        return {"ok": False, "reason": "live-cwd"}
     scratch = _scratch_relative_only(worktree)
     if scratch is None:
         return {"ok": False, "reason": "content"}

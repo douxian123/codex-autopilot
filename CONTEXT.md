@@ -16,11 +16,18 @@
 **Codex 自动挡**是给 Codex 加的一层「工程控制面」：你平时打字的那个 Codex 输入框就是总输入框，零散需求进去，归类、落账、隔离工作区、跑验证、能合的自动合、收口、回写主线，全由它串起来。
 
 - 形态：Codex 插件（原生风格面板） + macOS 菜单栏 Companion（状态锚点，不是第二套产品）
-- 版本：源码/候选发布 `0.6.0-preview.23`；安装后应运行该版本，旧 `preview.22` 保留可回滚，阶段：内部可用
+- 版本（2026-11-20 现场核对）：本机已安装并常驻运行 `0.6.0-preview.104`（`install-state.json` 的 `source_commit=11ef5cc21bcacab946b3970caf375507fe762e30`，常驻守护绑定 `/Users/danta/.newmax/workspace/codex-autopilot`）；该版本早于七管家与面板闭环提交 `65dac332`，因此不是当前 `origin/main` 的内容。`0.6.0-preview.105` 是打包当前主线的候选，尚未安装切换。旧版本目录逐版保留，可 `./install.sh --rollback` 回退，阶段：内部可用。
+- 候选 `0.6.0-preview.104`（源码提交 `11ef5cc21bcacab946b3970caf375507fe762e30`，已确认是 `origin/main` 祖先）：隔离安装 `install_exit=0`；三项定向门禁 `test-context-learning.py` / `test-constraint-candidates.py` / `test-selftest-release-dir.py` 全退出 0；全量 `ops/selftest.py` 退出 0；真机上下文学习扫描 `status=ok`、扫描 211 个会话，识别 `single_entry_unified_routing`（6 次/5 会话）和 `evidence_first_closure`（10 次/4 会话）两个高优先级主题；对外发布评估五条判据 5/5 通过、阴性对照 8/8。现场 `.104` 已安装但不包含七管家闭环；是否切换到当前主线候选 `0.6.0-preview.105` 仍属用户拍板。
+- 候选 `0.6.0-preview.105`：打包当前 `origin/main` 的七管家、九阶段施工计划、十条真实输入端到端门禁与面板三类入口；隔离安装和关键门禁以本轮命令证据为准。旧版本目录逐版保留，切换安装、刷新 Codex 插件缓存、换代常驻守护仍属发布动作，不自动执行。
 - 13 步产品路线：**7 步已完成、6 步进行中、0 步未开始**
 - 验收：机器已自证项持续增加；当前 A-0005/A-0006/A-0007/A-0008 仍需真人/桌面操作
 - 本机实测（2026-10-25）：候选版本 **`0.6.0-preview.23`** 修复跨 worktree / clone 的真相编号复用：同一项目共用持久高水位与文件锁，并合并本地真相根和 `origin/main` 的已占编号；隔离分支先写进展、主干后落盘时不会再撞号。全量 `python3 ops/selftest.py` 退出码 0；真实双 clone 回归验证 `P-0001` / `P-0002` 连续分配。preview.22 的自动收口证据门禁与共享 partial clone 保护保留，旧 `preview.22` 可回滚。
 - 自检：`python3 ops/selftest.py` → **24 组全过、退出码 0、约 58 秒**；再开真编译 + 真二进制两个开关 → **26 组全过**
+- 释放 `0.6.0-preview.53`（2026-11-10，commit `a54ac2c6`）：修复磁盘回收误删**正在被桌面会话使用**的 worktree。判活逻辑（`ops/live_guard.py`：内核 cwd 快照 + 最近写过的 Codex transcript cwd）早已合进 `main`，但从未打包进版本目录，运行中的 `com.danta.codex-disk-reap` 一直执行 `.52` 副本里「只看已合并 + 干净 + mtime 闲置」的旧规则；叠加本机长期低盘（压力模式把闲置门槛从 3 小时降到 15 分钟），于是频繁把在用现场整棵删掉、任务被迫重做。修复前实测 `.52` 的 `disk_reap.py --dry-run` 会回收 `ca-reap-live-session-guard-20261110` 等**持有这个修复本身**的树；换成 `.53` 后同一 dry-run 回收 0 个 worktree。门禁 `python3 ops/test-reap-live-session-guard.py` → `PASS`（含「闲置且干净的真死树仍可回收」反向断言）；全量 `python3 ops/selftest.py` 退出码 0。旧 `preview.52` 完整保留，可 `./install.sh --rollback` 回退。
+- 释放 `0.6.0-preview.54`（2026-11-11，commit `964b6bb1`）：补全 `.53` 漏掉的三条**弱信号回收路径**。`.53` 只把主通道（`central_daemon` 的 worktree 回收）改成 `live_guard_mode="all"`，但 `disk_reap.reap_regenerable_duplicates`（剥离可重建重复副本）、`disk_reap._remove_one_kg_tmp`（回收 `/private/tmp` 下已登记、已并入 main 的 `kg-*` worktree）与 `workspace_guard.orphan_residue`（孤儿残留目录）仍只问内核 cwd，看不见「把该目录当工作目录的只读会话」（其 argv 无树路径、只读活动也不刷目录 mtime），于是「正在用」和「已废弃」读起来一模一样。三条统一改为 `"all"`（同时认内核 cwd 与最近写过的 Codex transcript cwd）。新增门禁 `python3 ops/test-reap-weak-signal-mode.py` → `PASS`（7 项）；同一门禁对 `.53` 那份旧代码跑 → 4 项 `FAIL`、`EXIT=1`，证明确实拦住了原来漏掉的情形。回归 `test-reap-live-session-guard.py` / `test-reap-entry-forwards.py` / `test-orphan-residue.py` 全 `PASS`，全量 `selftest.py` 退出码 0。装好后 `repoint_launchd.py --check` 全绿，`com.danta.codex-disk-reap.plist` 的 `ProgramArguments` 已从 `.53` 改指 `.54`。旧 `preview.53` 完整保留，可 `./install.sh --rollback` 回退。
+- 释放 `0.6.0-preview.57`（2026-11-11，commit `35cb8443`）：给回收器加**创建宽限期**，修「新建 worktree 还没写字就被回收」。本机磁盘长期低于 `REAP_PRESSURE_FREE_GB=12GB`，回收一直处于压力模式，闲置门槛只有 `REAP_IDLE_PRESSURE_H=0.25`（15 分钟）；一棵刚建好、还没落任何改动的新树天然满足「分支 ahead=0 + 干净 + 无进程」，会在人开始干活前就落进回收视角。新增 `central_daemon._within_creation_grace`（默认 `KG_REAP_CREATION_GRACE_H=1` 小时，读 `st_birthtime`，读不到一律当刚创建；`<=0` 即关闭），只按目录创建时间放行 —— 不参与任何安全判据，只减少回收、绝不增加。门禁 `python3 ops/test-reap-creation-grace.py` → `PASS`（5 项，含「超过宽限期后同一棵树仍可回收」的反向断言）。同一轮把本地 main 与 origin/main 分叉合并：`.56` 从本地 main 打包，反而漏掉了 origin/main 上的 `file://` 判活修复（`.55` 有、`.56` 无），合并后两条线合一。旧 `preview.56` 完整保留，可 `./install.sh --rollback` 回退。
+- 释放 `0.6.0-preview.58`（2026-11-11，commit `3a890154`）：修旧会话压缩**在 launchd 下长期空转**。`com.danta.codex-disk-reap` 由 launchd 拉起，PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin`，而本机 `zstd` 只装在 `/opt/homebrew/bin`；实测 `disk-reap.out.log` 每小时对每个候选文件抛一次 `FileNotFoundError: 'zstd'`，一个字节都没压过 —— 它本是低盘止血手段，却一直空转，磁盘因此长期停在压力模式（正是 `.57` 那个空档的诱因）。修法：`disk_reap._zstd_path()` 显式解析二进制（先 `shutil.which`，再查常见 homebrew 前缀），进循环前解析一次，真找不到就报一行、保留全部原文件直接返回。门禁 `python3 ops/test-reap-zstd-path.py` → `PASS`（4 项，含「精简 PATH 下定位到 zstd」与「缺 zstd 时不删任何原文件、不留半截产物」）；同一门禁对 `.56` 旧代码跑 → `AttributeError`（无该 helper），行为级对照为 `compressed=0`、原文件保留。装好后 `launchctl start com.danta.codex-disk-reap` 实测：08:31:49 真机运行回收 1 棵死树、压缩 0 个旧会话、**无 zstd 报错**（此前每小时必报）。旧 `preview.57` 完整保留，可 `./install.sh --rollback` 回退。
+- 释放 `0.6.0-preview.59`（2026-11-11，commit `0d98bca9`）：修回收器**无视 Git 显式 worktree lock**。用户现场中 `kg-source-provenance-audit-20261110` 已用 `git worktree lock --reason source-provenance-active` 保护，但旧版只在回收前看“已合并、干净、无占用进程”，仍会把它列入 `disk_reap.py --dry-run` 候选。修法是用 `git worktree list --porcelain -z` 读取显式锁，在评估和删除两层都 fail closed；同时归一化 symlink 与 macOS `/private` 路径，并修复 `central_daemon` 中扫描变量覆盖调用方候选清单的问题。新增 `python3 ops/test-reap-worktree-lock.py`（锁定、symlink、dry-run 候选、解锁后真实回收），并把 worktree-lock、live-session、weak-signal、creation-grace 四条安全门禁接入 `python3 ops/selftest.py` 总闸。旧 `preview.58` 完整保留，可 `./install.sh --rollback` 回退。
 - 自动实现（2026-10-17 补充）：`ops/central_daemon.py` 强制首步落盘并对“退出 0 但无改动”在同一 worktree 自动重试；真实 `codex exec` 已在隔离 fixture 完成 `L-0001` → `verify.txt` 内容 `hello-e2e` → 过门禁 → land → 收口。
 
 ---
@@ -58,13 +65,26 @@
 - 项目可登记独立的 `quality_gate` 与 `engineering_radar` 只读快照。质量门禁逐项保留 `PASS / RED / HUMAN_PENDING / UNVERIFIED`：36 题严格质量 RED、50 题真人盲评未完成、配置或报告不可读都不能折叠成验收计数或发布通过；工程雷达按快照日期显示 19 层进度、下一步与卡点，不把旧快照冒充当日新结果。
 - 菜单栏 Companion 是轻量状态锚点：展示状态、项目、当前工作/步骤和待处理事项；保留派活、截图、附件、打开完整面板，诊断与路径类动作收进「更多」。
 - 出现人工验收、需要拍板或异常时，主面板升级为明确的待处理状态；菜单栏显示警示图标并通过 macOS 通知中心提醒。同一批待办只提醒一次，待办清空后新一批重新提醒。
+
+### 2026-11-19 面板注意力层级调整
+
+- Codex 原生输入框是唯一常用入口；面板内输入框移到高级区折叠，默认不占首屏。
+- 系统状态行首屏只显示用户可行动的健康结论；守护、队列、PID 和逐条原因进入「系统为什么这么判断」折叠区，同时保留在 `title` 可悬停查看。
+- 最近收口正文不显示 `L-xxxx` 等内部 ID；ID 保留在 `title` / `aria-label` 供追溯。详细交互判断以 `docs/PANEL_INTERACTION_DESIGN.md` 为准。
+- 面板首屏继续去工程黑话：`automation`/`越线` 改成人话健康结论，`判不清归属` 改成「不知道归到哪个项目」，最近收口改成「需求 -> 结果」；工程路径和命令只留可追溯属性与折叠证据。
+- 首屏第一问按动作给短提示：`要你验收`、`要你拍板`、`要说一句`、`等自己的轮次`；项目文件夹工作项 ID 和来源对话 ID 不进正文，只保留在 `title` 供追溯；`自治分级` 改称 `授权情况`。
 - 灵动岛与桌宠不承担路线管理和工程追踪；未来可做入口或轻量状态外观。工程状态需要稳定、可扫描、可验证的主面板。
+- 状态管家内部新增运行态新鲜度只读判据：比对主干源码、已装版本、运行代码与 daemon 是否同一代，并核对 daemon 当前绑定的项目。源码进 main 不代表本机现场生效；代际不一致或 daemon 服务别的账本时只提示受控换代或重载，信息不全写 `unknown`，绝不自动重启、reload、改绑定、换代、改配置或派工单，也不新增第八个管家行。
+- 状态管家内部新增路线与效能只读检测与复核闭环：发现路线偏离 mandate、长时间耗在与验收无关的卡点、同一处重试空转时，只在状态管家原有那一行提示需复核，并写清「只提复核，不自动纠偏」；daemon 每拍自动复测，恢复后清除、判据取不到保留旧项，不新增第八个管家行或新卡片。
+- 上下文管家内部新增跨会话自学习：从当前项目绑定的历史会话与唯一入口里统计反复出现的诉求，达到阈值后在同一候选闸里提「是否纳入规范」。候选附提及次数、跨会话数和原话证据；用户确认前不写生效约束、不改门禁、不自动追问；确认后带 `source=context_learning` 进 `constraints.jsonl`，由 `selfcheck()` 逐条检查是否真有机器兜底。归属先用 Git worktree / remote 识别同一项目的隔离工作区，文档型讨论窗只认真实用户原话里明确提到的项目名；排除系统注入、委派正文和心跳，判不清就跳过，不把别的窗口内容塞进当前项目。候选闸语义不变；扫描按流式逐行读取并设原话上限，避免历史会话增长拖慢面板。
 
 ### 明确不做
 
 - 自建多 agent 框架（编排复用 Codex 会话 / worktree / skill）
+- 把「管家」当成运行时按人类岗位切分的 Agent；新增关注点就横向增加管家行
 - 第二套任务账本、第二套设置体系、独立任务看板
 - 持续屏幕感知、后台自动截屏、隐式上传
+- 未经用户逐项 explicit 授权自动追问；候选默认只是候选，授权后可逆投递仍须发送前复核工作项和 thread 绑定
 - Electron 跨平台、正式签名公证分发
 - 改动共享 checkout 里别人的在途工作
 
@@ -533,6 +553,16 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 - 证据：新增“陈旧空分支不得自动收口、必须重新启动 worker”回归 fixture；
   `python3 -m py_compile ops/central_daemon.py ops/selftest.py` exit 0；
   `python3 ops/selftest.py` exit 0，全量自检通过。
+
+---
+
+### 12.14 原生 Codex 面板设计契约落盘（2026-11-19）
+
+- 原生感以 `@openai/apps-sdk-ui` 为唯一直接复用源；桌面包 `app.asar` 只做局部视觉校准，不当源码抄。面板 UI 继续走 `ui://autopilot/panel-v2.html`，注册 `global` 与 `thread` 两个官方 entrypoint。
+- 原生子对话首行采用 `[AP][<project>][<lane>] <ledger_id> · <title>` 标题契约，完整正文另起一段保留；当前 app-server 没有独立 rename，Codex 侧栏标题取自首条 user message，所以首行是唯一不写宿主库的落地方式。台账没有题名时固定写入 `自动挡任务`，不让正文首句冒充标题。
+- 「永久置顶」与「侧栏默认展开」仍是宿主能力目标；当前工具面没有可用 API，不声称已实现。已落地的是 section 分组、官方 entrypoint 和首行标题命名。
+- 面板主题按「官方语义 token → 旧宿主变量 → 兜底色」接入，success/warning/danger 的软背景与描边优先使用官方 surface token。机器门禁锁住顺序；改动前后真实渲染截图结构、颜色、间距一致，只有状态更新时间不同。
+- 机器门禁：`python3 ops/panel_logic_check.py` exit 0；`python3 ops/panel_render_check.py` exit 0 并生成改动后截图；`python3 ops/selftest.py` exit 0，含新增线程标题契约与行为级派活断言。
 
 ---
 

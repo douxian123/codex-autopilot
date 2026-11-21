@@ -22,6 +22,41 @@
       "class": "repoint"
     },
     {
+      "label": "ai.danta.codex-proxy-watchdog",
+      "script": "ops/guards/proxy-watchdog.sh",
+      "siblings": [],
+      "interval_s": 0,
+      "class": "repoint",
+      "note": "interval_s=0 表示保留 plist 既有调度，只改脚本路径。"
+    },
+    {
+      "label": "ai.danta.hyapi-burner",
+      "script": "ops/guards/hyapi_burner.py",
+      "siblings": ["ops/guards/hyapi_secrets.py"],
+      "interval_s": 0,
+      "class": "repoint",
+      "requires_secrets": ["HYAPI_ADMIN_TOKEN", "HYAPI_API_KEY"],
+      "note": "窗口调度写在 plist 的 StartCalendarInterval；只改脚本路径。"
+    },
+    {
+      "label": "ai.danta.hyapi-deadpool-reap",
+      "script": "ops/guards/hyapi_deadpool_reap.py",
+      "siblings": ["ops/guards/hyapi_secrets.py"],
+      "interval_s": 0,
+      "class": "repoint",
+      "requires_secrets": ["HYAPI_ADMIN_TOKEN"],
+      "note": "保留 plist 既有 StartInterval。"
+    },
+    {
+      "label": "ai.danta.hyapi-freewatch",
+      "script": "ops/guards/hyapi_freewatch.py",
+      "siblings": ["ops/guards/hyapi_secrets.py"],
+      "interval_s": 0,
+      "class": "repoint",
+      "requires_secrets": ["HYAPI_ADMIN_TOKEN"],
+      "note": "多次 StartCalendarInterval 调度原样保留。"
+    },
+    {
       "label": "com.danta.codex-guard",
       "script": "ops/guards/snapshot.sh",
       "siblings": [],
@@ -50,10 +85,18 @@
       "class": "repoint"
     },
     {
+      "label": "com.danta.kg-preserve-orphans",
+      "script": "ops/guards/kg-pin-orphans.sh",
+      "siblings": [],
+      "interval_s": 0,
+      "class": "repoint",
+      "note": "保留 WorkingDirectory / KG_REPO 等 plist 既有字段，只改脚本路径。"
+    },
+    {
       "label": "com.danta.codex-disk-reap",
       "script": "ops/disk_reap.py",
       "siblings": [],
-      "interval_s": 3600,
+      "interval_s": 900,
       "class": "repoint"
     },
     {

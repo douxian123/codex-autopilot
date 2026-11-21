@@ -1,0 +1,8 @@
+{
+ "codex/autopilot-health-20261019@c711255000695f1773b9573a46d51966131a2b16@f45a7a22a98ad312262c6b5c46e91cfc82f2eadd": {
+  "conflict_files": [
+   "ops/budget_gate.py"
+  ],
+  "unresolved_marker_files": []
+ }
+}
