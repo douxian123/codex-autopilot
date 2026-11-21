@@ -1186,6 +1186,14 @@ TOOLS = [
                         "description": "当前会话所在目录（强烈建议带上）。归属判定靠它区分不同项目；不带就可能判不清，记录会进全局待路由箱而不是某个项目账本"},
                 "project": {"type": "string",
                             "description": "明确指定项目名或状态根（用户说了是哪个项目时带上）"},
+                "product_shape": {"type": "array", "items": {"type": "string"},
+                                  "description": "产品形态，如 web_app / browser_extension / backend_service"},
+                "delivery_goal": {"type": "string",
+                                   "description": "交付目标，如 reviewable / acceptance_ready / production_release"},
+                "impacts": {"type": "array", "items": {"type": "string"},
+                            "description": "显式影响标签，如 security / deployment / performance"},
+                "confirm_scope": {"type": "boolean",
+                                  "description": "确认将本次动态验收范围写入目标项目；默认只返回预览"},
             },
             "required": ["text"],
             "additionalProperties": False,
@@ -3959,7 +3967,39 @@ def call_tool(name, args):
                "KG_INBOX_KIND": args.get("kind") or "unknown",
                "KG_INBOX_CWD": (args.get("cwd") or "").strip() or None,
                "KG_INBOX_PROJECT": (args.get("project") or "").strip() or None}
-        return kgctl("intake", text, extra_env=env)
+        # 统一入口先生成本次最小充分验收范围。预览不写盘；只有显式
+        # confirm_scope=true 才成为 pre_acceptance 的活动范围。
+        import dynamic_acceptance_scope
+        scope = dynamic_acceptance_scope.generate_scope(
+            text=text, kind=args.get("kind") or "unknown", files=files,
+            product_shape=args.get("product_shape") or [],
+            delivery_goal=args.get("delivery_goal") or "acceptance_ready",
+            explicit_impacts=args.get("impacts") or [],
+        )
+        intake_result, intake_code = kgctl("intake", text, extra_env=env)
+        result = {"intake": intake_result, "acceptance_scope_preview": scope,
+                  "scope_persisted": False,
+                  "__text__": "需求已进入统一入口；动态验收范围仅生成预览，尚未作为本次活动门禁。"}
+        if intake_code != 0:
+            result["__text__"] = "需求入口处理未完成；动态验收范围仍只是预览，未写入项目。"
+            return result, intake_code
+        if not bool(args.get("confirm_scope")):
+            return result, 0
+        try:
+            repo = resolve_project(project=args.get("project"), cwd=args.get("cwd"),
+                                   bound=os.environ.get("KG_REPO"))
+        except RequestContextError as exc:
+            result["scope_error"] = str(exc)
+            result["__text__"] = "需求已进入入口，但无法确认验收范围归属；未写入任何项目。"
+            return result, 2
+        path = repo / "ops" / "truth" / "acceptance_scope.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(scope, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8")
+        result["scope_persisted"] = True
+        result["scope_path"] = str(path)
+        result["__text__"] = "需求已进入统一入口；动态验收范围已确认并写入目标项目。"
+        return result, 0
     if name == "convergence_plan":
         argv = ["converge"]
         if args.get("confirm"):

@@ -15,7 +15,8 @@ def main():
     backend = scope.generate_scope(
         text="修改内部 API 的数据写入逻辑", kind="bug",
         files=["backend/src/write.ts"], product_shape=["backend_service"])
-    check("后端任务选择工程验收", backend["selected_checks"] == ["engineering"])
+    check("后端任务选择工程与证据验收",
+          backend["selected_checks"] == ["engineering", "evidence"])
     check("后端任务不强制前端验收", "frontend" in backend["not_applicable"])
     check("无未映射风险时可直接进入执行", backend["status"] == "ready")
 
@@ -23,8 +24,9 @@ def main():
         text="调整面板按钮位置和空状态", kind="visual",
         files=["frontend/src/Panel.tsx", "frontend/src/panel.css"],
         product_shape=["web_app"])
-    check("视觉任务选择工程、前端和理解性验收",
-          set(visual["selected_checks"]) == {"engineering", "frontend", "comprehension"})
+    check("视觉任务选择工程、前端、理解性和证据验收",
+          set(visual["selected_checks"]) ==
+          {"engineering", "frontend", "comprehension", "evidence"})
     check("视觉任务识别 UI 影响", "ui" in visual["impact_tags"])
 
     production = scope.generate_scope(

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 
-SUPPORTED = {"engineering", "frontend", "comprehension", "alignment"}
+SUPPORTED = {"engineering", "frontend", "comprehension", "alignment", "evidence"}
 
 
 def _text(value: Any) -> str:
@@ -87,6 +87,12 @@ def generate_scope(*, text: str = "", kind: str = "", files: list[str] | None = 
             ("验收", "预期", "需求", "用户", "发布", "上线", "release", "production")):
         selected.add("alignment")
         reasons["alignment"] = "本次交付涉及用户承诺、验收目标或发布目标"
+
+    # 证据审计是横切门禁：任何非空验收包都必须能证明版本、来源和现场，
+    # 不能因为本次只改后端或只改前端就把 provenance 关掉。
+    if selected:
+        selected.add("evidence")
+        reasons["evidence"] = "所有适用验收项都必须具备当前版本和可复核来源证据"
 
     unmapped: list[str] = []
     if {"authorization", "security"} & set(impacts):

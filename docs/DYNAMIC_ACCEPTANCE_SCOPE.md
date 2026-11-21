@@ -8,7 +8,7 @@ PM 管家根据产品形态、交付目标、任务文本、改动文件和显�
 
 1. 生成阶段只预览，不执行门禁，也不写账本。
 2. 只有项目归属明确且显式 `confirm=true` 才能落盘范围文件。
-3. `pre_acceptance.py` 有范围文件时只消费 `selected_checks`；没有范围文件时兼容旧的全量逐项门禁。
+3. `pre_acceptance.py` 有范围文件时只消费 `selected_checks`；没有范围文件时兼容旧的全量逐项门禁。只要范围非空，`evidence` 就是横切必选项，不能被裁掉。
 4. 范围文件损坏、缺少 `selected_checks` 或包含未知检查项时直接 `blocked`，不得静默回退。
 5. `unmapped_risks` 代表当前没有对应专项执行器；即使已选检查通过，也必须 `blocked`。
 6. 只有本次适用标准全部逐条 `pass` 且没有未映射风险时，才允许 `notify_user=true`。

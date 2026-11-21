@@ -113,6 +113,9 @@ def _selected_ids(root: Path, scope: dict[str, Any] | None = None) -> tuple[set[
     if unknown:
         return set(), {**selected, "status": "invalid",
                        "reason": f"动态验收范围包含未知检查项: {', '.join(unknown)}"}
+    if chosen:
+        # provenance 是所有实际验收包的横切门禁，不能由调用方漏传后降低证据标准。
+        chosen.add("evidence")
     return chosen, {**selected, "status": selected.get("status") or "selected_checks"}
 
 
