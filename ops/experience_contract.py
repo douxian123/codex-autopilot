@@ -101,6 +101,34 @@ def load(path):
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def land_gate(path):
+    """Return a truthful pre-land result for a committed contract.
+
+    A missing contract is deliberately compatible with older projects. Once a
+    project declares an experience contract, malformed or empty evidence
+    obligations are a real land failure rather than a context-only warning.
+    """
+    contract_path = Path(path)
+    if not contract_path.exists():
+        return {"ok": True, "status": "not_applicable", "reason": "未声明体验契约"}
+    try:
+        contract = load(contract_path)
+        validate_contract(contract)
+    except (OSError, ValueError, ContractError) as exc:
+        return {"ok": False, "status": "invalid", "reason": str(exc)}
+    required = bool(contract.get("experience_required"))
+    checks = list(contract.get("machine_checks") or []) + list(contract.get("human_checks") or [])
+    if required and not checks:
+        return {"ok": False, "status": "missing_checks", "reason": "体验任务没有机器或人工验收项"}
+    return {
+        "ok": True,
+        "status": "required" if required else "optional",
+        "reason": "体验契约已校验，验收项已声明",
+        "machine_checks": list(contract.get("machine_checks") or []),
+        "human_checks": list(contract.get("human_checks") or []),
+    }
+
+
 def main(argv):
     if len(argv) != 2:
         print("用法: python3 ops/experience_contract.py <contract.json>", file=sys.stderr)
