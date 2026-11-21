@@ -429,6 +429,23 @@ def write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _branch_experience_contract(branch: str):
+    """Read a committed contract from the target branch, never from the caller's worktree."""
+    raw = git("show", "%s:docs/experience/experience-contract.json" % branch)
+    if not raw:
+        return None
+    try:
+        contract = json.loads(raw)
+    except ValueError:
+        return {"error": "experience contract 不是合法 JSON"}
+    try:
+        import experience_contract
+        experience_contract.validate_contract(contract)
+    except (ImportError, ValueError) as exc:
+        return {"error": "experience contract 校验失败：%s" % exc}
+    return contract
+
+
 def codex_branches():
     out = git("for-each-ref", "--format=%(refname:short)", "refs/heads")
     return [b for b in out.split("\n") if b.startswith(BRANCH_PREFIX)]
@@ -2658,6 +2675,7 @@ def _context_payload(branch: str, head: str = "", main_head: str = "") -> dict:
                                   key=lambda r: r.get("ts", ""))[-8:],
         "convergence": next((g for g in load_convergence().get("groups", [])
                              if g.get("branch") == branch), None),
+        "experience_contract": _branch_experience_contract(branch),
     }
     payload["hash"] = hashlib.sha1(json.dumps(
         payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
@@ -2720,6 +2738,21 @@ def cmd_context(args):
         lines += ["", "## 验收 / DoD"]
         lines += [f"- [{x.get('status')}] {x.get('level','')} {x.get('title','')}"
                   for x in payload["acceptance_todo"]] or ["- （无）"]
+        contract = payload.get("experience_contract")
+        if contract:
+            lines += ["", "## Experience Contract"]
+            if contract.get("error"):
+                lines.append("- ❌ " + contract["error"])
+            else:
+                lines += [
+                    f"- schema: `{contract.get('schema_version')}`",
+                    f"- primary task: {contract.get('primary_task')}",
+                    f"- scope: {', '.join(contract.get('scope') or [])}",
+                    f"- surfaces: {', '.join(contract.get('surfaces') or [])}",
+                    f"- states: {', '.join(x.get('name', '') for x in contract.get('states') or [])}",
+                    f"- machine checks: {', '.join(contract.get('machine_checks') or []) or '（无）'}",
+                    f"- human checks: {', '.join(contract.get('human_checks') or []) or '（无）'}",
+                ]
         if payload["conflict_files"]:
             lines += ["", "## 冲突文件"]
             lines += [f"- `{f}`" for f in payload["conflict_files"]]

@@ -509,6 +509,8 @@ def cmd_accept(args):
     title = ' '.join(title_parts)
     if not title:
         sys.exit('accept 需要一句标题：truthctl accept "<标题>"')
+    applicable_raw = os.environ.get('KG_TRUTH_APPLICABLE', '').strip().lower()
+    applicable = True if applicable_raw == 'true' else False if applicable_raw == 'false' else None
     rec = _append_new('acceptance', title=title,
                       level=level or os.environ.get('KG_TRUTH_LEVEL', 'P1'),
                       status=status or os.environ.get('KG_TRUTH_STATUS', 'todo'),
@@ -520,6 +522,11 @@ def cmd_accept(args):
                       source_hash=os.environ.get('KG_TRUTH_SOURCE_HASH') or None,
                       lane=lane or os.environ.get('KG_TRUTH_LANE') or None,
                       files=_files(),
+                      domain=os.environ.get('KG_TRUTH_DOMAIN') or None,
+                      criterion=os.environ.get('KG_TRUTH_CRITERION') or None,
+                      standard=os.environ.get('KG_TRUTH_STANDARD') or None,
+                      applicable=applicable,
+                      contract_version=os.environ.get('KG_TRUTH_CONTRACT_VERSION') or None,
                       source=os.environ.get('KG_TRUTH_SOURCE', 'agent'))
     who = '需要人工验收' if rec['needs_human'] else '机器自证'
     print(f"已登记验收 [{rec['id']}]（{who}）{title[:70]}")

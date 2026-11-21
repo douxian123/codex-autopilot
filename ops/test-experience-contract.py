@@ -92,6 +92,7 @@ def main():
     schema = json.loads((ROOT / "docs/experience/experience-contract.schema.json").read_text(encoding="utf-8"))
     assert schema["$schema"].endswith("2020-12/schema")
     assert "states" in schema["required"]
+    assert module.validate_contract(valid) is True
     print("experience contract: PASS (valid + 6 negative cases)")
 
 
