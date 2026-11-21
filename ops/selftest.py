@@ -3073,6 +3073,59 @@ def test_native_socket_lstat():
     print("selftest ok: socket symlink 入口按 lstat 识别，权限挡目标不再误报成不存在。")
 
 
+def test_native_status_socket_missing_is_honest():
+    """socket 缺失时只说 socket 缺失，绝不误报成 Codex 没运行或已可派活。"""
+    import importlib
+    from unittest import mock
+
+    sys.path.insert(0, str(OPS))
+    import central_mcp
+    importlib.reload(central_mcp)
+
+    missing = {
+        "socket": "/tmp/native-status-test/absent.sock",
+        "socket_present": False,
+        "history_db": True,
+    }
+    with mock.patch.object(central_mcp.codex_native, "socket_state",
+                           return_value=dict(missing)), \
+         mock.patch.object(central_mcp.codex_native, "last_probe",
+                           return_value=None):
+        state = central_mcp._native_status()
+    assert state["last_probe"] is None, state
+    assert "未找到桌面控制 socket" in state["label"], state
+    assert "只读历史" in state["label"] and "不能派活" in state["label"], state
+    assert "Codex 未运行" not in state["label"], state
+
+    with mock.patch.object(central_mcp.codex_native, "socket_state",
+                           return_value=dict(missing)), \
+         mock.patch.object(central_mcp.codex_native, "last_probe", return_value={
+             "connected": False, "can_dispatch": False,
+             "reason": "没有找到 Codex 桌面端控制 socket",
+         }):
+        state = central_mcp._native_status()
+    assert "未找到桌面控制 socket" in state["label"], state
+    assert "已连通" not in state["label"] and "可派活到 Codex 窗口" not in state["label"], state
+
+    with mock.patch.object(central_mcp.codex_native, "socket_state",
+                           return_value=dict(missing)), \
+         mock.patch.object(central_mcp.codex_native, "last_probe", return_value={
+             "connected": False, "can_dispatch": False,
+             "blocked_by": "remote-control-chatgpt-pairing",
+         }):
+        state = central_mcp._native_status()
+    assert "ChatGPT 登录/配对" in state["label"], state
+
+    with mock.patch.object(central_mcp.codex_native, "socket_state",
+                           return_value={**missing, "socket_present": True}), \
+         mock.patch.object(central_mcp.codex_native, "last_probe",
+                           return_value=None):
+        state = central_mcp._native_status()
+    assert "未自检" in state["label"], state
+    assert "未找到桌面控制 socket" not in state["label"], state
+    print("selftest ok: 原生直连红灯如实区分未找到 socket、需配对与未自检。")
+
+
 FAKE_SECTION_SERVER = """
 import json, os, sys
 state_path = os.environ["FAKE_STATE"]
@@ -8234,6 +8287,7 @@ if __name__ == "__main__":
     test_panel_first_screen()
     test_codex_native_bridge()
     test_native_socket_lstat()
+    test_native_status_socket_missing_is_honest()
     test_native_section_grouping()
     test_native_thread_title_contract()
     test_native_call_budget()

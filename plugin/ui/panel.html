@@ -2251,7 +2251,9 @@
     var box = el("nativeState"); if (!box) return;
     var native = (s && s.native) || {};
     var probe = native.last_probe || null;
-    var text = native.label || (native.socket_present ? "原生直连：未自检" : "原生直连：Codex 未运行");
+    var fallback = native.socket_present ? "原生直连：未自检"
+      : "原生直连：未找到桌面控制 socket（只读历史，不能派活）";
+    var text = native.label || fallback;
     if (probe && probe.at) { text += "（自检于 " + probe.at + "）"; }
     box.textContent = text;
     var tip = (probe && probe.reason) ? probe.reason : "";

@@ -1271,6 +1271,24 @@ def main(argv):
                      "已关闭" if not payload.get("enabled") else "正在运行")
         fails += has("原生直连结论如实显示", out["nativeState"],
                      (payload.get("native") or {}).get("label"))
+        socket_missing_payload = dict(payload)
+        socket_missing_payload["native"] = {
+            "socket_present": False,
+            "history_db": True,
+            "label": "原生直连：未找到桌面控制 socket（只读历史，不能派活）",
+            "last_probe": {
+                "connected": False, "can_dispatch": False,
+                "reason": "没有找到 Codex 桌面端控制 socket",
+                "at": "2026-11-21T00:00:00+08:00",
+            },
+        }
+        missing_out = run_once(socket_missing_payload)
+        fails += has("控制 socket 缺失时面板说清不能派活", missing_out["nativeState"],
+                     "未找到桌面控制 socket", "只读历史", "不能派活")
+        fails += lacks("控制 socket 缺失时不误报 Codex 没运行", missing_out["nativeState"],
+                       "Codex 未运行", "Codex 没在运行")
+        fails += lacks("控制 socket 缺失时不宣称已连通可派活", missing_out["nativeState"],
+                       "已连通", "可派活到 Codex 窗口")
         fails += has("计数：收到反馈", out["received"], counters.get("received"))
         fails += has("计数：已合入", out["landned"], counters.get("landed"))
         fails += has("计数：待你验收", out["stReview"], len(human_acc))

@@ -2905,13 +2905,17 @@ def _native_status():
     probe = codex_native.last_probe()
     state["last_probe"] = probe
     if probe is None:
-        state["label"] = ("原生直连：未自检（点「原生自检」跑一次）"
-                          if state.get("socket_present") else "原生直连：Codex 未运行")
+        if state.get("socket_present"):
+            state["label"] = "原生直连：未自检（点「原生自检」跑一次）"
+        else:
+            state["label"] = "原生直连：未找到桌面控制 socket（只读历史，不能派活）"
     elif probe.get("connected"):
         state["label"] = "原生直连：已连通，可派活到 Codex 窗口"
     else:
         if probe.get("blocked_by") == "remote-control-chatgpt-pairing":
             state["label"] = "原生直连：需 ChatGPT 登录/配对后才能派活"
+        elif not state.get("socket_present"):
+            state["label"] = "原生直连：未找到桌面控制 socket（只读历史，不能派活）"
         else:
             state["label"] = "原生直连：不可派活，只能只读历史"
     return state

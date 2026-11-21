@@ -216,9 +216,12 @@ final class CompanionModel: ObservableObject {
             return "原生直连：已连通，可派活"
         }
         if native.socket_present == false {
-            return "原生直连：Codex 没在运行"
+            return "原生直连：未找到桌面控制 socket（只读历史，不能派活）"
         }
-        return "原生直连：不可派活（只读历史）"
+        if probe.reason?.contains("ChatGPT") == true || probe.reason?.contains("pairing") == true {
+            return "原生直连：需 ChatGPT 登录/配对后才能派活"
+        }
+        return "原生直连：不可派活，只能只读历史"
     }
 
     func toggle() {
