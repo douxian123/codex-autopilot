@@ -458,8 +458,24 @@ def main(argv):
                 "status": "ok",
                 "paths": [{
                     "work_item": {"id": "L-0030", "title": "施工路径上屏",
-                                  "status": "doing", "occupancy": "known"},
+                                  "status": "doing", "occupancy": "known",
+                                  "closure_package": {
+                                      "status": "planning_incomplete",
+                                      "label": "施工包未规划",
+                                      "usage_status": "pending",
+                                      "closure_debt": False,
+                                  }},
                 }],
+            },
+            "prd_revision": {
+                "status": "attention",
+                "attention_count": 1,
+                "items": [{
+                    "revision_id": "PR-0001",
+                    "text": "用户在多个窗口反复提到的预期必须驱动 PRD 更新",
+                    "decision": "ask_user",
+                }],
+                "reason": "有 1 项 PRD 修订等你确认",
             },
         },
         # 授权账本是 autopilot_status 的顶层状态，不属于 pm_briefing 子对象。
@@ -546,8 +562,14 @@ def main(argv):
             ("PM 简报上屏：施工路径只读投影",
              "施工路径" in pm_box and "L-0030" in pm_box
              and "施工路径上屏" in pm_box),
+            ("PM 简报上屏：施工包未规划状态与真实入口待验",
+             "施工包未规划" in pm_box and "L-0030" in pm_box
+             and "文件占地已声明" in pm_box),
             ("PM 简报上屏：研究决策状态",
              "PM 判断" in pm_box and "R-9001" in pm_box and "需要你确认" in pm_box),
+            ("PM 简报上屏：PRD 持续迭代待收敛项",
+             "PRD 迭代" in pm_box and "PR-0001" in pm_box
+             and "等你确认" in pm_box),
             ("上下文档案折叠区实际展开",
              str(adv_snapshot.get("contextArchiveFoldOpen")) == "1"),
             ("上下文档案上屏：四类状态与来源证据",

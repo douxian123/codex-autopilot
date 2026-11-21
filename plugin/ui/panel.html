@@ -1297,6 +1297,16 @@
       else if (r.decision_status === "awaiting_external_research") detail += " · 等待研究证据";
       pmRow(list, r.research_id || "研究", detail);
     });
+    var prd = pb.prd_revision || {};
+    var prdText = prd.status === "unknown" ? "PRD 修订状态取不到，不把不知道当成已同步。"
+      : pmCount(prd.attention_count) + " 项待收敛"
+        + (prd.reason ? " · " + prd.reason : " · 当前 PRD 已是最新决策口径");
+    pmRow(list, "PRD 迭代", prdText);
+    (prd.items || []).slice(0, 2).forEach(function(r){
+      var decisionText = ({adopt:"采用", adapt:"适配", defer:"暂缓", reject:"不采用",
+                           ask_user:"等你确认"})[r.decision] || r.status || "待判断";
+      pmRow(list, r.revision_id || "PRD", (r.text || "修订事项") + " · " + decisionText);
+    });
     var closurePaths = closure.paths || [];
     pmRow(list, "施工路径", pmCount(closure.status === "unknown" ? null : closurePaths.length)
       + " 条 · " + (closure.status === "unknown"
@@ -1304,8 +1314,10 @@
         : "原话到施工、依赖、路线、追问、关闭只做只读投影"));
     closurePaths.slice(0, 2).forEach(function(r){
       var w = r.work_item || {};
+      var pkg = w.closure_package || {};
       pmRow(list, w.id || "施工", (w.title || "未命名施工项")
         + " · " + (w.status || "unknown")
+        + " · " + (pkg.label || "闭环状态取不到")
         + " · 文件占地" + (w.occupancy === "unknown" ? "取不到" : "已声明"));
     });
     (exp.pending || []).slice(0, 2).forEach(function(r){

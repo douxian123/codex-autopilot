@@ -163,6 +163,11 @@ def main() -> int:
             plan = row.get("acceptance_plan") or {}
             check(text + " 路由时编译验收标准",
                   plan.get("status") in ("ok", "unknown"), plan)
+            package = row.get("closure_package") or {}
+            check(text + " 路由时生成闭环施工包草案",
+                  package.get("status") == "planning_incomplete"
+                  and package.get("cost_strategy", {}).get("mode") in
+                  ("summary_first", "minimal_scope"), package)
         check("inbox 全部标为已路由",
               all(row.get("routed") is True for row in read_jsonl(tasks / "inbox.jsonl")),
               read_jsonl(tasks / "inbox.jsonl"))
@@ -302,8 +307,45 @@ def main() -> int:
         # 7. 关闭：必须带命令、cwd、退出码；发布输入不自动关闭。
         evidence = ("python3 ops/test-e2e-ten-real-inputs.py cwd=%s exit 0"
                     % str(REPO))
-        closed = run_truthctl(
+        closed_before_ready = run_truthctl(
             {**env, "KG_TRUTH_EVIDENCE": evidence},
+            "close", "L-0005", "施工包未确认时不能关闭")
+        check("未 ready 的施工包拒绝关闭",
+              closed_before_ready.returncode != 0
+              and "未由 PM 确认到 ready" in (closed_before_ready.stderr or ""),
+              closed_before_ready.stdout + closed_before_ready.stderr)
+        fill = run_truthctl(env, "closure-package", "fill", "L-0005", "--json",
+                            json.dumps({
+                                "machine_acceptance": [{
+                                    "name": "e2e-machine-evidence",
+                                    "cmd": "python3 ops/test-e2e-ten-real-inputs.py",
+                                    "cwd": str(REPO),
+                                    "pass_condition": "exit 0",
+                                }],
+                                "real_usage_acceptance": [{
+                                    "step": "打开真实 Codex 面板高级区，确认 L-0005 关闭结果可见",
+                                    "pass_condition": "真实入口可见且状态可解释",
+                                    "status": "pending",
+                                }],
+                                "human_boundary": {"status": "not_required",
+                                                   "why": "gate 项由机器命令和真实入口证据覆盖"},
+                            }, ensure_ascii=False))
+        check("closure-package fill 成功", fill.returncode == 0,
+              fill.stdout + fill.stderr)
+        confirm = run_truthctl(env, "closure-package", "confirm", "L-0005",
+                               "--note", "PM 已核对机器门禁、真实入口与成本策略",
+                               "--evidence", "e2e: closure-package validation PASS")
+        check("closure-package confirm 到 ready", confirm.returncode == 0,
+              confirm.stdout + confirm.stderr)
+        show = run_truthctl(env, "closure-package", "show", "L-0005")
+        check("closure-package show 可复核 ready 状态",
+              show.returncode == 0 and '"status": "ready"' in show.stdout,
+              show.stdout + show.stderr)
+        usage_evidence = ("真实 Codex 面板高级区 PM 简报可见 L-0005，"
+                          "施工包状态已闭环；e2e fixture 截图 evidence/e2e-panel.png")
+        closed = run_truthctl(
+            {**env, "KG_TRUTH_EVIDENCE": evidence,
+             "KG_TRUTH_USAGE_EVIDENCE": usage_evidence},
             "close", "L-0005", "十条输入端到端门禁已跑通")
         check("truthctl close 带证据成功", closed.returncode == 0,
               closed.stdout + closed.stderr)
@@ -312,6 +354,12 @@ def main() -> int:
               after_close["L-0005"].get("status") == "done"
               and "exit 0" in str(after_close["L-0005"].get("evidence") or ""),
               after_close["L-0005"])
+        check("关闭项施工包状态与真实入口证据回写",
+              (after_close["L-0005"].get("closure_package") or {}).get("status") == "closed"
+              and after_close["L-0005"].get("closure_debt") is False
+              and "真实 Codex 面板高级区" in str(
+                  (after_close["L-0005"].get("closure_package") or {})
+                  .get("real_usage_acceptance") or ""), after_close["L-0005"])
         check("关闭同时写入进展台账",
               any("关闭 L-0005" in str(r.get("title") or "")
                   for r in read_jsonl(truth / "progress.jsonl")),

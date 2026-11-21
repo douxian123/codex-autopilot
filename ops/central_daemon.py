@@ -111,6 +111,8 @@ from pass_registry import (
 from ledger_state import latest_ledger_by_id  # noqa: E402
 import constraints as constraints_mod  # noqa: E402
 import acceptance_criteria_compiler  # noqa: E402
+import closure_package  # noqa: E402
+import prd_evolution  # noqa: E402
 import exec_overlap  # noqa: E402
 import exec_lifecycle  # noqa: E402
 import route_health_runtime  # noqa: E402
@@ -1365,6 +1367,9 @@ def _exec_prompt(item: dict) -> str:
         "- 目标只有两个：(1) 击穿产品预期——前后端真正闭环生效；(2) 保证现有体验——功能、",
         "  性能不能因为这次改动变差或更难用。不达标的实现不如不做。",
         "- 动手前先读仓库里的 AGENTS.md 和相关上下文（如 AI_SESSION_CONTEXT.md、产品决策文件）。",
+        "- 成本纪律（不得牺牲交付）：上下文按 scope + 文件指纹精准召回，先摘要与缓存，未命中才增量读取；"
+        "不得删除目标、必留上下文、可判定验收、人工边界、回滚或真实入口证据。"
+        "预算不足只停新派活并报告，不静默截断、不跳验收、不中断在途收尾。",
         "- 对直接、可验证的小任务（写文件、修文本、补配置等），第一步就要在当前 worktree 产出改动：",
         "  先执行实际命令（如 `printf '...' > 文件`、修改文本、补配置），再用命令自证；",
         "  只读检查不算完成，不能以“先看看 / 我先确认 / 发现已有”结束。",
@@ -3287,6 +3292,26 @@ def _exec_attempt_gate(rid: str) -> dict | None:
     return None
 
 
+def _closure_package_execution_gate(item: dict) -> dict:
+    """新派 worker 前的 PRD 5.0 施工包闸。
+
+    历史台账没有施工包，保持旧执行口径；新路由项一旦带施工包，就必须由 PM
+    补齐并确认到 ready。不能拿“路由草案已经落账”冒充可施工。
+    """
+    package = item.get("closure_package") if isinstance(item, dict) else None
+    if not isinstance(package, dict):
+        return {"status": "pass", "reason": "历史项没有施工包，保持旧执行口径"}
+    return closure_package.execution_gate(package)
+
+
+def _prd_evolution_execution_gate() -> dict:
+    """PRD 修订未收敛时禁止新施工；台账不存在视为暂无高影响修订。"""
+    try:
+        return prd_evolution.execution_gate(_state_repo())
+    except Exception as exc:
+        return {"status": "blocked", "reason": "PRD 修订闸读取失败：%s" % exc}
+
+
 def release_attempt_slot(rid: str) -> bool:
     """Give back one dispatch slot when the attempt died of throttling.
 
@@ -4501,6 +4526,25 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
                 continue
         if (item.get("kind") != "resolve"
                 and not _has_inflight):
+            _prd_gate = _prd_evolution_execution_gate()
+            if _prd_gate.get("status") == "blocked":
+                _prd_detail = str(_prd_gate.get("reason") or "PRD 修订未收敛")
+                blocked[rid] = {"reason": "prd_not_current", "detail": _prd_detail,
+                                "ts": _now()}
+                results.append({"id": rid, "outcome": "prd_not_current",
+                                "detail": _prd_detail})
+                log(f"[exec] {rid} PRD 未同步最新决策，不能进入 execute：{_prd_detail}")
+                continue
+            _pkg_gate = _closure_package_execution_gate(item)
+            if _pkg_gate.get("status") == "blocked":
+                _pkg_detail = str(_pkg_gate.get("reason") or "闭环施工包未完成")
+                blocked[rid] = {"reason": "planning_incomplete",
+                                "detail": _pkg_detail,
+                                "ts": _now()}
+                results.append({"id": rid, "outcome": "planning_incomplete",
+                                "detail": _pkg_detail})
+                log(f"[exec] {rid} 闭环施工包未完成，不能进入 execute：{_pkg_detail}")
+                continue
             _cap = _exec_attempt_gate(rid)
             if _cap:
                 blocked[rid] = _cap
