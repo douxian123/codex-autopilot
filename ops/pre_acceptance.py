@@ -55,6 +55,7 @@ CHECKS = (
 )
 
 _CHECK_IDS = {item["id"] for item in CHECKS}
+_DEFAULT_SCOPE = tuple(item["id"] for item in CHECKS)
 
 
 def _now() -> str:
@@ -77,6 +78,42 @@ def _rows(root: Path) -> list[dict[str, Any]]:
     except (OSError, json.JSONDecodeError):
         return []
     return [row for row in result if isinstance(row, dict)]
+
+
+def _scope_path(root: Path) -> Path:
+    return Path(root) / "ops" / "truth" / "acceptance_scope.json"
+
+
+def _read_scope(root: Path) -> dict[str, Any] | None:
+    path = _scope_path(root)
+    if not path.exists():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"status": "invalid", "reason": "acceptance_scope.json 无法读取或不是合法 JSON"}
+    if not isinstance(value, dict):
+        return {"status": "invalid", "reason": "acceptance_scope.json 顶层必须是对象"}
+    return value
+
+
+def _selected_ids(root: Path, scope: dict[str, Any] | None = None) -> tuple[set[str], dict[str, Any]]:
+    """动态范围必须显式列出 selected_checks，未知项不得静默回退。"""
+    selected = scope if scope is not None else _read_scope(root)
+    if selected is None:
+        return set(_DEFAULT_SCOPE), {"status": "legacy-default", "selected_checks": list(_DEFAULT_SCOPE)}
+    if selected.get("status") == "invalid":
+        return set(), selected
+    ids = selected.get("selected_checks")
+    if not isinstance(ids, list):
+        return set(), {**selected, "status": "invalid",
+                       "reason": "动态验收范围缺少 selected_checks 列表"}
+    chosen = {str(item).strip() for item in ids if str(item).strip()}
+    unknown = sorted(chosen - _CHECK_IDS)
+    if unknown:
+        return set(), {**selected, "status": "invalid",
+                       "reason": f"动态验收范围包含未知检查项: {', '.join(unknown)}"}
+    return chosen, {**selected, "status": selected.get("status") or "selected_checks"}
 
 
 def latest(root: Path) -> dict[str, dict[str, Any]]:
@@ -123,16 +160,24 @@ def _check_view(spec: dict[str, Any], row: dict[str, Any] | None) -> dict[str, A
     }
 
 
-def evaluate(root: Path) -> dict[str, Any]:
-    """返回逐项只读预验收结果；缺少逐项记录时必须是 unknown。"""
+def evaluate(root: Path, scope: dict[str, Any] | None = None) -> dict[str, Any]:
+    """只评估本次适用类别；没有范围文件时兼容旧的全量逐项门禁。"""
+    selected_ids, scope_info = _selected_ids(Path(root), scope)
+    if scope_info.get("status") == "invalid":
+        return {"status": "blocked", "label": "验收管家：动态验收范围无效，先修正范围，不通知你验收",
+                "checks": [], "categories": [], "items": [], "passed": 0, "failed": 0,
+                "unknown": 0, "not_applicable": 0, "total": 0, "notify_user": False,
+                "scope": scope_info,
+                "policy": "动态验收范围无法解释时不得静默回退到全量或宣称通过。"}
     rows = latest(Path(root))
     item_rows: dict[str, dict[str, Any]] = {}
     for row in _rows(Path(root)):
         item_id = _text(row.get("item_id"))
         if item_id in acceptance_dictionary.BY_ID:
             item_rows[item_id] = row
-    items = [acceptance_dictionary.evaluate_item(spec, item_rows.get(spec["id"]))
-             for spec in acceptance_dictionary.ITEMS]
+    all_items = [acceptance_dictionary.evaluate_item(spec, item_rows.get(spec["id"]))
+                 for spec in acceptance_dictionary.ITEMS]
+    items = [item for item in all_items if item["category"] in selected_ids]
     categories = []
     for category in acceptance_dictionary.CATEGORIES:
         subset = [item for item in items if item["category"] == category]
@@ -145,7 +190,12 @@ def evaluate(root: Path) -> dict[str, Any]:
             "unknown": len([x for x in subset if x["state"] == "unknown"]),
             "not_applicable": len([x for x in subset if x["state"] == "not_applicable"]),
         })
-    if not item_rows:
+    scope_review = scope_info.get("status") == "needs_review"
+    if not items:
+        state = "blocked" if scope_review else "ready"
+        label = ("验收管家：动态范围存在未映射风险，先补门禁或明确风险处理"
+                 if scope_review else "验收管家：本次没有适用的预验收项")
+    elif not item_rows:
         state = "unknown"
         label = "验收管家：逐项自检尚未完成，不通知你验收"
     elif any(item["state"] in ("fail", "blocked") for item in items):
@@ -157,6 +207,9 @@ def evaluate(root: Path) -> dict[str, Any]:
     else:
         state = "ready"
         label = "验收管家：所有适用必检项通过，可以通知你验收"
+    if scope_review and state == "ready":
+        state = "blocked"
+        label = "验收管家：动态范围存在未映射风险，先补门禁或明确风险处理"
     passed = sum(item["state"] == "pass" for item in items)
     return {
         "status": state,
@@ -170,7 +223,8 @@ def evaluate(root: Path) -> dict[str, Any]:
         "not_applicable": sum(item["state"] == "not_applicable" for item in items),
         "total": len(items),
         "notify_user": state == "ready",
-        "policy": "所有适用必检项逐条 pass 后才进入用户验收；截图是复核附件，不是自检替代品。",
+        "scope": scope_info,
+        "policy": "本次适用的必检项逐条 pass 且没有未映射风险后才进入用户验收；截图是复核附件，不是自检替代品。",
     }
 
 

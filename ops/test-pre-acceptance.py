@@ -38,6 +38,13 @@ def main():
         check("任一逐项失败会阻断用户验收", blocked["status"] == "blocked")
         check("阻断时不通知用户", blocked["notify_user"] is False)
 
+        scoped = {"status": "needs_review", "selected_checks": ["engineering"],
+                  "unmapped_risks": ["security/authorization"]}
+        scoped_ready = pre_acceptance.evaluate(root, scoped)
+        check("动态范围只评估选中的类别", scoped_ready["total"] == 15)
+        check("未映射风险即使基础项通过也阻断", scoped_ready["status"] == "blocked")
+        check("未映射风险不通知用户", scoped_ready["notify_user"] is False)
+
     print("pre-acceptance: PASS")
 
 

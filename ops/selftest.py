@@ -272,6 +272,12 @@ def main():
             cwd=str(OPS.parent), check=True)
         run([sys.executable, str(OPS / "test-pre-acceptance.py")],
             cwd=str(OPS.parent), check=True)
+        # 动态验收范围必须先裁剪本次最小充分检查集；确认落盘边界与未映射风险
+        # 阻断也必须进入总闸，避免新能力只在单独运行时才受保护。
+        run([sys.executable, str(OPS / "test-dynamic-acceptance-scope.py")],
+            cwd=str(OPS.parent), check=True)
+        run([sys.executable, str(OPS / "test-generate-acceptance-scope-tool.py")],
+            cwd=str(OPS.parent), check=True)
         # 复核截图必须由人点确认、只追加附件、失败时不写假路径。
         # 面板按钮和 MCP 工具都靠这条门禁守住边界，不能只做静态文案检查。
         run([sys.executable, str(OPS / "test-acceptance-screenshot.py")],

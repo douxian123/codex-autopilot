@@ -39,6 +39,7 @@ REPO = RUNNING_OPS.parent
 
 from plugin_binding import (apply_plugin_env, binding_health, binding_line,  # noqa: E402
                             current_ops, stale_code_problem)
+from request_context import RequestContextError, resolve_project  # noqa: E402
 
 
 def _live_ops() -> Path:
@@ -1524,6 +1525,26 @@ TOOLS = [
         "name": "acceptance_criteria_list",
         "description": "验收管家：列出待确认的「可判定验收标准候选」。守护从已路由原话里提名“怎么算完成”，候选阶段不写验收台账、不伪造自验证据，也不会自动催用户。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "generate_acceptance_scope",
+        "description": "按当前产品形态、交付目标、任务文本和改动文件生成最小充分验收范围。默认只预览；confirm=true 且项目归属明确时，才写入目标项目 ops/truth/acceptance_scope.json。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "本次交付或变更描述"},
+                "kind": {"type": "string", "description": "任务类型，如 visual / bug / gate / documentation"},
+                "files": {"type": "array", "items": {"type": "string"}},
+                "product_shape": {"type": "array", "items": {"type": "string"}},
+                "delivery_goal": {"type": "string", "description": "如 reviewable / acceptance_ready / production_release"},
+                "impacts": {"type": "array", "items": {"type": "string"}},
+                "cwd": {"type": "string"},
+                "project": {"type": "string"},
+                "confirm": {"type": "boolean", "description": "true 才写入验收范围；默认只预览"},
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
     },
     {
         "name": "acceptance_criteria_promote",
@@ -3438,7 +3459,7 @@ def call_tool(name, args):
         "dashboard", "autopilot_status", "render_autopilot_panel",
         "autopilot_settings_read", "codex_native_threads", "codex_native_probe",
         "harness_tune_list", "constraint_candidates_list", "context_archive",
-        "acceptance_criteria_list", "route_preview",
+        "acceptance_criteria_list", "generate_acceptance_scope", "route_preview",
         "followup_list",
         "routing_review_list", "pm_research_status", "pm_execution_gate",
     }
@@ -3776,6 +3797,34 @@ def call_tool(name, args):
             res = acceptance_criteria.dismiss(cid, args.get("reason") or "")
         return json.dumps(res, ensure_ascii=False, indent=1), (
             0 if res.get("status") != "error" else 2)
+    if name == "generate_acceptance_scope":
+        import dynamic_acceptance_scope
+        result = dynamic_acceptance_scope.generate_scope(
+            text=args.get("text") or "",
+            kind=args.get("kind") or "",
+            files=args.get("files") or [],
+            product_shape=args.get("product_shape") or [],
+            delivery_goal=args.get("delivery_goal") or "acceptance_ready",
+            explicit_impacts=args.get("impacts") or [],
+        )
+        if not bool(args.get("confirm")):
+            return {**result, "persisted": False,
+                    "__text__": "验收范围仅预览，未写入项目台账；确认后再落盘。"}, 0
+        guard = control_state.mutation_guard()
+        if guard:
+            return guard, 2
+        try:
+            repo = resolve_project(project=args.get("project"), cwd=args.get("cwd"),
+                                   bound=os.environ.get("KG_REPO"))
+        except RequestContextError as exc:
+            return {"code": "ACCEPTANCE_SCOPE_PROJECT_REQUIRED", "message": str(exc),
+                    "persisted": False}, 2
+        path = repo / "ops" / "truth" / "acceptance_scope.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8")
+        return {**result, "persisted": True, "path": str(path),
+                "__text__": f"动态验收范围已写入 {path}"}, 0
     if name in ("followup_authorize", "followup_cancel", "followup_list"):
         import authorized_followup as followup
         root = Path(os.environ.get("KG_REPO") or _fallback_repo())
