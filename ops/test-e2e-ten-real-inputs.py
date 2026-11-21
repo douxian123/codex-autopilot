@@ -378,7 +378,7 @@ def main() -> int:
         panel = PANEL.read_text(encoding="utf-8")
         check("首屏区分三类入口",
               all(word in panel for word in (
-                  "id=\"entryMap\"", "主入口", "当前 Codex 输入框", "万法归一",
+                  "id=\"entryMap\"", "主入口", "Codex 总输入框", "万法归一",
                   "执行入口", "后台任务窗口", "兜底入口", "高级区输入框")), "entryMap")
         check("职责次入口都在面板里",
               all(word in panel for word in (

@@ -443,7 +443,7 @@ def main(argv):
         if not quiet:
             print("Codex 自动挡 面板首屏逻辑检查")
         fails += has("首屏区分主入口、执行入口与兜底入口", out["entryMap"],
-                     "主入口", "当前 Codex 输入框", "万法归一",
+                     "主入口", "Codex 总输入框", "万法归一",
                      "执行入口", "后台任务窗口", "兜底入口", "高级区输入框")
         fails += has("首屏显示绑定项目（名字+路径）", out["projectLine"],
                      project.get("name"), project.get("path"))
@@ -1335,7 +1335,7 @@ def main(argv):
         else:
             print("  PASS  关闭后不再显示正在运行")
         fails += has("关闭后总状态是关闭态", shut["stateLabel"], "已恢复原生状态")
-        fails += has("关闭后副标题说明 Codex 回到原生", shut["subtitle"], "自动挡已关闭")
+        fails += has("关闭后副标题说明 Codex 回到原生", shut["subtitle"], "Autopilot 已关闭")
 
         # 窗口集合按官方协议的真实形状分组：集合挂在嵌套 section.id 上，
         # 不是扁平 sectionId。写错字段名时集合会永远显示「暂无窗口」。
