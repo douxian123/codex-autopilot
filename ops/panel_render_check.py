@@ -201,9 +201,9 @@ def main(argv):
          if payload.get("human_acceptance") else payload.get("doing")),
         ("首屏显示原生直连结论", (payload.get("native") or {}).get("label")),
         ("有「项目文件夹」区块", "项目文件夹"),
-        ("有「需要你介入」区块", "需要你介入"),
+        ("有「待确认事项」区块", "待确认事项"),
         ("有「工作项走到哪了」区块", "工作项走到哪了"),
-        ("有「工程详情与证据」区块", "工程详情与证据"),
+        ("有「验收证据与 Codex 工作区」区块", "验收证据与 Codex 工作区"),
     ]
     folders = ((payload.get("project_folders") or {}).get("folders") or [])
     radar_folder = next((f for f in folders if (f.get("engineering_radar") or {}).get("layers")), None)
@@ -236,7 +236,7 @@ def main(argv):
         checks.append(step_check)
 
     fails = 0
-    print("Codex 自动挡 面板渲染检查")
+    print("Codex Autopilot 面板渲染检查")
 
     stuck = [i for i in ("stateLabel", "projectLine", "focusStatus", "focusStep")
              if snapshot.get(i, "").strip() in ("", "读取中", "读取中…")]

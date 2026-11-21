@@ -217,7 +217,7 @@ def main(argv):
 
         fails = 0
         if not quiet:
-            print("Codex 自动挡 面板首屏逻辑检查")
+            print("Codex Autopilot 面板首屏逻辑检查")
         fails += has("首屏显示绑定项目（名字+路径）", out["projectLine"],
                      project.get("name"), project.get("path"))
         fails += has("绑定项目路径进了 title（悬停可看全）", out["projectTitle"], project.get("path"))
@@ -300,7 +300,7 @@ def main(argv):
         # 关掉总闸后必须有一个明确的关闭态，而不是还显示「正在运行」。
         closed = dict(payload)
         closed.update(enabled=False, lifecycle="off", paused=False,
-                      state="off", state_label="自动挡已关闭，Codex 已恢复原生状态")
+                      state="off", state_label="Autopilot 已关闭，Codex 已恢复原生状态")
         try:
             shut = run_once(closed)
         except RuntimeError as exc:
@@ -313,7 +313,7 @@ def main(argv):
         else:
             print("  PASS  关闭后不再显示正在运行")
         fails += has("关闭后总状态是关闭态", shut["stateLabel"], "已恢复原生状态")
-        fails += has("关闭后副标题说明 Codex 回到原生", shut["subtitle"], "自动挡已关闭")
+        fails += has("关闭后副标题说明 Codex 回到原生", shut["subtitle"], "Autopilot 已关闭")
 
         # 窗口集合按官方协议的真实形状分组：集合挂在嵌套 section.id 上，
         # 不是扁平 sectionId。写错字段名时集合会永远显示「暂无窗口」。
@@ -321,10 +321,10 @@ def main(argv):
         routed["route"] = {
             "thread_note": "",
             "native": {
-                "sections": [{"id": "sec-1", "name": "Codex 自动挡 · 面板检查"}],
+                "sections": [{"id": "sec-1", "name": "Codex Autopilot · 面板检查"}],
                 "threads": [
                     {"id": "t-in", "name": "归进集合的子对话",
-                     "section": {"id": "sec-1", "name": "Codex 自动挡 · 面板检查"}},
+                     "section": {"id": "sec-1", "name": "Codex Autopilot · 面板检查"}},
                     {"id": "t-out", "name": "没归组的子对话", "section": None},
                 ],
             },
@@ -335,7 +335,7 @@ def main(argv):
             print(exc)
             return 1
         fails += has("窗口集合按官方嵌套字段分组显示会话", grouped["routeText"],
-                     "Codex 自动挡 · 面板检查", "归进集合的子对话")
+                     "Codex Autopilot · 面板检查", "归进集合的子对话")
         if "没归组的子对话" in str(grouped["routeText"]):
             print("  FAIL  没归组的会话被塞进了集合")
             fails += 1
