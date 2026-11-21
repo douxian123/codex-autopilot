@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-20 15:36:53　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-21 08:39:33　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -59,8 +59,6 @@
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0149` [P1] codex/resolve-resource-admission-verify-narrowing-20261115 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0151` [P1] codex/resolve-reap-branch-preserve-20261111 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0152` [P1] codex/pm-research-decision-20261120 门禁预跑（未落盘）
@@ -82,6 +80,8 @@
 - `A-0161` [P1] 0.6.0-preview.105 换代验证
   - 证据：python3 ops/test-pm-research-decision.py -> 19/19 PASS；python3 ops/product_eval.py -> 可以对外（5/5 通过），阴性对照 8/8；plist/launchctl 指向 /Users/danta/plugins/codex-autopilot/releases/0.6.0-preview.105…
 - `A-0162` [P1] codex/resolve-dedupe-load-20261120 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0164` [P1] codex/project-autonomy-main-port-20261121 门禁预跑（未落盘）
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
@@ -185,11 +185,12 @@
 - `A-0159` [P1] codex/resolve-ledger-normalization-20261120 落盘验收
 - `A-0161` [P1] 0.6.0-preview.105 换代验证
 - `A-0162` [P1] codex/resolve-dedupe-load-20261120 落盘验收
+- `A-0164` [P1] codex/project-autonomy-main-port-20261121 门禁预跑（未落盘）
 
 ## 进度概览
 
 - 累计关闭问题：13 条
 - 累计落盘：91 条
 - 未决问题：1 条
-- 已验收：90 条
+- 已验收：91 条
 
