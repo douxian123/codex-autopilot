@@ -7119,6 +7119,20 @@ def test_mcp_contract():
     project = Path(tempfile.mkdtemp(prefix="kg-mcp-proj-"))
     (project / "ops" / "truth").mkdir(parents=True)
     (project / "ops" / "truth" / "ledger.jsonl").write_text("", encoding="utf-8")
+    # 预验收门禁现在要求四类自检全部 pass；测试项目必须显式提供证据，
+    # 否则人工验收项会按设计停在 pre_acceptance_blocked，永远进不了 human_acceptance。
+    (project / "ops" / "truth" / "pre_acceptance.jsonl").write_text(
+        "".join(_json.dumps({
+            "check_id": check_id,
+            "status": "pass",
+            "evidence_types": evidence_types,
+            "summary": "预验收证据已确认",
+        }, ensure_ascii=False) + "\n" for check_id, evidence_types in (
+            ("engineering", ["machine", "backend", "integration", "rollback"]),
+            ("frontend", ["browser", "screenshot", "interaction", "responsive"]),
+            ("comprehension", ["comprehension", "user_walkthrough"]),
+            ("alignment", ["prd", "expectations", "acceptance", "risk"]),
+        )), encoding="utf-8")
     env = os.environ.copy()
     env["KG_DAEMON_HOME"] = home
     env["KG_REPO"] = str(project)
