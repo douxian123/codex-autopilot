@@ -1129,6 +1129,11 @@ TOOLS = [
                 "lane": {"type": "string", "description": "归属分支，可选"},
                 "status": {"type": "string", "description": "todo / wip / blocked / verified / void，默认 todo"},
                 "evidence": {"type": "string", "description": "机器自证的真实命令+结果，可选"},
+                "domain": {"type": "string", "description": "验收域，可选；体验任务可填 experience"},
+                "criterion": {"type": "string", "description": "体验契约中的验收项，可选"},
+                "standard": {"type": "string", "description": "适用标准或项目契约版本，可选"},
+                "applicable": {"type": "boolean", "description": "该验收项是否适用，可选"},
+                "contract_version": {"type": "string", "description": "体验契约版本，可选"},
             },
             "required": ["title"],
             "additionalProperties": False,
@@ -3676,6 +3681,12 @@ def call_tool(name, args):
                "KG_TRUTH_LANE": args.get("lane") or None,
                "KG_TRUTH_STATUS": args.get("status") or None,
                "KG_TRUTH_EVIDENCE": args.get("evidence") or None,
+               "KG_TRUTH_DOMAIN": args.get("domain") or None,
+               "KG_TRUTH_CRITERION": args.get("criterion") or None,
+               "KG_TRUTH_STANDARD": args.get("standard") or None,
+               "KG_TRUTH_APPLICABLE": ("true" if args.get("applicable") is True else
+                                        "false" if args.get("applicable") is False else None),
+               "KG_TRUTH_CONTRACT_VERSION": args.get("contract_version") or None,
                "KG_TRUTH_SHOTS": _screenshots_env(args.get("screenshots"))}
         return truthctl(*argv, extra_env=env)
     if name == "resolve_acceptance":

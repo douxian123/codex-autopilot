@@ -177,6 +177,7 @@ def main():
             "test-closure-package.py",
             "test-prd-evolution.py",
             "test-cost-discipline.py",
+            "test-experience-contract.py",
         )
         for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)
