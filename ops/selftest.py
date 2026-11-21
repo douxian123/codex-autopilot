@@ -264,6 +264,10 @@ def main():
         # 「需要你验收」，等于让用户当第一道测试——用户明确要求过这个顺序。
         run([sys.executable, str(OPS / "test-acceptance-selfcheck.py")],
             cwd=str(OPS.parent), check=True)
+        # 产品级预验收：工程、真实前端、小白可理解性、PRD 对齐四类证据
+        # 未全部通过时，人工验收不得进入用户台。
+        run([sys.executable, str(OPS / "test-pre-acceptance.py")],
+            cwd=str(OPS.parent), check=True)
         # 复核截图必须由人点确认、只追加附件、失败时不写假路径。
         # 面板按钮和 MCP 工具都靠这条门禁守住边界，不能只做静态文案检查。
         run([sys.executable, str(OPS / "test-acceptance-screenshot.py")],

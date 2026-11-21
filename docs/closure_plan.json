@@ -49,7 +49,7 @@
       "depends_on": ["pm_loop"],
       "status": "done",
       "exit": "验收候选先确认，机器项先跑真证据，人工项带证据才进入需要你验收；截图只是复核附件。",
-      "gate": "python3 ops/test-acceptance-criteria.py && python3 ops/test-acceptance-close-reopen.py && python3 ops/test-acceptance-selfcheck.py && python3 ops/test-acceptance-screenshot.py && python3 ops/product_eval.py",
+      "gate": "python3 ops/test-acceptance-criteria.py && python3 ops/test-acceptance-close-reopen.py && python3 ops/test-acceptance-selfcheck.py && python3 ops/test-pre-acceptance.py && python3 ops/test-acceptance-screenshot.py && python3 ops/product_eval.py",
       "evidence": "候选确认、机器门禁、人工复核、截图附件、关闭与回归重开路径有门禁；2026-11-21 python3 ops/product_eval.py -> 可以对外（5/5 通过），阴性对照 8/8。",
       "user_entry": "需要你决策 / 需要你验收"
     },
