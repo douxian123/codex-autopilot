@@ -1,7 +1,7 @@
 {
-  "version": "2026-11-19",
+  "version": "2026-11-21",
   "goal": "把 Codex 自动挡的全部管家职责推到可发布、可开源使用、可稳定迭代的击穿状态；不含发布动作本身。",
-  "ordering_rule": "先写职责事实，再修发布地基，再补上下文/PM/验收闭环，最后做面板和十条真实需求端到端验收。每一阶段必须有真门禁和证据，不以代码存在当作完成。",
+  "ordering_rule": "先写职责事实，再修发布地基，再补上下文/PM/验收闭环，最后做面板和十条真实需求端到端验收；成本纪律只优化重复读取和无关材料，不删必留上下文、不跳验收、不伪造完成。每一阶段必须有真门禁和证据，不以代码存在当作完成。",
   "stages": [
     {
       "id": "steward_contract",
@@ -17,10 +17,10 @@
       "id": "release_foundation",
       "title": "发布地基一致性",
       "depends_on": ["steward_contract"],
-      "status": "done",
+      "status": "blocked",
       "exit": "装得上、跑得起来、服务对象对、有效、一致可回滚五条判据全绿，且阴性对照全部仍能变红。",
       "gate": "python3 ops/product_eval.py --selftest && python3 ops/product_eval.py",
-      "evidence": "release_ready=true；安装版本、运行版本、缓存版本、本地主干与远端主干 lineage 一致；守护绑定目标项目。",
+      "evidence": "2026-11-21 实跑 python3 ops/product_eval.py：阴性对照 8/8 能变红，前四条判据 OK；第 5 条一致可回滚红灯：远端权威主干 4e3c7d8d 不含已发布提交 3130e410（只在本地主干可见，不能算发布一致）；结论 不能对外（4/5 通过）。修复发布 lineage 后重跑该门禁才能改为 done。",
       "user_entry": "面板首屏 -> 运行状态"
     },
     {
@@ -47,10 +47,10 @@
       "id": "acceptance_loop",
       "title": "验收闭环",
       "depends_on": ["pm_loop"],
-      "status": "done",
+      "status": "blocked",
       "exit": "验收候选先确认，机器项先跑真证据，人工项带证据才进入需要你验收；截图只是复核附件。",
       "gate": "python3 ops/test-acceptance-criteria.py && python3 ops/test-acceptance-close-reopen.py && python3 ops/test-acceptance-selfcheck.py && python3 ops/test-acceptance-screenshot.py && python3 ops/product_eval.py",
-      "evidence": "候选确认、机器门禁、人工复核、截图附件、关闭与回归重开六条路径全部可追溯；产品判据 5/5，阴性对照 8/8。",
+      "evidence": "候选确认、机器门禁、人工复核、截图附件、关闭与回归重开路径有门禁；2026-11-21 python3 ops/product_eval.py -> 不能对外（4/5 通过），一致可回滚红灯未修复，因此不标 done。",
       "user_entry": "需要你决策 / 需要你验收"
     },
     {
@@ -87,17 +87,24 @@
       "id": "e2e_closure",
       "title": "十条真实需求端到端击穿",
       "depends_on": ["panel_layering"],
-      "status": "done",
+      "status": "in_progress",
       "exit": "十条来自真实输入框的需求，逐条走完归一、路由、施工、验证、落盘、收口和面板可见；发布动作仍由用户拍板。",
       "gate": "python3 ops/test-e2e-ten-real-inputs.py && python3 ops/selftest.py && python3 ops/product_eval.py",
-      "evidence": "test-e2e-ten-real-inputs 在临时状态根用真实 truthctl route --go 路由十条原话；逐条核对验收编译、上下文档案、PM 施工路径、worker lifecycle、wake/resume 单次投递、带命令/cwd/退出码的 truthctl close 与面板入口；unknown 与发布拍板项单列且不被自动关闭。2026-11-19 实跑：python3 ops/test-e2e-ten-real-inputs.py -> e2e-ten-real-inputs: PASS；python3 ops/selftest.py -> exit 0，新增门禁在总闸内被点名执行；python3 ops/product_eval.py --selftest && python3 ops/product_eval.py -> 阴性对照 8/8、正式评估 5/5，结论 可以对外。机器绿灯不替代用户结果，真实用户逐条确认与使用频次仍属现场证据。",
+      "evidence": "2026-11-21 实跑 python3 ops/test-e2e-ten-real-inputs.py -> e2e-ten-real-inputs: PASS：十条原话路由后都生成 planning_incomplete 施工包与成本策略；未 ready 关闭被拒；fill/confirm 后带真实入口证据才 closed；worker lifecycle、wake/resume、面板入口与发布拍板边界均保留。python3 ops/panel_render_check.py --no-shot -> 全部通过，PRD 迭代与施工包状态已上屏。python3 ops/product_eval.py -> 不能对外（4/5 通过），发布 lineage 红灯未修复，故本阶段不标 done。",
       "user_entry": "唯一输入框 / Codex 原生面板"
     }
   ],
   "progress_estimates": {
-    "职责代码覆盖率": "100%（七管家与全局健康均 status=implemented；以职责契约、九阶段门禁与真跑证据为界）",
-    "用户预期击穿度": "工程链路 100%（十条真实输入端到端 PASS）；真实用户逐条确认、视觉/体验复核与持续使用频次 unknown，不按 0 计",
-    "公开发布就绪度": "产品评估 5/5 通过、阴性对照 8/8 变红；发布动作仍需用户拍板，不计入本工程完成度",
-    "口径": "职责覆盖率按契约内已实现项统计；用户预期区分工程链路与现场使用证据；发布就绪度来自 product_eval 冻结评估，unknown 不按 0 计。"
+    "职责代码覆盖率": "契约层 100%（七管家与全局健康均 status=implemented；以职责契约与门禁为界），现场闭环按下列分层单独计",
+    "用户预期击穿度": "工程链路已通过十条真实输入端到端门禁；真实用户逐条确认、视觉/体验复核与持续使用频次 unknown，不按 0 计",
+    "对外发布就绪度": "当前 4/5，不能对外；阴性对照 8/8 变红，一致可回滚红灯来自远端权威主干缺少已发布提交 3130e410；发布动作仍需用户拍板",
+    "口径": "职责覆盖率按契约内已实现项统计；用户预期区分工程链路、真实入口和现场使用证据；发布就绪度来自当前 product_eval 实跑，unknown 不按 0 计，不用历史绿灯覆盖当前红灯。"
+  },
+  "completion_layers": {
+    "implemented": "PASS：闭环施工包、PRD 持续迭代、成本策略、面板投影与执行闸已有代码和门禁。",
+    "machine_verified": "PASS：closure-package、prd-evolution、pm-closure-loop、e2e-ten-real-inputs、panel_render_check 已实跑通过。",
+    "real_entry_verified": "PASS（受限）：panel_render_check 在真浏览器渲染面板并验证 PM 简报、施工包状态、PRD 迭代文字；真实用户逐条使用仍待现场证据。",
+    "closed": "IN_PROGRESS：新路由项已可施工包关闭；历史条款据与发布 lineage 未全量收口。",
+    "blocked": "发布地基红灯：product_eval 4/5，远端权威主干 4e3c7d8d 不含已发布提交 3130e410；修复并重跑后才能宣称对外就绪。"
   }
 }

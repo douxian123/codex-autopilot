@@ -43,6 +43,12 @@ def main():
     must_fail("阶段状态非法会红", lambda d: d["stages"][4].update(status="done-ish"))
     must_fail("进度估算缺口径会红",
               lambda d: d["progress_estimates"].pop("口径"))
+    must_fail("缺完成分层会红", lambda d: d.pop("completion_layers"))
+    must_fail("虚报 5/5 可以对外会红",
+              lambda d: d["progress_estimates"].update(
+                  {"对外发布就绪度": "产品评估 5/5，可以对外"}))
+    must_fail("发布地基越级标 done 会红",
+              lambda d: d["stages"][1].update(status="done"))
 
     print("closure-plan: PASS")
     return 0

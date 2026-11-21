@@ -7,7 +7,6 @@
 这里用临时仓库锁住这道门禁：坏分支不能入队，也不能 land。
 """
 
-import json
 import os
 import json
 import shutil
@@ -175,6 +174,9 @@ def main():
             "test-context-archive.py",
             "test-e2e-ten-real-inputs.py",
             "test-pm-research-decision.py",
+            "test-closure-package.py",
+            "test-prd-evolution.py",
+            "test-cost-discipline.py",
         )
         for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)
