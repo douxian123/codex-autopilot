@@ -159,6 +159,7 @@ def main():
             "test-repoint-interval.py",
             "test-snapshot-clone-prune.py",
             "test-runtime-truthctl-selection.py",
+            "test-runtime-install-contract.py",
             "test-state-root-freshness.py",
             "test-mirror-truth-jsonl-union.py",
             "test-selftest-release-dir.py",
