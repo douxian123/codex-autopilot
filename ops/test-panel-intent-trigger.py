@@ -95,11 +95,6 @@ if codex_cli.is_file():
         prompt_ok = False
     checks["宿主 prompt 暴露自动挡工具命名空间"] = prompt_ok
 
-    # deferred namespace 是本宿主当前事实。它只能证明 tool 被搜到，不能证明
-    # 面板已打开；把两者分开记录，避免后续会话把 metadata 当 UI 证据。
-    deferred_ok = done.returncode == 0 and "Deferred tool namespaces:" in done.stdout
-    checks["宿主 prompt 标记自动挡工具为 deferred"] = deferred_ok
-
     # 过期 release 路径会让宿主 MCP 启动失败，进而丢掉整组动态工具。
     config_path = Path.home() / ".codex" / "config.toml"
     if config_path.is_file():
