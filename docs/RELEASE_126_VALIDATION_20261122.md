@@ -303,7 +303,69 @@ FILE=NO /Users/danta/plugins/codex-autopilot/releases/0.6.0-preview.125/ops/test
 
 因此当前不能宣称动态验收专项执行器已经在本机 live 生效。
 
-## 11. 还差什么
+## 11. 真实任务级验收范围调用
+
+两组调用都在隔离安装的 `.126` 目录内运行，状态根是新建的临时 Git 项目；只写临时项目，没有写 live 现场。
+
+### 11.1 `generate_acceptance_scope`
+
+命令入口：
+
+```text
+/tmp/ca-release126-real-task-scope-20261122.log
+```
+
+实际结果：
+
+```text
+PREVIEW_RC= 0
+PREVIEW_PERSISTED= False
+PREVIEW_EXISTS_BEFORE_CONFIRM= False
+CONFIRM_RC= 0
+CONFIRM_PERSISTED= True
+CONFIRM_EXISTS_AFTER= True
+EXPECTED_VERSION= 591e1362128c8dcb74ca290f0e7422bbcd71b996
+SELECTED_CHECKS= ["engineering", "evidence"]
+UNMAPPED_RISKS= []
+SCOPE_EXPECTED_VERSION= 591e1362128c8dcb74ca290f0e7422bbcd71b996
+REAL_TASK_SCOPE=PASS
+REAL_TASK_SCOPE_EXIT=0
+```
+
+结论：后端任务只选 `engineering + evidence`，没有把前端、安全、AI 输出门禁误选进来；预览不写范围，确认后写入的 `expected_version` 与临时项目 HEAD 一致。
+
+### 11.2 `intake_request`
+
+命令入口：
+
+```text
+/tmp/ca-release126-real-task-intake-20261122.log
+```
+
+实际结果：
+
+```text
+INTAKE_PREVIEW_RC= 0
+INTAKE_PREVIEW_TEXT= 需求已进入统一入口；动态验收范围仅生成预览，尚未作为本次活动门禁。
+INTAKE_SCOPE_PERSISTED= False
+INTAKE_SCOPE_EXISTS_BEFORE_CONFIRM= False
+EXPERIENCE_REQUIRED= True
+INBOX_EXISTS_AFTER_PREVIEW= True
+INBOX_LINES_AFTER_PREVIEW= 1
+INTAKE_CONFIRM_RC= 0
+INTAKE_SCOPE_PERSISTED_AFTER= True
+INTAKE_SCOPE_EXISTS_AFTER= True
+SELECTED_CHECKS= ["alignment", "comprehension", "engineering", "evidence", "frontend"]
+EXPECTED_VERSION= dacfb3b132736cc0da27ed978ce9078d423a0d27
+REAL_TASK_INTAKE=PASS
+REAL_TASK_INTAKE_EXIT=0
+```
+
+结论：统一入口默认把需求写进唯一入口，但动态验收范围只是预览；显式 `confirm_scope=true` 后才把范围写入目标项目。视觉交互任务触发 `experience_contract.required=true`，选中前端和理解性验收。这里“预览”特指验收范围，不表示 `intake_request` 这个提交动作本身无副作用。
+
+首次夹具曾把 `[]` 当作单行写进 JSONL，导致 `AttributeError: 'list' object has no attribute 'get'`；这是临时夹具错误，不是产品错误。改用空 JSONL 后复跑通过。
+
+## 12. 还差什么
 
 候选包已经完成，未做 live 切换。live 切换会改写 marketplace、刷新 Codex 插件缓存、重建 Companion，并可能重载 daemon，属于发布动作，需要用户明确拍板。
 
