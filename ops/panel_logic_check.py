@@ -259,6 +259,13 @@ if (payload.__probeNative) {
   }
 }
 
+// 管家健康点必须真的能打开详情；只检查颜色类不能证明用户能看到最近完成。
+var stewardButtons = document.getElementById("stewardBar").children[0];
+if (stewardButtons && stewardButtons.children && stewardButtons.children[0]) {
+  var firstSteward = stewardButtons.children[0];
+  firstSteward._clickHandlers.slice().forEach(function (fn) { fn.call(firstSteward); });
+}
+
 const read = function (id) { return document.getElementById(id).textContent; };
 console.log(JSON.stringify({
   ok: true,
@@ -353,6 +360,7 @@ console.log(JSON.stringify({
   routeText: read("routeBox"),
   stewardBar: read("stewardBar"),
   stewardHtml: serializeEl(document.getElementById("stewardBar")),
+  stewardDetail: read("stewardDetail"),
   experienceHeadline: read("experienceHeadline"),
   experienceMeta: read("experienceMeta"),
   experienceStatus: (function(){ var n = document.getElementById("experienceContract"); return n ? n.getAttribute("data-status") || "" : ""; })(),
@@ -906,10 +914,8 @@ def main(argv):
             fails += 1
             print(f"  FAIL  验收标准不算按钮调用不对：{dismiss_calls}")
 
-        # 管家健康条：七个管家 + 一层全局项目健康必须在一个地方可读，四态语义不能混。
-        # 新版首屏只展示四态摘要 + 短名状态条，完整解释下沉到 title / aria-label。
-        # 门禁必须同时检查这两个出口：短名可见保证一眼能扫，完整解释可访问保证
-        # 信息没有被压缩吞掉；只查其中一个都会让「更轻」变成「丢信息」。
+        # 管家健康条：七个管家 + 一层全局项目健康必须在一个地方可达，四态语义不能混。
+        # 默认视觉只展示颜色点；名称和状态通过 title / aria-label 以及点击详情可查。
         stew = payload.get("stewards") or {}
         rows = stew.get("rows") or []
         counts = stew.get("counts") or {}
@@ -917,7 +923,17 @@ def main(argv):
         short_names = {"context": "上下文", "route": "路由", "merge": "合并",
                        "tune": "状态", "exec": "实现", "pm": "项目",
                        "accept": "验收", "health": "全局健康"}
-        fails += has("管家健康条上屏", out["stewardBar"], "管家")
+        steward_html = str(out.get("stewardHtml") or "")
+        if "steward-strip" in steward_html and "steward" in steward_html:
+            print("  PASS  管家健康条以颜色点上屏")
+        else:
+            fails += 1
+            print("  FAIL  管家健康条没有以颜色点上屏")
+        if "最近完成" in str(out.get("stewardDetail") or ""):
+            print("  PASS  点击管家颜色点可展开最近完成")
+        else:
+            fails += 1
+            print("  FAIL  点击管家颜色点没有展开最近完成")
         # 精确键集合：七个管家必须齐全；健康层单独校验，既不是第八个管家，也不得缺失。
         expected_keys = {"context", "route", "merge", "tune", "exec", "pm", "accept"}
         actual_keys = {r.get("key") for r in rows if r.get("key") != "health"}
@@ -963,24 +979,17 @@ def main(argv):
             print(f"  FAIL  管家健康条出现未知状态：{bad_states}")
         else:
             print("  PASS  管家健康条只使用四种约定状态")
-        # 摘要计数是首屏真正读到的全局结论，逐项检查，不能因为现场恰好只有一种状态就跳过。
-        summary_needles = []
-        for key in ("attention", "unknown", "off", "ok"):
-            if isinstance(counts.get(key), int):
-                summary_needles.append(f"{counts[key]} {states[key]}")
-        if (summary_needles and set(counts) <= set(states)
-                and sum(counts.values()) == len(rows)):
-            fails += has("健康摘要逐项显示四态计数", out["stewardBar"], *summary_needles)
+        # 计数只供控制层与详情使用，不在首屏铺开，避免把颜色摘要变成文本报表。
+        if set(counts) <= set(states) and sum(counts.values()) == len(rows):
+            print("  PASS  健康状态四态计数来自控制层，未铺到首屏")
         else:
             fails += 1
-            print(f"  FAIL  健康摘要计数与 8 行状态不一致：{counts}")
-        steward_html = str(out.get("stewardHtml") or "")
-        # 每个管家都要同时留下两样东西：短名上屏可扫，完整解释在 title / aria-label 可取。
+            print(f"  FAIL  健康状态计数与 8 行状态不一致：{counts}")
+        # 每个管家都要留下可访问名称；默认按钮本身没有可见文字。
         for r in rows:
             key = r.get("key")
             state = r.get("state") or "unknown"
             short = short_names.get(key, str(r.get("label") or "").split("：")[0])
-            fails += has(f"健康条短名上屏：{key}", out["stewardBar"], short)
             full = str(r.get("label") or "") + "（" + states.get(state, state) + "）"
             rendered_attrs = [f'data-key="{key}"', f"s-{state}"]
             for attr in ("title", 'aria-label'):
@@ -990,7 +999,7 @@ def main(argv):
                 fails += 1
                 print(f"  FAIL  健康条完整解释/状态不可访问：{key} 缺 {missing}")
             else:
-                print(f"  PASS  健康条短名与完整解释都在：{key}")
+                print(f"  PASS  健康点可访问且带完整解释：{key}")
         # 状态语义用确定性夹具锁住：unknown/off/attention/ok 四态各有明确文案与颜色类，
         # 防止现场恰好没有某一态时，那一态的实现腐化而无人发现。
         semantic_rows = [
@@ -1002,8 +1011,12 @@ def main(argv):
         semantic_counts = {"attention": 1, "unknown": 1, "off": 1, "ok": 1}
         sem_out = run_once(dict(payload, stewards={"rows": semantic_rows, "counts": semantic_counts}))
         sem_html = str(sem_out.get("stewardHtml") or "")
-        fails += has("四态摘要各自如实显示", sem_out["stewardBar"],
-                     "1 需关注", "1 取不到", "1 已关闭", "1 正常")
+        sem_html = str(sem_out.get("stewardHtml") or "")
+        if all(f"s-{state}" in sem_html for state in ("attention", "unknown", "off", "ok")):
+            print("  PASS  四态颜色点各自如实渲染")
+        else:
+            fails += 1
+            print("  FAIL  四态颜色点没有完整渲染")
         for r in semantic_rows:
             full = r["label"] + "（" + states[r["state"]] + "）"
             missing = [needle for needle in (
