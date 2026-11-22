@@ -1,13 +1,19 @@
-# 0.6.0-preview.126 候选发布验证报告
+# 0.6.0-preview.126 发布与 live 换代验证报告
 
 日期：2026-11-22
 
 ## 1. 结论
 
-`0.6.0-preview.126` 是动态验收专项执行器的候选发布版本。它基于 `origin/main = 35c53856016fb72db46078d6e36ff4bc0b76adf9`，
-在候选分支 `codex/release-126-dynamic-acceptance-20261122` 上只增加了版本号 bump。
+`0.6.0-preview.126` 的动态验收专项执行器已完成源码闭环、候选发布、本机 live 换代和现场门禁验证。
 
-本机 live 插件已按用户明确选择的 A 方案切换到 `0.6.0-preview.126`。旧版本 `0.6.0-preview.125` 保留，可回滚。
+功能源码合并点是 `bbcc3832 Merge remote-tracking branch 'origin/main' into codex/release-126-dynamic-acceptance-20261122`；
+该点已推送到候选分支和 `main`。随后本报告作为文档补丁另行提交，`main` 会再前进一步；
+这是文档收口，不代表功能源码有新变更。本机 live 插件已在用户明确选择 A 后切换到 `0.6.0-preview.126`，
+live release 的来源 commit 是 `857b45756870ea8b63d29ac165b6e8ed39c171bc`，旧版本 `0.6.0-preview.125` 保留可回滚。
+
+口径边界：第 3、10、13 节记录的是当时的历史现场，其中出现过候选、`.125` live 和更早的 `main` 引用；
+最终状态以第 14、15 节为准。由于不可变版本目录不允许覆盖同版本，live release 仍来自 `857b457...`，
+而随后合入 `main` 的 4 个 land 修复只在源码里生效；要不要再发一个新的 live 版本需要用户拍板。
 
 ## 2. 候选分支
 
@@ -256,7 +262,9 @@ PASS 运行态提示写清不会自动重启
 PASS 健康条取不到时不冒充正常
 ```
 
-## 10. 本机 live 现场未改动
+## 10. 本机 live 换代前状态（历史记录）
+
+本节保留换代前的 `.125` 证据，不能当成最终现场。最终 live 状态见第 14 节。
 
 本机插件列表：
 
@@ -367,11 +375,15 @@ REAL_TASK_INTAKE_EXIT=0
 
 ## 12. 还差什么
 
-本机 live 换代已经完成，marketplace、插件缓存、Companion、daemon 和定时任务都已切到 `.126`。
+已完成：源码合并与推送、live 换代、marketplace / 插件缓存 / Companion / daemon / 定时任务改指、live 现场机器门禁。
 
-唯一未由机器代签的是新开一个 Codex 会话后的用户肉眼验收：确认侧栏 / 对话里的自动挡面板能打开，首屏绑定项目显示为 `/Users/danta/Documents/Codex/codex-autopilot-native-autopilot`，并出现“交付前自检”区块。当前会话此前已加载的 MCP 工具不保证热更新，所以这一步需要新会话确认。
+未完成或未验证：
 
-## 13. 远端闭环
+1. 新开 Codex 会话后的用户肉眼验收：确认侧栏 / 对话里的自动挡面板能打开，首屏绑定项目显示为 `/Users/danta/Documents/Codex/codex-autopilot-native-autopilot`，并出现“交付前自检”区块。当前会话已加载的 MCP 工具不保证热更新，机器不能代签。
+2. live release 来源是 `857b457...`；`main` 后续 4 个 land 修复（`85e992e9`、`fdbb279a`、`cb5832ef`、`36a265d6`）已在源码和远端 `main`，但没有进入已安装的不可变 `.126` release。要不要发新的 live 版本，需要用户拍板。
+3. 最终面板 redesign 未定稿。当前通过的是 `panel renderer contract` 下的 interim renderer，不能宣称最终视觉版上线。
+
+## 13. 远端闭环（第一次发布推送，历史记录）
 
 候选分支推送成功后，已确认 `origin/main` 未漂移且候选是其快进后继，随后把验证过的候选推入主线：
 
@@ -381,7 +393,7 @@ To https://github.com/douxian123/codex-autopilot.git
 PUSH_MAIN_EXIT=0
 ```
 
-回读结果：
+当时回读结果：
 
 ```text
 REMOTE_MAIN=475c537783c2bd525a8298a917d6305a04cd5feb	refs/heads/main
@@ -389,7 +401,8 @@ ORIGIN_MAIN=475c537783c2bd525a8298a917d6305a04cd5feb
 LOG_ORIGIN_MAIN=475c5377 docs(release): add real task acceptance scope evidence
 ```
 
-这说明 `0.6.0-preview.126` 的版本号和本报告已经进入远端 `main`。本机 live 切换证据见第 14 节。
+这记录了 `0.6.0-preview.126` 的版本号和当时报告进入远端 `main` 的第一次推送。后续远端继续前进到 `36a265d6`，
+最终闭环见第 15 节；本机 live 切换证据见第 14 节。
 
 ## 14. live 换代现场证据
 
@@ -485,3 +498,59 @@ LIVE126_PANEL_TAIL_EXIT=0
 ```
 
 结论：本机现场已经吃到 `.126`，动态验收专项执行器在 live 目录中存在并通过门禁。最终仍需新开 Codex 会话做一次用户肉眼验收，因为当前会话已加载的 MCP 工具不保证热更新。
+
+## 15. 合并后复验与功能源码远端闭环
+
+live 换代后，`origin/main` 又前进了 4 个 land 修复提交。候选分支已把它们合并进本地 `bbcc3832`，合并无冲突。
+在合并后的 `bbcc3832` 上复跑验证：
+
+```bash
+cd /Users/danta/.newmax/workspace/codex-autopilot-release-126-20261122
+python3 ops/test-land-dirty-trunk-clean-worktree.py
+python3 ops/test-trunk-is-same-repo.py
+python3 -m py_compile ops/*.py
+python3 -u ops/selftest.py
+```
+
+结果：
+
+```text
+land dirty trunk clean worktree unit: PASS
+LAND_DIRTY_TRUNK_EXIT=0
+land trunk is same repo unit: PASS
+TRUNK_SAME_REPO_EXIT=0
+PY_COMPILE_EXIT=0
+MERGED_SELFTEST_EXIT=0
+selftest ok: 人判类收口停在 awaiting_human、人确认后才 done；机器可证的 bug 仍直达 done，自动派发闭环未被打断。
+```
+
+日志：
+
+```text
+/tmp/ca-release126-land-dirty-trunk-20261122.log
+/tmp/ca-release126-trunk-same-repo-20261122.log
+/tmp/ca-release126-py-compile-merged-20261122.log
+/tmp/ca-release126-selftest-merged-20261122.log
+```
+
+推送前远端引用：
+
+```text
+49c75a73fc346862c24d1ff759644b6f12230eda	refs/heads/codex/release-126-dynamic-acceptance-20261122
+36a265d603d811b077f021689dd70c384bb2ee73	refs/heads/main
+```
+
+功能合并点推送结果（本报告提交前）：
+
+```text
+To https://github.com/douxian123/codex-autopilot.git
+   49c75a73..bbcc3832  HEAD -> codex/release-126-dynamic-acceptance-20261122
+PUSH_CANDIDATE_EXIT=0
+To https://github.com/douxian123/codex-autopilot.git
+   36a265d6..bbcc3832  HEAD -> main
+PUSH_MAIN_EXIT=0
+```
+
+边界说明：以下推送结果记录功能合并点 `bbcc3832` 进入远端；随后本报告的文档补丁会再次推进 `main`，
+最终远端引用以推送后回读为准，功能源码仍停在 `bbcc3832`。本机 live release 仍是 `857b457...` 来源的不可变 `.126`。
+两者版本号相同但源码 commit 不同，不能把“源码已合入”说成“live 现场也已更新到该 commit”。
