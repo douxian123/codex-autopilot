@@ -68,9 +68,10 @@ def _run(argv):
 
 
 # 工具描述存在不等于宿主能调用。历史上发生过 tool_search 能搜到
-# render_autopilot_panel，但实际调用返回 unsupported call。这里把宿主暴露形态
-# 变成可机器复核的门禁：插件 MCP 已注册时，prompt 必须是 deferred namespace，
-# 否则说明注册/宿主接线已经漂移。
+# render_autopilot_panel，但实际调用返回 unsupported call。修复点是让插件工具
+# 绕过 deferred bridge；prompt-input 不应再把 MCP 命名空间塞给模型。这里只验证
+# 用户指令原样进入 prompt、deferred namespace 不在 prompt 里，以及 installed
+# manifest 的 omit_tools_from 接线。
 codex_cli = Path("/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex")
 if codex_cli.is_file():
     code, mcp_list = _run([str(codex_cli), "mcp", "list", "--json"])
@@ -106,11 +107,12 @@ if codex_cli.is_file():
             env=env,
         )
         prompt_ok = done.returncode == 0 and (
-            "mcp__codex_autopilot" in done.stdout or "codex_autopilot" in done.stdout
-        )
+            "请调用 render_autopilot_panel 工具打开 Codex Autopilot 面板。"
+            in done.stdout
+        ) and "mcp__codex_autopilot" not in done.stdout
     except (OSError, subprocess.SubprocessError):
         prompt_ok = False
-    checks["宿主 prompt 暴露自动挡工具命名空间"] = prompt_ok
+    checks["宿主 prompt 保留 direct tool 指令且不带 deferred 命名空间"] = prompt_ok
 
     # 过期 release 路径会让宿主 MCP 启动失败，进而丢掉整组动态工具。
     config_path = Path.home() / ".codex" / "config.toml"
