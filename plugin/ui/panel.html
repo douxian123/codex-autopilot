@@ -1672,10 +1672,6 @@
         : "入口原话" + ((x.signals && x.signals.length)
           ? " · 命中 " + x.signals.join("、") : "");
       var detail = (x.id || "") + " · " + (x.text || x.title || "") + " · " + source;
-      var SCOPE_LABEL = {global:"全局", workflow:"工作流程", module:"模块", project:"项目"};
-      var PRIORITY_LABEL = {high:"高", normal:"普通", low:"低"};
-      if (x.scope_class) detail += " · 范围：" + (SCOPE_LABEL[x.scope_class] || x.scope_class);
-      if (x.priority) detail += " · 优先级：" + (PRIORITY_LABEL[x.priority] || x.priority);
       if (x.evidence && x.evidence.length){
         var ev = x.evidence[0];
         detail += " · 证据：" + ((ev.thread) ? ev.thread + "：" : "") + (ev.text || "");
@@ -2255,7 +2251,9 @@
     var box = el("nativeState"); if (!box) return;
     var native = (s && s.native) || {};
     var probe = native.last_probe || null;
-    var text = native.label || (native.socket_present ? "原生直连：未自检" : "原生直连：Codex 未运行");
+    var fallback = native.socket_present ? "原生直连：未自检"
+      : "原生直连：未找到桌面控制 socket（只读历史，不能派活）";
+    var text = native.label || fallback;
     if (probe && probe.at) { text += "（自检于 " + probe.at + "）"; }
     box.textContent = text;
     var tip = (probe && probe.reason) ? probe.reason : "";
@@ -2578,16 +2576,13 @@
     (cc.items || []).forEach(function(x){
       var scope = (x.scope && x.scope.length) ? x.scope.join("、") : "全局";
       var sig = (x.signals && x.signals.length) ? x.signals.join("、") : "规范措辞";
-      var scopeClass = ({global:"全局", workflow:"工作流程", module:"模块", project:"项目"})[x.scope_class] || "项目";
-      var priority = ({high:"高", normal:"普通", low:"低"})[x.priority] || "普通";
       var src = x.source === "context_learning"
         ? "自学习：同一诉求出现 " + (x.mentions || 0) + " 次 / 跨 " + (x.threads || 0) + " 个会话；"
         : "命中信号：" + sig + "；";
       items.push({tag:"待你确认", cls:"warn",
         text:(x.id||"") + " · " + (x.text||x.title||""),
         act:"constraint", id:x.id,
-        why:src + "范围类别：" + scopeClass + " · 优先级：" + priority +
-          " · 适用范围：" + scope +
+        why:src + "适用范围：" + scope +
           "。点「算」会把它收进项目规范，之后落盘门禁与执行者都按它办事；点「不算」这条不再出现，什么都不生效。"});
     });
     // 验收管家提出的验收标准候选：先把“怎么算完成”编译成可判定标准，但确认前
