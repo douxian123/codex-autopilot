@@ -7715,11 +7715,37 @@ def test_disk_reap_reaps_stale_code_sign_clones():
         assert fresh.exists(), "未过 grace 的新副本不能被删除"
 
         mod._open_paths_snapshot = lambda: None
+        mod._open_paths_for_roots = lambda roots: None
         another = xdir / "code_sign_clone.another"
         another.mkdir(parents=True)
         os.utime(another, (old, old))
         removed, _ = mod.reap_code_sign_clones(dry=False)
         assert removed == 0 and another.exists(), "引用探针不确定时必须保留"
+
+    with tempfile.TemporaryDirectory(prefix="codex-sign-clones-scoped-") as tmp:
+        xdir = Path(tmp) / "X" / "com.google.Chrome.code_sign_clone"
+        stale = xdir / "code_sign_clone.stale"
+        active = xdir / "code_sign_clone.active"
+        for path in (stale, active):
+            path.mkdir(parents=True)
+            (path / "payload").write_text("x" * 32, encoding="utf-8")
+        old = time.time() - 3600
+        os.utime(stale, (old, old))
+        os.utime(active, (old, old))
+
+        mod._code_sign_clone_xdirs = lambda: iter([str(Path(tmp) / "X")])
+        mod._open_paths_snapshot = lambda: None
+        mod._open_paths_for_roots = lambda roots: [str(active / "payload")]
+        removed, _ = mod.reap_code_sign_clones(dry=False)
+        assert removed == 1 and not stale.exists(), "范围探测成功时旧副本应能回收"
+        assert active.exists(), "范围探测认出的活跃副本不能被删除"
+
+        mod._open_paths_for_roots = lambda roots: None
+        another = xdir / "code_sign_clone.another"
+        another.mkdir(parents=True)
+        os.utime(another, (old, old))
+        removed, _ = mod.reap_code_sign_clones(dry=False)
+        assert removed == 0 and another.exists(), "两级探针都失败时必须整轮保留"
 
     print("selftest ok: 签名临时副本只回收旧且无引用的目录，活跃副本受保护。")
 

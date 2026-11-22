@@ -470,21 +470,5 @@
  "codex/project-autonomy-mode-20261121@1aebb35c6630b5e7fcaf3605b26766d1d7785532@16606666f76aebbab5f48317827a731146f066a1": {
   "files": 7,
   "lines": 621
- },
- "codex/prd-closure-package-20261121@44b485e4a045555b92fed90a41c24494654cc2df@2f4368fc7ece371fbbc010247a6d0eaceaebec53": {
-  "files": 6,
-  "lines": 153
- },
- "codex/project-autonomy-main-port-20261121@3a7580dd74db38c92abaa62b6f53c1c786271091@2f4368fc7ece371fbbc010247a6d0eaceaebec53": {
-  "files": 18,
-  "lines": 867
- },
- "codex/project-autonomy-main-port-20261121@3a7580dd74db38c92abaa62b6f53c1c786271091@483610db46bf35bf7bc7dcd67df1dc2661819d04": {
-  "files": 18,
-  "lines": 867
- },
- "codex/native-red-light-honest-20261122@d8bcfcf66589403723b93af408fee0bb2a6b524e@cbe419fe09bf303023a6e57ff904fd24104cb095": {
-  "files": 12,
-  "lines": 90
  }
 }
