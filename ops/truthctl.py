@@ -1872,6 +1872,8 @@ def cmd_snapshot(args):
     L.append('')
 
     STATUS.parent.mkdir(parents=True, exist_ok=True)
+    while L and not L[-1]:
+        L.pop()
     STATUS.write_text('\n'.join(L) + '\n')
     if not args or '--print' in args:
         print('\n'.join(L))
