@@ -9,11 +9,13 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 
-SUPPORTED = {"engineering", "frontend", "comprehension", "alignment", "evidence"}
+SUPPORTED = {"engineering", "frontend", "comprehension", "alignment", "evidence",
+             "security", "deployment", "ai_output"}
 
 
 def _text(value: Any) -> str:
@@ -32,6 +34,11 @@ def _has(text: str, words: tuple[str, ...]) -> bool:
     return any(word in text for word in words)
 
 
+def _has_ai_token(text: str) -> bool:
+    """只把独立 AI 词当成输出质量风险，不让 mail/detail/main 误触发。"""
+    return re.search(r"(?<![a-z])ai(?![a-z])", text) is not None
+
+
 def infer_impact(text: str, kind: str, files: list[str]) -> list[str]:
     """从任务线索推导影响标签；未知影响不降级为低风险。"""
     haystack = " ".join([text, kind, *files]).lower()
@@ -48,7 +55,7 @@ def infer_impact(text: str, kind: str, files: list[str]) -> list[str]:
         impacts.add("deployment")
     if _has(haystack, ("性能", "并发", "慢", "延迟", "大数据", "内存")):
         impacts.add("performance")
-    if _has(haystack, ("ai", "模型", "prompt", "引用", "来源", "生成")):
+    if _has_ai_token(haystack) or _has(haystack, ("模型", "prompt", "引用", "来源", "生成")):
         impacts.add("ai_output")
     return sorted(impacts)
 
@@ -56,7 +63,8 @@ def infer_impact(text: str, kind: str, files: list[str]) -> list[str]:
 def generate_scope(*, text: str = "", kind: str = "", files: list[str] | None = None,
                    product_shape: list[str] | None = None,
                    delivery_goal: str = "acceptance_ready",
-                   explicit_impacts: list[str] | None = None) -> dict[str, Any]:
+                   explicit_impacts: list[str] | None = None,
+                   expected_version: str = "") -> dict[str, Any]:
     """生成 acceptance_scope.json 内容，不产生任何副作用。"""
     files = _texts(files)
     shape = _texts(product_shape)
@@ -94,19 +102,24 @@ def generate_scope(*, text: str = "", kind: str = "", files: list[str] | None = 
         selected.add("evidence")
         reasons["evidence"] = "所有适用验收项都必须具备当前版本和可复核来源证据"
 
-    unmapped: list[str] = []
     if {"authorization", "security"} & set(impacts):
-        unmapped.append("security/authorization：当前预验收执行器没有独立安全门禁")
+        selected.add("security")
+        reasons["security"] = "存在权限、账号、密钥或敏感数据影响，需要真实安全与授权证据"
     if "deployment" in impacts:
-        unmapped.append("deployment：当前预验收执行器没有发布、回滚和生产健康检查门禁")
+        selected.add("deployment")
+        reasons["deployment"] = "存在发布、灰度、回滚或生产影响，需要部署和健康检查证据"
+    if "ai_output" in impacts:
+        selected.add("ai_output")
+        reasons["ai_output"] = "存在模型、提示、引用或生成输出影响，需要事实性和来源证据"
+
+    unmapped: list[str] = []
     if "performance" in impacts:
         unmapped.append("performance：当前预验收执行器没有性能基线和负载门禁")
-    if "ai_output" in impacts:
-        unmapped.append("ai_output：当前预验收执行器没有 AI 输出质量和来源门禁")
 
     return {
         "schema": "acceptance-scope/v1",
         "status": "ready" if not unmapped else "needs_review",
+        "expected_version": _text(expected_version),
         "product_shape": shape,
         "delivery_goal": _text(delivery_goal) or "acceptance_ready",
         "change": {"kind": _text(kind), "text": _text(text), "files": files},

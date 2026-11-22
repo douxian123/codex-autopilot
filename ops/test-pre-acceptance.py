@@ -21,7 +21,10 @@ def main():
         check("没有预验收台账时是 unknown", first["status"] == "unknown")
         check("没有预验收台账时不通知用户", first["notify_user"] is False)
 
-        for spec in pre_acceptance.acceptance_dictionary.ITEMS:
+        default_categories = set(pre_acceptance._DEFAULT_SCOPE)
+        default_items = [spec for spec in pre_acceptance.acceptance_dictionary.ITEMS
+                         if spec["category"] in default_categories]
+        for spec in default_items:
             pre_acceptance.record(root, "engineering", "pass",
                                   list(spec["evidence_required"]),
                                   item_id=spec["id"], version="test-commit",
@@ -29,7 +32,7 @@ def main():
         ready = pre_acceptance.evaluate(root)
         check("每条必检标准都通过才 ready", ready["status"] == "ready")
         check("ready 才允许通知用户", ready["notify_user"] is True)
-        check("逐项自检数量完整", ready["passed"] == ready["total"] == len(pre_acceptance.acceptance_dictionary.ITEMS))
+        check("逐项自检数量完整", ready["passed"] == ready["total"] == len(default_items))
 
         pre_acceptance.record(root, "engineering", "fail", ["browser"],
                               item_id="FE-001", version="test-commit",

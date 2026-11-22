@@ -35,14 +35,28 @@ def main():
         product_shape=["production_service"], delivery_goal="production_release")
     check("生产任务识别部署和安全风险",
           {"deployment", "security", "authorization"} <= set(production["impact_tags"]))
-    check("未实现的发布安全门禁不会假装通过", production["status"] == "needs_review")
-    check("未映射风险被明确列出", len(production["unmapped_risks"]) >= 2)
+    check("发布安全专项进入最小充分验收范围",
+          {"deployment", "security", "alignment", "engineering", "evidence"} <=
+          set(production["selected_checks"]))
+    check("已实现专项不再伪装成未映射风险",
+          all("security" not in risk and "deployment" not in risk
+              for risk in production["unmapped_risks"]))
+    check("仍无执行器的风险保持未映射",
+          all("performance" in risk for risk in production["unmapped_risks"])
+          if production["unmapped_risks"] else True)
 
     docs = scope.generate_scope(
         text="更新使用说明", kind="documentation", files=["README.md"],
         product_shape=["documentation"], delivery_goal="reviewable")
     check("纯文档变更可以没有预验收项", docs["selected_checks"] == [])
     check("纯文档变更空集合不制造未知风险", docs["status"] == "ready")
+
+    ai = scope.generate_scope(
+        text="调整模型 prompt 和引用来源展示", kind="feature",
+        files=["ops/engine.py"], product_shape=["backend_service"])
+    check("AI 输出风险进入专项验收范围", "ai_output" in ai["selected_checks"])
+    check("AI 输出专项不再列为未映射风险",
+          all("ai_output" not in risk for risk in ai["unmapped_risks"]))
     print("dynamic-acceptance-scope: PASS")
 
 

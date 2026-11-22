@@ -3,8 +3,9 @@
 """验收管家的交付前预验收闸。
 
 人工验收不是第一道测试。这个模块把「是否已经值得打扰用户」收敛成一份
-可审计的质量包：工程闭环、真实前端、用户可理解性、PRD/预期对齐四类证据
-都必须明确通过；任一项失败或取不到，都只能停在 ``blocked``/``unknown``。
+可审计的质量包：工程闭环、真实前端、用户可理解性、PRD/预期对齐和证据审计
+五类基础证据必须明确通过；安全、发布、AI 输出三类专项只在动态范围选中时
+追加。任一项失败或取不到，都只能停在 ``blocked``/``unknown``。
 
 模块只读消费已有证据，不替代具体门禁，也不把截图本身当成通过证据。这样
 既能复用项目已有的测试和浏览器门禁，也不会因为新增一层投影而制造第二套
@@ -52,10 +53,30 @@ CHECKS = (
         "reason": "每条必检项必须能回到当前版本、真实入口和可复核现场。",
         "required_evidence": ("evidence", "version", "provenance"),
     },
+    {
+        "id": "security",
+        "title": "安全与权限专项",
+        "reason": "权限、密钥、敏感数据和越权路径必须有真实命令或入口证据，不能靠基础门禁代替。",
+        "required_evidence": ("command", "result", "security_scan", "version"),
+    },
+    {
+        "id": "deployment",
+        "title": "发布与恢复专项",
+        "reason": "发布、灰度、回滚和生产健康必须有当前版本的可复核证据。",
+        "required_evidence": ("command", "result", "deployment", "health_check", "version"),
+    },
+    {
+        "id": "ai_output",
+        "title": "AI 输出质量专项",
+        "reason": "模型输出必须有结构、事实性、来源和降级证据。",
+        "required_evidence": ("command", "result", "source_trace", "ai_output", "version"),
+    },
 )
 
 _CHECK_IDS = {item["id"] for item in CHECKS}
-_DEFAULT_SCOPE = tuple(item["id"] for item in CHECKS)
+# 旧项目没有 acceptance_scope.json 时只保留原有五类基础门禁。
+# 专项门禁必须由当前任务显式选中，不能因为新增类别就静默加到所有项目上。
+_DEFAULT_SCOPE = ("engineering", "frontend", "comprehension", "alignment", "evidence")
 
 
 def _now() -> str:
@@ -178,8 +199,10 @@ def evaluate(root: Path, scope: dict[str, Any] | None = None) -> dict[str, Any]:
         item_id = _text(row.get("item_id"))
         if item_id in acceptance_dictionary.BY_ID:
             item_rows[item_id] = row
-    all_items = [acceptance_dictionary.evaluate_item(spec, item_rows.get(spec["id"]))
-                 for spec in acceptance_dictionary.ITEMS]
+    expected_version = _text(scope_info.get("expected_version"))
+    all_items = [acceptance_dictionary.evaluate_item(
+        spec, item_rows.get(spec["id"]), expected_version=expected_version)
+        for spec in acceptance_dictionary.ITEMS]
     items = [item for item in all_items if item["category"] in selected_ids]
     categories = []
     for category in acceptance_dictionary.CATEGORIES:
@@ -194,10 +217,12 @@ def evaluate(root: Path, scope: dict[str, Any] | None = None) -> dict[str, Any]:
             "not_applicable": len([x for x in subset if x["state"] == "not_applicable"]),
         })
     scope_review = scope_info.get("status") == "needs_review"
+    unmapped_risks = scope_info.get("unmapped_risks") or []
+    unmapped_risk_present = bool(unmapped_risks)
     if not items:
-        state = "blocked" if scope_review else "ready"
+        state = "blocked" if (scope_review or unmapped_risk_present) else "ready"
         label = ("验收管家：动态范围存在未映射风险，先补门禁或明确风险处理"
-                 if scope_review else "验收管家：本次没有适用的预验收项")
+                 if (scope_review or unmapped_risk_present) else "验收管家：本次没有适用的预验收项")
     elif not item_rows:
         state = "unknown"
         label = "验收管家：逐项自检尚未完成，不通知你验收"
@@ -210,7 +235,9 @@ def evaluate(root: Path, scope: dict[str, Any] | None = None) -> dict[str, Any]:
     else:
         state = "ready"
         label = "验收管家：所有适用必检项通过，可以通知你验收"
-    if scope_review and state == "ready":
+    # 未映射风险是硬阻塞：即使调用方把 scope.status 写成 ready，或逐项证据
+    # 只到 unknown，都不能进入用户验收台。N/A 也要有执行证据，不能隐式放行。
+    if (scope_review or unmapped_risk_present) and state in ("ready", "unknown"):
         state = "blocked"
         label = "验收管家：动态范围存在未映射风险，先补门禁或明确风险处理"
     passed = sum(item["state"] == "pass" for item in items)
@@ -227,6 +254,8 @@ def evaluate(root: Path, scope: dict[str, Any] | None = None) -> dict[str, Any]:
         "total": len(items),
         "notify_user": state == "ready",
         "scope": scope_info,
+        "unmapped_risks": unmapped_risks,
+        "unmapped_risk_count": len(unmapped_risks),
         "policy": "本次适用的必检项逐条 pass 且没有未映射风险后才进入用户验收；截图是复核附件，不是自检替代品。",
     }
 
