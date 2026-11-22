@@ -7,7 +7,7 @@
 `0.6.0-preview.126` 是动态验收专项执行器的候选发布版本。它基于 `origin/main = 35c53856016fb72db46078d6e36ff4bc0b76adf9`，
 在候选分支 `codex/release-126-dynamic-acceptance-20261122` 上只增加了版本号 bump。
 
-本机 live 插件仍然是 `0.6.0-preview.125`，没有切换。切换 live 属于发布动作，未在本轮执行。
+本机 live 插件已按用户明确选择的 A 方案切换到 `0.6.0-preview.126`。旧版本 `0.6.0-preview.125` 保留，可回滚。
 
 ## 2. 候选分支
 
@@ -367,11 +367,9 @@ REAL_TASK_INTAKE_EXIT=0
 
 ## 12. 还差什么
 
-候选包已经完成，未做 live 切换。live 切换会改写 marketplace、刷新 Codex 插件缓存、重建 Companion，并可能重载 daemon，属于发布动作，需要用户明确拍板。
+本机 live 换代已经完成，marketplace、插件缓存、Companion、daemon 和定时任务都已切到 `.126`。
 
-用户选择 A：`0.6.0-preview.126` 切换为 live。好处是当前会话之后可以使用新动态验收专项执行器；代价是会改动本机插件入口和后台进程，当前会话已加载的工具未必立刻更新，可能需要新开 Codex 会话确认。
-
-用户选择 B：保持 `0.6.0-preview.125`。好处是当前现场完全不动；代价是动态验收专项执行器只在候选包和仓库里可追溯，本机 live 仍然不生效。
+唯一未由机器代签的是新开一个 Codex 会话后的用户肉眼验收：确认侧栏 / 对话里的自动挡面板能打开，首屏绑定项目显示为 `/Users/danta/Documents/Codex/codex-autopilot-native-autopilot`，并出现“交付前自检”区块。当前会话此前已加载的 MCP 工具不保证热更新，所以这一步需要新会话确认。
 
 ## 13. 远端闭环
 
@@ -391,4 +389,99 @@ ORIGIN_MAIN=475c537783c2bd525a8298a917d6305a04cd5feb
 LOG_ORIGIN_MAIN=475c5377 docs(release): add real task acceptance scope evidence
 ```
 
-这说明 `0.6.0-preview.126` 的版本号和本报告已经进入远端 `main`。它只代表源码和发布证据可追溯，不代表本机 live 已切换到 `.126`；现场仍保持 `0.6.0-preview.125`。
+这说明 `0.6.0-preview.126` 的版本号和本报告已经进入远端 `main`。本机 live 切换证据见第 14 节。
+
+## 14. live 换代现场证据
+
+用户明确选择 A 后，执行了真实 live 换代：
+
+```bash
+cd /Users/danta/.newmax/workspace/codex-autopilot-release-126-20261122
+bash ./install.sh \
+  --state-root /Users/danta/Documents/Codex/codex-autopilot-native-autopilot \
+  --trunk /Users/danta/Documents/Codex/codex-autopilot-native-autopilot-trunk \
+  --refresh-plugin
+```
+
+结果：
+
+```text
+LIVE_INSTALL_EXIT=0
+```
+
+关键安装输出：
+
+```text
+已安装不可变版本 0.6.0-preview.126 到 /Users/danta/plugins/codex-autopilot/releases/0.6.0-preview.126
+已注册 codex-autopilot 到 /Users/danta/.agents/plugins/marketplace.json，当前版本路径：./plugins/codex-autopilot/releases/0.6.0-preview.126
+原版本仍完整保留，可用 ./install.sh --rollback 回退到：./plugins/codex-autopilot/releases/0.6.0-preview.125
+已安装菜单栏 Companion：/Users/danta/Applications/CodexAutopilotCompanion.app
+守护已切到 0.6.0-preview.126 并重启。
+定时任务改指完成：10 条已更新。
+插件缓存已刷新。
+```
+
+live 运行态契约：
+
+```text
+LIVE126_RUNTIME_CONTRACT_EXIT=0
+```
+
+```json
+{
+  "status": "ok",
+  "version": "0.6.0-preview.126",
+  "commit": "857b45756870ea8b63d29ac165b6e8ed39c171bc",
+  "source": "./plugins/codex-autopilot/releases/0.6.0-preview.126",
+  "plist_script": "/Users/danta/plugins/codex-autopilot/releases/0.6.0-preview.126/ops/central_daemon.py",
+  "pid": "85211",
+  "pid_script": "/Users/danta/plugins/codex-autopilot/releases/0.6.0-preview.126/ops/central_daemon.py",
+  "unknown": [],
+  "failures": []
+}
+```
+
+Codex 插件列表和缓存：
+
+```text
+codex-autopilot@personal installed, enabled 0.6.0-preview.126 /Users/danta/plugins/codex-autopilot/releases/0.6.0-preview.126
+cache version = 0.6.0-preview.126
+FILE=YES /Users/danta/.codex/plugins/cache/personal/codex-autopilot/0.6.0-preview.126/ui/panel.html
+FILE=YES /Users/danta/.codex/plugins/cache/personal/codex-autopilot/0.6.0-preview.126/ops/test-specialized-acceptance-executors.py
+```
+
+live 目录内复跑专项门禁：
+
+```text
+specialized-acceptance-executors: PASS
+pre-acceptance: PASS
+acceptance-dictionary: PASS
+dynamic-acceptance-scope: PASS
+generate-acceptance-scope-tool: PASS
+acceptance-evidence: PASS
+gate registration unit: PASS（92 条门禁全部已登记）
+EXIT=0 py_compile
+LIVE126_GATES_EXIT=0
+```
+
+live 面板检查：
+
+```text
+体验契约投影到面板首屏
+PASS  渲染契约投影到中间态面板
+PASS  当前面板声明为 interim renderer
+PASS  运行态提示写清不会自动重启
+PASS  健康条取不到时不冒充正常
+结果：全部通过
+EXIT=0
+LIVE126_PANEL_TAIL_EXIT=0
+```
+
+命令行状态回读：
+
+```text
+安装绑定   OK（0.6.0-preview.126 · 状态根 /Users/danta/Documents/Codex/codex-autopilot-native-autopilot）
+常驻守护       OK（pid 85211，绑定 /Users/danta/Documents/Codex/codex-autopilot-native-autopilot）
+```
+
+结论：本机现场已经吃到 `.126`，动态验收专项执行器在 live 目录中存在并通过门禁。最终仍需新开 Codex 会话做一次用户肉眼验收，因为当前会话已加载的 MCP 工具不保证热更新。
