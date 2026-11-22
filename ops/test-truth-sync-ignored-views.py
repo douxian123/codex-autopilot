@@ -4,9 +4,10 @@
 
 为什么有这条（2026-11-17 本轮 land 实测）：
 
-  守护/面板会重建一批生成视图（`docs/PROJECT_STATUS.md`、`docs/CONTROL_BOARD.md`、
-  `docs/CONTROL_PLANE.html`、`ops/context/`）。它们在 .gitignore 里被显式排除，也
-  从未进过版本库。但 `TRUTH_PATHS` 把它们和真账本列在一起，旧实现的 `git add` 循环
+  守护/面板会重建一批生成视图。`docs/CONTROL_BOARD.md`、`docs/CONTROL_PLANE.html`、
+  `ops/context/` 属于本地仪表盘视图，在 .gitignore 里被显式排除。
+  `docs/PROJECT_STATUS.md` 和 `docs/PROJECT_CONSTITUTION.md` 是用户可见的自动归档页，
+  必须随版本库分发，不能继续当成 ignored 本地视图。但 `TRUTH_PATHS` 把它们和真账本列在一起，旧实现的 `git add` 循环
   对每个存在的路径无脑 `git add`：
 
       → 已生成的视图：`git add` 报
@@ -24,7 +25,7 @@
 
 本门禁锁死四件事：
   1. 存在 ignored 生成视图时，真相同步照常提交真账本（不再被视图卡死）；
-  2. ignored 生成视图绝不被提交进版本库；
+  2. ignored 仪表盘视图绝不被提交进版本库，自动归档页则必须被提交；
   3. `.bak-*` 这类 smoke 测试遗留副本绝不被卷进 `chore(truth)`；
   4. add 失败时索引被清干净，不给下一次 land 留半暂存。
 """
@@ -74,8 +75,6 @@ def seed(root: Path):
     (repo / "docs" / "PRODUCT_MAINLINE.md").write_text("# 主线\n", encoding="utf-8")
     # 关键复现条件：生成视图在 .gitignore 里被排除。
     (repo / ".gitignore").write_text(
-        "docs/PROJECT_STATUS.md\n"
-        "docs/PROJECT_CONSTITUTION.md\n"
         "docs/CONTROL_BOARD.md\n"
         "docs/CONTROL_PLANE.html\n"
         "ops/context/\n",
@@ -118,10 +117,12 @@ def main():
         changed = git(repo, "show", "--name-only", "--format=", "HEAD").stdout
         check("真账本被提交", "ops/truth/progress.jsonl" in changed,
               f"(changed={changed.strip()!r})")
-        for view in ("docs/PROJECT_STATUS.md", "docs/PROJECT_CONSTITUTION.md",
-                     "docs/CONTROL_BOARD.md",
+        for view in ("docs/CONTROL_BOARD.md",
                      "docs/CONTROL_PLANE.html", "ops/context/pack.json"):
-            check(f"ignored 生成视图不进版本库：{view}", view not in changed,
+            check(f"ignored 仪表盘视图不进版本库：{view}", view not in changed,
+                  f"(changed={changed.strip()!r})")
+        for view in ("docs/PROJECT_STATUS.md", "docs/PROJECT_CONSTITUTION.md"):
+            check(f"自动归档页必须入库：{view}", view in changed,
                   f"(changed={changed.strip()!r})")
         check("smoke 遗留副本不进版本库",
               "bak-route-smoke" not in changed, f"(changed={changed.strip()!r})")
