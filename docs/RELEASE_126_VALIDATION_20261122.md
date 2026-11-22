@@ -554,3 +554,32 @@ PUSH_MAIN_EXIT=0
 边界说明：以下推送结果记录功能合并点 `bbcc3832` 进入远端；随后本报告的文档补丁会再次推进 `main`，
 最终远端引用以推送后回读为准，功能源码仍停在 `bbcc3832`。本机 live release 仍是 `857b457...` 来源的不可变 `.126`。
 两者版本号相同但源码 commit 不同，不能把“源码已合入”说成“live 现场也已更新到该 commit”。
+
+## 16. 用户怎么用上并验收
+
+最短使用路径：
+
+1. 新开一个 Codex 会话。当前已加载 MCP 的会话不保证热更新到新插件版本。
+2. 在 Codex 里打开 Plugins → Personal，确认 `Codex 自动挡` 显示为 `0.6.0-preview.126`。
+3. 在侧栏或对话里说“打开自动挡面板”。看到面板首屏后，确认绑定项目是 `/Users/danta/Documents/Codex/codex-autopilot-native-autopilot`。
+4. 首屏应能看到安装绑定 `OK`、常驻守护 `OK`、唯一入口、分支/冲突/落盘统计。高级区应能看到 PM 简报、验收标准、PRD 迭代、上下文档案和管家状态。
+5. 如果要发需求，直接在总输入框说；默认先路由，验收范围只预览。看到范围后再显式确认，才会把动态验收范围写进项目账本。
+
+命令行快速验收：
+
+```bash
+cat /Users/danta/plugins/codex-autopilot/install-state.json
+KG_REPO=/Users/danta/Documents/Codex/codex-autopilot-native-autopilot \
+KG_TRUNK=/Users/danta/Documents/Codex/codex-autopilot-native-autopilot-trunk \
+python3 /Users/danta/plugins/codex-autopilot/releases/0.6.0-preview.126/ops/kgctl.py status
+```
+
+看到以下组合算机器侧正常：
+
+```text
+"version": "0.6.0-preview.126"
+安装绑定   OK（0.6.0-preview.126 · 状态根 /Users/danta/Documents/Codex/codex-autopilot-native-autopilot）
+常驻守护       OK（pid ...，绑定 /Users/danta/Documents/Codex/codex-autopilot-native-autopilot）
+```
+
+人工侧必须你自己看一眼：新会话里面板能否打开、首屏是否来自真实状态、交互是否符合当前 interim renderer 的视觉预期。
