@@ -880,6 +880,7 @@
   var nextId = 1;
   var state = null;
   var loadError = null;
+  var mcpInitialized = false;
   if (/[?&]adv=1/.test(location.search)) document.body.classList.add("adv");
 
   function request(method, params){
@@ -887,6 +888,27 @@
     try { window.parent.postMessage({jsonrpc:"2.0", id:id, method:method, params:params||{}}, "*"); }
     catch(e){}
     return new Promise(function(resolve, reject){ pending[id] = {resolve:resolve, reject:reject}; });
+  }
+
+  function notify(method, params){
+    try { window.parent.postMessage({jsonrpc:"2.0", method:method, params:params||{}}, "*"); }
+    catch(e){}
+  }
+
+  function initializeMcpApp(){
+    if (mcpInitialized) return Promise.resolve(null);
+    mcpInitialized = true;
+    return request("ui/initialize", {
+      appInfo: {name: "codex-autopilot-panel", version: "0.6.0"},
+      appCapabilities: {},
+      protocolVersion: "2025-11-21"
+    }).then(function(result){
+      notify("ui/notifications/initialized", {});
+      return result;
+    }, function(error){
+      mcpInitialized = false;
+      throw error;
+    });
   }
 
   window.addEventListener("message", function(ev){
@@ -2944,6 +2966,7 @@
     callTool("dashboard", {open:false}).then(function(res){ toast((res && res.__text__) || "已生成驾驶舱"); });
   });
 
+  initializeMcpApp().catch(function(){});
   setTimeout(function(){ if (!state) loadStatus(); }, 1500);
   setInterval(function(){ if (state && !document.body.classList.contains("adv")) loadStatus(); }, 20000);
 })();

@@ -17,6 +17,9 @@ if not setup_path.is_file():
 setup = setup_path.read_text(encoding="utf-8")
 mcp = (OPS / "central_mcp.py").read_text(encoding="utf-8")
 installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+panel_candidates = (ROOT / "plugin" / "ui" / "panel.html", ROOT / "ui" / "panel.html")
+panel = next((path for path in panel_candidates if path.is_file()), panel_candidates[0])
+panel_html = panel.read_text(encoding="utf-8") if panel.is_file() else ""
 
 def has_any(text: str, *needles: str) -> bool:
     return any(needle in text for needle in needles)
@@ -65,6 +68,15 @@ checks = {
             '"readOnlyHint": True',
             '"destructiveHint": False',
             '"openWorldHint": False',
+        )
+    ),
+    "面板完成 MCP App 初始化握手": all(
+        needle in panel_html
+        for needle in (
+            'request("ui/initialize"',
+            'protocolVersion: "2025-11-21"',
+            'notify("ui/notifications/initialized"',
+            'initializeMcpApp()',
         )
     ),
 }
