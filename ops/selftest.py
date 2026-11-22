@@ -225,6 +225,10 @@ def main():
         # 用 git common dir，判为 foreign 时退回本仓 <项目名>-trunk。
         run([sys.executable, str(OPS / "test-trunk-is-same-repo.py")],
             cwd=str(OPS.parent), check=True)
+        # 用户共享检出常有与本次合并无关的在途改动。land 必须在对齐 ref /
+        # checkout 前发现它们，改走一次性干净 worktree，不能 stash/reset 用户文件。
+        run([sys.executable, str(OPS / "test-land-dirty-trunk-clean-worktree.py")],
+            cwd=str(OPS.parent), check=True)
         # supersede / land 每拍 `× 主干工作树切不到 main` 的那条：trunk 与 main 没有
         # 共同祖先，且两份追加型台账的工作副本是旧截断版，`git checkout --detach main`
         # 被拒。门禁要求：切得过去、main 章节一条不丢、本地新条目保留，同时夹带**代码**

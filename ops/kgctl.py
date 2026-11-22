@@ -3410,11 +3410,28 @@ def _trunk_is_foreign_clone(wt: Path) -> bool:
             return False
     except OSError:
         return False
-    mine = project_router.identity(REPO)
-    theirs = project_router.identity(wt)
-    if not theirs:
+    # Compare the git object store, not pathnames or remote URLs. A configured
+    # trunk may be a separate clone with the same remote and even the same
+    # branch name; merge/checkout there would mutate somebody else's checkout.
+    mine = git("-C", str(REPO), "rev-parse", "--git-common-dir")
+    theirs = git("-C", str(wt), "rev-parse", "--git-common-dir")
+    if not mine or not theirs:
         return False
-    return bool(mine) and theirs != mine
+    mine_path = Path(mine)
+    if not mine_path.is_absolute():
+        mine_path = (REPO / mine_path).resolve()
+    theirs_path = Path(theirs)
+    if not theirs_path.is_absolute():
+        theirs_path = (wt / theirs_path).resolve()
+    return mine_path.resolve() != theirs_path.resolve()
+
+
+def _trunk_can_checkout_main(wt: Path) -> bool:
+    """预演切到 main：有会覆盖用户文件的风险时返回 False。"""
+    probe = proc_run(["git", "-C", str(wt), "checkout", "--dry-run",
+                      "--detach", MAIN],
+                     capture_output=True, text=True)
+    return probe.returncode == 0
 
 
 def _trunk_worktree():
@@ -3432,17 +3449,17 @@ def _trunk_worktree():
         fallback = REPO.parent / (REPO.name + "-trunk")
         print(f"  !KG_TRUNK 指向状态根本身（{REPO}），已改用独立主干工作树：{fallback}")
         wt = fallback
-    if _trunk_is_foreign_clone(wt):
-        # 配置里的 trunk_dir 也可能指向**另一个 clone**（本仓实测就写死了一条
-        # ~/Documents/Codex/codex-autopilot-native-autopilot-trunk：remote 相同、
-        # git common dir 不同）。那不是「本项目的落盘主干」，而是另一份检出。
-        # land 会在主干里 checkout main / merge / reset HEAD —— 跑到别人的检出里做
-        # 这些，既是破坏性修改，也会因为那边有自己的未跟踪 runtime 产物而必然失败
-        # （实测：「untracked working tree files would be overwritten by checkout」）。
-        # 身份不是本仓库就退回默认的 `<项目名>-trunk`。
+    if _trunk_is_foreign_clone(wt) or not _trunk_can_checkout_main(wt):
+        # 配置里的 trunk_dir 可能是另一个 clone，也可能同一仓库里堆着会挡住
+        # checkout 的未跟踪 runtime 文件。land 必须完全避开这类目录，不能
+        # stash / reset / 删除他人文件。fallback 本身也要过 checkout 预演；
+        # 若默认 trunk 同样不安全，就建一个带时间戳的一次性独立目录。
         fallback = REPO.parent / (REPO.name + "-trunk")
-        print(f"  !配置的落盘主干属于另一个 clone（{wt}），"
-              f"已改用本仓库主干：{fallback}")
+        if fallback.exists() and not _trunk_can_checkout_main(fallback):
+            fallback = REPO.parent / (
+                REPO.name + f"-land-clean-{int(time.time())}")
+        print(f"  !配置的落盘主干不可安全切换（{wt}），"
+              f"已改用一次性干净主干：{fallback}")
         wt = fallback
     if not (wt / ".git").exists():
         wt.parent.mkdir(parents=True, exist_ok=True)
@@ -5647,11 +5664,31 @@ def cmd_land(args):
     if not _acquire_lock("land"):
         sys.exit(f"已有 land 在进行（{LOCK}）")
     OPS.mkdir(parents=True, exist_ok=True)
+    clean_wt = None
     try:
-        _align_main()
-        pre = git("rev-parse", MAIN)
-        wt = _trunk_worktree()
-        reset_trunk_head(wt)
+        # Check the configured trunk before aligning refs or switching branches.
+        # A shared checkout may hold unrelated user edits (for example
+        # ops/tasks/conflict_burden.json). The clean one-shot worktree already
+        # exists for this case, but _align_main()/reset_trunk_head() used to
+        # attempt a checkout first and fail closed on those edits.
+        trunk_before = _trunk_worktree()
+        dirty_trunk = [line for line in trunk_status(trunk_before)
+                       if not is_truth_path(line)
+                       and not _is_zero_loss_noise(
+                           line, _regenerable_head_paths(trunk_before))]
+        if dirty_trunk:
+            print(f"  ! 主干工作树有 {len(dirty_trunk)} 项非真相层改动，改用一次性干净落盘工作树")
+            print("  " + "\n  ".join(dirty_trunk[:8])[:600])
+            _align_main()
+            pre = git("rev-parse", MAIN)
+            clean_wt = _clean_land_worktree()
+            wt = clean_wt
+        else:
+            _align_main()
+            pre = git("rev-parse", MAIN)
+            wt = trunk_before
+        if not clean_wt:
+            reset_trunk_head(wt)
         _mirror_truth_into_trunk(wt)
         head_regenerable = _regenerable_head_paths(wt)
         dirty = [line for line in trunk_status(wt)
@@ -5681,7 +5718,12 @@ def cmd_land(args):
         gate_ok, gate_results, gate_out = _run_verify_gates(wt, pre)
         print(f"  验证门禁 {'ok' if gate_ok else '× 失败 → 丢弃，main 不动'}")
         if not gate_ok:
-            print(gate_out[-800:])
+            # Show the failing gate from the beginning: selftest prints its
+            # assertion near the end, but earlier gates/commands and the first
+            # error matter when several checks run in one land attempt.
+            print(gate_out[:4000])
+            if len(gate_out) > 4000:
+                print("  ... [门禁输出截断，完整结果见验收台账]")
             print(f"  main 仍是 {pre[:10]}，源分支 {branch} 未受影响")
             sys.exit(1)
         merge_commit = proc_run(["git", "-C", str(wt), "rev-parse", "HEAD"],
