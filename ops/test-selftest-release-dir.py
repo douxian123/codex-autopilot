@@ -10,6 +10,7 @@
 """
 
 import importlib.util
+import json
 import os
 import shutil
 import subprocess
@@ -36,6 +37,26 @@ def main() -> int:
         if outer.returncode == 0 and outer.stdout.strip() == "true":
             print("fixture still resolves as a git work tree", file=sys.stderr)
             return 1
+
+        # 新的发布门禁要求可追溯来源。这里复制出的 release 夹具本来就剥离了
+        # .git；若源目录也没有真实元数据，就补一条仅用于该临时夹具的 provenance，
+        # 让安装继续走到本测试真正要锁的「非 git 状态根必须拒绝」。
+        source_meta = release / ".codex-autopilot-source.json"
+        meta = {}
+        if source_meta.is_file():
+            try:
+                meta = json.loads(source_meta.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                meta = {}
+        if not (meta.get("commit") and not meta.get("dirty")):
+            provenance = run(["git", "-C", str(ROOT), "rev-parse", "HEAD"])
+            commit = provenance.stdout.strip() if provenance.returncode == 0 \
+                else "selftest-non-git-release"
+            source_meta.write_text(json.dumps({
+                "version": "selftest-release-dir",
+                "commit": commit,
+                "dirty": False,
+            }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
         spec = importlib.util.spec_from_file_location(
             "release_selftest", release / "ops" / "selftest.py")

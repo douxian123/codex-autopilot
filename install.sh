@@ -156,6 +156,35 @@ PYEOF
   exit 0
 fi
 
+# 2026-11-22 preview.116 事故：从非 git 目录发版时 SOURCE_COMMIT 为空，安装器仍
+# 写出 commit=null/dirty=true 的不可变版本，现场于是静默跑回旧 disk_reap。
+# 发布根目录若是已带真实元数据的 release，可继承它的 commit；除此之外必须有 git HEAD。
+# 放在 --list-releases / --rollback 之后，避免只读列表和回退被新门禁误伤。
+if [ -z "$SOURCE_COMMIT" ]; then
+  SOURCE_META="$REPO/.codex-autopilot-source.json"
+  if [ -f "$SOURCE_META" ]; then
+    SOURCE_COMMIT="$("$PY" - "$SOURCE_META" <<'PYEOF'
+import json
+import sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+    commit = str(data.get("commit") or "").strip()
+    if commit and not data.get("dirty"):
+        print(commit)
+except Exception:
+    pass
+PYEOF
+)"
+  fi
+fi
+if [ -z "$SOURCE_COMMIT" ]; then
+  echo "× 找不到可追溯的唯一来源提交，拒绝发布不可变版本。" >&2
+  echo "  $REPO 既不是干净 git 源码，也没有带真实 commit 的发布元数据。" >&2
+  echo "  请从 git 仓库发布；不要用 commit=null 的 release 继续换代。" >&2
+  exit 1
+fi
+
 [ -n "$PROJECT" ] || PROJECT="$REPO"
 if [ ! -d "$PROJECT" ]; then
   echo "× 目标项目不存在：$PROJECT" >&2
