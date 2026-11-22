@@ -123,6 +123,8 @@
     "payload-matches-contract",
     "all-required-states-present",
     "no-internal-fields-in-first-screen",
+    "steward-health-defaults-to-color-dots",
+    "steward-dot-opens-detail",
     "no-overflow",
     "no-clipping",
     "focus-visible"
