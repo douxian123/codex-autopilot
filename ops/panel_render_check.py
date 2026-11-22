@@ -62,12 +62,28 @@ setTimeout(function(){
     if (pmFold) pmFold.open = true;
     var contextFold = d.getElementById("contextArchiveFold");
     if (contextFold) contextFold.open = true;
+    var modelRoutesFold = d.getElementById("modelRoutesFold");
+    if (modelRoutesFold) modelRoutesFold.open = true;
   }
+  var folders = d ? Array.prototype.slice.call(d.querySelectorAll("#folderBox details.folder")) : [];
+  out["__projectFolds__"] = JSON.stringify(folders.map(function(card){
+    var summary = card.querySelector("summary");
+    var body = card.querySelector(".folder-body");
+    return {
+      open: !!(card.open || card.hasAttribute("open")),
+      title: card.title || "",
+      summary: summary ? summary.textContent.replace(/\\s+/g, " ").trim() : "",
+      body: body ? body.textContent.replace(/\\s+/g, " ").trim() : ""
+    };
+  }));
+  out["acceptCardCount"] = d ? d.querySelectorAll("#acceptCard").length : 0;
   __IDS__.forEach(function(id){
     var domId = (id === "pmBriefingFoldOpen") ? "pmBriefingFold"
-      : (id === "contextArchiveFoldOpen") ? "contextArchiveFold" : id;
+      : (id === "contextArchiveFoldOpen") ? "contextArchiveFold"
+      : (id === "modelRoutesFoldOpen") ? "modelRoutesFold" : id;
     var n = d.getElementById(domId);
-    if (id === "pmBriefingFoldOpen" || id === "contextArchiveFoldOpen") {
+    if (id === "pmBriefingFoldOpen" || id === "contextArchiveFoldOpen"
+        || id === "modelRoutesFoldOpen") {
       out[id] = n ? ((n.open || n.hasAttribute("open")) ? "1" : "0") : "";
     } else {
       out[id] = n ? n.textContent.trim() : "";
@@ -99,9 +115,11 @@ FIRST_SCREEN_IDS = [
     "focusStep", "hierProject", "hierRoad", "hierWork", "sysLine",
     "intakeRoute", "needText", "systemDetail",
 ]
+PROJECT_FOLD_IDS = ["folderNote", "acceptCard"]
 ADV_SCREEN_IDS = FIRST_SCREEN_IDS + [
     "pmBriefingBox", "acceptBox", "pmBriefingFoldOpen",
     "contextArchiveBox", "contextArchiveFoldOpen",
+    "modelRoutesBox", "modelRoutesFoldOpen",
     "relationshipGoalsBox", "outcomeScoreBox",
 ]
 
@@ -234,7 +252,7 @@ def main(argv):
             print((proc.stderr or "")[-600:])
         return result, dom, proc
 
-    wrapper = build_wrapper("panel-harness.html", payload)
+    wrapper = build_wrapper("panel-harness.html", payload, ids=FIRST_SCREEN_IDS + PROJECT_FOLD_IDS)
     snapshot, dom, dom_proc = render_snapshot(wrapper, "首屏")
     if not snapshot:
         return 1
@@ -244,10 +262,18 @@ def main(argv):
     rendered = re.sub(r"<script\b[^>]*>.*?</script>", "", dom,
                       flags=re.IGNORECASE | re.DOTALL)
 
+    def project_folds(result):
+        try:
+            return json.loads(str(result.get("__projectFolds__") or "[]"))
+        except Exception:
+            return []
+
+    folders = ((payload.get("project_folders") or {}).get("folders") or [])
+
     def visible(text):
         if not text:
             return False
-        return any(text in v for v in snapshot.values())
+        return any(text in str(v) for v in snapshot.values())
 
     # 面板的「正在做什么」有固定优先级：人工验收 > 自动实现 > 工作项 > 卡点 >
     # 控制层 doing。门禁必须照同一优先级算期望，并只核对 focusDoing；
@@ -274,7 +300,8 @@ def main(argv):
 
     checks = [
         ("首屏显示绑定项目名", project.get("name")),
-        ("首屏显示绑定项目路径", project.get("path")),
+        ("首屏正文不铺开绑定项目路径",
+         not str(project.get("path") or "") in str(snapshot.get("projectLine") or "")),
         ("输入落点预览显示将落到项目",
          "将落到：" + str(project.get("name") or "")),
         ("首屏显示总状态文案", payload.get("state_label")),
@@ -287,45 +314,101 @@ def main(argv):
         ("首屏显示正在做什么", expected_doing_text(payload)),
         ("首屏显示原生直连结论", (payload.get("native") or {}).get("label")),
         ("有「项目文件夹」区块", "项目文件夹"),
-        ("有「待确认事项」区块", "待确认事项"),
         ("有「工作项走到哪了」区块", "工作项走到哪了"),
         ("有「验收证据与 Codex 工作区」区块", "验收证据与 Codex 工作区"),
+        ("项目卡以面性折叠容器呈现", len(folders) > 0 and len(project_folds(snapshot)) == len(folders)),
+        ("只有一张验收卡，不再重复空待确认卡",
+         str(snapshot.get("acceptCardCount")) == "1"
+         and "待确认事项" not in str(snapshot.get("acceptCard") or "")),
     ]
-    folders = ((payload.get("project_folders") or {}).get("folders") or [])
     # 该状态根没有雷达/门禁数据时，这两条不是「面板没显示」，而是「没东西可显示」。
     # 以前会把 None 当成期望文本去比对，必然失败——门禁自己造了一个永远红的假红灯。
     # 没有数据就如实跳过并打印 SKIP，既不假通过，也不假失败。
     skipped = []
     radar_folder = next((f for f in folders if (f.get("engineering_radar") or {}).get("layers")), None)
     gate_folder = next((f for f in folders if (f.get("quality_gate") or {}).get("checks")), None)
-    if radar_folder:
-        radar = radar_folder["engineering_radar"]
-        checks.append(("项目文件夹显示 19 层工程进度",
-                       "19 层工程进度 " + str(radar.get("overall") or "")))
-        if radar.get("generated_at"):
-            checks.append(("项目文件夹显示工程快照日期",
-                           "快照 " + str(radar["generated_at"])[:10]))
-        if radar.get("next_steps"):
-            checks.append(("项目文件夹显示工程下一步", "下一步：" + str(radar["next_steps"][0])))
-        if radar.get("blockers"):
-            checks.append(("项目文件夹显示工程卡点", "卡点：" + str(radar["blockers"][0])))
-    else:
+    if not radar_folder:
         skipped.append("项目文件夹显示 19 层工程进度（该状态根还没有工程雷达数据）")
-    if gate_folder and gate_folder["quality_gate"].get("status"):
-        gate_status = gate_folder["quality_gate"].get("status")
-        gate_text = ("质量门禁：严格质量通过" if gate_status == "pass" else
-                     "质量门禁：等待真人盲评" if gate_status == "human_pending" else
-                     "质量门禁：门禁历史不可读" if gate_status == "unverified" else
-                     "质量门禁：严格质量 RED")
-        checks.append(("项目文件夹显示独立质量门禁状态", gate_text))
-    else:
+    if not gate_folder:
         skipped.append("项目文件夹显示独立质量门禁状态（该状态根还没有质量门禁数据）")
     if folders:
-        checks.append(("项目文件夹显示当前步骤", folders[0].get("current_step")))
+        checks.append(("项目卡摘要显示当前步骤",
+                       "当前步骤：" + str(folders[0].get("current_step") or "路线待拆解")))
+        checks.append(("项目卡摘要显示当前目标",
+                       "当前目标：" + str(folders[0].get("one_liner")
+                                       or folders[0].get("stage") or "目标待明确")))
     if step_check:
         checks.append(step_check)
 
     fails = 0
+    open_folds_wrapper = build_wrapper("panel-project-folds-open.html", payload,
+                                       ids=FIRST_SCREEN_IDS + PROJECT_FOLD_IDS)
+    open_script = """
+<script>
+setTimeout(function(){
+  var d = document.getElementById("f").contentDocument;
+  if (!d) return;
+  Array.prototype.forEach.call(d.querySelectorAll("#folderBox details.folder"), function(card){
+    card.open = true;
+  });
+}, 4200);
+</script>
+"""
+    open_folds_wrapper.write_text(
+        open_folds_wrapper.read_text(encoding="utf-8") + open_script,
+        encoding="utf-8")
+    open_snapshot, _, _ = render_snapshot(open_folds_wrapper, "项目卡展开区")
+    if not open_snapshot:
+        print("  FAIL  项目卡展开区没有渲染出快照")
+        fails += 1
+    folded = project_folds(snapshot)
+    expanded = project_folds(open_snapshot)
+    fold_checks = [
+        ("项目卡默认全部折叠", bool(folded) and all(not row["open"] for row in folded)),
+        ("项目卡展开后可读明细", bool(expanded) and all(row["open"] for row in expanded)),
+        ("项目卡展开区有目标编辑入口",
+         bool(expanded) and all("编辑目标" in row["body"] for row in expanded)),
+        ("项目摘要不铺开工程路径",
+         all(str(f.get("path") or "") not in row["summary"]
+             for f, row in zip(folders, folded))),
+        ("项目摘要不铺开工作项标题",
+         all(not any(str(x.get("title") or "") in row["summary"]
+                     for x in ((f.get("doing_items") or []) + (f.get("todo_items") or [])))
+             for f, row in zip(folders, folded))),
+        ("项目摘要不铺开门禁与雷达明细",
+         all(not any(mark in row["summary"] for mark in
+                     ("质量门禁：", "19 层工程进度", "快照 ", "下一步：", "卡点："))
+             for row in folded)),
+    ]
+    if radar_folder:
+        radar = radar_folder["engineering_radar"]
+        fold_checks += [
+            ("项目卡展开区显示 19 层工程进度",
+             any("19 层工程进度 " + str(radar.get("overall") or "") in row["body"] for row in expanded)),
+        ]
+        if radar.get("generated_at"):
+            fold_checks.append(("工程快照日期在展开区可查",
+                                any("快照 " + str(radar["generated_at"])[:10] in row["body"]
+                                    for row in expanded)))
+        if radar.get("next_steps"):
+            fold_checks.append(("工程下一步在展开区可查",
+                                any("下一步：" + str(radar["next_steps"][0]) in row["body"]
+                                    for row in expanded)))
+        if radar.get("blockers"):
+            fold_checks.append(("工程卡点在展开区可查",
+                                any("卡点：" + str(radar["blockers"][0]) in row["body"]
+                                    for row in expanded)))
+    if gate_folder and gate_folder["quality_gate"].get("status"):
+        fold_checks.append(("质量门禁在展开区可查",
+                            any("质量门禁：" in row["body"] for row in expanded)))
+    if folders:
+        sample_work = next((x.get("title") or x.get("detail") for x in
+                            ((folders[0].get("doing_items") or []) +
+                             (folders[0].get("todo_items") or [])) if x), None)
+        if sample_work:
+            fold_checks.append(("工作项明细在展开区可查",
+                                sample_work in expanded[0]["body"] if expanded else False))
+
     print("Codex Autopilot 面板渲染检查")
 
     stuck = [i for i in ("stateLabel", "projectLine", "focusStatus", "focusStep")
@@ -339,8 +422,21 @@ def main(argv):
     for label in skipped:
         print(f"  SKIP  {label}")
 
+    for label, ok in fold_checks:
+        if ok:
+            print(f"  PASS  {label}")
+        else:
+            print(f"  FAIL  {label}")
+            fails += 1
+
     for label, expected in checks:
-        ok = visible_doing(expected) if label == "首屏显示正在做什么" else visible(expected)
+        if isinstance(expected, bool):
+            # 降噪断言给的是布尔结论，例如「正文不该出现工程路径」。
+            ok = expected
+        elif label == "首屏显示正在做什么":
+            ok = visible_doing(expected)
+        else:
+            ok = visible(expected)
         if ok:
             print(f"  PASS  {label}")
         else:
@@ -350,12 +446,14 @@ def main(argv):
     # 面板层级：Codex 原生输入框是常用入口；面板输入框只在高级区兜底。
     # 系统判据默认折叠，但不能因为降噪把可观测性删掉。
     layer_checks = [
-        ("首屏明示主入口、执行入口与兜底入口",
-         all(word in str(snapshot.get("entryMap") or "")
-             for word in ("主入口", "Codex 总输入框", "万法归一",
-                          "执行入口", "后台任务窗口", "兜底入口", "高级区输入框"))),
+        ("首屏不重复解释入口",
+         not any(word in str(snapshot.get("__body__") or "")
+                 for word in ("万法归一", "兜底入口", "后台任务窗口",
+                              "有东西需要我吗", "零散问题直接说，其余我来"))),
         ("面板输入框收进高级区", str(snapshot.get("intakeInAdvanced")) == "1"),
         ("默认首屏看不到面板输入框", str(snapshot.get("intakeVisible")) == "0"),
+        ("默认首屏不铺开任务模型配置",
+         "任务模型" not in str(snapshot.get("__body__") or "")),
         ("系统判据详情默认折叠", str(snapshot.get("systemEvidenceOpen")) == "0"),
         ("系统判据详情仍可查", "可落盘" in str(snapshot.get("systemDetail") or "")),
         ("系统首屏不铺开队列读数", "可落盘" not in str(snapshot.get("sysLine") or "")),
@@ -543,11 +641,16 @@ def main(argv):
         print("Codex 自动挡 高级区渲染检查")
         pm_box = str(adv_snapshot.get("pmBriefingBox") or "")
         ca_box = str(adv_snapshot.get("contextArchiveBox") or "")
+        model_box = str(adv_snapshot.get("modelRoutesBox") or "")
         accept_box = str(adv_snapshot.get("acceptBox") or "")
         rel_box = str(adv_snapshot.get("relationshipGoalsBox") or "")
         outcome_box = str(adv_snapshot.get("outcomeScoreBox") or "")
         adv_checks = [
             ("高级区由 ?adv=1 打开", "adv" in str(adv_snapshot.get("bodyClass") or "")),
+            ("任务模型折叠区实际展开",
+             str(adv_snapshot.get("modelRoutesFoldOpen")) == "1"),
+            ("任务模型三档在高级区可见",
+             all(label in model_box for label in ("快速处理", "标准施工", "深度决策"))),
             ("PM 简报折叠区实际展开", str(adv_snapshot.get("pmBriefingFoldOpen")) == "1"),
             ("PM 简报上屏：待确认预期",
              "待确认" in pm_box and "绝不影响用户正在用的服务" in pm_box),

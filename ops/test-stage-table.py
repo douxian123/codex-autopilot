@@ -57,6 +57,12 @@ def main():
     check("正在实现盖过「有卡点」",
           st.panel_stage({"exec_running": True, "blocked_count": 2})["stage"]
           == "working/exec")
+    check("持续运行异常盖过「需要你说一句」",
+          st.panel_stage({"daemon_problem": True, "answer_count": 9})["stage"]
+          == "daemon/problem")
+    check("持续运行异常在服务别的项目时用人话",
+          st.panel_stage({"daemon_problem": True, "daemon_other_project": True})["label"]
+          == "当前项目待命")
     check("「要你拍板」盖过「等你验收」",
           st.panel_stage({"blocked_count": 1, "review_count": 9})["stage"]
           == "person/blocked")
@@ -71,7 +77,9 @@ def main():
           st.panel_stage({"daemon_live": False})["stage"] == "session_only")
     check("在服务别的项目时文案不同",
           st.panel_stage({"daemon_live": False, "daemon_other_project": True})["label"]
-          == st.SESSION_ONLY_OTHER_PROJECT)
+          == st.CURRENT_PROJECT_IDLE)
+    check("服务别的项目时完整结论仍单独保留",
+          "这个项目暂时不需要你操作" in st.SESSION_ONLY_OTHER_PROJECT)
     check("在服务别的项目时不说后台队列黑话",
           "不会混入它的队列" not in st.SESSION_ONLY_OTHER_PROJECT)
     check("有分支可合 = working/queued",

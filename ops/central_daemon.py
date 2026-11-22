@@ -198,6 +198,15 @@ EXEC_INFRA_PATTERN = re.compile(
     r"|429 Too Many Requests|exceeded retry limit, last status: 429",
     re.IGNORECASE)
 EXEC_INFRA_TAIL_BYTES = 8192
+# 面板暴露给用户的是三档任务模型，不是 raw model slug。配置留空时继续沿用
+# 下面已有的 fast_model / slow_model 通道，避免新配置把旧项目的派活路径改掉。
+MODEL_ROUTE_LEVELS = ("quick", "standard", "deep")
+MODEL_ROUTE_EFFORTS = ("low", "medium", "high")
+MODEL_ROUTE_DEFAULTS = {
+    "quick": {"model": None, "reasoning_effort": "low"},
+    "standard": {"model": None, "reasoning_effort": "medium"},
+    "deep": {"model": None, "reasoning_effort": "high"},
+}
 # 模型通道预扣费/额度失败不是“需求做不出来”，也不适合在 fast 通道上反复退避。
 # 检测到后再派一次慢通道（config 的 slow_model），仍失败才按基础设施失败保留现场。
 EXEC_MODEL_FALLBACK_PATTERN = re.compile(
@@ -652,6 +661,7 @@ def auto_exec_config() -> dict:
            "add_dirs": [],
            "model": None, "fast_model": None, "slow_model": None,
            "reasoning_effort": "medium",
+           "model_routes": {k: dict(v) for k, v in MODEL_ROUTE_DEFAULTS.items()},
            "retries": EXEC_INFRA_RETRIES}
     repo = _state_repo()
     if repo:
@@ -692,6 +702,20 @@ def auto_exec_config() -> dict:
                 out["slow_model"] = str(cfg["slow_model"])
             if cfg.get("reasoning_effort"):
                 out["reasoning_effort"] = str(cfg["reasoning_effort"])
+            routes = cfg.get("model_routes")
+            if isinstance(routes, dict):
+                for key in MODEL_ROUTE_LEVELS:
+                    row = routes.get(key)
+                    if not isinstance(row, dict):
+                        continue
+                    model = str(row.get("model") or "").strip()
+                    effort = str(row.get("reasoning_effort") or row.get("effort") or "").strip()
+                    if effort not in MODEL_ROUTE_EFFORTS:
+                        effort = MODEL_ROUTE_DEFAULTS[key]["reasoning_effort"]
+                    out["model_routes"][key] = {
+                        "model": model or None,
+                        "reasoning_effort": effort,
+                    }
     # The launchd environment is the last-resort model override. Keeping it
     # here as well as in central.config.json makes an old installed config
     # unable to silently fall back to the general Codex model.
@@ -1905,6 +1929,14 @@ def _exec_model(item: dict, cfg: dict) -> str | None:
     """
     if cfg.get("model"):
         return str(cfg["model"])
+    # 面板的三档任务模型先于 legacy fast/slow。配置留空时这里不返回，继续走
+    # 下面已验证过的离线/交互分类，老项目不需要迁移配置。
+    level = _exec_route_level(item)
+    routes = cfg.get("model_routes") if isinstance(cfg.get("model_routes"), dict) else {}
+    route = routes.get(level) if isinstance(routes.get(level), dict) else {}
+    route_model = str(route.get("model") or "").strip()
+    if route_model:
+        return route_model
     # 29 号离线批次把「文档、审计、只读盘点」这类不赶交互的任务放到慢通道，
     # 避免把 aibvv 快速额度烧在低时敏任务上。命中关键词才走慢卡，否则保持
     # 原有行为：bug/gate/resolve 走 fast_model，其它走 slow_model。
@@ -1927,6 +1959,31 @@ def _exec_model(item: dict, cfg: dict) -> str | None:
     if (item.get("kind") or "") in fast_kinds and cfg.get("fast_model"):
         return str(cfg["fast_model"])
     return str(cfg.get("slow_model") or cfg.get("fast_model") or "") or None
+
+
+def _exec_route_level(item: dict) -> str:
+    """把工程项映射到用户能理解的三档，而不是把 raw model slug 搬上面板。"""
+    value = " ".join(str(item.get(key) or "") for key in ("kind", "lane", "type")).lower()
+    quick = ("bug", "gate", "resolve", "visual", "ux")
+    deep = ("arch", "prd", "research", "decision", "plan")
+    if any(word in value for word in quick):
+        return "quick"
+    if any(word in value for word in deep):
+        return "deep"
+    return "standard"
+
+
+def _exec_route_effort(item: dict, cfg: dict) -> str:
+    routes = cfg.get("model_routes") if isinstance(cfg.get("model_routes"), dict) else {}
+    level = _exec_route_level(item)
+    route = routes.get(level) if isinstance(routes.get(level), dict) else {}
+    effort = str(route.get("reasoning_effort") or "").strip()
+    if effort in MODEL_ROUTE_EFFORTS:
+        return effort
+    legacy = str(cfg.get("reasoning_effort") or "").strip()
+    if legacy in MODEL_ROUTE_EFFORTS:
+        return legacy
+    return "medium"
 
 
 def _prepare_resolve_exec(item: dict, cfg: dict, blocked: dict) -> dict:
@@ -2182,7 +2239,7 @@ def _exec_command(job: dict) -> list:
         cmd += ["--add-dir", str(d)]
     if job.get("model"):
         cmd += ["-m", job["model"]]
-    effort = str(cfg.get("reasoning_effort") or "medium")
+    effort = _exec_route_effort(job.get("item") or {}, cfg)
     cmd += ["-c", f'model_reasoning_effort="{effort}"']
     prompt = _exec_prompt(job["item"])
     if job.get("no_change_retry"):

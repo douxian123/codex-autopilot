@@ -1,5 +1,7 @@
 # Codex 自动挡面板交互设计
 
+> 根目录 `DESIGN.md` 是产品与视觉总契约；本文聚焦面板信息架构、交互路径和验收标准。
+
 > 当前 `plugin/ui/panel.html` 是 **interim renderer / reference implementation only**，只用于验证数据契约和工程接线，不是最终视觉稿。最终面板正在重新设计；两者都必须消费 `docs/experience/panel-renderer-contract.json`，不得直接把当前 DOM、CSS 或卡片布局固化为最终规范。
 
 ## 产品判断

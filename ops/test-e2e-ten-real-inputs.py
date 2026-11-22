@@ -376,10 +376,9 @@ def main() -> int:
 
         # 8. 面板与合同：用户可见入口、职责边界与发布拍板口不能漂移。
         panel = PANEL.read_text(encoding="utf-8")
-        check("首屏区分三类入口",
-              all(word in panel for word in (
-                  "id=\"entryMap\"", "主入口", "Codex 总输入框", "万法归一",
-                  "执行入口", "后台任务窗口", "兜底入口", "高级区输入框")), "entryMap")
+        check("首屏不重复解释入口",
+              not any(word in panel for word in (
+                  "万法归一", "兜底入口", "后台任务窗口")), "entryMap")
         check("职责次入口都在面板里",
               all(word in panel for word in (
                   "id=\"pmBriefingFold\"", "PM 简报", "id=\"contextArchiveFold\"",
