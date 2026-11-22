@@ -183,6 +183,8 @@ def main():
             "test-experience-contract.py",
             "test-experience-contract-gate.py",
             "test-panel-renderer-contract.py",
+            "test-panel-intent-trigger.py",
+            "test-panel-no-html-fallback.py",
             "test-research-adoption.py",
             "test-specialized-acceptance-executors.py",
         )

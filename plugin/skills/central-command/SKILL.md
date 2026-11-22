@@ -104,8 +104,20 @@ python3 "$KGCTL" tick
 # 看项目真相 / 当前待办 / 驾驶舱
 sed -n 1,80p "$KG_REPO/docs/PROJECT_STATUS.md"
 python3 "$KGCTL" next
-python3 "$KGCTL" dash --open            # 生成并打开 docs/CONTROL_PLANE.html
+python3 "$KGCTL" dash --open            # 仅内部诊断驾驶舱，不是自动挡面板
 ```
+
+### 打开 Codex Autopilot 面板（唯一成功路径）
+用户说“打开 Codex Autopilot 面板 / 打开自动挡面板 / 面板打不开 / 面板在哪看”时，只允许两条成功路径：
+
+1. 调用 `render_autopilot_panel`，并确认结果以 MCP App / 内联卡片 / 对话侧栏 /
+   全局侧栏出现。
+2. 宿主侧栏已有原生「自动挡」入口，并确认它是宿主渲染的面板，不是浏览器标签页。
+
+如果当前会话没有暴露 `render_autopilot_panel`，必须直接说明工具不可见并建议新开
+会话或重启 Codex，不得改用 `docs/CONTROL_PLANE.html`、`companion_api.py panel`、
+`kgctl dash --open`、`open file://...` 或任何浏览器页面代替。
+`CONTROL_PLANE.html` 只能叫“内部诊断驾驶舱”，绝不能叫“Codex Autopilot 面板”。
 
 ## 分支很多、到底谁先合
 冲突分支不要逐条问用户。默认把每条轻冲突拆成**一个可执行任务**，逐条收口；量大且分散时再收拢成族：

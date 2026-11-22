@@ -579,6 +579,14 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 
 ---
 
+### 12.16 落盘主干不可安全切换时改用干净工作树（2026-11-22）
+
+- 旧冲突：配置的主干若指向另一个 clone，或同一仓库但已被未跟踪产物挡住 `checkout`，`land` 会停在失败处；即使主流程已识别共享主干很脏并准备一次性干净工作树，后续 `reset_trunk_head()` 仍可能碰到不该碰的检出。
+- 本轮裁决保留两侧意图：继续用 `git common dir` 识别外部 clone；默认 trunk 也不可切换时生成带时间戳的一次性目录；确认走的是干净回退树后跳过 `reset`/`checkout`，同步真相后的脏度兜底检查不放松。
+- 证据：`python3 ops/test-land-dirty-trunk-clean-worktree.py` 七项 PASS；`python3 -u ops/selftest.py` EXIT=0。没有 reload、重启常驻服务、删数据或改门禁阈值。
+
+---
+
 ## 十三、下一步（谁该做什么）
 
 **用户（只有这几件，别的不用管）**：

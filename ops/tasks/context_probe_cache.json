@@ -1,28 +1,10 @@
 {
- "codex/autopilot-health-20261019@c711255000695f1773b9573a46d51966131a2b16@f45a7a22a98ad312262c6b5c46e91cfc82f2eadd": {
-  "conflict_files": [
-   "ops/budget_gate.py"
-  ],
+ "codex/disk-admission-fix-20261105@300ea3931412419b0f8515ffa5fc912c47f7d1b4@0faac6985da0918859a1d13120c8e12306663d28": {
+  "conflict_files": [],
   "unresolved_marker_files": []
  },
- "codex/converge-d74e090c58@3092e8a4ec2f1915ac6bdd4e4889c8b5b5f1b024@6aaf5cb6e0769d776db3d7f1ce418e2ed7e4e993": {
+ "codex/native-thread-bridge@ffc371d3621cb1f8280f17fbfeaf597de11b3714@0faac6985da0918859a1d13120c8e12306663d28": {
   "conflict_files": [],
-  "unresolved_marker_files": [
-   "codex/converge-d74e090c58:ops/central_daemon.py",
-   "codex/converge-d74e090c58:ops/central_mcp.py",
-   "codex/converge-d74e090c58:ops/selftest.py",
-   "codex/converge-d74e090c58:ops/tasks/conflict_burden.json",
-   "codex/converge-d74e090c58:ops/tasks/diff_probe_cache.json",
-   "codex/converge-d74e090c58:ops/tasks/resolve.json",
-   "codex/converge-d74e090c58:plugin/.codex-plugin/plugin.json",
-   "codex/converge-d74e090c58:plugin/ui/panel.html"
-  ]
- },
- "codex/converge-d218251f8b@c35fff1b4e295690f07f00f14ac503adf36e7696@6aaf5cb6e0769d776db3d7f1ce418e2ed7e4e993": {
-  "conflict_files": [],
-  "unresolved_marker_files": [
-   "codex/converge-d218251f8b:docs/PRODUCT_CONTRACT.md",
-   "codex/converge-d218251f8b:docs/closure_plan.json"
-  ]
+  "unresolved_marker_files": []
  }
 }

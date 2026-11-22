@@ -635,7 +635,7 @@ def _renderer_contract_summary():
 def _steward_health(payload):
     """七管家健康条：把七个管家的真实状态收敛成一份面板可读的清单。
 
-    用户问过「面板要怎么做」，也给过「万法归一入口 + 背后许多管家」的完整设想。
+    用户问过「面板要怎么做」，也给过「单一入口 + 背后许多管家」的完整设想。
     面板此前只散着显示路由/合并/实现/项目经理的一部分，状态与上下文管家按到最近
     才有卡 —— 没有一个地方能一眼看出**哪个管家断了**。这里只做**聚合**，判据全部
     来自各处已经算好的真实字段，不重算、不新增第二套真相。
@@ -1527,7 +1527,7 @@ TOOLS = [
     },
     {
         "name": "render_autopilot_panel",
-        "description": "打开 Codex Autopilot 面板（inline 卡片 / 对话侧栏 / 全局侧栏 / 全屏）。面板说明当前状态、需要你决定什么、系统正在做什么、真正闭环了什么，并可随时暂停。用户问“Codex Autopilot 在哪看 / 怎么用 / 现在开着吗”时用它。",
+        "description": "打开 Codex Autopilot 原生面板（MCP App：inline 卡片 / 对话侧栏 / 全局侧栏 / 全屏）。用户说“打开 Codex Autopilot 面板 / 打开自动挡面板 / 面板打不开 / 面板在哪看”时必须立即调用本工具，不要只解释入口、不要只去侧栏找按钮，也不要打开 CONTROL_PLANE.html / companion panel / browser 页面冒充面板。面板第一屏用大白话说明：需要你决定什么、系统正在做什么、真正闭环了什么，并可随时暂停。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         "_meta": {
             "ui": {"resourceUri": PANEL_URI},
