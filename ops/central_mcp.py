@@ -1541,6 +1541,14 @@ TOOLS = [
             "openai/toolInvocation/invoking": "打开 Codex Autopilot 面板…",
             "openai/toolInvocation/invoked": "Codex Autopilot 面板已打开。",
         },
+        # Codex treats MCP tools without explicit read-only semantics as approval-gated.
+        # Opening the bundled panel is local and non-destructive; declaring it here
+        # lets the host render the app inline without an approval prompt.
+        "annotations": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "openWorldHint": False,
+        },
     },
     {
         "name": "autopilot_run_once",

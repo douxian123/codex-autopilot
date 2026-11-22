@@ -22,6 +22,17 @@ def has_any(text: str, *needles: str) -> bool:
     return any(needle in text for needle in needles)
 
 
+def tool_definition(text: str, name: str) -> str:
+    marker = '"name": "%s"' % name
+    start = text.find(marker)
+    if start < 0:
+        return ""
+    return text[start:start + 3000]
+
+
+render_tool = tool_definition(mcp, "render_autopilot_panel")
+
+
 # “自动挡”是内部旧称，只作为兼容触发语；公开品牌和面板文案使用 Codex Autopilot。
 checks = {
     "setup 写明必须调用工具": "必须马上调用\n   `render_autopilot_panel` 工具" in setup,
@@ -47,6 +58,14 @@ checks = {
     ),
     "安装器把面板工具排除 deferred 桥": (
         '"omit_tools_from": ["deferred"]' in installer
+    ),
+    "面板工具声明本地只读语义": all(
+        needle in render_tool
+        for needle in (
+            '"readOnlyHint": True',
+            '"destructiveHint": False',
+            '"openWorldHint": False',
+        )
     ),
 }
 
