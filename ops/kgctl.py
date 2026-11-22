@@ -5823,15 +5823,36 @@ def cmd_board(args):
     print(f"已写出 {BOARD.relative_to(REPO)}（{len(rows)} 行）")
 
 
-def _truthctl_path(root: Path | None = None) -> Path:
+def _truthctl_supports(path: Path, command: str) -> bool:
+    """只读判断某个 truthctl 是否注册了子命令，不导入它、不执行它。"""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    return ("'%s':" % command) in text or ('"%s":' % command) in text
+
+
+# `synthesize` 在本版里不只生成 PRODUCT_MAINLINE，还负责刷新 PROJECT_CONSTITUTION。
+# 绑定状态根常带着比插件旧的 truthctl；若继续「项目优先」，tick 会静默跳过宪法页。
+# 这里只对明确有新增能力的子命令做能力探测，普通 route/snapshot 仍保持项目优先。
+_TRUTH_SUBCOMMAND_CAPABILITIES = {
+    "synthesize": "constitution",
+    "constitution": "constitution",
+}
+
+
+def _truthctl_path(root: Path | None = None, required_command: str | None = None) -> Path:
     """Find the project truthctl first, then fall back to the bundled runtime.
 
     A project ledger may be newer than the immutable plugin release. Calling the
     bundled copy there can allocate duplicate IDs and miss current repair rules.
+    When a caller needs a command the project copy does not register, pick the
+    first candidate that actually has it instead of silently losing the page.
     """
     roots = ([root] if root is not None else
              [REPO, CODE_ROOT, central_config.trunk_dir(REPO, CFG), RUNTIME_OPS])
     seen = set()
+    candidates = []
     for base in roots:
         if base is None:
             continue
@@ -5841,8 +5862,14 @@ def _truthctl_path(root: Path | None = None) -> Path:
             continue
         seen.add(key)
         if candidate.is_file():
-            return candidate
-    raise FileNotFoundError("找不到 ops/truthctl.py；请先同步 main 或设置 KG_TRUNK")
+            candidates.append(candidate)
+    if not candidates:
+        raise FileNotFoundError("找不到 ops/truthctl.py；请先同步 main 或设置 KG_TRUNK")
+    if required_command:
+        for candidate in candidates:
+            if _truthctl_supports(candidate, required_command):
+                return candidate
+    return candidates[0]
 
 def _truth(sub, *extra):
     """Delegate a truth-layer subcommand through the same entrypoint.
@@ -5850,7 +5877,8 @@ def _truth(sub, *extra):
     KG_REPO 必须显式传给子进程：truthctl 若自己再解析一次状态根，就可能解析到另一个
     worktree，「kgctl 说 10 条待路由、tick 说没有待路由」的分叉又会回来。
     """
-    path = _truthctl_path()
+    path = _truthctl_path(
+        required_command=_TRUTH_SUBCOMMAND_CAPABILITIES.get(sub))
     env = os.environ.copy()
     env["KG_REPO"] = str(REPO)
     res = proc_run([sys.executable, str(path), sub, *extra],

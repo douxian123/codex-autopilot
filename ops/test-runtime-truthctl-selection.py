@@ -59,6 +59,27 @@ with tempfile.TemporaryDirectory(prefix="runtime-truthctl-") as tmp:
     else:
         raise AssertionError("显式 root 缺 truthctl 时必须 fail-closed，而不是回退到运行时副本")
 
+    # synthesize 在本版还会刷新项目宪法页。项目自带旧 truthctl 没有 constitution
+    # 子命令时，kgctl 必须改用有该能力的运行时副本，否则 tick 每拍绿灯但页面永远不生成。
+    stale = Path(tmp) / "stale-project"
+    stale_truthctl = stale / "ops" / "truthctl.py"
+    stale_truthctl.parent.mkdir(parents=True)
+    (stale / "ops" / "tasks").mkdir()
+    (stale / "ops" / "truth").mkdir()
+    stale_truthctl.write_text("CMDS = {'synthesize': 1}\n", encoding="utf-8")
+    kgctl_stale = load_kgctl(stale)
+    assert kgctl_stale._truthctl_path().resolve() == stale_truthctl.resolve()
+    assert kgctl_stale._truthctl_path(required_command="constitution").resolve() == runtime_copy.resolve()
+
+    capable = Path(tmp) / "capable-project"
+    capable_truthctl = capable / "ops" / "truthctl.py"
+    capable_truthctl.parent.mkdir(parents=True)
+    (capable / "ops" / "tasks").mkdir()
+    (capable / "ops" / "truth").mkdir()
+    capable_truthctl.write_text("CMDS = {'synthesize': 1, 'constitution': 1}\n", encoding="utf-8")
+    kgctl_capable = load_kgctl(capable)
+    assert kgctl_capable._truthctl_path(required_command="constitution").resolve() == capable_truthctl.resolve()
+
     source = (ROOT / "ops" / "kgctl.py").read_text(encoding="utf-8")
 
     # 源码层的判据从「不许出现某段文本」改成「出现时只能是回退分支」。
@@ -82,5 +103,7 @@ with tempfile.TemporaryDirectory(prefix="runtime-truthctl-") as tmp:
     # 「项目自带优先」的入口本身也要保持：不得直接拼死运行时路径当作首选。
     assert 'own if own.is_file() else' in source
     assert 'wt / "ops" / "truthctl.py"' not in source
+    assert '_TRUTH_SUBCOMMAND_CAPABILITIES.get(sub)' in source, (
+        "synthesize/constitution 必须走能力探测，不能只改 helper 却忘记接线")
 
-print("runtime truthctl selection: PASS (project copy wins; runtime copy only as fallback)")
+print("runtime truthctl selection: PASS (project copy wins when capable; runtime copy supplies missing commands)")
