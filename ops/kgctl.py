@@ -3450,25 +3450,16 @@ def _trunk_worktree():
         print(f"  !KG_TRUNK 指向状态根本身（{REPO}），已改用独立主干工作树：{fallback}")
         wt = fallback
     if _trunk_is_foreign_clone(wt) or not _trunk_can_checkout_main(wt):
-<<<<<<< HEAD
-        # 配置里的 trunk_dir 也可能指向**另一个 clone**（本仓实测就写死了一条
-        # ~/Documents/Codex/codex-autopilot-native-autopilot-trunk：remote 相同、
-        # git common dir 不同）。那不是「本项目的落盘主干」，而是另一份检出。
+        # 配置里的 trunk_dir 可能是另一个 clone（remote 相同、git common dir
+        # 不同），也可能同一仓库里堆着会挡住 checkout 的未跟踪 runtime 文件。
         # land 会在主干里 checkout main / merge / reset HEAD —— 跑到别人的检出里做
-        # 这些，既是破坏性修改，也会因为那边有自己的未跟踪 runtime 产物而必然失败
-        # （实测：「untracked working tree files would be overwritten by checkout」）。
-        # 身份不是本仓库就退回默认的 `<项目名>-trunk`。
-        fallback = REPO.parent / (REPO.name + "-trunk")
-=======
-        # 配置里的 trunk_dir 可能是另一个 clone，也可能同一仓库里堆着会挡住
-        # checkout 的未跟踪 runtime 文件。land 必须完全避开这类目录，不能
-        # stash / reset / 删除他人文件。fallback 本身也要过 checkout 预演；
-        # 若默认 trunk 同样不安全，就建一个带时间戳的一次性独立目录。
+        # 这些既是破坏性修改，也会因为那边有自己的未跟踪产物而必然失败。
+        # fallback 本身也要过 checkout 预演；若默认 trunk 同样不安全，就建一个
+        # 带时间戳的一次性独立目录。
         fallback = REPO.parent / (REPO.name + "-trunk")
         if fallback.exists() and not _trunk_can_checkout_main(fallback):
             fallback = REPO.parent / (
                 REPO.name + f"-land-clean-{int(time.time())}")
->>>>>>> codex/land-clean-worktree-gate-20261122
         print(f"  !配置的落盘主干不可安全切换（{wt}），"
               f"已改用一次性干净主干：{fallback}")
         wt = fallback
@@ -5698,12 +5689,8 @@ def cmd_land(args):
             _align_main()
             pre = git("rev-parse", MAIN)
             wt = trunk_before
-<<<<<<< HEAD
-        reset_trunk_head(wt)
-=======
         if not clean_wt:
             reset_trunk_head(wt)
->>>>>>> codex/land-clean-worktree-gate-20261122
         _mirror_truth_into_trunk(wt)
         head_regenerable = _regenerable_head_paths(wt)
         dirty = [line for line in trunk_status(wt)
