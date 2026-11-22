@@ -1,6 +1,54 @@
 {
  "tasks": [
   {
+   "slug": "release-124-truthctl-runtime-20261122",
+   "branch": "codex/release-124-truthctl-runtime-20261122",
+   "resolve_branch": "codex/resolve-release-124-truthctl-runtime-20261122",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-panel-intent-trigger-20261122-resolve-release-124-truthctl-runtime-20261122",
+   "base_main": "4409528b216ba838f539bef261c06b99f0c3798d",
+   "source_head": "39e745af6b9fc4102f82b1f384336b79b3279e89",
+   "source_commits": [
+    "2f3538630e6bc68d89559d8c57457151366eebec",
+    "39e745af6b9fc4102f82b1f384336b79b3279e89"
+   ],
+   "created": "2026-11-22 17:53:20",
+   "updated": "2026-11-22 17:53:20",
+   "conflict_files": [
+    "docs/PRODUCT_MAINLINE.md",
+    "docs/PROJECT_CONSTITUTION.md",
+    "docs/PROJECT_STATUS.md"
+   ],
+   "unresolved_files": [
+    "docs/PRODUCT_MAINLINE.md",
+    "docs/PROJECT_CONSTITUTION.md",
+    "docs/PROJECT_STATUS.md"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
+   "slug": "guard-release-version-20261119",
+   "branch": "codex/guard-release-version-20261119",
+   "resolve_branch": "codex/resolve-guard-release-version-20261119",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-panel-intent-trigger-20261122-resolve-guard-release-version-20261119",
+   "base_main": "b321b26696054d771ca11566653ea2ef7f5a1e39",
+   "source_head": "9994dede77319360645bb7307f8d192d32fc7e69",
+   "source_commits": [
+    "6d52fbe79b149e36f6859a93248aea5fdd59dc74",
+    "9994dede77319360645bb7307f8d192d32fc7e69"
+   ],
+   "created": "2026-11-22 17:51:33",
+   "updated": "2026-11-22 17:51:33",
+   "conflict_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "unresolved_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
    "slug": "land-clean-worktree-gate-20261122",
    "branch": "codex/land-clean-worktree-gate-20261122",
    "resolve_branch": "codex/resolve-land-clean-worktree-gate-20261122",
@@ -88,5 +136,5 @@
    "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
   }
  ],
- "updated": "2026-11-22 16:52:30"
+ "updated": "2026-11-22 17:53:20"
 }

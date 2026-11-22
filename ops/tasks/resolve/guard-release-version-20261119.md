@@ -2,15 +2,15 @@
 
 - 源分支：`codex/guard-release-version-20261119`
 - 执行分支：`codex/resolve-guard-release-version-20261119`
-- 工作树：`/Users/danta/.newmax/workspace/codex-autopilot-resolve-guard-release-version-20261119`
-- 基于：`7ef93627729f`（origin/main）
-- 状态：`gate_fail`
+- 工作树：`/Users/danta/.newmax/workspace/codex-autopilot-panel-intent-trigger-20261122-resolve-guard-release-version-20261119`
+- 基于：`b321b2669605`（origin/main）
+- 状态：`needs_agent`
 
 ## 要解的冲突文件（保留的 marker）
 - `docs/PRODUCT_MAINLINE.md`
 
 ## 怎么做
-1. 进 `/Users/danta/.newmax/workspace/codex-autopilot-resolve-guard-release-version-20261119`，逐个打开上面列出的文件，把 `<<<<<<<` / `=======` / `>>>>>>>` 改成正确的最终代码——想清楚两边意图，不是机械二选一。
+1. 进 `/Users/danta/.newmax/workspace/codex-autopilot-panel-intent-trigger-20261122-resolve-guard-release-version-20261119`，逐个打开上面列出的文件，把 `<<<<<<<` / `=======` / `>>>>>>>` 改成正确的最终代码——想清楚两边意图，不是机械二选一。
 2. 显式 `git add <文件>`（不要 `-A`），`git commit -m "resolve: ..."`。
 3. `python3 ops/kgctl.py resolve --finish guard-release-version-20261119 --go`：无 marker 且过了 build 门禁才会落盘。
 
