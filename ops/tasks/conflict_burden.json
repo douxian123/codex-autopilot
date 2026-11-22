@@ -1,5 +1,5 @@
 {
- "main": "e2ad55a745f336795a172e9797733a4dda6708a1",
+ "main": "593c447cad316797be8746a0b8d5b5991e72b2b9",
  "branches": [
   "codex/final-ledger-restore-20261120",
   "codex/prd-closure-package-20261121",
@@ -9,7 +9,7 @@
  "burden": {
   "codex/final-ledger-restore-20261120": 1,
   "codex/prd-closure-package-20261121": 2,
-  "codex/project-autonomy-main-port-20261121": 4,
+  "codex/project-autonomy-main-port-20261121": 5,
   "codex/project-autonomy-mode-20261121": 4
  }
 }

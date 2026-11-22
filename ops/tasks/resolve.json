@@ -1,6 +1,25 @@
 {
  "tasks": [
   {
+   "slug": "final-ledger-restore-20261120",
+   "branch": "codex/final-ledger-restore-20261120",
+   "resolve_branch": "codex/resolve-final-ledger-restore-20261120",
+   "worktree": "/Users/danta/.newmax/workspace/autopilot-native-red-light-20261122-resolve-final-ledger-restore-20261120",
+   "base_main": "593c447cad316797be8746a0b8d5b5991e72b2b9",
+   "source_head": "d9218bd59a7288a66e3967f10be8b1bff51c8090",
+   "source_commits": [],
+   "created": "2026-11-22 08:37:19",
+   "updated": "2026-11-22 08:37:19",
+   "conflict_files": [
+    "ops/tasks/resolve.json"
+   ],
+   "unresolved_files": [
+    "ops/tasks/resolve.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
    "slug": "native-red-light-honest-20261122",
    "branch": "codex/native-red-light-honest-20261122",
    "resolve_branch": "codex/resolve-native-red-light-honest-20261122",
@@ -585,5 +604,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-22 08:12:14"
+ "updated": "2026-11-22 08:37:20"
 }

@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-22 08:18:28　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-22 08:38:31　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -44,10 +44,12 @@
 - 自动挡架构收敛为两平面七管家与一层全局健康 —— 继续横向加管家会把职责变成角色堆叠，无法说清谁拥有事实、谁执行、谁能改状态。两平面先分真相与执行，再以四层契约处理关系、规划、执行、运行，能保留万法归一入口，同时把写权限和人工介入边界写硬。
 - 受控换代边界与 MCP 重载策略 —— 用户授权 A 是换代并重载自动挡自身运行面，不是授权扩大到宿主全局服务。必须把发布一致性、现场生效和会话内工具未热加载分开记账。
 
+## PRD 修订索引
+
+- 修订 0 条，需收敛 0 条
+
 ## 最近在推进
 
-- [已落盘] @ 1db2bc5563 codex/resolve-guard-release-version-20261119 验证门禁通过，已落盘 main @ 1db2bc5563；改动 2 个文件：ops/truth/acceptance.jsonl（+2/-0）、ops/truth/progress.jsonl（+1/-0）｜2 files changed, 3 insertions(+)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [已落盘] @ 543f005f37 codex/resolve-ledger-normalization-20261120 验证门禁通过，已落盘 main @ 543f005f37；改动 1 个文件：ops/tasks/resolve.json（+51/-4）｜1 file changed, 51 insertions(+), 4 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [在途] 0.6.0-preview.105 受控换代完成：marketplace、install-state、Companion、Codex 插件缓存、自动挡守护均指向 .105；守护 live pid 由旧版切到新版；产品评估 5/5 通过，阴性对照 8/8 变红。
 - [已落盘] @ 3595c70326 codex/resolve-dedupe-load-20261120 验证门禁通过，已落盘 main @ 3595c70326；改动 2 个文件：ops/kgctl.py（+47/-1）、ops/selftest.py（+6/-1）｜2 files changed, 53 insertions(+), 2 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [在途] 端到端闭环施工地图九阶段已按门禁闭环并推送 main
@@ -56,19 +58,11 @@
 - [已落盘] @ 51a8d2a7ff codex/project-autonomy-main-port-20261121 验证门禁通过，已落盘 main @ 51a8d2a7ff；改动 7 个文件：README.md（+10/-0）、ops/central_daemon.py（+97/-4）、ops/central_mcp.py（+79/-0）、ops/project_autonomy.py（+232/-0）、ops/selftest.py（+109/-1），另有 2 个文件｜7 files changed, 608 insertions(+), 6 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0163、A-0164
 - [已落盘] @ 31347afa07 codex/experience-evidence-gate-20261121 验证门禁通过，已落盘 main @ 31347afa07；改动 5 个文件：ops/central_mcp.py（+30/-3）、ops/experience_contract.py（+253/-4）、ops/experience_evidence.py（+582/-0）、ops/kgctl.py（+13/-2）、ops/test-experience-contract-gate.py（+108/-2）｜5 files changed, 986 insertions(+), 11 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 2dbf36644f codex/codesign-clone-reap-resilience-20261122 验证门禁通过，已落盘 main @ 2dbf36644f；改动 2 个文件：ops/disk_reap.py（+72/-33）、ops/selftest.py（+26/-0）｜2 files changed, 98 insertions(+), 33 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ 49f5bd44a8 codex/context-projection-stale-wt-20261122 验证门禁通过，已落盘 main @ 49f5bd44a8；改动 13 个文件：.gitignore（+1/-0）、ops/central_mcp.py（+1/-0）、ops/constraint_candidates.py（+60/-6）、ops/context_archive.py（+2/-0）、ops/kgctl.py（+16/-3），另有 8 个文件｜13 files changed, 695 insertions(+), 13 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0172、A-0174
+- [已落盘] @ e0216c92de codex/context-projection-stale-wt-20261122 验证门禁通过，已落盘 main @ e0216c92de；改动 14 个文件：.gitignore（+1/-0）、ops/central_mcp.py（+1/-0）、ops/constraint_candidates.py（+60/-6）、ops/context_archive.py（+2/-0）、ops/kgctl.py（+16/-3），另有 9 个文件｜14 files changed, 698 insertions(+), 13 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0172、A-0174、A-0176
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0154` [P1] codex/pm-research-decision-20261120 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0155` [P1] codex/cross-entry-route-control-20261120 门禁预跑（未落盘）
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0156` [P1] codex/cross-entry-route-control-20261120 门禁预跑（未落盘）
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0157` [P1] codex/cross-entry-route-control-20261120 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0158` [P1] codex/resolve-guard-release-version-20261119 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0159` [P1] codex/resolve-ledger-normalization-20261120 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0161` [P1] 0.6.0-preview.105 换代验证
@@ -81,7 +75,17 @@
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0170` [P1] codex/experience-evidence-gate-20261121 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0172` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0173` [P1] codex/codesign-clone-reap-resilience-20261122 落盘验收
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0174` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0175` [P1] codex/context-projection-stale-wt-20261122 落盘验收
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0176` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0177` [P1] codex/context-projection-stale-wt-20261122 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 
 ## 还差什么
@@ -188,12 +192,17 @@
 - `A-0164` [P1] codex/project-autonomy-main-port-20261121 门禁预跑（未落盘）
 - `A-0165` [P1] codex/project-autonomy-main-port-20261121 落盘验收
 - `A-0170` [P1] codex/experience-evidence-gate-20261121 落盘验收
+- `A-0172` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
+- `A-0174` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
 - `A-0173` [P1] codex/codesign-clone-reap-resilience-20261122 落盘验收
+- `A-0175` [P1] codex/context-projection-stale-wt-20261122 落盘验收
+- `A-0176` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
+- `A-0177` [P1] codex/context-projection-stale-wt-20261122 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：13 条
-- 累计落盘：94 条
+- 累计落盘：96 条
 - 未决问题：1 条
-- 已验收：94 条
+- 已验收：99 条
 
