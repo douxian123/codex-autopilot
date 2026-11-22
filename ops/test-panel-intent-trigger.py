@@ -7,7 +7,11 @@ from pathlib import Path
 OPS = Path(__file__).resolve().parent
 ROOT = OPS.parent
 
-setup = (ROOT / "plugin" / "skills" / "setup" / "SKILL.md").read_text(encoding="utf-8")
+setup_path = ROOT / "plugin" / "skills" / "setup" / "SKILL.md"
+if not setup_path.is_file():
+    # 不可变 release 目录把 plugin/skills 摊平成顶层 skills。
+    setup_path = ROOT / "skills" / "setup" / "SKILL.md"
+setup = setup_path.read_text(encoding="utf-8")
 mcp = (OPS / "central_mcp.py").read_text(encoding="utf-8")
 
 checks = {
