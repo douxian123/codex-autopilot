@@ -69,6 +69,10 @@ def main():
     check("不可安全切换的主干会退回干净主干",
           "not _trunk_can_checkout_main(wt)" in SOURCE
           and "配置的落盘主干不可安全切换" in SOURCE)
+    check("clean_wt 在 try 前初始化",
+          "OPS.mkdir(parents=True, exist_ok=True)\n    clean_wt = None\n    try:" in src)
+    check("干净落盘主干跳过 reset checkout",
+          "if not clean_wt:" in src and "reset_trunk_head(wt)" in src)
     check("同步后仍保留兜底检查",
           len(status_calls) >= 2 and status_calls[-1].lineno > clean[0].lineno,
           f"(status={[c.lineno for c in status_calls]} clean={[c.lineno for c in clean]})")
