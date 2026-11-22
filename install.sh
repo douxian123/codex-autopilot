@@ -380,6 +380,9 @@ data = {"mcpServers": {"codex-autopilot": {
     "args": ["./ops/central_mcp.py"],
     "cwd": ".",
     "env": env,
+    # MCP Apps tools must remain direct functions. The host's deferred bridge
+    # emits plain function_call items and cannot produce native mcpToolCall UI.
+    "omit_tools_from": ["deferred"],
 }}}
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(data, fh, ensure_ascii=False, indent=2)
