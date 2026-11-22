@@ -204,6 +204,15 @@ if (routingPreviewButton) {
   routingPreviewButton._clickHandlers.slice().forEach(function (fn) { fn(); });
 }
 
+// 原生自检按钮必须发显式 repair=true；只在专项 payload 里点，避免污染其它首屏断言。
+if (payload.__probeNative) {
+  var nativeProbeButton = document.getElementById("nativeProbe");
+  if (nativeProbeButton && nativeProbeButton._clickHandlers.length) {
+    // 面板回调依赖 this 指向按钮本身；直接 fn() 会在严格模式下把 this 丢掉。
+    nativeProbeButton._clickHandlers.slice().forEach(function (fn) { fn.call(nativeProbeButton); });
+  }
+}
+
 const read = function (id) { return document.getElementById(id).textContent; };
 console.log(JSON.stringify({
   ok: true,
@@ -235,6 +244,11 @@ console.log(JSON.stringify({
   routingAssignCalls: toolCalls.filter(function (c) {
     return c.name === "routing_review_assign";
   }).map(function (c) { return c.arguments || {}; }),
+  nativeProbeCalls: toolCalls.filter(function (c) {
+    return c.name === "codex_native_probe";
+  }).map(function (c) { return c.arguments || {}; }),
+  nativeHint: read("nativeHint"),
+  nativeHintHidden: document.getElementById("nativeHint").hidden,
   globalRoutingFoldHidden: document.getElementById("globalRoutingFold").hidden,
   globalRoutingSummary: read("globalRoutingSummary"),
   globalRoutingBox: read("globalRoutingBox"),
@@ -1279,6 +1293,7 @@ def main(argv):
             "last_probe": {
                 "connected": False, "can_dispatch": False,
                 "reason": "没有找到 Codex 桌面端控制 socket",
+                "hint": "自动挡已尝试启动官方 app-server daemon，但控制 socket 仍不可用。复核命令：codex app-server daemon start",
                 "at": "2026-11-21T00:00:00+08:00",
             },
         }
@@ -1289,6 +1304,33 @@ def main(argv):
                        "Codex 未运行", "Codex 没在运行")
         fails += lacks("控制 socket 缺失时不宣称已连通可派活", missing_out["nativeState"],
                        "已连通", "可派活到 Codex 窗口")
+        fails += has("控制 socket 缺失时 repair 提示上屏", missing_out.get("nativeHint", ""),
+                     "已尝试启动官方 app-server daemon", "codex app-server daemon start")
+        if missing_out.get("nativeHintHidden") is True:
+            print("  FAIL  控制 socket 缺失时 repair 提示被隐藏")
+            fails += 1
+        else:
+            print("  PASS  控制 socket 缺失时 repair 提示可见")
+        connected_hint_payload = dict(socket_missing_payload)
+        connected_hint_payload["native"] = dict(socket_missing_payload["native"])
+        connected_hint_payload["native"]["last_probe"] = dict(
+            socket_missing_payload["native"]["last_probe"])
+        connected_hint_payload["native"]["last_probe"].update(
+            connected=True, can_dispatch=True,
+            hint="旧的失败提示不应盖住已连通状态")
+        connected_hint_out = run_once(connected_hint_payload)
+        if connected_hint_out.get("nativeHintHidden") is not True:
+            print("  FAIL  原生直连已连通时旧失败提示仍显示")
+            fails += 1
+        else:
+            print("  PASS  原生直连已连通时旧失败提示隐藏")
+        probe_button_out = run_once(dict(socket_missing_payload, __probeNative=True))
+        probe_calls = probe_button_out.get("nativeProbeCalls") or []
+        if probe_calls != [{"repair": True}]:
+            print(f"  FAIL  原生自检按钮参数不对：{probe_calls!r}")
+            fails += 1
+        else:
+            print("  PASS  原生自检按钮显式发出 repair=true")
         fails += has("计数：收到反馈", out["received"], counters.get("received"))
         fails += has("计数：已合入", out["landned"], counters.get("landed"))
         fails += has("计数：待你验收", out["stReview"], len(human_acc))

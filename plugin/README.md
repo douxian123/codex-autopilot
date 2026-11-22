@@ -55,6 +55,18 @@
 
 在对话中调用 `render_autopilot_panel` 打开面板；看到“项目自主运行”状态变为“运行中”，并且计数区出现待派、运行中、卡住或待确认，说明项目级运行状态已经加载。`project_autonomy_control` 支持 `enable`、`run`、`pause`、`wait`、`disable`。
 
+## 原生直连红灯
+
+面板「任务路线」里的「原生自检」是用户主动触发的修复入口。缺控制 socket 时，它会调用
+官方 `codex app-server daemon start`，等待 socket 出现后再真连一次；不会杀桌面端、切
+provider 或改账号。命令行等价入口是：
+
+```bash
+python3 ops/codex_native.py probe --repair
+```
+
+只有在结果里看到 `connected: true` 与 `can_dispatch: true`，才能说原生派活已连通。
+
 ## 安装
 
 在本仓库根目录跑一次：

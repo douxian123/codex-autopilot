@@ -50,6 +50,22 @@ description: Codex 自动挡的入门引导。用户第一次装好、问“这�
 
 旧版本不会被删除。安装器的不可变 release 目录和回滚指针会保留历史版本；如果宿主仍显示旧面板，先确认已重启 Codex，再重新执行 `--refresh-plugin`，不要手动覆盖 release 目录。
 
+## 原生直连显示红灯怎么办
+
+在面板「任务路线」里点「原生自检」。它只在缺控制 socket 时启动 Codex 官方
+`app-server daemon`，然后重新连一次；不会杀桌面端、不会切 provider、不会改账号。
+看到「原生直连：已连通，可派活到 Codex 窗口」才算修好。
+
+命令行也能验证：
+
+```bash
+cat ~/plugins/codex-autopilot/install-state.json
+python3 ~/plugins/codex-autopilot/releases/<version>/ops/codex_native.py probe --repair
+```
+
+把 `<version>` 换成安装态文件里的版本号；结果里必须看到
+`connected: true` 与 `can_dispatch: true` 才是真的修好。
+
 ## 常用操作（用户可以直接说，也可以让面板做）
 - “暂停自动挡” / “恢复自动挡” -> 暂停后不再启动新工作，当前 Git 操作安全收尾。
 - “现在检查一轮” -> 立刻跑一个周期（暂停中会拒绝，不会偷偷跑）。

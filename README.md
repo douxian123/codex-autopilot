@@ -120,6 +120,13 @@ python3 ~/.codex-autopilot/portable_migrate.py remap --to "$HOME" --go   # 目�
 
 装好之后，**那个普通的 Codex 输入框就是总输入框**。你只做一件事：把感受原样说出来。分类、路由、排期、追踪由它接手。
 
+要看面板，在 Codex 对话里说一句“打开自动挡面板”，或从全局侧栏 / 对话侧栏的「自动挡」入口打开。
+面板「任务路线」里如果显示原生直连红灯，点「原生自检」：它会在缺控制 socket 时启动官方
+`codex app-server daemon` 并复验，不杀桌面端、不切 provider。命令行等价入口是从当前版本目录运行
+`python3 ops/codex_native.py probe --repair`。当前安装版本以
+`~/plugins/codex-autopilot/install-state.json` 为准，命令文件在
+`~/plugins/codex-autopilot/releases/<version>/ops/codex_native.py`。
+
 最省事就是对 Codex 直接说：
 
 > 左边导航 rail 的排版坏了，图标贴到左缘，被裁掉了。
