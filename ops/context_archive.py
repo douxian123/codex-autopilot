@@ -90,6 +90,8 @@ def _item(row: dict, status: str, bucket: str) -> dict:
         "source_topic": row.get("source_topic"),
         "source_sample": str(row.get("source_sample") or "")[:240] or None,
         "scope": row.get("scope") or [],
+        "scope_class": row.get("scope_class"),
+        "priority": row.get("priority"),
         "signals": row.get("signals") or [],
         "mentions": row.get("mentions"),
         "threads": row.get("threads"),

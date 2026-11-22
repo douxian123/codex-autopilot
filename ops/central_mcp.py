@@ -208,6 +208,7 @@ def _constraint_candidates_summary():
         "title": r.get("title"),
         "kind": r.get("kind"),
         "scope": r.get("scope") or [],
+        "scope_class": r.get("scope_class"),
         "signals": r.get("signals") or [],
         "source": r.get("source") or "intake",
         "mentions": r.get("mentions"),
