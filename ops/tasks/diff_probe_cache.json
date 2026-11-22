@@ -1,482 +1,70 @@
 {
- "codex/autopilot-close-gate-20261026@80afdc3670903d66e9187e534661cc7c97775f27@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
-  "files": 6,
-  "lines": 241
- },
- "codex/autopilot-exec-recover-min-20261020@9c5f53f80858de40418294585dc0af81fbd6b25b@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
-  "files": 2,
-  "lines": 847
- },
- "codex/autopilot-health-20261019@c711255000695f1773b9573a46d51966131a2b16@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
-  "files": 1,
-  "lines": 727
- },
- "codex/autopilot-parallel-runtime-fix-20261019@38aed5c0e38e3cf92dc147982e2e68a35e37ec68@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
-  "files": 2,
-  "lines": 160
- },
- "codex/autopilot-resolve-stderr@3ab07ffa9ff49fd140b55f73e3272fa5277d6915@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
-  "files": 2,
-  "lines": 51
- },
- "codex/autopilot-truth-sync-failclosed@e63c220e3a6da8877a8ef196a7169e3d3b4b2f4e@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
-  "files": 2,
-  "lines": 64
- },
- "codex/daemon-liveness-20261110@fc8773ee4dd038ebabf552769f1f755e5a7b6c52@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
-  "files": 4,
-  "lines": 263
- },
- "codex/disk-production-admission-20261112@34296b378968b3164b732eecebcaee65a75c28df@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
+ "codex/disk-admission-clean-20261027@728b93900d9e3376026062185d606bdc24523a25@abd44dac7c29be180d3c78540aef4b0139b88743": {
   "files": 3,
-  "lines": 128
+  "lines": 378
  },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
-  "files": 15,
-  "lines": 1221
+ "codex/disk-admission-preview29-20261027@f399305303a08e6a65509e789f80621cfe2d3571@abd44dac7c29be180d3c78540aef4b0139b88743": {
+  "files": 28,
+  "lines": 12929
  },
- "codex/reap-branch-preserve-20261111@b4d56939cf323ba107e321ade73fe96e8247ca06@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
-  "files": 3,
-  "lines": 259
+ "codex/disk-reap-into-repo@07b17402d83c4c6a3b2e39b892ca1e5526d75c89@abd44dac7c29be180d3c78540aef4b0139b88743": {
+  "files": 14,
+  "lines": 1923
  },
- "codex/resource-admission-verify-narrowing-20261115@cf6e7668f10ac03ac42ccf258192d39fa0c15666@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
-  "files": 7,
-  "lines": 327
- },
- "codex/snapshot-budget-archive-20261113@ad220fb88c2b2546a3c807dd4229971473f806c7@acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec": {
-  "files": 8,
-  "lines": 438
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@d22efa139c572ab227ef06e16f16be70064765cc": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/pm-truth-closure-20261118@784dd43fcdc777f65d8af58a9cf2f8f54e43256b@d22efa139c572ab227ef06e16f16be70064765cc": {
-  "files": 10,
-  "lines": 621
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@d36087b804b052de2e40cd0e655bc432b11541f5": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@0fd2177bea6a39fa0f26822a6064529b44ee2a30": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/truth-close-pm-truth-closure-20261118@c8b9f37b322a7cf772b4974c6ed1ce60ff8e4602@0fd2177bea6a39fa0f26822a6064529b44ee2a30": {
-  "files": 7,
-  "lines": 82
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@fe2c0f33d5f593b9fb5d01d340f83142152ec985": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@9ff339b92f9079018131ef26cee0f3a867f187d7": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/truth-dedupe-pm-closure-20261118@cbef1c0e1346908225e71686655a337b988248a6@9ff339b92f9079018131ef26cee0f3a867f187d7": {
-  "files": 9,
-  "lines": 259
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@95ff40ac62a58629381e846aae97b4f56d07a238": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@4ee15aaa53f5d8785d8fc06cee028a06d924313e": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/acceptance-criteria-closure-20261118@99283f276e57c4fb56327d0a50cc242b79fdda45@4ee15aaa53f5d8785d8fc06cee028a06d924313e": {
-  "files": 15,
-  "lines": 818
- },
- "codex/acceptance-criteria-compiler-20261118@96f177802653d3bfb879a0b47deff4395a53c083@68c89020bd72d107c34e969c84ed902f43039fd3": {
-  "files": 9,
-  "lines": 399
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@68c89020bd72d107c34e969c84ed902f43039fd3": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@bbce76e894f0a7e888df239a154bf678a04760f8": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@31c213b6663be4c9514f478d65dbdf7dc7cf6415": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@ed4b6d64dcb2e797136dc62e6975faafbf887470": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@59366650b1c858131976de8806409766b60a2031": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@d10dd4c88e67806f907f80082f9ba09bf2645eb8": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@d30fedfb76e1e44163ed1b34ff1b7a55900fffb6": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@cc4905ad8e3278de47850828fd32ea050128a6eb": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@bfde65f98d4caca8e1d6082150a8cfac1ec07a8a": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@634d33d9f8086e6fabed443994ae5d872d74eb67": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@0c4f47e14db8211b79e5ed9d26cda2fa009bdee4": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@ea531ef3ab4554846c7a4f490941077d6e304923": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@ebe9b4e3434a8393834bc46e19f4f560f603fa9f": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@2dd4466e411f37a42ccf84fdc2324dad5521f015": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@b6d9d429018207537f8cd4b252f0c46af308b869": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@0634714cd36cff46e115b2a513d56545f910a34e": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@b07f83174b7fe235807dd96f9b73702fc44341d6": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@7f22f9a0acef2b32b25fdec7adf5f53f0ea5c8b9": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@cdf93e1a2d3bd1c6c6270bc4d8389421d1592346": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@7db4f0c9088b7f6007616331f6ec38c514e2c203": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@2a1856827559187173d76ee2052a8b9bfb6ba0a4": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@7b726f7a5aa8cf17568fff691f520559b4db4cc8": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/panel-windshield-20261119@2502826140494a75701169847097b55f0de8045a@7b726f7a5aa8cf17568fff691f520559b4db4cc8": {
-  "files": 8,
-  "lines": 295
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@16f4a77a87c868aacbf74d83cdb16b64b5b9f711": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@d5e7c7afece82d659b9a02ecba2340e08fcb3f1e": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/panel-route-contract-20261119@de892575160d2af811541abe7144ecd99e2e306e@d5e7c7afece82d659b9a02ecba2340e08fcb3f1e": {
-  "files": 5,
-  "lines": 94
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@f2fb33150948e9fe62322c64e2ef5a213a58eced": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@7ef93627729fb390b5d62d11616ecee275474dcb": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/guard-release-version-20261119@fe5cd24406e9d127a68f9354bf9f15f938e11650@7ef93627729fb390b5d62d11616ecee275474dcb": {
-  "files": 2,
-  "lines": 18
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@4ed1bd83f8c4e5a65801f507f859fcdcef12149a": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@136619619ae460f7716d3cb74ebb54230fbd00c9": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/selftrack-mainline-20261119@14950da60035f612d129c96f9e61157748ec4e8c@136619619ae460f7716d3cb74ebb54230fbd00c9": {
-  "files": 8,
-  "lines": 241
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@b22a8242374342f82453cf73d2767084c2295b8e": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@0bea60a692a6cd5c1cb0b43e25cf3b44bce07f2e": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@c55084cbf42badb86cadc10bccc15e1db4dbe368": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/route-health-20261119@743923849f9a4eba05fdc031cae8694f3baf6b72@c55084cbf42badb86cadc10bccc15e1db4dbe368": {
-  "files": 7,
-  "lines": 472
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@874c4a9ba438db402a555c2c3be10bc2c69db7e4": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@995b7b1f75a1791650886f725bfd4e5cb18f79e7": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/authorized-followup-20261119@f8ccb60abfd78ca73fd6ac76b438c9c761013e23@14076f84abf960708ed11ca623a4415af4f0e081": {
-  "files": 11,
-  "lines": 697
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@14076f84abf960708ed11ca623a4415af4f0e081": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@e66dcfcf45316f873a9aa6caac972effb91b5820": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@e85ee904feaf946f152ad2700f126cbffb3fd460": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@04bcdd8bc28526b3db24a352a29b11a3b3023d0f": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@7766d3a165cba077e363bb1afbe772e73338686a": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@73819106ed85fb9a7116aac5889387e505935c8f": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@6a4afce4ad22ed8c8f391005802b3926dd8a81c4": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@37d005e1be6cdcb35ee1e4d920edcb9383c8e74f": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@e0255bea2172b9be92fb7fe2ddbb1323ff71aae1": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@a53fc607b0abfa85dcf7424a371dc44049cdbd49": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@c0a5b914e90a0276df4e7a97843025ce1f9db92a": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@50babfd286ee9c6236b1025346cc27ffa90274bf": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@931da6de54588dd10bd440706ffc1109f4d87e81": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@6be96356ab874f40cee7617058abc6f100abd57e": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/route-review-20261119@63f51f27644215980608712a0d30470d7506209e@6be96356ab874f40cee7617058abc6f100abd57e": {
-  "files": 9,
-  "lines": 511
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@eef910d43b70101612938d113ded9c7027e95faf": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@1ac09e15cafc92b6fbdfb63df4951b081a29b0f9": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@c178e20155470f2b6d0226298c6e73adcff8b5f7": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@1553069e195b9ba6296107b4d543f00a865fdc80": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/arch-boundaries-port-20261119@34eb923c461586367c506348679ca1a97653c048@6dca0241bb522e2e902f9e536256370cc244aa64": {
-  "files": 1,
-  "lines": 144
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@6dca0241bb522e2e902f9e536256370cc244aa64": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/arch-boundaries-port-20261119@34eb923c461586367c506348679ca1a97653c048@9dbb3e8865cf987185221577b55d55173f963463": {
-  "files": 1,
-  "lines": 144
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@9dbb3e8865cf987185221577b55d55173f963463": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@1488e99685a2f3d590cd015321312aefba2b6eb6": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@ab5141cc9c8bbbd84bfdc3ec1519dbbdc4ac9440": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@c211ab7c59257eb4258c3b783faf0c06d9d4d6fa": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@8a82c53a02e31dc38932e02d285f80c998bed444": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@ce7a11091261a4d2ab6471db66048dcda5fd1f37": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@e1e5e5d17df7585947fac1eee588e6816f3f850a": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/install-architecture-doc-20261119@a05ac9e229b83f9a44791d3918cb0b241b8bf30e@e1e5e5d17df7585947fac1eee588e6816f3f850a": {
-  "files": 16,
-  "lines": 658
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@f9b0dc7e8e7c59b4a6d6ebf4f00fa154e045c8db": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/runtime-freshness-20261119b@139e528e64005b4e4654dd0ff0019bed45210191@f9b0dc7e8e7c59b4a6d6ebf4f00fa154e045c8db": {
-  "files": 8,
-  "lines": 183
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@0236f861a0d09b8b7891ce76b96c53199c6039ce": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/runtime-freshness-20261119b@0919a111ad2b9ff9e1cb322fab272bc0d15ad37f@0236f861a0d09b8b7891ce76b96c53199c6039ce": {
-  "files": 8,
-  "lines": 185
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@fb4f705ece47197528912f2796680dbe82e91ac1": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@3acac80e164b0768db130d453b7041c4fc67cbb2": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@88500674991fd899ec0a64fc5805eca1cae84a03": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@598c39dcfd886e48cacbd3b2b4f5c95db35cf5dc": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/autopilot-routing-context-20261119@e30a2cce1de1db5c60db0b7f8a0b647482575496@598c39dcfd886e48cacbd3b2b4f5c95db35cf5dc": {
+ "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@abd44dac7c29be180d3c78540aef4b0139b88743": {
   "files": 4,
-  "lines": 149
+  "lines": 5372
  },
- "codex/autopilot-routing-context-20261119@e30a2cce1de1db5c60db0b7f8a0b647482575496@ac0efe238cee99065e011832459a44eefafa97d1": {
+ "codex/autopilot-brand-panel@bac7b3dd7d2a598f2b5392ce2631cbea3c128d0f@0faac6985da0918859a1d13120c8e12306663d28": {
+  "files": 21,
+  "lines": 2291
+ },
+ "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@0faac6985da0918859a1d13120c8e12306663d28": {
   "files": 4,
-  "lines": 149
+  "lines": 5372
  },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@ac0efe238cee99065e011832459a44eefafa97d1": {
-  "files": 15,
-  "lines": 1221
+ "codex/autopilot-brand-panel@bac7b3dd7d2a598f2b5392ce2631cbea3c128d0f@35c53856016fb72db46078d6e36ff4bc0b76adf9": {
+  "files": 21,
+  "lines": 2230
  },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@43f83433afb95e3a6d88dda4bbd2971d359bb36e": {
-  "files": 15,
-  "lines": 1221
+ "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@35c53856016fb72db46078d6e36ff4bc0b76adf9": {
+  "files": 4,
+  "lines": 5372
  },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@7b36075d91a2121e986d5d7ec461ff3907424d97": {
-  "files": 15,
-  "lines": 1221
+ "codex/autopilot-brand-panel@bac7b3dd7d2a598f2b5392ce2631cbea3c128d0f@85e992e9d8cd07390691f62e2313160fa15c7e9a": {
+  "files": 21,
+  "lines": 2230
  },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@1dd1a110c254d04f0823938eef550e218844970e": {
-  "files": 15,
-  "lines": 1221
+ "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@85e992e9d8cd07390691f62e2313160fa15c7e9a": {
+  "files": 4,
+  "lines": 5372
  },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@0fa64eea5794cf1eebc07ecd28e2386d5fafaff9": {
-  "files": 15,
-  "lines": 1221
+ "codex/autopilot-brand-panel@bac7b3dd7d2a598f2b5392ce2631cbea3c128d0f@fdbb279a024b66ca478ec77ab17513fbf168644e": {
+  "files": 21,
+  "lines": 2230
  },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@7dcbc8ad18f35d2d8af0704f9e545236538303eb": {
-  "files": 15,
-  "lines": 1221
+ "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@fdbb279a024b66ca478ec77ab17513fbf168644e": {
+  "files": 4,
+  "lines": 5372
  },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@5b09eb9f6739e3c001a4904e9d92bb38494fce0e": {
-  "files": 15,
-  "lines": 1221
+ "codex/autopilot-brand-panel@bac7b3dd7d2a598f2b5392ce2631cbea3c128d0f@cb5832eff34886df2a516037858fc0e7966ad564": {
+  "files": 21,
+  "lines": 2230
  },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@ad33983947bafe339f834c0c5ded07ca02250f2d": {
-  "files": 15,
-  "lines": 1221
+ "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@cb5832eff34886df2a516037858fc0e7966ad564": {
+  "files": 4,
+  "lines": 5372
  },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@c1a50b8b71d1f75c3c40c9602684438ada36a54d": {
-  "files": 15,
-  "lines": 1221
+ "codex/land-clean-worktree-gate-20261122@3fba3da49c6cc70a68a6a6d56559b0cf16f431d9@cb5832eff34886df2a516037858fc0e7966ad564": {
+  "files": 4,
+  "lines": 178
  },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@972a818fe6ce66b9547283e4f670fe8f8e3b2d5d": {
-  "files": 15,
-  "lines": 1221
+ "codex/autopilot-brand-panel@bac7b3dd7d2a598f2b5392ce2631cbea3c128d0f@607c7aa2409b52dc920613dbcc9a1d2650fff8c6": {
+  "files": 21,
+  "lines": 2230
  },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@f45a7a22a98ad312262c6b5c46e91cfc82f2eadd": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@274bd40ba3e52b87a3312e622a7017ce174ee84a": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@502212efc659074a5a898e00856c65baecab36aa": {
-  "files": 15,
-  "lines": 1221
- },
- "codex/eval-loop-judge-20261110@dcda93832dda979d88c2dbe5975e95b1171e227c@02ad0ab72ec3f4137659949f29a8385c68668520": {
-  "files": 12,
-  "lines": 958
- },
- "codex/project-autonomy-mode-20261121@1aebb35c6630b5e7fcaf3605b26766d1d7785532@16606666f76aebbab5f48317827a731146f066a1": {
-  "files": 7,
-  "lines": 621
- },
- "codex/final-ledger-restore-20261120@d9218bd59a7288a66e3967f10be8b1bff51c8090@e2ad55a745f336795a172e9797733a4dda6708a1": {
-  "files": 1,
-  "lines": 12
- },
- "codex/final-ledger-restore-20261120@d9218bd59a7288a66e3967f10be8b1bff51c8090@593c447cad316797be8746a0b8d5b5991e72b2b9": {
-  "files": 1,
-  "lines": 12
+ "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@607c7aa2409b52dc920613dbcc9a1d2650fff8c6": {
+  "files": 4,
+  "lines": 5372
  }
 }
