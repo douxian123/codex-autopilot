@@ -361,6 +361,7 @@ console.log(JSON.stringify({
   stewardBar: read("stewardBar"),
   stewardHtml: serializeEl(document.getElementById("stewardBar")),
   stewardDetail: read("stewardDetail"),
+  stewardDetailHtml: serializeEl(document.getElementById("stewardDetail")),
   experienceHeadline: read("experienceHeadline"),
   experienceMeta: read("experienceMeta"),
   experienceStatus: (function(){ var n = document.getElementById("experienceContract"); return n ? n.getAttribute("data-status") || "" : ""; })(),
@@ -929,11 +930,20 @@ def main(argv):
         else:
             fails += 1
             print("  FAIL  管家健康条没有以颜色点上屏")
-        if "最近完成" in str(out.get("stewardDetail") or ""):
-            print("  PASS  点击管家颜色点可展开最近完成")
+        detail_text = str(out.get("stewardDetail") or "")
+        detail_html = str(out.get("stewardDetailHtml") or "")
+        # 颜色点本身已经给了上下文；详情的状态行只能说当前结果。
+        # 历史条目可能自然提到某个角色名，不能把整块 textContent 当成标题来查。
+        status_match = re.search(
+            r'<div class="steward-detail-status"[^>]*>(.*?)</div>', detail_html
+        )
+        status_text = status_match.group(1) if status_match else ""
+        if ("最近完成" in detail_text and "管家" not in status_text
+                and "steward-detail-head" not in detail_html):
+            print("  PASS  点击颜色点只展开结果详情，不重复显示内部名称")
         else:
             fails += 1
-            print("  FAIL  点击管家颜色点没有展开最近完成")
+            print("  FAIL  颜色点详情仍重复显示内部名称或未展开最近完成")
         # 精确键集合：七个管家必须齐全；健康层单独校验，既不是第八个管家，也不得缺失。
         expected_keys = {"context", "route", "merge", "tune", "exec", "pm", "accept"}
         actual_keys = {r.get("key") for r in rows if r.get("key") != "health"}
@@ -1028,6 +1038,35 @@ def main(argv):
                 print(f"  FAIL  状态语义夹具渲染错误：{r['key']} 缺 {missing}")
             else:
                 print(f"  PASS  状态语义夹具渲染正确：{r['key']}/{r['state']}")
+        # 最近三条默认可见，更早记录必须收进原生 details，不把历史继续铺在首屏。
+        history_rows = [dict(r) for r in rows]
+        history_rows[0] = dict(history_rows[0], recent_completed=[
+            {"title": "最近结果一"}, {"title": "最近结果二"},
+            {"title": "最近结果三"}, {"title": "更早结果"},
+        ], description="正在持续推进")
+        history_counts = dict(counts)
+        history_out = run_once(dict(payload, stewards={"rows": history_rows, "counts": history_counts}))
+        history_html = str(history_out.get("stewardDetailHtml") or "")
+        recent_match = re.search(
+            r'<div class="steward-detail-recent"[^>]*>(.*?)</div><details',
+            history_html,
+        )
+        history_match = re.search(
+            r'<details class="steward-history"[^>]*>(.*?)</details>',
+            history_html,
+        )
+        recent_html = recent_match.group(1) if recent_match else ""
+        history_html_inner = history_match.group(1) if history_match else ""
+        if ("最近结果一" in recent_html
+                and "最近结果三" in recent_html
+                and "更早结果" not in recent_html
+                and "查看更早记录（1）" in history_html_inner
+                and "更早结果" in history_html_inner
+                and "<details" in history_html):
+            print("  PASS  最近三条默认显示，更早记录可折叠查看")
+        else:
+            fails += 1
+            print("  FAIL  最近完成历史没有按三条默认、其余折叠呈现")
         # unknown 态不得伪装正常：空 payload 下必须出现「取不到 / 没在跑」这类词。
         # 新 UI 把它们放在短名的 title/aria-label 里，检查必须同时覆盖文本和 HTML。
         blank = dict(payload)

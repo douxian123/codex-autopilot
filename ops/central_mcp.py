@@ -699,7 +699,8 @@ def _steward_health(payload):
     blocked = payload.get("blocked") or {}
 
     rows = []
-    recent_by_key = _steward_recent_completed()
+    # 面板默认只展示三条；这里多取一小段，供用户主动展开更早记录。
+    recent_by_key = _steward_recent_completed(limit=12)
 
     # 1. 上下文管家：自动收录候选 + 生效约束条数。候选待确认 = 需要人，不是故障。
     try:
