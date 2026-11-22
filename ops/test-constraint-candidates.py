@@ -84,11 +84,34 @@ def main():
             check("建议 scope 来自文件线索",
                   c["scope"] == ["plugin/ui/panel.html"], c["scope"])
             check("候选带命中信号作为证据", c["signals"] == ["不许"], c["signals"])
+            check("候选带范围分类（文件线索=模块）",
+                  c.get("scope_class") == "module", c.get("scope_class"))
+            check("强措辞候选优先级为高",
+                  c.get("priority") == "high", c.get("priority"))
         check("描述现状的句子没有被误收",
               all("磁盘曾达" not in c["text"] for c in created))
         check("还没路由的条目不参与",
               all("必须等路由" not in c["text"] for c in created))
         check("提名阶段不写生效台账", not constraints.exists(), str(constraints))
+
+        check("新规范词被识别（禁止）",
+              ("禁止", "taboo") in m.signals("禁止删除数据"),
+              m.signals("禁止删除数据"))
+        check("新规范词被识别（应该）",
+              ("应该", "expectation") in m.signals("应该先解释"),
+              m.signals("应该先解释"))
+        check("全局措辞分类为 global",
+              m.classify_scope("全局必须保留命令原文") == ("global", []),
+              m.classify_scope("全局必须保留命令原文"))
+        check("流程措辞分类为 workflow（每次提交不是泛化全局）",
+              m.classify_scope("每次提交必须跑门禁") == ("workflow", []),
+              m.classify_scope("每次提交必须跑门禁"))
+        check("文件线索分类为 module",
+              m.classify_scope("这里别加隐式依赖", ["a.py"]) == ("module", ["a.py"]),
+              m.classify_scope("这里别加隐式依赖", ["a.py"]))
+        check("强措辞提高优先级，弱措辞保持普通",
+              m.candidate_priority([("必须", "expectation")], "project") == "high"
+              and m.candidate_priority([("应该", "expectation")], "project") == "normal")
 
         # 重复 propose 不重复出卡（同一句话只提一次）。
         again = m.propose()
@@ -130,7 +153,13 @@ def main():
                   "落盘必须只在 main 上做，不许带 --force", rows[0].get("statement"))
             check("生效约束带 scope", rows[0].get("scope") == ["ops/kgctl.py"],
                   rows[0].get("scope"))
+            check("生效约束带 scope_class",
+                  rows[0].get("scope_class") == "workflow",
+                  rows[0].get("scope_class"))
         check("promote 带回 C-id", bool(pr.get("candidate", {}).get("constraint_id")), pr)
+        check("候选确认记录保留 scope_class",
+              pr.get("candidate", {}).get("scope_class") == "workflow",
+              pr.get("candidate", {}).get("scope_class"))
 
     print()
     if failures:

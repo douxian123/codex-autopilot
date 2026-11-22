@@ -34,16 +34,32 @@ OPS = Path(__file__).resolve().parent
 # 只在出现明确的规范性措辞时才提名，不做「任何句子都当约束」的滥收。
 # 每条 = (命中词, 建议 kind)。顺序即优先级。
 SIGNALS = [
-    ("绝不允许", "taboo"), ("绝对不允许", "taboo"), ("不许", "taboo"),
+    ("绝不允许", "taboo"), ("绝对不允许", "taboo"), ("禁止", "taboo"),
+    ("不许", "taboo"), ("不能", "taboo"),
     ("不要再", "rework"), ("别再", "rework"), ("返修", "rework"),
-    ("必须", "expectation"), ("不得", "expectation"), ("一律", "expectation"),
-    ("以后都", "expectation"), ("永远", "expectation"), ("默认", "expectation"),
+    ("必须", "expectation"), ("不得", "expectation"), ("应当", "expectation"),
+    ("应该", "expectation"), ("一律", "expectation"), ("以后都", "expectation"),
+    ("永远", "expectation"), ("默认", "expectation"), ("从现在起", "expectation"),
+    ("从今以后", "expectation"), ("每次", "expectation"), ("确保", "expectation"),
     ("记住", "decision"), ("拍板", "decision"), ("就这么定", "decision"),
     ("按这个来", "decision"),
 ]
 
 # 命中这些词但其实是「描述现状」的句子，不提名，避免把 bug 描述误收成规范。
 SUPPRESS = ("曾达", "实测", "复现", "报错原文", "日志如下")
+
+# scope 分类只影响候选卡和宪法页的呈现；真正生效时的 scope 仍由人确认。
+# 「每次提交」是工作流程，不是无限扩大到所有场景的全局规则；先判明确流程词，
+# 再判「每次」这种只表达重复频次的词。
+EXPLICIT_GLOBAL_MARKERS = ("全局", "全项目", "所有项目", "任何入口", "任何对话",
+                           "所有窗口", "永远", "一律", "从现在起", "从今以后")
+REPEAT_MARKERS = ("每次", "每次都")
+WORKFLOW_MARKERS = ("工作流程", "流程", "门禁", "收尾", "验收", "提交",
+                    "合入", "落盘", "闭环", "台账", "宪法", "规范")
+PROJECT_MARKERS = ("本项目", "这个项目", "项目")
+STRONG_SIGNALS = {"绝不允许", "绝对不允许", "禁止", "不许", "不能", "必须",
+                  "不得", "应当", "一律", "永远", "每次", "记住", "拍板",
+                  "就这么定", "按这个来"}
 
 
 def truth_dir() -> Path:
@@ -138,6 +154,36 @@ def suggested_scope(files) -> list:
     return out
 
 
+def classify_scope(text, files=None) -> tuple:
+    """给候选卡打 scope 分类：global / workflow / module / project。
+
+    全局与工作流程是对所有改动都该生效的规则；文件线索则是精准调取用的模块范围。
+    这里只分类，不决定是否生效，也不把分类写成机器门禁。
+    """
+    t = str(text or "")
+    if any(marker in t for marker in EXPLICIT_GLOBAL_MARKERS):
+        return "global", []
+    if any(marker in t for marker in WORKFLOW_MARKERS):
+        return "workflow", suggested_scope(files)
+    if any(marker in t for marker in REPEAT_MARKERS):
+        return "global", []
+    scoped = suggested_scope(files)
+    if scoped:
+        return "module", scoped
+    if any(marker in t for marker in PROJECT_MARKERS):
+        return "project", []
+    # 没写文件、没写流程词，但明确是规范：按项目范围收，不私自扩大成全局。
+    return "project", []
+
+
+def candidate_priority(hits, scope_class) -> str:
+    """明确红线、全局/流程规范优先进入候选区；弱措辞仍保留为普通候选。"""
+    words = {word for word, _kind in hits}
+    if scope_class in ("global", "workflow") or words & STRONG_SIGNALS:
+        return "high"
+    return "normal"
+
+
 def propose() -> dict:
     """扫描已路由的入口原话，为命中规范性措辞的条目提名候选卡。只读 inbox。
 
@@ -163,12 +209,15 @@ def propose() -> dict:
         if h in known:
             continue
         kind = hits[0][1]
+        scope_class, scope = classify_scope(text, it.get("files"))
         row = {
             "id": _next_id(rows), "ts": _now(), "type": "constraint_candidate",
             "status": "proposed", "text": text,
             "title": text[:80],
             "kind": kind,
-            "scope": suggested_scope(it.get("files")),
+            "scope": scope,
+            "scope_class": scope_class,
+            "priority": candidate_priority(hits, scope_class),
             "signals": [h[0] for h in hits],
             "source_ts": it.get("ts"),
             "source_lane": it.get("lane"),
@@ -198,6 +247,7 @@ def propose_learned(key, statement, scope=None, evidence=None, priority="normal"
     if not text:
         return {"status": "error", "reason": "学习候选没有可确认的语句"}
     topic = " ".join(str(key or "").split()) or text_hash(text)
+    scope_class, scoped = classify_scope(text, scope)
     h = "learned:" + text_hash(topic + "\n" + text)
     path = candidates_path()
     live = latest_by_id(path)
@@ -210,14 +260,15 @@ def propose_learned(key, statement, scope=None, evidence=None, priority="normal"
         "status": "proposed", "text": text, "title": text[:80],
         # 学习候选是共性规范建议，kind 统一走 expectation；原话证据仍保留在卡里。
         "kind": "expectation",
-        "scope": suggested_scope(scope),
+        "scope": scoped,
+        "scope_class": scope_class,
         "signals": ["context_learning", "跨会话重复"],
         "source": "context_learning",
         "source_hash": h,
         "source_topic": topic,
         "source_sample": " ".join(str(sample or "").split())[:240],
         "evidence": evidence or [],
-        "priority": priority,
+        "priority": "high" if scope_class in ("global", "workflow") else priority,
         "mentions": int(mentions or 0),
         "threads": int(threads or 0),
         # 候选不参与门禁；确认后由人决定 enforceable，绝不自动标 gate。
@@ -240,11 +291,13 @@ def promote(cid: str, kind=None, scope=None, enforceable=None, cmd=None, cwd=Non
     scope = scope if scope is not None else (row.get("scope") or [])
     if isinstance(scope, (list, tuple)):
         scope = ":".join(str(s) for s in scope)
+    scope_class = row.get("scope_class") or classify_scope(row.get("text"), row.get("scope"))[0]
     enforceable = (enforceable or "none").strip()
     env = {
         "KG_CONSTRAINT_KIND": kind,
         "KG_TRUTH_SOURCE_HASH": str(row.get("source_hash") or "") or None,
         "KG_CONSTRAINT_SCOPE": scope or None,
+        "KG_CONSTRAINT_SCOPE_CLASS": scope_class,
         "KG_CONSTRAINT_ENFORCEABLE": enforceable,
         "KG_CONSTRAINT_CMD": cmd or None,
         "KG_CONSTRAINT_CWD": cwd or None,
@@ -263,6 +316,7 @@ def promote(cid: str, kind=None, scope=None, enforceable=None, cmd=None, cwd=Non
     done.update({"status": "promoted", "promoted_ts": _now(),
                  "constraint_id": m.group(1) if m else None,
                  "kind": kind, "scope": suggested_scope(scope.split(":")),
+                 "scope_class": scope_class,
                  "enforceable": enforceable, "truthctl": proc.stdout.strip()[-300:]})
     _append(path, done)
     return {"status": "promoted", "candidate": done}

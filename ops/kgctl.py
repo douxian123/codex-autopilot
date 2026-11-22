@@ -654,13 +654,24 @@ def conflict_groups(rows=None) -> list:
 
 
 def worktree_map():
+    """只返回目录仍在的 worktree 注册。
+
+    `git worktree list --porcelain` 会把 `prunable`（gitdir 指向的目录已消失）的
+    注册也列出来。旧实现只要看到 `branch refs/heads/x` 就把那条路径当成有效
+    工作树，于是 `kgctl gate x` 会坚持在已不存在的路径里跑门禁，三条命令全部
+    因 `cwd 不存在` 假红，分支明明能过门禁却被判成失败。这里按真实目录过滤，
+    让 gate 自建临时 worktree；不删除注册、不影响真正存在的分支工作树。
+    """
     out = git("worktree", "list", "--porcelain")
     m, cur = {}, {}
     for line in out.split("\n"):
         if line.startswith("worktree "):
-            cur = {"path": line.split(" ", 1)[1]}
+            path = line.split(" ", 1)[1]
+            p = Path(path)
+            cur = {"path": path, "valid": p.is_dir() and (p / ".git").exists()}
         elif line.startswith("branch "):
-            m[line.split(" ", 1)[1].replace("refs/heads/", "")] = cur["path"]
+            if cur.get("valid"):
+                m[line.split(" ", 1)[1].replace("refs/heads/", "")] = cur["path"]
     return m
 
 
@@ -4143,7 +4154,8 @@ def _origin_contains(commit: str) -> bool:
 # 多一份无人认领的在途改动（正是 PARALLEL_WORKFLOW「禁止制造在途改动」要禁止的形态）。
 TRUTH_PATHS = ("ops/truth", "ops/tasks", "ops/context", "docs/PROJECT_STATUS.md",
                "docs/CONTROL_BOARD.md", "docs/CONTROL_PLANE.html",
-               "docs/PRODUCT_MAINLINE.md", "docs/COCKPIT_BRIEF.md",
+               "docs/PRODUCT_MAINLINE.md", "docs/PROJECT_CONSTITUTION.md",
+               "docs/COCKPIT_BRIEF.md",
                "docs/AGENT_SYNC.md", "docs/OCT29_PROGRESS_RADAR.generated.md")
 TRUTH_COMMIT_RE = re.compile(r"^(chore\(truth\)|train: (sync|merge))")
 
@@ -4153,6 +4165,7 @@ APPEND_ONLY_MARKDOWN = ("docs/COCKPIT_BRIEF.md", "docs/AGENT_SYNC.md")
 # 从台账/真相综合出来的 Markdown 视图。它们有稳定的「生成时间」行，恢复主干工作树
 # 时不能用旧快照覆盖 main 已经综合好的新视图；否则 PRODUCT_MAINLINE 会退回几个月前。
 GENERATED_MARKDOWN_VIEWS = ("docs/PRODUCT_MAINLINE.md", "docs/PROJECT_STATUS.md",
+                            "docs/PROJECT_CONSTITUTION.md",
                             "docs/CONTROL_BOARD.md", "docs/OCT29_PROGRESS_RADAR.generated.md")
 
 # 产品真相证据：这些文件由真实质量/运维命令生成，不能由旧真相同步或冲突合并覆盖。

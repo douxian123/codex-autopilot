@@ -35,6 +35,7 @@ def main():
         write(root / "constraint_candidates.jsonl", [
             {"id": "CC-0001", "status": "proposed", "text": "以后都不要做破坏性修改",
              "source": "intake", "signals": ["以后都", "不要"], "scope": ["AGENTS.md"],
+             "scope_class": "global", "priority": "high",
              "evidence": [{"thread": "t-1", "text": "以后都不要做破坏性修改"}]},
             {"id": "CC-0002", "status": "promoted", "text": "面板只展示值得关注的信息",
              "source": "context_learning", "mentions": 5, "threads": 3,
@@ -67,6 +68,10 @@ def main():
               and "以后都" in by_id.get("CC-0001", {}).get("signals", []))
         check("证据线程与原话保留",
               by_id.get("CC-0001", {}).get("evidence", [{}])[0].get("thread") == "t-1")
+        check("范围分类与优先级带出（不造新卡）",
+              by_id.get("CC-0001", {}).get("scope_class") == "global"
+              and by_id.get("CC-0001", {}).get("priority") == "high",
+              {k: by_id.get("CC-0001", {}).get(k) for k in ("scope_class", "priority")})
         learned = by_id.get("CC-0002") or {}
         check("自学习重复证据保留",
               learned.get("source") == "context_learning"
