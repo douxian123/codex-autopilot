@@ -313,7 +313,8 @@ if [ -d "$REPO/docs" ]; then
   fi
   # 动态验收标准、体验契约与研究采用决策是安装后门禁/面板要读的现行规范，必须随 release 发布。
   for doc in DYNAMIC_ACCEPTANCE_SCOPE.md PRE_ACCEPTANCE_STANDARD.md \
-             PRODUCT_CONTRACT.md OPENSOURCE_RESEARCH.md PANEL_INTERACTION_DESIGN.md; do
+             PRODUCT_CONTRACT.md OPENSOURCE_RESEARCH.md PANEL_INTERACTION_DESIGN.md \
+             PROJECT_GLOBAL_RULES.md; do
     if [ -f "$REPO/docs/$doc" ]; then
       cp "$REPO/docs/$doc" "$STAGE/docs/$doc"
     fi
@@ -420,6 +421,7 @@ fi
 # 安装后的 release 根目录既是插件根，也是门禁执行根。契约、采用策略与两份校验器
 # 缺任何一项，面板都会失去可核验的真相来源；在移动 staging 之前硬失败。
 for required in \
+  docs/PROJECT_GLOBAL_RULES.md \
   docs/experience/panel-renderer-contract.json \
   docs/research/adoption-strategy.json \
   ops/panel_renderer_contract.py \
