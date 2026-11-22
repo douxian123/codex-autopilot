@@ -130,16 +130,14 @@
   .steward.s-unknown .sdot{background:var(--ink-3);opacity:.38}
   .steward-detail{margin-top:9px;padding:11px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2);font-size:12px;color:var(--ink-2)}
   .steward-detail[hidden]{display:none}
-  .steward-detail-head{display:flex;align-items:center;gap:7px;color:var(--ink);font-weight:650}
-  .steward-detail-head .sdot{width:8px;height:8px;border-radius:50%;background:var(--ink-3);flex:0 0 auto}
-  .steward-detail-head.s-ok .sdot{background:var(--ok)}
-  .steward-detail-head.s-attention .sdot{background:var(--warn)}
-  .steward-detail-head.s-off .sdot,.steward-detail-head.s-unknown .sdot{background:var(--ink-3)}
-  .steward-detail-status{margin-top:5px;color:var(--ink-3);line-height:1.5}
+  .steward-detail-status{color:var(--ink-2);line-height:1.5}
   .steward-detail-recent{margin-top:9px;padding-top:8px;border-top:1px solid var(--line-2)}
   .steward-detail-recent strong{display:block;color:var(--ink);font-weight:600;margin-bottom:4px}
   .steward-detail-recent ul{margin:0;padding-left:17px}
   .steward-detail-recent li{margin:2px 0;overflow-wrap:anywhere}
+  .steward-history{margin-top:8px;border-top:1px solid var(--line-2);padding-top:7px}
+  .steward-history summary{cursor:pointer;color:var(--ink-2);font-size:11.5px}
+  .steward-history ul{margin-top:6px}
 
   .hero-bar{height:3px;border-radius:999px;background:var(--surface-3);margin-top:13px;overflow:hidden}
   .hero-bar span{display:block;height:100%;width:34%;border-radius:999px;background:var(--acc);opacity:0}
@@ -1399,8 +1397,6 @@
   function laneLabel(lane){ return LANE_LABEL[lane] || lane || "未分泳道"; }
   // 管家健康条：首屏只显示可点击的颜色点；名称、状态和最近工作在点开后出现。
   // title / aria-label 保留完整语义，颜色只是扫视入口，不承担唯一的无障碍信息。
-  var STEWARD_SHORT = {context:"上下文", route:"路由", merge:"合并", tune:"状态",
-    exec:"实现", pm:"项目", accept:"验收", health:"全局健康"};
   var STEWARD_STATE = {ok:"正常", attention:"需关注", off:"已关闭", unknown:"取不到"};
   function renderStewards(st){
     var box = el("stewardBar"); if (!box) return;
@@ -1424,26 +1420,22 @@
       var dot = document.createElement("span"); dot.className = "sdot";
       dot.setAttribute("aria-hidden", "true");
       li.appendChild(dot);
-      li.addEventListener("click", function(){ renderStewardDetail(r, st); });
+      li.addEventListener("click", function(){ renderStewardDetail(r); });
       strip.appendChild(li);
     });
     box.appendChild(strip);
   }
 
-  function renderStewardDetail(row, all){
+  function renderStewardDetail(row){
     var detail = el("stewardDetail");
     if (!detail) return;
     var state = row.state || "unknown";
-    var label = STEWARD_SHORT[row.key] || (row.label || "管家").split("：")[0];
     var status = STEWARD_STATE[state] || "取不到";
     var description = row.description || row.label || "当前状态取不到";
-    var recent = Array.isArray(row.recent_completed) ? row.recent_completed.slice(0, 3) : [];
+    var history = Array.isArray(row.recent_completed) ? row.recent_completed : [];
+    var recent = history.slice(0, 3);
+    var older = history.slice(3);
     detail.innerHTML = "";
-    var head = document.createElement("div");
-    head.className = "steward-detail-head s-" + state;
-    var dot = document.createElement("span"); dot.className = "sdot"; dot.setAttribute("aria-hidden", "true");
-    var title = document.createElement("span"); title.textContent = label;
-    head.appendChild(dot); head.appendChild(title); detail.appendChild(head);
     var stateText = document.createElement("div");
     stateText.className = "steward-detail-status";
     stateText.textContent = status + " · " + description;
@@ -1466,6 +1458,21 @@
       recentBox.appendChild(empty);
     }
     detail.appendChild(recentBox);
+    if (older.length){
+      var historyFold = document.createElement("details");
+      historyFold.className = "steward-history";
+      var historySummary = document.createElement("summary");
+      historySummary.textContent = "查看更早记录（" + older.length + "）";
+      historyFold.appendChild(historySummary);
+      var olderList = document.createElement("ul");
+      older.forEach(function(item){
+        var li = document.createElement("li");
+        li.textContent = typeof item === "string" ? item : (item.title || item.text || "一项工作已完成");
+        olderList.appendChild(li);
+      });
+      historyFold.appendChild(olderList);
+      detail.appendChild(historyFold);
+    }
     detail.hidden = false;
   }
 
