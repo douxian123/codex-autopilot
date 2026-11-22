@@ -119,6 +119,16 @@ def _sha256_text(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _panel_path(root):
+    """Resolve the panel from both source and immutable release layouts."""
+    root = Path(root)
+    for candidate in (root / "ui" / "panel.html",
+                      root / "plugin" / "ui" / "panel.html"):
+        if candidate.is_file():
+            return candidate
+    return root / "plugin" / "ui" / "panel.html"
+
+
 def _latest_by_id(rows):
     latest = {}
     for row in rows:
@@ -140,7 +150,7 @@ def evaluate_machine_evidence(contract, evidence, root, evidence_dir):
         reasons.append("证据来源不是真实 Chrome 运行")
     if not str(evidence.get("browser", "")).startswith(("Chrome/", "Chromium/")):
         reasons.append("未记录真实 Chrome/Chromium 版本")
-    panel = root / "plugin" / "ui" / "panel.html"
+    panel = _panel_path(root)
     if not evidence.get("panel_sha256") or evidence.get("panel_sha256") != _sha256(panel):
         reasons.append("证据的面板哈希与当前树不一致")
     if not evidence.get("contract_sha256"):
@@ -343,7 +353,7 @@ def land_gate(path, verify_evidence=False, root=None):
             if ops_dir not in sys.path:
                 sys.path.insert(0, ops_dir)
             import experience_evidence
-            panel = tree / "plugin" / "ui" / "panel.html"
+            panel = _panel_path(tree)
             with tempfile.TemporaryDirectory(prefix="experience-land-evidence-") as tmp:
                 evidence_path = Path(tmp) / "experience-evidence.json"
                 evidence = experience_evidence.write_evidence(
