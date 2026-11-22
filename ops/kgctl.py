@@ -3426,6 +3426,14 @@ def _trunk_is_foreign_clone(wt: Path) -> bool:
     return mine_path.resolve() != theirs_path.resolve()
 
 
+def _trunk_can_checkout_main(wt: Path) -> bool:
+    """预演切到 main：有会覆盖用户文件的风险时返回 False。"""
+    probe = proc_run(["git", "-C", str(wt), "checkout", "--dry-run",
+                      "--detach", MAIN],
+                     capture_output=True, text=True)
+    return probe.returncode == 0
+
+
 def _trunk_worktree():
     """落盘必须在**独立主干工作树**里做。
 
@@ -3441,7 +3449,7 @@ def _trunk_worktree():
         fallback = REPO.parent / (REPO.name + "-trunk")
         print(f"  !KG_TRUNK 指向状态根本身（{REPO}），已改用独立主干工作树：{fallback}")
         wt = fallback
-    if _trunk_is_foreign_clone(wt):
+    if _trunk_is_foreign_clone(wt) or not _trunk_can_checkout_main(wt):
         # 配置里的 trunk_dir 也可能指向**另一个 clone**（本仓实测就写死了一条
         # ~/Documents/Codex/codex-autopilot-native-autopilot-trunk：remote 相同、
         # git common dir 不同）。那不是「本项目的落盘主干」，而是另一份检出。
@@ -3450,8 +3458,8 @@ def _trunk_worktree():
         # （实测：「untracked working tree files would be overwritten by checkout」）。
         # 身份不是本仓库就退回默认的 `<项目名>-trunk`。
         fallback = REPO.parent / (REPO.name + "-trunk")
-        print(f"  !配置的落盘主干属于另一个 clone（{wt}），"
-              f"已改用本仓库主干：{fallback}")
+        print(f"  !配置的落盘主干不可安全切换（{wt}），"
+              f"已改用一次性干净主干：{fallback}")
         wt = fallback
     if not (wt / ".git").exists():
         wt.parent.mkdir(parents=True, exist_ok=True)
