@@ -66,6 +66,9 @@ def main():
           len(clean) == 1 and len(pre_dirty_reject) == 1
           and len(late_reject) == 1,
           f"(clean={[c.lineno for c in clean]} pre={len(pre_dirty_reject)} late={len(late_reject)})")
+    check("不可安全切换的主干会退回干净主干",
+          "not _trunk_can_checkout_main(wt)" in SOURCE
+          and "配置的落盘主干不可安全切换" in SOURCE)
     check("同步后仍保留兜底检查",
           len(status_calls) >= 2 and status_calls[-1].lineno > clean[0].lineno,
           f"(status={[c.lineno for c in status_calls]} clean={[c.lineno for c in clean]})")
