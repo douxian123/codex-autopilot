@@ -1,6 +1,6 @@
 # 项目状态（自动生成，勿手改）
 
-> 生成时间 2026-11-22 11:37:00　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
+> 生成时间 2026-11-22 11:56:47　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
 
 ## 一、产品主线
 
@@ -31,25 +31,25 @@
 **gate（1 待处理）**
 - `L-0007` 【launchd 陈旧项·非 Stop 复发链】freshness 门禁真机实测 4 条 stale：ai.danta.codex-proxy-watchdog → `gate`
 
-（历史已关闭 13 条）
+（历史已关闭 14 条）
 
 ## 四、进展
 
-- `P-0191` [已落盘] @ `31347afa07` codex/experience-evidence-gate-20261121 验证门禁通过，已落盘 main @ 31347afa07；改动 5 个文件：ops/central_mcp.py（+30/-3）、ops/experience_contract.py（+253/-4）、ops/experience_evidence.py（+582/-0）、ops/kgctl.py（+13/-2）、ops/test-experience-contract-gate.py（+108/-2）｜5 files changed, 986 insertions(+), 11 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- `P-0192` [已落盘] @ `2dbf36644f` codex/codesign-clone-reap-resilience-20261122 验证门禁通过，已落盘 main @ 2dbf36644f；改动 2 个文件：ops/disk_reap.py（+72/-33）、ops/selftest.py（+26/-0）｜2 files changed, 98 insertions(+), 33 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- `P-0193` [已落盘] @ `49f5bd44a8` codex/context-projection-stale-wt-20261122 验证门禁通过，已落盘 main @ 49f5bd44a8；改动 13 个文件：.gitignore（+1/-0）、ops/central_mcp.py（+1/-0）、ops/constraint_candidates.py（+60/-6）、ops/context_archive.py（+2/-0）、ops/kgctl.py（+16/-3），另有 8 个文件｜13 files changed, 695 insertions(+), 13 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0172、A-0174
 - `P-0194` [已落盘] @ `e0216c92de` codex/context-projection-stale-wt-20261122 验证门禁通过，已落盘 main @ e0216c92de；改动 14 个文件：.gitignore（+1/-0）、ops/central_mcp.py（+1/-0）、ops/constraint_candidates.py（+60/-6）、ops/context_archive.py（+2/-0）、ops/kgctl.py（+16/-3），另有 9 个文件｜14 files changed, 698 insertions(+), 13 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0172、A-0174、A-0176
 - `P-0195` [已落盘] @ `d99338685a` codex/installer-source-provenance-20261122 验证门禁通过，已落盘 main @ d99338685a；改动 5 个文件：install.sh（+29/-0）、ops/selftest.py（+48/-1）、ops/tasks/inbox.jsonl（+10/-10）、ops/test-selftest-release-dir.py（+21/-0）、ops/truth/ledger.jsonl（+8/-8）｜5 files changed, 116 insertions(+), 19 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0196` [已落盘] @ `f49526c2d4` codex/disk-gate-immediate-reap-20261122 验证门禁通过，已落盘 main @ f49526c2d4；改动 2 个文件：ops/central_daemon.py（+80/-2）、ops/selftest.py（+118/-0）｜2 files changed, 198 insertions(+), 2 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0197` [已落盘] @ `b5cb485745` codex/truthctl-runtime-precedence-20261122 验证门禁通过，已落盘 main @ b5cb485745；改动 2 个文件：ops/kgctl.py（+32/-4）、ops/test-runtime-truthctl-selection.py（+24/-1）｜2 files changed, 56 insertions(+), 5 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0180
 - `P-0200` [已落盘] @ `2f1a0398bd` 网络恢复后单次核验并推送：curl -sS -o /dev/null -w "%{http_code}\n" --connect-timeout 5 --max-time 10 https://github.com -> 200, CURL_EXIT=0；git fetch origin main -> FETCH_EXIT=0, LOCAL=2f1a0398bd2875cbf4bc21c243b62a09b93e1451, ORIGIN_MAIN=60aa31beb80fb010777ba562ae7cf92d1fd3babd, ANCESTOR_EXIT=0；git push origin codex/release-124-truthctl-runtime-20261122:main -> 60aa31be..2f1a0398, PUSH_EXIT=0；git ls-remote origin refs/heads/main -> 2f1a0398bd2875cbf4bc21c243b62a09b93e1451 refs/heads/main, LS_REMOTE_EXIT=0。本机现场：install-state 0.6.0-preview.125, source_commit=2f1a0398bd2875cbf4bc21c243b62a09b93e1451；daemon PID 70368；runtime-install-contract status ok, unknown=[], failures=[]。
+- `P-0201` [已落盘] @ `780021fb69` codex/release-124-truthctl-runtime-20261122 验证门禁通过，已落盘 main @ 780021fb69；改动 11 个文件：docs/PRE_ACCEPTANCE_STANDARD.md（+27/-6）、docs/PRODUCT_CONTRACT.md（+1/-1）、ops/acceptance_dictionary.py（+46/-9）、ops/central_mcp.py（+19/-0）、ops/dynamic_acceptance_scope.py（+21/-8），另有 6 个文件｜11 files changed, 276 insertions(+), 40 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- `P-0203` [已落盘] @ `c31ee080b3` cwd=/Users/danta/.newmax/workspace/ca-truthctl-runtime-precedence-20261122-trunk-trunk; python3 ops/test-truth-sync-ignored-views.py -> EXIT=0; python3 ops/test-specialized-acceptance-executors.py -> EXIT=0; python3 ops/test-pre-acceptance.py -> EXIT=0; python3 ops/test-acceptance-dictionary.py -> EXIT=0; python3 ops/test-dynamic-acceptance-scope.py -> EXIT=0; python3 ops/test-generate-acceptance-scope-tool.py -> EXIT=0; python3 ops/test-acceptance-evidence.py -> EXIT=0; python3 ops/test-gate-registration.py -> EXIT=0; python3 -m py_compile ... -> PY_COMPILE_EXIT=0; python3 -u ops/selftest.py -> SELFTEST_EXIT=0; git push origin HEAD:refs/heads/main -> PUSH_EXIT=0; git ls-remote origin refs/heads/main -> c31ee080b3efb2202acd62b6af53aef29b8f3ef3
+- `P-0204` [已落盘] @ `c31ee080b3` 动态验收专项执行器已进入 origin/main；专项和最小充分范围门禁通过；现场安装版本暂未换代，未宣称用户现场已生效
 
 ## 五、验收进度
 
 **需要你验收（0）**
 - （当前没有需要你人工拍板的验收项）
 
-**已机器验收（103）**
+**已机器验收（105）**
 - `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
@@ -153,6 +153,8 @@
 - `A-0179` [P1] codex/disk-gate-immediate-reap-20261122 落盘验收
 - `A-0180` [P1] codex/truthctl-runtime-precedence-20261122 门禁预跑（未落盘）
 - `A-0181` [P1] codex/truthctl-runtime-precedence-20261122 落盘验收
+- `A-0182` [P1] codex/release-124-truthctl-runtime-20261122 落盘验收
+- `A-0183` [P1] 动态验收专项执行器远端合入门禁验收
 
 ## 六、决策记录
 

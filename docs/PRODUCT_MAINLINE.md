@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-22 08:38:31　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-22 11:56:46　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -50,31 +50,19 @@
 
 ## 最近在推进
 
-- [在途] 0.6.0-preview.105 受控换代完成：marketplace、install-state、Companion、Codex 插件缓存、自动挡守护均指向 .105；守护 live pid 由旧版切到新版；产品评估 5/5 通过，阴性对照 8/8 变红。
-- [已落盘] @ 3595c70326 codex/resolve-dedupe-load-20261120 验证门禁通过，已落盘 main @ 3595c70326；改动 2 个文件：ops/kgctl.py（+47/-1）、ops/selftest.py（+6/-1）｜2 files changed, 53 insertions(+), 2 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [在途] 端到端闭环施工地图九阶段已按门禁闭环并推送 main
-- [在途] 端到端闭环施工地图九阶段已按门禁闭环并推送 main
-- [在途] launchd guard 随版本发布完整性门禁已覆盖并全量通过
-- [已落盘] @ 51a8d2a7ff codex/project-autonomy-main-port-20261121 验证门禁通过，已落盘 main @ 51a8d2a7ff；改动 7 个文件：README.md（+10/-0）、ops/central_daemon.py（+97/-4）、ops/central_mcp.py（+79/-0）、ops/project_autonomy.py（+232/-0）、ops/selftest.py（+109/-1），另有 2 个文件｜7 files changed, 608 insertions(+), 6 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0163、A-0164
-- [已落盘] @ 31347afa07 codex/experience-evidence-gate-20261121 验证门禁通过，已落盘 main @ 31347afa07；改动 5 个文件：ops/central_mcp.py（+30/-3）、ops/experience_contract.py（+253/-4）、ops/experience_evidence.py（+582/-0）、ops/kgctl.py（+13/-2）、ops/test-experience-contract-gate.py（+108/-2）｜5 files changed, 986 insertions(+), 11 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 2dbf36644f codex/codesign-clone-reap-resilience-20261122 验证门禁通过，已落盘 main @ 2dbf36644f；改动 2 个文件：ops/disk_reap.py（+72/-33）、ops/selftest.py（+26/-0）｜2 files changed, 98 insertions(+), 33 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 49f5bd44a8 codex/context-projection-stale-wt-20261122 验证门禁通过，已落盘 main @ 49f5bd44a8；改动 13 个文件：.gitignore（+1/-0）、ops/central_mcp.py（+1/-0）、ops/constraint_candidates.py（+60/-6）、ops/context_archive.py（+2/-0）、ops/kgctl.py（+16/-3），另有 8 个文件｜13 files changed, 695 insertions(+), 13 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0172、A-0174
 - [已落盘] @ e0216c92de codex/context-projection-stale-wt-20261122 验证门禁通过，已落盘 main @ e0216c92de；改动 14 个文件：.gitignore（+1/-0）、ops/central_mcp.py（+1/-0）、ops/constraint_candidates.py（+60/-6）、ops/context_archive.py（+2/-0）、ops/kgctl.py（+16/-3），另有 9 个文件｜14 files changed, 698 insertions(+), 13 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0172、A-0174、A-0176
+- [已落盘] @ d99338685a codex/installer-source-provenance-20261122 验证门禁通过，已落盘 main @ d99338685a；改动 5 个文件：install.sh（+29/-0）、ops/selftest.py（+48/-1）、ops/tasks/inbox.jsonl（+10/-10）、ops/test-selftest-release-dir.py（+21/-0）、ops/truth/ledger.jsonl（+8/-8）｜5 files changed, 116 insertions(+), 19 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ f49526c2d4 codex/disk-gate-immediate-reap-20261122 验证门禁通过，已落盘 main @ f49526c2d4；改动 2 个文件：ops/central_daemon.py（+80/-2）、ops/selftest.py（+118/-0）｜2 files changed, 198 insertions(+), 2 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ b5cb485745 codex/truthctl-runtime-precedence-20261122 验证门禁通过，已落盘 main @ b5cb485745；改动 2 个文件：ops/kgctl.py（+32/-4）、ops/test-runtime-truthctl-selection.py（+24/-1）｜2 files changed, 56 insertions(+), 5 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0180
+- [已落盘] @ 2f1a0398bd 网络恢复后单次核验并推送：curl -sS -o /dev/null -w "%{http_code}\n" --connect-timeout 5 --max-time 10 https://github.com -> 200, CURL_EXIT=0；git fetch origin main -> FETCH_EXIT=0, LOCAL=2f1a0398bd2875cbf4bc21c243b62a09b93e1451, ORIGIN_MAIN=60aa31beb80fb010777ba562ae7cf92d1fd3babd, ANCESTOR_EXIT=0；git push origin codex/release-124-truthctl-runtime-20261122:main -> 60aa31be..2f1a0398, PUSH_EXIT=0；git ls-remote origin refs/heads/main -> 2f1a0398bd2875cbf4bc21c243b62a09b93e1451 refs/heads/main, LS_REMOTE_EXIT=0。本机现场：install-state 0.6.0-preview.125, source_commit=2f1a0398bd2875cbf4bc21c243b62a09b93e1451；daemon PID 70368；runtime-install-contract status ok, unknown=[], failures=[]。
+- [已落盘] @ 780021fb69 codex/release-124-truthctl-runtime-20261122 验证门禁通过，已落盘 main @ 780021fb69；改动 11 个文件：docs/PRE_ACCEPTANCE_STANDARD.md（+27/-6）、docs/PRODUCT_CONTRACT.md（+1/-1）、ops/acceptance_dictionary.py（+46/-9）、ops/central_mcp.py（+19/-0）、ops/dynamic_acceptance_scope.py（+21/-8），另有 6 个文件｜11 files changed, 276 insertions(+), 40 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ c31ee080b3 cwd=/Users/danta/.newmax/workspace/ca-truthctl-runtime-precedence-20261122-trunk-trunk; python3 ops/test-truth-sync-ignored-views.py -> EXIT=0; python3 ops/test-specialized-acceptance-executors.py -> EXIT=0; python3 ops/test-pre-acceptance.py -> EXIT=0; python3 ops/test-acceptance-dictionary.py -> EXIT=0; python3 ops/test-dynamic-acceptance-scope.py -> EXIT=0; python3 ops/test-generate-acceptance-scope-tool.py -> EXIT=0; python3 ops/test-acceptance-evidence.py -> EXIT=0; python3 ops/test-gate-registration.py -> EXIT=0; python3 -m py_compile ... -> PY_COMPILE_EXIT=0; python3 -u ops/selftest.py -> SELFTEST_EXIT=0; git push origin HEAD:refs/heads/main -> PUSH_EXIT=0; git ls-remote origin refs/heads/main -> c31ee080b3efb2202acd62b6af53aef29b8f3ef3
+- [已落盘] @ c31ee080b3 动态验收专项执行器已进入 origin/main；专项和最小充分范围门禁通过；现场安装版本暂未换代，未宣称用户现场已生效
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0159` [P1] codex/resolve-ledger-normalization-20261120 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0161` [P1] 0.6.0-preview.105 换代验证
-  - 证据：python3 ops/test-pm-research-decision.py -> 19/19 PASS；python3 ops/product_eval.py -> 可以对外（5/5 通过），阴性对照 8/8；plist/launchctl 指向 /Users/danta/plugins/codex-autopilot/releases/0.6.0-preview.105…
-- `A-0162` [P1] codex/resolve-dedupe-load-20261120 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0164` [P1] codex/project-autonomy-main-port-20261121 门禁预跑（未落盘）
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0165` [P1] codex/project-autonomy-main-port-20261121 落盘验收
-  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
-- `A-0170` [P1] codex/experience-evidence-gate-20261121 落盘验收
-  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0172` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0173` [P1] codex/codesign-clone-reap-resilience-20261122 落盘验收
@@ -87,6 +75,18 @@
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0177` [P1] codex/context-projection-stale-wt-20261122 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0178` [P1] codex/installer-source-provenance-20261122 落盘验收
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0179` [P1] codex/disk-gate-immediate-reap-20261122 落盘验收
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0180` [P1] codex/truthctl-runtime-precedence-20261122 门禁预跑（未落盘）
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0181` [P1] codex/truthctl-runtime-precedence-20261122 落盘验收
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0182` [P1] codex/release-124-truthctl-runtime-20261122 落盘验收
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0183` [P1] 动态验收专项执行器远端合入门禁验收
+  - 证据：cwd=/Users/danta/.newmax/workspace/ca-truthctl-runtime-precedence-20261122-trunk-trunk; python3 ops/test-truth-sync-ignored-views.py -> EXIT=0; python3 ops/test-specialized-acceptance-execut…
 
 ## 还差什么
 
@@ -198,11 +198,17 @@
 - `A-0175` [P1] codex/context-projection-stale-wt-20261122 落盘验收
 - `A-0176` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
 - `A-0177` [P1] codex/context-projection-stale-wt-20261122 落盘验收
+- `A-0178` [P1] codex/installer-source-provenance-20261122 落盘验收
+- `A-0179` [P1] codex/disk-gate-immediate-reap-20261122 落盘验收
+- `A-0180` [P1] codex/truthctl-runtime-precedence-20261122 门禁预跑（未落盘）
+- `A-0181` [P1] codex/truthctl-runtime-precedence-20261122 落盘验收
+- `A-0182` [P1] codex/release-124-truthctl-runtime-20261122 落盘验收
+- `A-0183` [P1] 动态验收专项执行器远端合入门禁验收
 
 ## 进度概览
 
-- 累计关闭问题：13 条
-- 累计落盘：96 条
+- 累计关闭问题：14 条
+- 累计落盘：103 条
 - 未决问题：1 条
-- 已验收：99 条
+- 已验收：105 条
 
