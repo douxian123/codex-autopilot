@@ -1119,8 +1119,10 @@
     setText("rendererHeadline", rc.headline || "面板渲染契约取不到，当前界面不冒充最终设计");
     var order = (rc.attention_order || []).join(" -> ");
     var states = (rc.states || []).join(" / ");
+    var official = rc.official_ui_reuse || {};
     setText("rendererMeta", "当前模式：" + (rc.mode || "取不到") +
       " · 最终视觉已定稿：" + (rc.final_visual_approved === true ? "是" : "否") +
+      " · 官方 UI 复用：" + (official.status || "取不到") +
       " · 注意力：" + (order || "取不到") +
       " · 状态：" + (states || "取不到"));
   }

@@ -311,7 +311,8 @@ def check(home: Path, only: list[str] | None = None) -> int:
         print(f"\n{bad} 条定时任务没有跟上当前安装版本。")
         print("修法：在干净快照里跑一次 ./install.sh（它会重写这些 plist 并 reload）。")
         return 1
-    print("\n所有登记的定时任务都指向当前安装版本。")
+    base = _script_base()
+    print(f"\n所有登记的定时任务都指向当前安装版本：{base}")
     return 0
 
 

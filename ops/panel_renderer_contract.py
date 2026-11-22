@@ -20,7 +20,7 @@ CONTRACT_PATH = ROOT / "docs" / "experience" / "panel-renderer-contract.json"
 REQUIRED = (
     "schema_version", "contract_name", "status", "renderer_mode",
     "final_visual_approved", "resource_uri", "primary_task", "attention_order",
-    "required_status_fields", "states", "field_semantics", "action_policy",
+    "official_ui_reuse", "required_status_fields", "states", "field_semantics", "action_policy",
     "user_hidden_fields", "accessibility", "machine_checks", "human_checks",
     "replacement_policy",
 )
@@ -68,6 +68,19 @@ def validate(contract):
         raise ContractError("首屏依赖字段不得被当前面板实现删改")
     if contract["resource_uri"] != "ui://autopilot/panel-v2.html":
         raise ContractError("resourceUri 必须与 MCP UI tool 一致")
+
+    official_ui = contract["official_ui_reuse"]
+    if not isinstance(official_ui, dict):
+        raise ContractError("official_ui_reuse 必须是 object")
+    if official_ui.get("package") != "@openai/apps-sdk-ui":
+        raise ContractError("官方 UI 复用包必须为 @openai/apps-sdk-ui")
+    if official_ui.get("status") not in {"documented_not_componentized", "componentized"}:
+        raise ContractError("official_ui_reuse.status 取值非法")
+    if official_ui.get("status") == "componentized" and contract["final_visual_approved"] is False:
+        raise ContractError("声称官方 UI 组件化完成前，final_visual_approved 必须先定稿")
+    for key in ("requirement", "completion_condition"):
+        if not str(official_ui.get(key) or "").strip():
+            raise ContractError("official_ui_reuse 缺少 %s" % key)
 
     states = contract["states"]
     if not isinstance(states, list) or not states:
@@ -137,6 +150,8 @@ def validate_repo(root=None):
     design = (root / "docs" / "PANEL_INTERACTION_DESIGN.md").read_text(encoding="utf-8")
     if "interim renderer" not in design.lower():
         raise ContractError("面板设计文档没有声明当前实现是中间态")
+    if "@openai/apps-sdk-ui" not in design:
+        raise ContractError("面板设计文档没有声明官方 UI 复用包")
     return True
 
 

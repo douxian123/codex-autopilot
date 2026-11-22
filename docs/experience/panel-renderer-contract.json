@@ -5,6 +5,12 @@
   "renderer_mode": "interim",
   "final_visual_approved": false,
   "resource_uri": "ui://autopilot/panel-v2.html",
+  "official_ui_reuse": {
+    "status": "documented_not_componentized",
+    "package": "@openai/apps-sdk-ui",
+    "requirement": "最终面板优先复用官方语义 token 与组件；当前中间态只验证 token 顺序和 UI resource 接线，不算组件化完成。",
+    "completion_condition": "最终 renderer 使用官方语义 token 和组件后，把 status 改为 componentized 并附浏览器证据。"
+  },
   "primary_task": "让用户看懂 Codex 自动档当前在做什么、卡在哪里、下一步由谁做",
   "attention_order": [
     "需要你做什么",

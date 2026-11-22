@@ -1,5 +1,5 @@
 {
- "main": "2f4368fc7ece371fbbc010247a6d0eaceaebec53",
+ "main": "483610db46bf35bf7bc7dcd67df1dc2661819d04",
  "branches": [
   "codex/prd-closure-package-20261121",
   "codex/project-autonomy-main-port-20261121",
@@ -7,7 +7,7 @@
  ],
  "burden": {
   "codex/prd-closure-package-20261121": 2,
-  "codex/project-autonomy-main-port-20261121": 2,
+  "codex/project-autonomy-main-port-20261121": 4,
   "codex/project-autonomy-mode-20261121": 4
  }
 }

@@ -208,6 +208,7 @@ PM 管家每轮不是只问“任务做完了吗”，而要复核：用户能�
 - [ ] 小白用户只需安装一次、新开会话、输入一句话即可开始，不需要理解内部管家和分支；安装、加载和首次使用步骤由产品自己说明清楚。现场证据 unknown：`python3 ops/product_eval.py` 已验证装得上、跑得起来、服务对象对，但用户小范围试用和持续使用频次尚未发生。
 - [x] 面板能明确显示插件是否加载、当前绑定项目、正在做什么、下一步、需要用户做什么和最近完成什么；缺数据显示未知，不让用户自行排查内部日志。证据：`python3 ops/panel_logic_check.py`、`python3 ops/panel_render_check.py --no-shot`。
 - [x] 当前面板只作为中间态 renderer，最终重设计面板必须消费同一份权威渲染契约，保留注意力顺序、状态语义、缺失数据策略和人工边界；视觉布局、组件、间距和动效可替换。证据：`python3 ops/test-panel-renderer-contract.py`、`python3 ops/panel_logic_check.py`；安装后的 release 根目录也运行同一门禁，覆盖 `plugin/ui/panel.html` 与 `ui/panel.html` 两种布局。
+- [x] renderer contract 显式声明官方 UI 复用状态：当前为 `documented_not_componentized`，最终面板组件化并定稿前不得声称完成。证据：`docs/experience/panel-renderer-contract.json`、`python3 ops/test-panel-renderer-contract.py`、面板高级区的渲染契约投影。
 - [x] 每个交付项都能从面板或原生输入框找到真实使用入口，并能验证“已生效”而不只是“已合并”。证据：`python3 ops/test-e2e-ten-real-inputs.py` 覆盖十条原话的入口、施工包、真实入口证据与关闭回写。
 - [x] 用户不会被要求主动发现遗漏的入口、配置、服务启动、验收步骤或收口动作；系统要么自动完成，要么明确说明唯一必要的人工动作及其原因。证据：闭环施工包九字段门禁 `python3 ops/test-closure-package.py` 与产品评估。
 - [x] 同一窗口混合多个项目时不会把输入全部落进默认账本；无法判断时明确等待路由。证据：`python3 ops/test-project-router.py`、`python3 ops/test-request-context.py`。
@@ -227,6 +228,8 @@ PM 管家每轮不是只问“任务做完了吗”，而要复核：用户能�
 - [x] append-only 台账不会因并发 land、陈旧状态或重复事件覆盖有效历史。证据：`python3 ops/test-mirror-truth-jsonl-union.py`、`python3 ops/test-truth-sync-index-lock.py`。
 - [x] 项目自主运行具备暂停、等待人工、预算熔断、重试上限、空转检测和恢复路径。证据：`python3 ops/selftest.py` 的预算、worker、恢复与人工边界回归。
 - [x] 面板缺数据时显示 `unknown` 或明确缺失，不把缺失写成 0、正常或完成。证据：`python3 ops/panel_logic_check.py`、`python3 ops/panel_render_check.py --no-shot`。
+- [x] 原生直连缺桌面控制 socket 时，面板显示「只读历史，不能派活」，不误报「Codex 未运行」或「已连通可派活」。证据：`python3 ops/panel_logic_check.py` 覆盖 socket 缺失断言，`python3 -u ops/selftest.py` 覆盖三种状态文案；release 根目录运行 `AUTOPILOT_CHROMIUM=<headless-shell> python3 ops/panel_render_check.py --no-shot` 全部通过。
+- [x] 安装态与已生成 release 分开表述：生成 release 不等于现场已安装；当前安装版本以 `install-state.json` / `codex plugin list --json` 为准。证据：`~/plugins/codex-autopilot/install-state.json` 仍为 `0.6.0-preview.113`，`python3 .../repoint_launchd.py --check` 输出当前安装基准路径。
 
 ### 6.3 PM 质量验收
 
