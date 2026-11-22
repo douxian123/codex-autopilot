@@ -1,13 +1,15 @@
 {
- "main": "483610db46bf35bf7bc7dcd67df1dc2661819d04",
+ "main": "cbe419fe09bf303023a6e57ff904fd24104cb095",
  "branches": [
+  "codex/native-red-light-honest-20261122",
   "codex/prd-closure-package-20261121",
   "codex/project-autonomy-main-port-20261121",
   "codex/project-autonomy-mode-20261121"
  ],
  "burden": {
+  "codex/native-red-light-honest-20261122": 2,
   "codex/prd-closure-package-20261121": 2,
-  "codex/project-autonomy-main-port-20261121": 4,
+  "codex/project-autonomy-main-port-20261121": 2,
   "codex/project-autonomy-mode-20261121": 4
  }
 }
