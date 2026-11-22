@@ -160,9 +160,14 @@ with tempfile.TemporaryDirectory() as tmp:
     real_runner = importlib.util.module_from_spec(real_spec)
     real_spec.loader.exec_module(real_runner)
     real_evidence_dir = root / "real-evidence"
+    # 源码树的面板在 plugin/ui，release 快照里面板在根 ui/。
+    # 两种布局都必须能跑真实浏览器证据，否则 release 总闸会因为路径假设假红。
+    source_panel = ROOT / "plugin" / "ui" / "panel.html"
+    release_panel = ROOT / "ui" / "panel.html"
+    real_panel = source_panel if source_panel.is_file() else release_panel
     real_evidence_path = real_runner.write_evidence(
         real_evidence_dir / "experience-evidence.json",
-        panel=ROOT / "plugin" / "ui" / "panel.html",
+        panel=real_panel,
         contract=ROOT / "docs" / "experience" / "experience-contract.json")
     real_contract = module.load(ROOT / "docs" / "experience" / "experience-contract.json")
     real_reasons = module.evaluate_machine_evidence(
