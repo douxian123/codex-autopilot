@@ -2,6 +2,9 @@
 # -*- coding: utf-8 -*-
 """回归：打开 Codex Autopilot 面板的自然语言必须映射到 render_autopilot_panel 工具。"""
 
+import json
+import os
+import subprocess
 from pathlib import Path
 
 OPS = Path(__file__).resolve().parent
@@ -26,13 +29,91 @@ checks = {
         "请调用 render_autopilot_panel 工具打开 Codex Autopilot 面板。",
         "请调用 render_autopilot_panel 工具打开自动挡面板。",
     ),
+    "setup 写明 deferred 工具不算现场成功": (
+        "工具能被 `tool_search` 搜到，不等于当前会话能直接调用" in setup
+    ),
+    "setup 写明直接调用 unsupported 的止损": (
+        "unsupported call: mcp__codex_autopilot__render_autopilot_panel" in setup
+    ),
     "MCP 描述写明自然语言触发": has_any(
         mcp,
         "用户说“打开 Codex Autopilot 面板 / 打开自动挡面板 / 面板打不开 / 面板在哪看”时必须立即调用本工具",
         "用户说“打开自动挡面板 / 面板打不开 / 自动挡在哪看”时必须立即调用本工具",
     ),
     "MCP 明确禁止只解释入口": "不要只解释入口、不要只去侧栏找按钮" in mcp,
+    "setup 写明 unsupported 止损": (
+        "unsupported call: mcp__codex_autopilot__render_autopilot_panel" in setup
+    ),
 }
+
+
+def _run(argv):
+    try:
+        done = subprocess.run(
+            argv,
+            cwd=str(ROOT),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=20,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None, ""
+    return done.returncode, done.stdout
+
+
+# 工具描述存在不等于宿主能调用。历史上发生过 tool_search 能搜到
+# render_autopilot_panel，但实际调用返回 unsupported call。这里把宿主暴露形态
+# 变成可机器复核的门禁：插件 MCP 已注册时，prompt 必须是 deferred namespace，
+# 否则说明注册/宿主接线已经漂移。
+codex_cli = Path("/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex")
+if codex_cli.is_file():
+    code, mcp_list = _run([str(codex_cli), "mcp", "list", "--json"])
+    server_registered = False
+    if code == 0:
+        try:
+            servers = json.loads(mcp_list)
+            server_registered = any(
+                item.get("name") in ("codex-autopilot", "codex_autopilot")
+                and item.get("enabled") is True
+                for item in servers
+            )
+        except (TypeError, ValueError):
+            server_registered = False
+    checks["宿主已注册自动挡 MCP"] = server_registered
+
+    env = dict(os.environ)
+    env["CODEX_HOME"] = str(Path.home() / ".codex")
+    try:
+        done = subprocess.run(
+            [
+                str(codex_cli),
+                "debug",
+                "prompt-input",
+                "请调用 render_autopilot_panel 工具打开 Codex Autopilot 面板。",
+            ],
+            cwd=str(ROOT),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=20,
+            check=False,
+            env=env,
+        )
+        prompt_ok = done.returncode == 0 and (
+            "mcp__codex_autopilot" in done.stdout or "codex_autopilot" in done.stdout
+        )
+    except (OSError, subprocess.SubprocessError):
+        prompt_ok = False
+    checks["宿主 prompt 暴露自动挡工具命名空间"] = prompt_ok
+
+    # 过期 release 路径会让宿主 MCP 启动失败，进而丢掉整组动态工具。
+    config_path = Path.home() / ".codex" / "config.toml"
+    if config_path.is_file():
+        config = config_path.read_text(encoding="utf-8")
+        stale_app_tools = "codex-app-tools/26.1103.60933" in config
+        checks["宿主 app-tools MCP 未指向过期版本"] = not stale_app_tools
 
 failed = [name for name, ok in checks.items() if not ok]
 for name, ok in checks.items():

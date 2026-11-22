@@ -56,6 +56,10 @@ description: Codex Autopilot 的入门引导。用户第一次装好、问“这
 2. 如果新对话仍看不到工具，完全退出 Codex 桌面端再打开；插件 MCP 工具在会话启动时注入，旧会话不会热更新。
 3. 用 `codex mcp get codex-autopilot` 确认本机注册仍为 `enabled: true`；若不是，重新执行自动挡安装器的 `--refresh-plugin --verify <真实项目路径>`。
 4. 新会话里说“请调用 render_autopilot_panel 工具打开 Codex Autopilot 面板”。只有 MCP App / 内联卡片 / 侧栏面板出现才算成功。
+   工具能被 `tool_search` 搜到，不等于当前会话能直接调用。若手写调用原样返回
+   `unsupported call: mcp__codex_autopilot__render_autopilot_panel`，这是宿主把工具放在
+   deferred namespace，没有暴露 direct function；不要继续试 `.` / `::` / `__` 变体，
+   也不要用网页或浏览器面板冒充。此时只能新开会话或重启宿主，让工具重新注入。
 
 禁止把 `docs/CONTROL_PLANE.html`、`companion_api.py panel`、`kgctl dash --open`
 或任何浏览器页面当作“Codex Autopilot 面板”交付。它们只是内部诊断驾驶舱，不是原生面板。
