@@ -3390,6 +3390,65 @@ REAP_MAX_PER_ROUND = int(os.environ.get("KG_REAP_MAX_PER_ROUND", "5"))
 # 更多每轮上限），安全判据一条不放松；仍可用 KG_REAP_PRESSURE_FREE_GB 覆盖。
 REAP_PRESSURE_FREE_GB = float(os.environ.get(
     "KG_REAP_PRESSURE_FREE_GB", str(EXEC_DISK_RESUME_FREE_GB)))
+# 低盘门禁发现空间不足时，立刻联动一次零损失签名副本回收。独立 launchd reaper
+# 仍是兜底；这里补的是「门禁已经报警，却还要等 15 分钟才清源」的空窗。
+# 只限制扫描频率，不放松任何删除判据；dry-run 不写节流状态。
+DISK_GATE_SIGNATURE_REAP_INTERVAL_S = float(os.environ.get(
+    "KG_DISK_GATE_SIGNATURE_REAP_INTERVAL_S", "300"))
+
+
+def _load_disk_reap_module():
+    """Load the checked-in reaper on demand, without importing it at daemon boot."""
+    import importlib.util
+
+    path = HERE / "disk_reap.py"
+    spec = importlib.util.spec_from_file_location(
+        "central_daemon_disk_reap", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"无法加载磁盘回收器：{path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _reap_low_disk_signature_clones(free_gb: float | None,
+                                    dry: bool = False) -> dict:
+    """Reclaim stale signing clones in the same cycle that detects low disk.
+
+    This reuses the existing reaper's safety predicates: open paths, clone age,
+    target-name allowlist, and allocated-size accounting. It never kills a
+    process, restarts a service, or touches project files.
+    """
+    if os.environ.get("KG_DISK_GATE_SIGNATURE_REAP", "1").lower() in (
+            "0", "false", "off", "no"):
+        return {"called": False, "reason": "disabled"}
+    if free_gb is None or free_gb >= REAP_PRESSURE_FREE_GB:
+        return {"called": False, "reason": "not_low_disk"}
+    now = time.time()
+    state = load_state()
+    last = float(state.get("last_low_disk_signature_reap_ts") or 0)
+    if now - last < DISK_GATE_SIGNATURE_REAP_INTERVAL_S:
+        return {"called": False, "reason": "throttled"}
+    try:
+        reaper = _load_disk_reap_module()
+        removed, freed = reaper.reap_code_sign_clones(dry=dry)
+    except Exception as exc:
+        log(f"[safety] 低盘签名副本联动失败（忽略）："
+            f"{type(exc).__name__}: {exc}")
+        return {"called": True, "error": repr(exc)}
+    if not dry:
+        latest = load_state()
+        latest["last_low_disk_signature_reap_ts"] = now
+        try:
+            save_state(latest)
+        except OSError as exc:
+            log(f"[safety] 低盘签名副本节流状态暂不能落盘：{exc}")
+    if removed:
+        suffix = "（dry-run）" if dry else ""
+        log(f"[safety] 低盘联动回收签名临时副本 {removed} 个"
+            f"（{freed / 1e9:.2f}GB）{suffix}")
+    return {"called": True, "dry": bool(dry), "removed": removed,
+            "freed_gb": round(freed / 1e9, 2)}
 
 
 def _safety_path() -> Path:
@@ -4893,6 +4952,16 @@ def _pass_reap(ctx: dict) -> dict:
     时会挤掉一整轮派发。全部 fail-open，可一键关。
     """
     free_before = _disk_free_gb()
+    # 签名副本回收与其他回收相互独立：即使它自己的状态读写异常，也不能挡住
+    # 后面的孤儿后端 / 死 worktree / git gc 清理。
+    low_disk_signature = {"called": False, "reason": "not_checked"}
+    try:
+        low_disk_signature = _reap_low_disk_signature_clones(
+            free_before, dry=bool(ctx.get("dry")))
+    except Exception as exc:
+        low_disk_signature = {"called": False, "error": repr(exc)}
+        log(f"[safety] 低盘签名副本联动入口异常（忽略）：{exc!r}")
+    ctx["low_disk_signature_reap"] = low_disk_signature
     try:
         _reap_backend_orphans()
         _reap_dead_worktrees()
@@ -6062,18 +6131,27 @@ def run_maintenance_cycle() -> dict:
     _disk_pressure()
     maybe_reap()
     failures = []
+    free_before = _disk_free_gb()
+    # 与完整周期走同一个零损失回收器；异常计入维护观察，但不阻断后续回收。
+    try:
+        low_disk_signature = _reap_low_disk_signature_clones(free_before)
+    except Exception as exc:
+        low_disk_signature = {"called": False, "error": repr(exc)}
+        failures.append(("(low-disk-signature)", repr(exc)))
+        log(f"[maintenance] 低盘签名副本联动异常（已隔离）：{exc!r}")
     try:
         _reap_backend_orphans()
         _reap_dead_worktrees()
         _reap_orphan_residue()
-        if (_disk_free_gb() or 0) < REAP_PRESSURE_FREE_GB:
+        if free_before is None or free_before < REAP_PRESSURE_FREE_GB:
             _git_gc_maintenance()
     except Exception as exc:
         failures.append(("(maintenance)", repr(exc)))
         log(f"[maintenance] 安全回收异常（已隔离，不触碰项目工作）：{exc!r}")
 
     result = {"ts": time.time(), "iso": _now(), "maintenance_only": True,
-              "summary": {}, "landed": [], "failures": failures}
+              "summary": {}, "landed": [], "failures": failures,
+              "low_disk_signature_reap": low_disk_signature}
     state = load_state()
     state["last_run"] = result
     try:

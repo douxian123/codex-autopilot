@@ -2324,6 +2324,8 @@ def test_daemon_maintenance_mode_is_zero_touch():
          mock.patch.object(central_daemon.control_state, "is_paused", return_value=False), \
          mock.patch.object(central_daemon, "_disk_pressure") as disk, \
          mock.patch.object(central_daemon, "maybe_reap") as reap, \
+         mock.patch.object(central_daemon, "_reap_low_disk_signature_clones",
+                           return_value={"called": True, "removed": 0}) as sig_reap, \
          mock.patch.object(central_daemon, "_reap_backend_orphans") as backends, \
          mock.patch.object(central_daemon, "_reap_dead_worktrees") as worktrees, \
          mock.patch.object(central_daemon, "_reap_orphan_residue") as residue, \
@@ -2337,12 +2339,127 @@ def test_daemon_maintenance_mode_is_zero_touch():
     assert result["maintenance_only"] is True
     disk.assert_called_once_with()
     reap.assert_called_once_with()
+    sig_reap.assert_called_once_with(8.0)
     backends.assert_called_once_with()
     worktrees.assert_called_once_with()
     residue.assert_called_once_with()
     gc.assert_called_once_with()
     kgctl.assert_not_called()
+    assert result["low_disk_signature_reap"] == {"called": True, "removed": 0}
     print("selftest ok: 维护模式只刷新磁盘闸和安全回收，route/land/port/resolve/exec 全不调用。")
+
+
+def test_low_disk_gate_reaps_signature_clones():
+    """磁盘闸报低盘时，必须在同一轮联动零损失签名副本回收。"""
+    import importlib
+    from types import SimpleNamespace
+    from unittest import mock
+
+    sys.path.insert(0, str(OPS))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    reaper = SimpleNamespace(
+        reap_code_sign_clones=mock.Mock(return_value=(2, 3.0e9)))
+    env = {"KG_DISK_GATE_SIGNATURE_REAP": "1",
+           "KG_DISK_GATE_SIGNATURE_REAP_INTERVAL_S": "300"}
+
+    with mock.patch.dict(os.environ, env), \
+         mock.patch.object(central_daemon,
+                           "DISK_GATE_SIGNATURE_REAP_INTERVAL_S", 300), \
+         mock.patch.object(central_daemon, "_load_disk_reap_module",
+                           return_value=reaper) as load_reaper, \
+         mock.patch.object(central_daemon, "load_state", return_value={}), \
+         mock.patch.object(central_daemon, "save_state") as save, \
+         mock.patch.object(central_daemon, "log"):
+        result = central_daemon._reap_low_disk_signature_clones(8.0, dry=False)
+
+    assert result == {"called": True, "dry": False, "removed": 2,
+                      "freed_gb": 3.0}
+    load_reaper.assert_called_once_with()
+    reaper.reap_code_sign_clones.assert_called_once_with(dry=False)
+    save.assert_called_once()
+    saved = save.call_args.args[0]
+    assert saved["last_low_disk_signature_reap_ts"] > 0
+
+    reaper.reap_code_sign_clones.reset_mock()
+    now = _time.time()
+    with mock.patch.dict(os.environ, env), \
+         mock.patch.object(central_daemon,
+                           "DISK_GATE_SIGNATURE_REAP_INTERVAL_S", 300), \
+         mock.patch.object(central_daemon, "_load_disk_reap_module",
+                           return_value=reaper) as load_reaper, \
+         mock.patch.object(central_daemon, "load_state",
+                           return_value={"last_low_disk_signature_reap_ts": now}), \
+         mock.patch.object(central_daemon, "save_state") as save, \
+         mock.patch.object(central_daemon, "log"):
+        result = central_daemon._reap_low_disk_signature_clones(8.0, dry=False)
+
+    assert result == {"called": False, "reason": "throttled"}
+    load_reaper.assert_not_called()
+    reaper.reap_code_sign_clones.assert_not_called()
+    save.assert_not_called()
+
+    reaper.reap_code_sign_clones.reset_mock()
+    with mock.patch.dict(os.environ, env), \
+         mock.patch.object(central_daemon,
+                           "DISK_GATE_SIGNATURE_REAP_INTERVAL_S", 300), \
+         mock.patch.object(central_daemon, "_load_disk_reap_module",
+                           return_value=reaper) as load_reaper:
+        result = central_daemon._reap_low_disk_signature_clones(25.0, dry=False)
+
+    assert result == {"called": False, "reason": "not_low_disk"}
+    load_reaper.assert_not_called()
+    reaper.reap_code_sign_clones.assert_not_called()
+
+    reaper.reap_code_sign_clones.reset_mock()
+    with mock.patch.dict(os.environ, env), \
+         mock.patch.object(central_daemon,
+                           "DISK_GATE_SIGNATURE_REAP_INTERVAL_S", 300), \
+         mock.patch.object(central_daemon, "_load_disk_reap_module",
+                           return_value=reaper), \
+         mock.patch.object(central_daemon, "load_state", return_value={}), \
+         mock.patch.object(central_daemon, "save_state") as save, \
+         mock.patch.object(central_daemon, "log"):
+        result = central_daemon._reap_low_disk_signature_clones(8.0, dry=True)
+
+    assert result == {"called": True, "dry": True, "removed": 2,
+                      "freed_gb": 3.0}
+    reaper.reap_code_sign_clones.assert_called_once_with(dry=True)
+    save.assert_not_called()
+
+    with mock.patch.dict(os.environ, env), \
+         mock.patch.object(central_daemon,
+                           "DISK_GATE_SIGNATURE_REAP_INTERVAL_S", 300), \
+         mock.patch.object(central_daemon, "_load_disk_reap_module",
+                           side_effect=RuntimeError("boom")), \
+         mock.patch.object(central_daemon, "load_state", return_value={}), \
+         mock.patch.object(central_daemon, "save_state") as save, \
+         mock.patch.object(central_daemon, "log") as log:
+        result = central_daemon._reap_low_disk_signature_clones(8.0, dry=False)
+
+    assert result["called"] is True and "boom" in result["error"]
+    assert log.called and save.call_count == 0
+
+    ctx = {"dry": True}
+    with mock.patch.object(central_daemon, "_disk_free_gb", return_value=8.0), \
+         mock.patch.object(central_daemon, "_reap_low_disk_signature_clones",
+                           side_effect=RuntimeError("boom")) as sig_reap, \
+         mock.patch.object(central_daemon, "_reap_backend_orphans") as backends, \
+         mock.patch.object(central_daemon, "_reap_dead_worktrees") as worktrees, \
+         mock.patch.object(central_daemon, "_reap_orphan_residue") as residue, \
+         mock.patch.object(central_daemon, "_git_gc_maintenance") as gc, \
+         mock.patch.object(central_daemon, "log"):
+        result = central_daemon._pass_reap(ctx)
+
+    sig_reap.assert_called_once_with(8.0, dry=True)
+    backends.assert_called_once_with()
+    worktrees.assert_called_once_with()
+    residue.assert_called_once_with()
+    gc.assert_called_once_with()
+    assert "error" in ctx["low_disk_signature_reap"]
+    assert "error" not in result
+    print("selftest ok: 低盘门禁同轮联动签名副本回收，节流/dry-run/异常均不越界。")
 
 
 def test_daemon_install_preserves_maintenance_mode():
@@ -8349,6 +8466,7 @@ if __name__ == "__main__":
     test_daemon_project_binding()
     test_daemon_plist_repoints_on_upgrade()
     test_daemon_maintenance_mode_is_zero_touch()
+    test_low_disk_gate_reaps_signature_clones()
     test_daemon_install_preserves_maintenance_mode()
     test_daemon_control_action()
     test_daemon_liveness_shared_judge()
