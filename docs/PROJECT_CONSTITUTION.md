@@ -1,9 +1,9 @@
 # 项目宪法（自动投影，勿手改）
 
-> 生成时间 2026-11-22 17:51:12　·　由 `python3 ops/truthctl.py constitution` 从约束/候选/判断台账投影
+> 生成时间 2026-11-22 17:53:02　·　由 `python3 ops/truthctl.py constitution` 从约束/候选/判断台账投影
 > 只有人确认过的约束才生效；候选与驳回项保留原话供追溯，不自动参与执行。
 
-生效 2 · 待确认 6 · 已确认待落账 0 · 已驳回 0 · 判断逻辑 16
+生效 2 · 待确认 12 · 已确认待落账 0 · 已驳回 0 · 判断逻辑 16
 
 ## 一、生效约束
 
@@ -28,6 +28,18 @@
 - **CC-0006** [高优先/项目/预期] 验收和交付必须基于真实证据与端到端闭环，不用绿字、记录或可合并替代生效
   - 命中：context_learning、跨会话重复
   - 重复证据：出现 10 次 / 跨 4 个会话
+- **CC-0007** [高优先/全局/预期] 状态根解析把「停在旧分支的共享检出」当权威状态根：resolve_state_root 的候选顺序是 (main, trunk, current_worktree())，而 ops/tasks+ops/truth 已签入版本库、每个 worktree 都满足 looks_like_state_root，于是共享检出永远胜出。共享检出 ops/central.config.json 在其检出分支 1a6c56b4 上根本不存在，central_config.load 读不到就退回内置默认 build=npm run build(cwd=frontend)，本仓库没有 frontend，land 门禁必红。2026-11-10 实录：KG_REPO 指向含 config 的工作树时 land 能一路 merge→门禁 ok→落盘；默认解析到共享检出时门禁在 merge 之后必失败。需明确「配置从哪读（代码根 or 状态根）」，或让 config 缺失时 fail-closed 报错而不是静默退回 npm 默认值。
+  - 命中：永远、默认
+- **CC-0008** [高优先/全局/预期] 【守护起不来·机械根因】install.sh 5.5 段的守护改指被条件锁死：if [ -f "$HOME/Library/LaunchAgents/com.codex-autopilot.daemon.plist" ] 才执行 KG_REPO=.. python3 $DEST/ops/central_daemon.py --install。也就是说：只有『已经装过守护』才会重写 plist 并重启；一旦 plist 缺失（本次实录：活的 com.codex-autopilot.daemon.plist 不存在，只有 .disabled-20261105/.bak-* 一堆），install.sh 静默跳过整段，于是每次安装都成功、守护永远不装、launchctl list 里没有这个 job。product_eval 判据 2『跑得起来』因此恒红（status=not_installed），而 control.json 仍显示 enabled=true/daemon_enabled=true —— 开关绿、进程无，正是本产品最痛的那类静默失效。对照：预置 plist 里 ProgramArguments 指向 releases/0.6.0-preview.50/ops/central_daemon.py，已是旧版本路径，说明这套 repoint 逻辑本身此前也没把它修到当前版本。修法方向（需人拍板）：install.sh 缺 plist 时也应提供一条显式『首次安装守护』路径（或用 --install-daemon 显式开关），而不是把常驻与否只挂在文件是否存在上；重装后必须回读 launchctl list 作为证据。
+  - 命中：必须、永远、每次、拍板
+- **CC-0009** [高优先/工作流程/预期] 【既存·门禁环境】在部署目录 ~/plugins/codex-autopilot/releases/0.6.0-preview.82 里直接跑 ops/selftest.py 会 exit=1，失败点是 test_installer -> install.sh 报『--state-root 必须是 git 仓库：.../releases/0.6.0-preview.82』（release 目录不是 git 仓）。A/B 对照：换回发版源 40fc0f39 的原版 selftest.py 同样 exit=1，证明与本次 Stop 修复无关，是既存环境问题；同一份 selftest.py 在专属 worktree（git 仓）里跑全绿。影响有限：install.sh --verify 走的是 preview-check.sh 而非 selftest.py。修法方向：test_installer 在非 git 目录里应显式 skip 或造一个 git 夹具，而不是让线上部署位置的总闸恒红。
+  - 命中：必须
+- **CC-0010** [高优先/全局/预期] 【自治等级·observe 模式 + explicit/inferred 两级授权】现状是开关制（auto_exec on/off），要么全自动要么不动。要改成：新管家/pass 先跑 observe（只记录我本来会做什么 + 依据 + 影响面，不执行），人确认后再转 auto；把授权分 explicit（用户明确要求）与 inferred（系统推断），inferred 一律不得触发破坏性动作（合并/删除/发布/改方向）。pass_registry 已有 mode（observe/propose/auto）字段，缺的是默认 observe 起步 + 转正判据 + 面板上让人一眼看到 observe 期的建议这条链。
+  - 命中：不得、一律、默认
+- **CC-0011** [高优先/工作流程/禁忌] 【自动挡·防丢失】kgctl land 的真相镜像在状态根与 main 的 progress.jsonl/acceptance.jsonl 出现同 ID 不同内容时，会整文件覆盖远端当前台账：本轮 P-0080 关闭记录覆盖了上轮 P-0079 land 记录，本轮 A-0006 覆盖了上轮 A-0006 验收记录。已用新唯一 ID P-0082/A-0071 补回并记录，但根因未修。需要把 JSONL 合并改成按 identity 行级并集或禁止复用/覆盖同 ID，确保并发 land 不丢历史。
+  - 命中：禁止、确保
+- **CC-0012** [高优先/工作流程/禁忌] 【原生 Codex 面板设计闭环】把已调研的 @openai/apps-sdk-ui 官方设计系统、MCP Apps 协议、万法归一置顶总调度窗与子线程命名法则落成可验证的面板契约：首屏三问、原生 token 优先、最多两个动作、证据折叠、线程 section/命名与宿主能力边界，更新设计文档和门禁，禁止把缓存插件当源码，不碰共享 checkout 脏文件。
+  - 命中：禁止
 
 ## 三、已确认待落账
 
@@ -78,6 +90,12 @@
 - `CC-0004` 打开自动挡面板自然语言触发不稳定：用户说“打开自动挡面板”后，Codex 会话只分析入口、没有调用 render_autopilot_panel，侧栏/内联面板都没有出现；需要在触发规范里明确写“必须调用 render_autopilot_panel 工具”，并给小白用户提供可复制指令 —— 高优先候选仍待人确认，尚未生效
 - `CC-0005` 用户只在一个入口表达，系统负责跨项目/跨窗口路由，不让用户自己选 —— 高优先候选仍待人确认，尚未生效
 - `CC-0006` 验收和交付必须基于真实证据与端到端闭环，不用绿字、记录或可合并替代生效 —— 高优先候选仍待人确认，尚未生效
+- `CC-0007` 状态根解析把「停在旧分支的共享检出」当权威状态根：resolve_state_root 的候选顺序是 (main, trunk, current_worktree())，而 ops/tasks+ops/truth 已签入版本库、每个 worktree 都满足 looks_like_state_root，于是共享检出永远胜出。共享检出 ops/central.config.json 在其检出分支 1a6c56b4 上根本不存在，central_config.load 读不到就退回内置默认 build=npm run build(cwd=frontend)，本仓库没有 frontend，land 门禁必红。2026-11-10 实录：KG_REPO 指向含 config 的工作树时 land 能一路 merge→门禁 ok→落盘；默认解析到共享检出时门禁在 merge 之后必失败。需明确「配置从哪读（代码根 or 状态根）」，或让 config 缺失时 fail-closed 报错而不是静默退回 npm 默认值。 —— 高优先候选仍待人确认，尚未生效
+- `CC-0008` 【守护起不来·机械根因】install.sh 5.5 段的守护改指被条件锁死：if [ -f "$HOME/Library/LaunchAgents/com.codex-autopilot.daemon.plist" ] 才执行 KG_REPO=.. python3 $DEST/ops/central_daemon.py --install。也就是说：只有『已经装过守护』才会重写 plist 并重启；一旦 plist 缺失（本次实录：活的 com.codex-autopilot.daemon.plist 不存在，只有 .disabled-20261105/.bak-* 一堆），install.sh 静默跳过整段，于是每次安装都成功、守护永远不装、launchctl list 里没有这个 job。product_eval 判据 2『跑得起来』因此恒红（status=not_installed），而 control.json 仍显示 enabled=true/daemon_enabled=true —— 开关绿、进程无，正是本产品最痛的那类静默失效。对照：预置 plist 里 ProgramArguments 指向 releases/0.6.0-preview.50/ops/central_daemon.py，已是旧版本路径，说明这套 repoint 逻辑本身此前也没把它修到当前版本。修法方向（需人拍板）：install.sh 缺 plist 时也应提供一条显式『首次安装守护』路径（或用 --install-daemon 显式开关），而不是把常驻与否只挂在文件是否存在上；重装后必须回读 launchctl list 作为证据。 —— 高优先候选仍待人确认，尚未生效
+- `CC-0009` 【既存·门禁环境】在部署目录 ~/plugins/codex-autopilot/releases/0.6.0-preview.82 里直接跑 ops/selftest.py 会 exit=1，失败点是 test_installer -> install.sh 报『--state-root 必须是 git 仓库：.../releases/0.6.0-preview.82』（release 目录不是 git 仓）。A/B 对照：换回发版源 40fc0f39 的原版 selftest.py 同样 exit=1，证明与本次 Stop 修复无关，是既存环境问题；同一份 selftest.py 在专属 worktree（git 仓）里跑全绿。影响有限：install.sh --verify 走的是 preview-check.sh 而非 selftest.py。修法方向：test_installer 在非 git 目录里应显式 skip 或造一个 git 夹具，而不是让线上部署位置的总闸恒红。 —— 高优先候选仍待人确认，尚未生效
+- `CC-0010` 【自治等级·observe 模式 + explicit/inferred 两级授权】现状是开关制（auto_exec on/off），要么全自动要么不动。要改成：新管家/pass 先跑 observe（只记录我本来会做什么 + 依据 + 影响面，不执行），人确认后再转 auto；把授权分 explicit（用户明确要求）与 inferred（系统推断），inferred 一律不得触发破坏性动作（合并/删除/发布/改方向）。pass_registry 已有 mode（observe/propose/auto）字段，缺的是默认 observe 起步 + 转正判据 + 面板上让人一眼看到 observe 期的建议这条链。 —— 高优先候选仍待人确认，尚未生效
+- `CC-0011` 【自动挡·防丢失】kgctl land 的真相镜像在状态根与 main 的 progress.jsonl/acceptance.jsonl 出现同 ID 不同内容时，会整文件覆盖远端当前台账：本轮 P-0080 关闭记录覆盖了上轮 P-0079 land 记录，本轮 A-0006 覆盖了上轮 A-0006 验收记录。已用新唯一 ID P-0082/A-0071 补回并记录，但根因未修。需要把 JSONL 合并改成按 identity 行级并集或禁止复用/覆盖同 ID，确保并发 land 不丢历史。 —— 高优先候选仍待人确认，尚未生效
+- `CC-0012` 【原生 Codex 面板设计闭环】把已调研的 @openai/apps-sdk-ui 官方设计系统、MCP Apps 协议、万法归一置顶总调度窗与子线程命名法则落成可验证的面板契约：首屏三问、原生 token 优先、最多两个动作、证据折叠、线程 section/命名与宿主能力边界，更新设计文档和门禁，禁止把缓存插件当源码，不碰共享 checkout 脏文件。 —— 高优先候选仍待人确认，尚未生效
 
 ## 七、书面宪法引用
 

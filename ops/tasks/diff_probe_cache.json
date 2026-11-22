@@ -66,5 +66,9 @@
  "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@607c7aa2409b52dc920613dbcc9a1d2650fff8c6": {
   "files": 4,
   "lines": 5372
+ },
+ "codex/guard-release-version-20261119@9994dede77319360645bb7307f8d192d32fc7e69@cceddb6cec2f9f745641961db6bb0de68bef2bbd": {
+  "files": 3,
+  "lines": 13
  }
 }
