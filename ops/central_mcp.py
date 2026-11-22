@@ -3952,6 +3952,16 @@ def call_tool(name, args):
         except RequestContextError as exc:
             return {"code": "ACCEPTANCE_SCOPE_PROJECT_REQUIRED", "message": str(exc),
                     "persisted": False}, 2
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(repo), "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                result["expected_version"] = (proc.stdout or "").strip()
+            else:
+                result["expected_version"] = ""
+        except (OSError, subprocess.TimeoutExpired):
+            result["expected_version"] = ""
         path = repo / "ops" / "truth" / "acceptance_scope.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n",
@@ -4133,6 +4143,15 @@ def call_tool(name, args):
             result["scope_error"] = str(exc)
             result["__text__"] = "需求已进入入口，但无法确认验收范围归属；未写入任何项目。"
             return result, 2
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(repo), "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=5)
+            expected_version = (proc.stdout or "").strip() if proc.returncode == 0 else ""
+        except (OSError, subprocess.TimeoutExpired):
+            expected_version = ""
+        result["acceptance_scope_preview"]["expected_version"] = expected_version
+        scope["expected_version"] = expected_version
         path = repo / "ops" / "truth" / "acceptance_scope.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(scope, ensure_ascii=False, indent=2) + "\n",

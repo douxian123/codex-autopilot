@@ -82,9 +82,32 @@ EVIDENCE = _group("evidence", "EVD", "fullstack", "证据审计", (
     "发布动作与工程完成分离", "人工验收只接收预验收后的剩余项", "验收失败可重开并保留历史"),
     ("evidence", "version", "provenance"))
 
-ITEMS = tuple(ENGINEERING + FRONTEND + COMPREHENSION + ALIGNMENT + EVIDENCE)
+SECURITY = _group("security", "SEC", "backend", "安全与权限专项", (
+    "认证边界已在真实入口验证", "授权边界已在真实入口验证", "敏感数据不进入日志或面板",
+    "密钥和令牌没有进入代码或证据附件", "越权访问被拒绝且错误可理解",
+    "失败闭环不会泄露内部实现", "安全扫描或等价命令有当前版本结果"),
+    ("command", "result", "security_scan", "version"),
+    source="autopilot:dynamic-acceptance-security")
+
+DEPLOYMENT = _group("deployment", "DEP", "fullstack", "发布与恢复专项", (
+    "发布对象与验收版本一致", "部署命令和退出码可复核", "生产健康检查真实通过",
+    "回滚路径经过验证或明确不适用", "灰度或切换边界对用户明确",
+    "发布后关键入口真实可达", "监控和告警能覆盖本次发布风险"),
+    ("command", "result", "deployment", "health_check", "version"),
+    source="autopilot:dynamic-acceptance-deployment")
+
+AI_OUTPUT = _group("ai_output", "AIO", "fullstack", "AI 输出质量专项", (
+    "输出结构符合约定 schema", "事实性有可复核来源", "引用和材料可以回到原始出处",
+    "未知或取不到时明确 unknown", "降级路径不会伪装成成功",
+    "提示变更已比较代表性输入", "输出不含未授权敏感信息"),
+    ("command", "result", "source_trace", "ai_output", "version"),
+    source="autopilot:dynamic-acceptance-ai-output")
+
+ITEMS = tuple(ENGINEERING + FRONTEND + COMPREHENSION + ALIGNMENT + EVIDENCE
+              + SECURITY + DEPLOYMENT + AI_OUTPUT)
 BY_ID = {item["id"]: item for item in ITEMS}
-CATEGORIES = ("engineering", "frontend", "comprehension", "alignment", "evidence")
+CATEGORIES = ("engineering", "frontend", "comprehension", "alignment", "evidence",
+              "security", "deployment", "ai_output")
 
 
 def applicable(scope: str, requested: str | None) -> list[dict[str, Any]]:
@@ -96,7 +119,8 @@ def applicable(scope: str, requested: str | None) -> list[dict[str, Any]]:
     return [item for item in ITEMS if item["scope"] in (requested, "fullstack")]
 
 
-def evaluate_item(spec: dict[str, Any], row: dict[str, Any] | None) -> dict[str, Any]:
+def evaluate_item(spec: dict[str, Any], row: dict[str, Any] | None,
+                  expected_version: str | None = None) -> dict[str, Any]:
     """严格判定一条标准，避免空字段、fixture或旧版本证据伪装通过。"""
     row = row or {}
     state = str(row.get("status") or row.get("state") or "unknown").strip().lower()
@@ -108,14 +132,27 @@ def evaluate_item(spec: dict[str, Any], row: dict[str, Any] | None) -> dict[str,
     evidence = [x for x in evidence if isinstance(x, str) and x.strip()]
     reason = str(row.get("reason") or "").strip()
     missing = sorted(set(spec["evidence_required"]) - set(evidence))
-    version_ok = bool(str(row.get("version") or row.get("commit") or "").strip())
+    actual_version = str(row.get("version") or row.get("commit") or "").strip()
+    version_ok = bool(actual_version)
+    expected = str(expected_version or "").strip()
+    version_match = not expected or actual_version == expected
     fixture_only = bool(row.get("fixture_only")) or any("fixture" in x.lower() for x in evidence)
-    if state == "not_applicable" and not reason:
+    if state == "not_applicable" and (not reason or missing or not version_ok or not version_match):
         state = "unknown"
-        reason = "not_applicable 必须提供理由"
-    elif state == "pass" and (missing or not version_ok or fixture_only):
+        gaps = list(missing)
+        if not reason:
+            gaps.append("reason")
+        if not version_ok:
+            gaps.append("version")
+        elif not version_match:
+            gaps.append("version_mismatch")
+        reason = f"not_applicable 必须提供理由、证据和版本：{', '.join(gaps)}"
+    elif state == "pass" and (missing or not version_ok or not version_match or fixture_only):
         state = "unknown"
-        reason = reason or ("缺少证据：" + ", ".join(missing or ["version"]))
+        if not version_match:
+            reason = reason or f"证据版本 {actual_version or '空'} 与当前验收版本 {expected} 不一致"
+        else:
+            reason = reason or ("缺少证据：" + ", ".join(missing or ["version"]))
     elif state not in {"pass", "fail", "blocked", "unknown", "not_applicable"}:
         state = "unknown"
         reason = "未知状态不能作为通过"
@@ -126,6 +163,6 @@ def evaluate_item(spec: dict[str, Any], row: dict[str, Any] | None) -> dict[str,
         "pass_condition": spec["pass_condition"], "fail_condition": spec["fail_condition"],
         "evidence_required": list(spec["evidence_required"]), "evidence": evidence,
         "missing_evidence": missing, "reason": reason or str(row.get("summary") or ""),
-        "version": row.get("version") or row.get("commit") or "",
+        "version": actual_version,
         "source": spec["source"],
     }

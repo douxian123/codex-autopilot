@@ -16,8 +16,9 @@ def check(label, condition):
 
 
 def main():
-    check("字典包含五类标准", set(d.CATEGORIES) == {
-        "engineering", "frontend", "comprehension", "alignment", "evidence"})
+    check("字典包含五类基础标准和三类专项标准", set(d.CATEGORIES) == {
+        "engineering", "frontend", "comprehension", "alignment", "evidence",
+        "security", "deployment", "ai_output"})
     check("每条标准有稳定字段", all({"id", "title", "scope", "severity", "required",
                                        "pass_condition", "fail_condition", "evidence_required"} <= set(x)
                                       for x in d.ITEMS))
@@ -28,13 +29,21 @@ def main():
     check("缺证据不能 pass", d.evaluate_item(spec, {"status": "pass", "version": "abc123"})["state"] == "unknown")
     check("没有版本不能 pass", d.evaluate_item(spec, {"status": "pass",
         "evidence": list(spec["evidence_required"])})["state"] == "unknown")
+    check("版本不匹配不能 pass", d.evaluate_item(spec, {"status": "pass",
+        "evidence": list(spec["evidence_required"]), "version": "old-commit"},
+        expected_version="current-commit")["state"] == "unknown")
     check("fixture-only不能 pass", d.evaluate_item(spec, {"status": "pass",
         "evidence": ["fixture-only", *spec["evidence_required"]], "version": "abc123"})["state"] == "unknown")
     check("失败不能被证据覆盖", d.evaluate_item(spec, {"status": "fail",
         "evidence": list(spec["evidence_required"]), "version": "abc123"})["state"] == "fail")
     check("不适用必须有理由", d.evaluate_item(spec, {"status": "not_applicable"})["state"] == "unknown")
-    check("有理由才允许不适用", d.evaluate_item(spec, {"status": "not_applicable",
-        "reason": "本工程无前端", "version": "abc123"})["state"] == "not_applicable")
+    check("有理由、证据和版本才允许不适用", d.evaluate_item(spec, {
+        "status": "not_applicable", "reason": "本工程无前端",
+        "evidence": list(spec["evidence_required"]), "version": "abc123",
+    })["state"] == "not_applicable")
+    check("有理由但缺证据的不适用仍为 unknown", d.evaluate_item(spec, {
+        "status": "not_applicable", "reason": "本工程无前端", "version": "abc123",
+    })["state"] == "unknown")
     check("未知范围不默认放宽", len(d.applicable("x", "unknown")) == len(d.ITEMS))
     print("acceptance-dictionary: PASS")
 

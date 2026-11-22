@@ -184,6 +184,7 @@ def main():
             "test-experience-contract-gate.py",
             "test-panel-renderer-contract.py",
             "test-research-adoption.py",
+            "test-specialized-acceptance-executors.py",
         )
         for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)

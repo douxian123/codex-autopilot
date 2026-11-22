@@ -238,7 +238,7 @@ PM 管家每轮不是只问“任务做完了吗”，而要复核：用户能�
 - [x] 自研项能说明为什么没有采用成熟轮子，且范围不超出差异化目标。证据：产品契约第 1 节与第 7 节的竞品吸收边界，以及 PM 研究决策门禁。
 - [x] 施工项有依赖图、文件占地和冲突关系；重复工作不会并行覆盖。证据：`python3 ops/test-pm-closure-loop.py`、`python3 ops/selftest.py` 的 overlap 与 worker 门禁。
 - [x] 验收项能从用户预期推导，机器项和人工项分开；机器先验收，人工只处理剩余判断。证据：`python3 ops/test-acceptance-criteria.py`、`python3 ops/test-acceptance-selfcheck.py`。
-- [x] 验收管家在通知用户前必须完成产品级预验收：工程与后端、真实前端视觉/交互、小白可理解性、PRD 与用户预期对齐四类证据全部 `pass`；任一失败或 `unknown` 都先返修/补证据，不进入用户验收台。证据：`docs/PRE_ACCEPTANCE_STANDARD.md`、`python3 ops/test-pre-acceptance.py`、面板 `交付前自检` 区块。
+- [x] 验收管家在通知用户前必须完成产品级预验收：工程与后端、真实前端视觉/交互、小白可理解性、PRD 与用户预期对齐、证据审计五类基础检查，以及动态范围选中的安全、发布、AI 输出专项检查逐条 `pass`；任一失败、`unknown` 或未映射风险都先返修/补证据，不进入用户验收台。证据：`docs/PRE_ACCEPTANCE_STANDARD.md`、`python3 ops/test-pre-acceptance.py`、`python3 ops/test-specialized-acceptance-executors.py`、面板 `交付前自检` 区块。
 - [x] 产品结果不达标时，即使代码和测试通过，PM 也不能关闭项目。证据：`python3 ops/test-closure-package.py` 的真实入口证据闸门与主线的 outcome review 约定。
 - [x] 每轮收口都有 outcome review：继续、修实现、重新研究、重新规划、等待用户或关闭。证据：`docs/OPENSOURCE_RESEARCH.md` 的路线内化说明与 `python3 ops/test-prd-evolution.py` 的决策闸。
 - [x] PRD 修订台账有候选、决策、证据和 PRD 更新状态；高影响未决项会挡住 execute。证据：`python3 ops/test-prd-evolution.py`。
