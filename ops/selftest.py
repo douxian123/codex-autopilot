@@ -3075,6 +3075,59 @@ def test_native_socket_lstat():
     print("selftest ok: socket symlink 入口按 lstat 识别，权限挡目标不再误报成不存在。")
 
 
+def test_native_status_socket_missing_is_honest():
+    """socket 缺失时只说 socket 缺失，绝不误报成 Codex 没运行或已可派活。"""
+    import importlib
+    from unittest import mock
+
+    sys.path.insert(0, str(OPS))
+    import central_mcp
+    importlib.reload(central_mcp)
+
+    missing = {
+        "socket": "/tmp/native-status-test/absent.sock",
+        "socket_present": False,
+        "history_db": True,
+    }
+    with mock.patch.object(central_mcp.codex_native, "socket_state",
+                           return_value=dict(missing)), \
+         mock.patch.object(central_mcp.codex_native, "last_probe",
+                           return_value=None):
+        state = central_mcp._native_status()
+    assert state["last_probe"] is None, state
+    assert "未找到桌面控制 socket" in state["label"], state
+    assert "只读历史" in state["label"] and "不能派活" in state["label"], state
+    assert "Codex 未运行" not in state["label"], state
+
+    with mock.patch.object(central_mcp.codex_native, "socket_state",
+                           return_value=dict(missing)), \
+         mock.patch.object(central_mcp.codex_native, "last_probe", return_value={
+             "connected": False, "can_dispatch": False,
+             "reason": "没有找到 Codex 桌面端控制 socket",
+         }):
+        state = central_mcp._native_status()
+    assert "未找到桌面控制 socket" in state["label"], state
+    assert "已连通" not in state["label"] and "可派活到 Codex 窗口" not in state["label"], state
+
+    with mock.patch.object(central_mcp.codex_native, "socket_state",
+                           return_value=dict(missing)), \
+         mock.patch.object(central_mcp.codex_native, "last_probe", return_value={
+             "connected": False, "can_dispatch": False,
+             "blocked_by": "remote-control-chatgpt-pairing",
+         }):
+        state = central_mcp._native_status()
+    assert "ChatGPT 登录/配对" in state["label"], state
+
+    with mock.patch.object(central_mcp.codex_native, "socket_state",
+                           return_value={**missing, "socket_present": True}), \
+         mock.patch.object(central_mcp.codex_native, "last_probe",
+                           return_value=None):
+        state = central_mcp._native_status()
+    assert "未自检" in state["label"], state
+    assert "未找到桌面控制 socket" not in state["label"], state
+    print("selftest ok: 原生直连红灯如实区分未找到 socket、需配对与未自检。")
+
+
 FAKE_SECTION_SERVER = """
 import json, os, sys
 state_path = os.environ["FAKE_STATE"]
@@ -7664,11 +7717,37 @@ def test_disk_reap_reaps_stale_code_sign_clones():
         assert fresh.exists(), "未过 grace 的新副本不能被删除"
 
         mod._open_paths_snapshot = lambda: None
+        mod._open_paths_for_roots = lambda roots: None
         another = xdir / "code_sign_clone.another"
         another.mkdir(parents=True)
         os.utime(another, (old, old))
         removed, _ = mod.reap_code_sign_clones(dry=False)
         assert removed == 0 and another.exists(), "引用探针不确定时必须保留"
+
+    with tempfile.TemporaryDirectory(prefix="codex-sign-clones-scoped-") as tmp:
+        xdir = Path(tmp) / "X" / "com.google.Chrome.code_sign_clone"
+        stale = xdir / "code_sign_clone.stale"
+        active = xdir / "code_sign_clone.active"
+        for path in (stale, active):
+            path.mkdir(parents=True)
+            (path / "payload").write_text("x" * 32, encoding="utf-8")
+        old = time.time() - 3600
+        os.utime(stale, (old, old))
+        os.utime(active, (old, old))
+
+        mod._code_sign_clone_xdirs = lambda: iter([str(Path(tmp) / "X")])
+        mod._open_paths_snapshot = lambda: None
+        mod._open_paths_for_roots = lambda roots: [str(active / "payload")]
+        removed, _ = mod.reap_code_sign_clones(dry=False)
+        assert removed == 1 and not stale.exists(), "范围探测成功时旧副本应能回收"
+        assert active.exists(), "范围探测认出的活跃副本不能被删除"
+
+        mod._open_paths_for_roots = lambda roots: None
+        another = xdir / "code_sign_clone.another"
+        another.mkdir(parents=True)
+        os.utime(another, (old, old))
+        removed, _ = mod.reap_code_sign_clones(dry=False)
+        assert removed == 0 and another.exists(), "两级探针都失败时必须整轮保留"
 
     print("selftest ok: 签名临时副本只回收旧且无引用的目录，活跃副本受保护。")
 
@@ -8236,6 +8315,7 @@ if __name__ == "__main__":
     test_panel_first_screen()
     test_codex_native_bridge()
     test_native_socket_lstat()
+    test_native_status_socket_missing_is_honest()
     test_native_section_grouping()
     test_native_thread_title_contract()
     test_native_call_budget()

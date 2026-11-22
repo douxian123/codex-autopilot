@@ -72,6 +72,10 @@ def main():
     actions["action_policy"]["max_primary_actions"] = 3
     expect_fail(actions, "最多两个主操作")
 
+    official = copy.deepcopy(valid)
+    official["official_ui_reuse"]["status"] = "componentized"
+    expect_fail(official, "final_visual_approved")
+
     replacement = copy.deepcopy(valid)
     replacement["replacement_policy"]["final_panel_must_preserve_contract"] = False
     expect_fail(replacement, "同一份渲染契约")
@@ -83,11 +87,13 @@ def main():
     assert summary["status"] == "ok", summary
     assert summary["mode"] == "interim", summary
     assert summary["final_visual_approved"] is False, summary
+    assert summary["official_ui_reuse"]["status"] == "documented_not_componentized", summary
+    assert summary["official_ui_reuse"]["package"] == "@openai/apps-sdk-ui", summary
     assert "需要你做什么" in summary["attention_order"], summary
 
     schema = json.loads((ROOT / "docs/experience/panel-renderer-contract.json").read_text(encoding="utf-8"))
     assert schema["replacement_policy"]["current_panel_role"] == "interim_renderer_reference_implementation_only"
-    print("panel renderer contract: PASS (valid + 6 negative cases + source/release layouts + provider projection)")
+    print("panel renderer contract: PASS (valid + 7 negative cases + official-ui state + source/release layouts + provider projection)")
 
 
 if __name__ == "__main__":

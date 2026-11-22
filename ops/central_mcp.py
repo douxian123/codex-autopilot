@@ -583,6 +583,7 @@ def _renderer_contract_summary():
         "headline": "面板渲染契约取不到，当前界面不冒充最终设计",
         "mode": "unknown",
         "final_visual_approved": False,
+        "official_ui_reuse": {"status": "unknown", "package": None},
         "attention_order": [],
         "states": [],
         "resource_uri": None,
@@ -601,6 +602,10 @@ def _renderer_contract_summary():
         "headline": "当前面板是中间态 renderer，最终视觉另行定稿",
         "mode": data.get("renderer_mode"),
         "final_visual_approved": bool(data.get("final_visual_approved")),
+        "official_ui_reuse": {
+            "status": (data.get("official_ui_reuse") or {}).get("status"),
+            "package": (data.get("official_ui_reuse") or {}).get("package"),
+        },
         "attention_order": list(data.get("attention_order") or []),
         "states": [s.get("name") for s in (data.get("states") or []) if isinstance(s, dict)],
         "resource_uri": data.get("resource_uri"),
@@ -2906,13 +2911,17 @@ def _native_status():
     probe = codex_native.last_probe()
     state["last_probe"] = probe
     if probe is None:
-        state["label"] = ("原生直连：未自检（点「原生自检」跑一次）"
-                          if state.get("socket_present") else "原生直连：Codex 未运行")
+        if state.get("socket_present"):
+            state["label"] = "原生直连：未自检（点「原生自检」跑一次）"
+        else:
+            state["label"] = "原生直连：未找到桌面控制 socket（只读历史，不能派活）"
     elif probe.get("connected"):
         state["label"] = "原生直连：已连通，可派活到 Codex 窗口"
     else:
         if probe.get("blocked_by") == "remote-control-chatgpt-pairing":
             state["label"] = "原生直连：需 ChatGPT 登录/配对后才能派活"
+        elif not state.get("socket_present"):
+            state["label"] = "原生直连：未找到桌面控制 socket（只读历史，不能派活）"
         else:
             state["label"] = "原生直连：不可派活，只能只读历史"
     return state

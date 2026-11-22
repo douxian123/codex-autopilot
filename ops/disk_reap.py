@@ -402,6 +402,43 @@ def _open_paths_snapshot() -> list[str] | None:
         return None
 
 
+def _open_paths_for_roots(roots: list[str]) -> list[str] | None:
+    """Fallback probe scoped to known clone roots after a global lsof failure.
+
+    A full-process `lsof` snapshot can fail under load or permissions. Treating
+    that single failure as "every clone may be active" leaves 1.5GB Chrome
+    copies behind for hours. A scoped probe still fails closed for the clone
+    roots we are about to consider, while avoiding a global scan.
+    """
+    paths: set[str] = set()
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        try:
+            out = subprocess.run(
+                ["lsof", "-n", "-F", "n", "+D", root],
+                capture_output=True,
+                text=True,
+                timeout=90,
+            )
+        except Exception:
+            return None
+        if out.returncode not in (0, 1):
+            return None
+        paths.update(
+            line[1:] for line in out.stdout.splitlines() if line.startswith("n")
+        )
+    return sorted(paths)
+
+
+def _clone_roots() -> list[str]:
+    return [
+        os.path.join(xdir, parent_name)
+        for xdir in _code_sign_clone_xdirs()
+        for parent_name in CODEX_SIGN_CLONE_TARGETS
+    ]
+
+
 def _path_in_open_paths(path: str, open_paths: list[str]) -> bool:
     needle = path.rstrip("/") + "/"
     return any(needle in open_path for open_path in open_paths)
@@ -445,45 +482,47 @@ def reap_code_sign_clones(dry: bool = False) -> tuple[int, int]:
     cutoff = time.time() - CODEX_SIGN_CLONE_GRACE_MIN * 60
     open_paths = _open_paths_snapshot()
     if open_paths is None:
-        log("无法读取进程打开文件，本轮保留全部签名临时副本")
-        return 0, 0
-    for xdir in _code_sign_clone_xdirs():
-        for parent_name in CODEX_SIGN_CLONE_TARGETS:
-            root = os.path.join(xdir, parent_name)
-            if not os.path.isdir(root):
+        roots = _clone_roots()
+        open_paths = _open_paths_for_roots(roots)
+        if open_paths is None:
+            log("无法读取进程打开文件和签名副本目录，本轮保留全部签名临时副本")
+            return 0, 0
+        log("全局打开文件快照不可用，已切换到签名副本目录范围探测")
+    for root in _clone_roots():
+        if not os.path.isdir(root):
+            continue
+        try:
+            entries = sorted(os.listdir(root))
+        except OSError:
+            continue
+        for ent in entries:
+            if not ent.startswith("code_sign_clone."):
+                continue
+            path = os.path.join(root, ent)
+            if not os.path.isdir(path) or os.path.islink(path):
                 continue
             try:
-                entries = sorted(os.listdir(root))
+                if os.path.getmtime(path) > cutoff:
+                    continue
             except OSError:
                 continue
-            for ent in entries:
-                if not ent.startswith("code_sign_clone."):
-                    continue
-                path = os.path.join(root, ent)
-                if not os.path.isdir(path) or os.path.islink(path):
-                    continue
-                try:
-                    if os.path.getmtime(path) > cutoff:
-                        continue
-                except OSError:
-                    continue
-                if _path_in_open_paths(path, open_paths):
-                    log(f"签名临时副本仍在使用，跳过：{path}")
-                    continue
-                size = _tree_size(path)
-                if dry:
-                    log(f"dry-run: 会回收签名临时副本 {path}（{size / 1e9:.2f}GB）")
-                    removed += 1
-                    freed += size
-                    continue
-                try:
-                    shutil.rmtree(path)
-                except Exception as exc:
-                    log(f"签名临时副本回收失败 {path}: {type(exc).__name__}: {exc}")
-                    continue
+            if _path_in_open_paths(path, open_paths):
+                log(f"签名临时副本仍在使用，跳过：{path}")
+                continue
+            size = _tree_size(path)
+            if dry:
+                log(f"dry-run: 会回收签名临时副本 {path}（{size / 1e9:.2f}GB）")
                 removed += 1
                 freed += size
-                log(f"回收签名临时副本 {path}（{size / 1e9:.2f}GB）")
+                continue
+            try:
+                shutil.rmtree(path)
+            except Exception as exc:
+                log(f"签名临时副本回收失败 {path}: {type(exc).__name__}: {exc}")
+                continue
+            removed += 1
+            freed += size
+            log(f"回收签名临时副本 {path}（{size / 1e9:.2f}GB）")
     return removed, freed
 
 

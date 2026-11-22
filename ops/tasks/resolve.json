@@ -1,6 +1,29 @@
 {
  "tasks": [
   {
+   "slug": "native-red-light-honest-20261122",
+   "branch": "codex/native-red-light-honest-20261122",
+   "resolve_branch": "codex/resolve-native-red-light-honest-20261122",
+   "worktree": "/Users/danta/.newmax/workspace/autopilot-native-red-light-20261122-resolve-native-red-light-honest-20261122",
+   "base_main": "cbe419fe09bf303023a6e57ff904fd24104cb095",
+   "source_head": "d8bcfcf66589403723b93af408fee0bb2a6b524e",
+   "source_commits": [
+    "d8bcfcf66589403723b93af408fee0bb2a6b524e"
+   ],
+   "created": "2026-11-22 08:12:13",
+   "updated": "2026-11-22 08:12:13",
+   "conflict_files": [
+    "ops/tasks/conflict_burden.json",
+    "ops/tasks/diff_probe_cache.json"
+   ],
+   "unresolved_files": [
+    "ops/tasks/conflict_burden.json",
+    "ops/tasks/diff_probe_cache.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
    "slug": "guard-release-version-20261119",
    "branch": "codex/guard-release-version-20261119",
    "resolve_branch": "codex/resolve-guard-release-version-20261119",
@@ -22,6 +45,30 @@
    "status": "landed",
    "gate_output": "→ codex/resolve-guard-release-version-20261119: 2 提交、落后 8、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n已有 land 在进行（/Users/danta/.newmax/workspace/codex-autopilot/.git/kgctl-land.lock）",
    "reason": "锁占用导致的 gate_fail 是误记；正式落盘已通过门禁：main 1db2bc55630d7baf620d8ec364d65b6e7eb5a031，P-0181，A-0158"
+  },
+  {
+   "slug": "reap-branch-preserve-20261111",
+   "branch": "codex/reap-branch-preserve-20261111",
+   "resolve_branch": "codex/resolve-reap-branch-preserve-20261111",
+   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-reap-branch-preserve-20261111",
+   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
+   "source_head": "b4d56939cf323ba107e321ade73fe96e8247ca06",
+   "source_commits": [
+    "b4d56939cf323ba107e321ade73fe96e8247ca06"
+   ],
+   "created": "2026-11-17 19:38:15",
+   "updated": "2026-11-20 14:10:18",
+   "conflict_files": [
+    "ops/kgctl.py",
+    "ops/test-reap-branch-preserve.py"
+   ],
+   "unresolved_files": [
+    "ops/kgctl.py",
+    "ops/test-reap-branch-preserve.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "landed",
+   "reason": "已落盘：main beda436be2a738d233560587f88f6d0cd9aa9366，P-0177，A-0151"
   },
   {
    "slug": "autopilot-truth-sync-failclosed",
@@ -469,30 +516,6 @@
    "status": "needs_agent"
   },
   {
-   "slug": "reap-branch-preserve-20261111",
-   "branch": "codex/reap-branch-preserve-20261111",
-   "resolve_branch": "codex/resolve-reap-branch-preserve-20261111",
-   "worktree": "/Users/danta/.newmax/workspace/codex-autopilot-resolve-reap-branch-preserve-20261111",
-   "base_main": "acc08f24f10a4a4edc3d7b7e2b39bc5990dceaec",
-   "source_head": "b4d56939cf323ba107e321ade73fe96e8247ca06",
-   "source_commits": [
-    "b4d56939cf323ba107e321ade73fe96e8247ca06"
-   ],
-   "created": "2026-11-17 19:38:15",
-   "updated": "2026-11-20 14:10:18",
-   "conflict_files": [
-    "ops/kgctl.py",
-    "ops/test-reap-branch-preserve.py"
-   ],
-   "unresolved_files": [
-    "ops/kgctl.py",
-    "ops/test-reap-branch-preserve.py"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "landed",
-   "reason": "已落盘：main beda436be2a738d233560587f88f6d0cd9aa9366，P-0177，A-0151"
-  },
-  {
    "slug": "autopilot-close-gate-20261026",
    "branch": "codex/autopilot-close-gate-20261026",
    "resolve_branch": "codex/resolve-autopilot-close-gate-20261026",
@@ -562,5 +585,5 @@
    "status": "needs_agent"
   }
  ],
- "updated": "2026-11-20 14:30:00"
+ "updated": "2026-11-22 08:12:14"
 }
