@@ -70,5 +70,9 @@
  "codex/guard-release-version-20261119@9994dede77319360645bb7307f8d192d32fc7e69@cceddb6cec2f9f745641961db6bb0de68bef2bbd": {
   "files": 3,
   "lines": 13
+ },
+ "codex/release-124-truthctl-runtime-20261122@39e745af6b9fc4102f82b1f384336b79b3279e89@4409528b216ba838f539bef261c06b99f0c3798d": {
+  "files": 6,
+  "lines": 263
  }
 }
