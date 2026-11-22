@@ -3410,11 +3410,20 @@ def _trunk_is_foreign_clone(wt: Path) -> bool:
             return False
     except OSError:
         return False
-    mine = project_router.identity(REPO)
-    theirs = project_router.identity(wt)
-    if not theirs:
+    # Compare the git object store, not pathnames or remote URLs. A configured
+    # trunk may be a separate clone with the same remote and even the same
+    # branch name; merge/checkout there would mutate somebody else's checkout.
+    mine = git("-C", str(REPO), "rev-parse", "--git-common-dir")
+    theirs = git("-C", str(wt), "rev-parse", "--git-common-dir")
+    if not mine or not theirs:
         return False
-    return bool(mine) and theirs != mine
+    mine_path = Path(mine)
+    if not mine_path.is_absolute():
+        mine_path = (REPO / mine_path).resolve()
+    theirs_path = Path(theirs)
+    if not theirs_path.is_absolute():
+        theirs_path = (wt / theirs_path).resolve()
+    return mine_path.resolve() != theirs_path.resolve()
 
 
 def _trunk_worktree():

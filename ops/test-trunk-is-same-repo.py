@@ -92,6 +92,12 @@ def main():
         other_trunk = other
         check("别的 clone 判为 foreign", kg._trunk_is_foreign_clone(other_trunk) is True,
               f"(path={other_trunk})")
+        same_remote = "https://example.invalid/autopilot.git"
+        git(state, "remote", "add", "origin", same_remote)
+        git(other, "remote", "add", "origin", same_remote)
+        check("remote 相同但 common dir 不同仍判 foreign",
+              kg._trunk_is_foreign_clone(other_trunk) is True,
+              f"(remote={same_remote})")
         check("本仓库自身不算 foreign", kg._trunk_is_foreign_clone(state) is False,
               f"(path={state})")
         check("不存在的路径不猜（返回 False）",
