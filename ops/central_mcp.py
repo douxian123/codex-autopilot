@@ -1507,7 +1507,7 @@ TOOLS = [
     },
     {
         "name": "render_autopilot_panel",
-        "description": "打开自动挡面板（inline 卡片 / 对话侧栏 / 全局侧栏 / 全屏）。面板第一屏用大白话说明：它是什么、怎么用（普通 Codex 输入框就是总输入框，不用新建对话或分支）、它替你做了什么、现在在做什么、你需要做什么、随时可暂停。用户问“自动挡在哪看 / 怎么用 / 现在开着吗”时用它。",
+        "description": "打开自动挡原生面板（MCP App：inline 卡片 / 对话侧栏 / 全局侧栏 / 全屏）。用户说“打开自动挡面板 / 面板打不开 / 自动挡在哪看”时必须立即调用本工具，不要只解释入口、不要只去侧栏找按钮，也不要打开 CONTROL_PLANE.html / companion panel / browser 页面冒充面板。面板第一屏用大白话说明：它是什么、怎么用（普通 Codex 输入框就是总输入框，不用新建对话或分支）、它替你做了什么、现在在做什么、你需要做什么、随时可暂停。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         "_meta": {
             "ui": {"resourceUri": PANEL_URI},

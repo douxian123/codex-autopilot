@@ -1,13 +1,19 @@
-# 0.6.0-preview.126 候选发布验证报告
+# 0.6.0-preview.126 发布与 live 换代验证报告
 
 日期：2026-11-22
 
 ## 1. 结论
 
-`0.6.0-preview.126` 是动态验收专项执行器的候选发布版本。它基于 `origin/main = 35c53856016fb72db46078d6e36ff4bc0b76adf9`，
-在候选分支 `codex/release-126-dynamic-acceptance-20261122` 上只增加了版本号 bump。
+`0.6.0-preview.126` 的动态验收专项执行器已完成源码闭环、候选发布、本机 live 换代和现场门禁验证。
 
-本机 live 插件仍然是 `0.6.0-preview.125`，没有切换。切换 live 属于发布动作，未在本轮执行。
+功能源码合并点是 `bbcc3832 Merge remote-tracking branch 'origin/main' into codex/release-126-dynamic-acceptance-20261122`；
+该点已推送到候选分支和 `main`。随后本报告作为文档补丁另行提交，`main` 会再前进一步；
+这是文档收口，不代表功能源码有新变更。本机 live 插件已在用户明确选择 A 后切换到 `0.6.0-preview.126`，
+live release 的来源 commit 是 `857b45756870ea8b63d29ac165b6e8ed39c171bc`，旧版本 `0.6.0-preview.125` 保留可回滚。
+
+口径边界：第 3、10、13 节记录的是当时的历史现场，其中出现过候选、`.125` live 和更早的 `main` 引用；
+最终状态以第 14、15 节为准。由于不可变版本目录不允许覆盖同版本，live release 仍来自 `857b457...`，
+而随后合入 `main` 的 4 个 land 修复只在源码里生效；要不要再发一个新的 live 版本需要用户拍板。
 
 ## 2. 候选分支
 
@@ -256,7 +262,9 @@ PASS 运行态提示写清不会自动重启
 PASS 健康条取不到时不冒充正常
 ```
 
-## 10. 本机 live 现场未改动
+## 10. 本机 live 换代前状态（历史记录）
+
+本节保留换代前的 `.125` 证据，不能当成最终现场。最终 live 状态见第 14 节。
 
 本机插件列表：
 
@@ -367,13 +375,15 @@ REAL_TASK_INTAKE_EXIT=0
 
 ## 12. 还差什么
 
-候选包已经完成，未做 live 切换。live 切换会改写 marketplace、刷新 Codex 插件缓存、重建 Companion，并可能重载 daemon，属于发布动作，需要用户明确拍板。
+已完成：源码合并与推送、live 换代、marketplace / 插件缓存 / Companion / daemon / 定时任务改指、live 现场机器门禁。
 
-用户选择 A：`0.6.0-preview.126` 切换为 live。好处是当前会话之后可以使用新动态验收专项执行器；代价是会改动本机插件入口和后台进程，当前会话已加载的工具未必立刻更新，可能需要新开 Codex 会话确认。
+未完成或未验证：
 
-用户选择 B：保持 `0.6.0-preview.125`。好处是当前现场完全不动；代价是动态验收专项执行器只在候选包和仓库里可追溯，本机 live 仍然不生效。
+1. 新开 Codex 会话后的用户肉眼验收：确认侧栏 / 对话里的自动挡面板能打开，首屏绑定项目显示为 `/Users/danta/Documents/Codex/codex-autopilot-native-autopilot`，并出现“交付前自检”区块。当前会话已加载的 MCP 工具不保证热更新，机器不能代签。
+2. live release 来源是 `857b457...`；`main` 后续 4 个 land 修复（`85e992e9`、`fdbb279a`、`cb5832ef`、`36a265d6`）已在源码和远端 `main`，但没有进入已安装的不可变 `.126` release。要不要发新的 live 版本，需要用户拍板。
+3. 最终面板 redesign 未定稿。当前通过的是 `panel renderer contract` 下的 interim renderer，不能宣称最终视觉版上线。
 
-## 13. 远端闭环
+## 13. 远端闭环（第一次发布推送，历史记录）
 
 候选分支推送成功后，已确认 `origin/main` 未漂移且候选是其快进后继，随后把验证过的候选推入主线：
 
@@ -383,7 +393,7 @@ To https://github.com/douxian123/codex-autopilot.git
 PUSH_MAIN_EXIT=0
 ```
 
-回读结果：
+当时回读结果：
 
 ```text
 REMOTE_MAIN=475c537783c2bd525a8298a917d6305a04cd5feb	refs/heads/main
@@ -391,4 +401,185 @@ ORIGIN_MAIN=475c537783c2bd525a8298a917d6305a04cd5feb
 LOG_ORIGIN_MAIN=475c5377 docs(release): add real task acceptance scope evidence
 ```
 
-这说明 `0.6.0-preview.126` 的版本号和本报告已经进入远端 `main`。它只代表源码和发布证据可追溯，不代表本机 live 已切换到 `.126`；现场仍保持 `0.6.0-preview.125`。
+这记录了 `0.6.0-preview.126` 的版本号和当时报告进入远端 `main` 的第一次推送。后续远端继续前进到 `36a265d6`，
+最终闭环见第 15 节；本机 live 切换证据见第 14 节。
+
+## 14. live 换代现场证据
+
+用户明确选择 A 后，执行了真实 live 换代：
+
+```bash
+cd /Users/danta/.newmax/workspace/codex-autopilot-release-126-20261122
+bash ./install.sh \
+  --state-root /Users/danta/Documents/Codex/codex-autopilot-native-autopilot \
+  --trunk /Users/danta/Documents/Codex/codex-autopilot-native-autopilot-trunk \
+  --refresh-plugin
+```
+
+结果：
+
+```text
+LIVE_INSTALL_EXIT=0
+```
+
+关键安装输出：
+
+```text
+已安装不可变版本 0.6.0-preview.126 到 /Users/danta/plugins/codex-autopilot/releases/0.6.0-preview.126
+已注册 codex-autopilot 到 /Users/danta/.agents/plugins/marketplace.json，当前版本路径：./plugins/codex-autopilot/releases/0.6.0-preview.126
+原版本仍完整保留，可用 ./install.sh --rollback 回退到：./plugins/codex-autopilot/releases/0.6.0-preview.125
+已安装菜单栏 Companion：/Users/danta/Applications/CodexAutopilotCompanion.app
+守护已切到 0.6.0-preview.126 并重启。
+定时任务改指完成：10 条已更新。
+插件缓存已刷新。
+```
+
+live 运行态契约：
+
+```text
+LIVE126_RUNTIME_CONTRACT_EXIT=0
+```
+
+```json
+{
+  "status": "ok",
+  "version": "0.6.0-preview.126",
+  "commit": "857b45756870ea8b63d29ac165b6e8ed39c171bc",
+  "source": "./plugins/codex-autopilot/releases/0.6.0-preview.126",
+  "plist_script": "/Users/danta/plugins/codex-autopilot/releases/0.6.0-preview.126/ops/central_daemon.py",
+  "pid": "85211",
+  "pid_script": "/Users/danta/plugins/codex-autopilot/releases/0.6.0-preview.126/ops/central_daemon.py",
+  "unknown": [],
+  "failures": []
+}
+```
+
+Codex 插件列表和缓存：
+
+```text
+codex-autopilot@personal installed, enabled 0.6.0-preview.126 /Users/danta/plugins/codex-autopilot/releases/0.6.0-preview.126
+cache version = 0.6.0-preview.126
+FILE=YES /Users/danta/.codex/plugins/cache/personal/codex-autopilot/0.6.0-preview.126/ui/panel.html
+FILE=YES /Users/danta/.codex/plugins/cache/personal/codex-autopilot/0.6.0-preview.126/ops/test-specialized-acceptance-executors.py
+```
+
+live 目录内复跑专项门禁：
+
+```text
+specialized-acceptance-executors: PASS
+pre-acceptance: PASS
+acceptance-dictionary: PASS
+dynamic-acceptance-scope: PASS
+generate-acceptance-scope-tool: PASS
+acceptance-evidence: PASS
+gate registration unit: PASS（92 条门禁全部已登记）
+EXIT=0 py_compile
+LIVE126_GATES_EXIT=0
+```
+
+live 面板检查：
+
+```text
+体验契约投影到面板首屏
+PASS  渲染契约投影到中间态面板
+PASS  当前面板声明为 interim renderer
+PASS  运行态提示写清不会自动重启
+PASS  健康条取不到时不冒充正常
+结果：全部通过
+EXIT=0
+LIVE126_PANEL_TAIL_EXIT=0
+```
+
+命令行状态回读：
+
+```text
+安装绑定   OK（0.6.0-preview.126 · 状态根 /Users/danta/Documents/Codex/codex-autopilot-native-autopilot）
+常驻守护       OK（pid 85211，绑定 /Users/danta/Documents/Codex/codex-autopilot-native-autopilot）
+```
+
+结论：本机现场已经吃到 `.126`，动态验收专项执行器在 live 目录中存在并通过门禁。最终仍需新开 Codex 会话做一次用户肉眼验收，因为当前会话已加载的 MCP 工具不保证热更新。
+
+## 15. 合并后复验与功能源码远端闭环
+
+live 换代后，`origin/main` 又前进了 4 个 land 修复提交。候选分支已把它们合并进本地 `bbcc3832`，合并无冲突。
+在合并后的 `bbcc3832` 上复跑验证：
+
+```bash
+cd /Users/danta/.newmax/workspace/codex-autopilot-release-126-20261122
+python3 ops/test-land-dirty-trunk-clean-worktree.py
+python3 ops/test-trunk-is-same-repo.py
+python3 -m py_compile ops/*.py
+python3 -u ops/selftest.py
+```
+
+结果：
+
+```text
+land dirty trunk clean worktree unit: PASS
+LAND_DIRTY_TRUNK_EXIT=0
+land trunk is same repo unit: PASS
+TRUNK_SAME_REPO_EXIT=0
+PY_COMPILE_EXIT=0
+MERGED_SELFTEST_EXIT=0
+selftest ok: 人判类收口停在 awaiting_human、人确认后才 done；机器可证的 bug 仍直达 done，自动派发闭环未被打断。
+```
+
+日志：
+
+```text
+/tmp/ca-release126-land-dirty-trunk-20261122.log
+/tmp/ca-release126-trunk-same-repo-20261122.log
+/tmp/ca-release126-py-compile-merged-20261122.log
+/tmp/ca-release126-selftest-merged-20261122.log
+```
+
+推送前远端引用：
+
+```text
+49c75a73fc346862c24d1ff759644b6f12230eda	refs/heads/codex/release-126-dynamic-acceptance-20261122
+36a265d603d811b077f021689dd70c384bb2ee73	refs/heads/main
+```
+
+功能合并点推送结果（本报告提交前）：
+
+```text
+To https://github.com/douxian123/codex-autopilot.git
+   49c75a73..bbcc3832  HEAD -> codex/release-126-dynamic-acceptance-20261122
+PUSH_CANDIDATE_EXIT=0
+To https://github.com/douxian123/codex-autopilot.git
+   36a265d6..bbcc3832  HEAD -> main
+PUSH_MAIN_EXIT=0
+```
+
+边界说明：以下推送结果记录功能合并点 `bbcc3832` 进入远端；随后本报告的文档补丁会再次推进 `main`，
+最终远端引用以推送后回读为准，功能源码仍停在 `bbcc3832`。本机 live release 仍是 `857b457...` 来源的不可变 `.126`。
+两者版本号相同但源码 commit 不同，不能把“源码已合入”说成“live 现场也已更新到该 commit”。
+
+## 16. 用户怎么用上并验收
+
+最短使用路径：
+
+1. 新开一个 Codex 会话。当前已加载 MCP 的会话不保证热更新到新插件版本。
+2. 在 Codex 里打开 Plugins → Personal，确认 `Codex 自动挡` 显示为 `0.6.0-preview.126`。
+3. 在侧栏或对话里说“打开自动挡面板”。看到面板首屏后，确认绑定项目是 `/Users/danta/Documents/Codex/codex-autopilot-native-autopilot`。
+4. 首屏应能看到安装绑定 `OK`、常驻守护 `OK`、唯一入口、分支/冲突/落盘统计。高级区应能看到 PM 简报、验收标准、PRD 迭代、上下文档案和管家状态。
+5. 如果要发需求，直接在总输入框说；默认先路由，验收范围只预览。看到范围后再显式确认，才会把动态验收范围写进项目账本。
+
+命令行快速验收：
+
+```bash
+cat /Users/danta/plugins/codex-autopilot/install-state.json
+KG_REPO=/Users/danta/Documents/Codex/codex-autopilot-native-autopilot \
+KG_TRUNK=/Users/danta/Documents/Codex/codex-autopilot-native-autopilot-trunk \
+python3 /Users/danta/plugins/codex-autopilot/releases/0.6.0-preview.126/ops/kgctl.py status
+```
+
+看到以下组合算机器侧正常：
+
+```text
+"version": "0.6.0-preview.126"
+安装绑定   OK（0.6.0-preview.126 · 状态根 /Users/danta/Documents/Codex/codex-autopilot-native-autopilot）
+常驻守护       OK（pid ...，绑定 /Users/danta/Documents/Codex/codex-autopilot-native-autopilot）
+```
+
+人工侧必须你自己看一眼：新会话里面板能否打开、首屏是否来自真实状态、交互是否符合当前 interim renderer 的视觉预期。

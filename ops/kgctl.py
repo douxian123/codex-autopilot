@@ -3450,12 +3450,10 @@ def _trunk_worktree():
         print(f"  !KG_TRUNK 指向状态根本身（{REPO}），已改用独立主干工作树：{fallback}")
         wt = fallback
     if _trunk_is_foreign_clone(wt) or not _trunk_can_checkout_main(wt):
-        # 配置里的 trunk_dir 可能是另一个 clone（remote 相同、git common dir
-        # 不同），也可能同一仓库里堆着会挡住 checkout 的未跟踪 runtime 文件。
-        # land 会在主干里 checkout main / merge / reset HEAD —— 跑到别人的检出里做
-        # 这些既是破坏性修改，也会因为那边有自己的未跟踪产物而必然失败。
-        # fallback 本身也要过 checkout 预演；若默认 trunk 同样不安全，就建一个
-        # 带时间戳的一次性独立目录。
+        # 配置里的 trunk_dir 可能是另一个 clone，也可能同一仓库里堆着会挡住
+        # checkout 的未跟踪 runtime 文件。land 必须完全避开这类目录，不能
+        # stash / reset / 删除他人文件。fallback 本身也要过 checkout 预演；
+        # 若默认 trunk 同样不安全，就建一个带时间戳的一次性独立目录。
         fallback = REPO.parent / (REPO.name + "-trunk")
         if fallback.exists() and not _trunk_can_checkout_main(fallback):
             fallback = REPO.parent / (
