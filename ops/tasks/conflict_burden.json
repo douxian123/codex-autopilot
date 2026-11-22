@@ -1,13 +1,15 @@
 {
- "main": "cbe419fe09bf303023a6e57ff904fd24104cb095",
+ "main": "e2ad55a745f336795a172e9797733a4dda6708a1",
  "branches": [
+  "codex/final-ledger-restore-20261120",
   "codex/prd-closure-package-20261121",
   "codex/project-autonomy-main-port-20261121",
   "codex/project-autonomy-mode-20261121"
  ],
  "burden": {
+  "codex/final-ledger-restore-20261120": 1,
   "codex/prd-closure-package-20261121": 2,
-  "codex/project-autonomy-main-port-20261121": 2,
+  "codex/project-autonomy-main-port-20261121": 4,
   "codex/project-autonomy-mode-20261121": 4
  }
 }

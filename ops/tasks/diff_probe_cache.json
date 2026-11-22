@@ -470,5 +470,9 @@
  "codex/project-autonomy-mode-20261121@1aebb35c6630b5e7fcaf3605b26766d1d7785532@16606666f76aebbab5f48317827a731146f066a1": {
   "files": 7,
   "lines": 621
+ },
+ "codex/final-ledger-restore-20261120@d9218bd59a7288a66e3967f10be8b1bff51c8090@e2ad55a745f336795a172e9797733a4dda6708a1": {
+  "files": 1,
+  "lines": 12
  }
 }
