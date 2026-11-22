@@ -42,6 +42,26 @@ description: Codex 自动挡的入门引导。用户第一次装好、问“这�
 - 开关：Plugins -> Personal -> Codex 自动挡 -> 设置；由 Codex 用原生设置控件渲染。
 - 面板第一屏就是给不熟的人看的：怎么用 + 当前状态 + 暂停按钮；点「高级」才展开开关与队列。
 
+## 工具不可见时怎么说
+如果当前会话没有暴露 `render_autopilot_panel`，助手必须原样说明：
+
+```text
+当前会话没有暴露 render_autopilot_panel，无法打开原生面板。
+请新开 Codex 会话或重启 Codex 桌面端，再确认 Plugins -> Personal -> Codex 自动挡 已启用。
+```
+
+正确的现场验证顺序：
+
+1. 先在 Codex 里新开一个对话，不要复用刷新插件前创建的旧对话。
+2. 如果新对话仍看不到工具，完全退出 Codex 桌面端再打开；插件 MCP 工具在会话启动时注入，旧会话不会热更新。
+3. 用 `codex mcp get codex-autopilot` 确认本机注册仍为 `enabled: true`；若不是，重新执行自动挡安装器的 `--refresh-plugin --verify <真实项目路径>`。
+4. 新会话里说“请调用 render_autopilot_panel 工具打开自动挡面板”。只有 MCP App / 内联卡片 / 侧栏面板出现才算成功。
+
+禁止把 `docs/CONTROL_PLANE.html`、`companion_api.py panel`、`kgctl dash --open`
+或任何浏览器页面当作“自动挡面板”交付。它们只是内部诊断驾驶舱，不是原生面板。
+只有在 `render_autopilot_panel` 调用成功，并且结果以 MCP App / 内联卡片 /
+对话侧栏 / 全局侧栏出现时，才算“面板已打开”。
+
 ## 怎么确认新版本真的加载
 
 打开面板后先看「运行状态」和「交付前自检」：
