@@ -1626,7 +1626,54 @@ def test_installer_requires_clean_source():
             home2 / "plugins" / "codex-autopilot" / "releases" / installed_version)
         assert not dirty_release.exists(), "拒绝之后仍留下了不可变版本目录"
 
-    print("selftest ok: 不可变安装记录唯一来源提交，并拒绝把 dirty 工作区混入发布。")
+        # preview.116 事故：从非 git 的 release 目录换代时，旧安装器会把
+        # commit=null/dirty=true 写进新版本，现场于是静默跑回旧代码。必须拒绝。
+        no_commit_source = root / "source-no-commit"
+        shutil.copytree(OPS.parent, no_commit_source,
+                        ignore=shutil.ignore_patterns(".git"))
+        _make_state_root(no_commit_source)
+        (no_commit_source / ".codex-autopilot-source.json").write_text(
+            _json.dumps({"version": installed_version, "commit": None, "dirty": True}),
+            encoding="utf-8")
+        home3 = root / "home-no-commit"
+        home3.mkdir()
+        env["HOME"] = str(home3)
+        no_commit = run(["bash", str(no_commit_source / "install.sh"),
+                         "--trunk", str(trunk), "--no-seed", "--no-marketplace",
+                         "--no-companion", str(no_commit_source)],
+                        env=env, check=False)
+        combined = no_commit.stdout + no_commit.stderr
+        assert no_commit.returncode != 0, f"无 commit 的 release 被误发布:\n{combined}"
+        assert "拒绝发布不可变版本" in combined, combined
+        no_commit_release = (
+            home3 / "plugins" / "codex-autopilot" / "releases" / installed_version)
+        assert not no_commit_release.exists(), "拒绝之后仍留下了不可追溯版本目录"
+
+        # 反向锁：从已有真实 release 目录换代时，必须继承它的 commit，
+        # 不能因为目录本身不是 git worktree 就拒绝正常回退/重装。
+        proven_source = root / "source-proven-release"
+        shutil.copytree(OPS.parent, proven_source,
+                        ignore=shutil.ignore_patterns(".git"))
+        _make_state_root(proven_source)
+        (proven_source / ".codex-autopilot-source.json").write_text(
+            _json.dumps({"version": installed_version, "commit": commit, "dirty": False}),
+            encoding="utf-8")
+        home4 = root / "home-proven-release"
+        home4.mkdir()
+        env["HOME"] = str(home4)
+        proven = run(["bash", str(proven_source / "install.sh"),
+                      "--trunk", str(trunk), "--no-seed", "--no-marketplace",
+                      "--no-companion", str(source)],
+                     env=env, check=False)
+        assert proven.returncode == 0, f"带真实来源的 release 换代失败:\n{proven.stdout}\n{proven.stderr}"
+        proven_release = (
+            home4 / "plugins" / "codex-autopilot" / "releases" / installed_version)
+        proven_meta = _json.loads(
+            (proven_release / ".codex-autopilot-source.json").read_text(encoding="utf-8"))
+        assert proven_meta == {"version": installed_version, "commit": commit, "dirty": False}, \
+            f"release 换代没有继承来源提交：{proven_meta}"
+
+    print("selftest ok: 不可变安装记录唯一来源提交，拒绝 dirty/不可追溯发布，并允许带真实元数据的 release 换代。")
 
 
 def test_installer_shell_portability():
