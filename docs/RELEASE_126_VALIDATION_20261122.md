@@ -372,3 +372,23 @@ REAL_TASK_INTAKE_EXIT=0
 用户选择 A：`0.6.0-preview.126` 切换为 live。好处是当前会话之后可以使用新动态验收专项执行器；代价是会改动本机插件入口和后台进程，当前会话已加载的工具未必立刻更新，可能需要新开 Codex 会话确认。
 
 用户选择 B：保持 `0.6.0-preview.125`。好处是当前现场完全不动；代价是动态验收专项执行器只在候选包和仓库里可追溯，本机 live 仍然不生效。
+
+## 13. 远端闭环
+
+候选分支推送成功后，已确认 `origin/main` 未漂移且候选是其快进后继，随后把验证过的候选推入主线：
+
+```text
+To https://github.com/douxian123/codex-autopilot.git
+   35c53856..475c5377  HEAD -> main
+PUSH_MAIN_EXIT=0
+```
+
+回读结果：
+
+```text
+REMOTE_MAIN=475c537783c2bd525a8298a917d6305a04cd5feb	refs/heads/main
+ORIGIN_MAIN=475c537783c2bd525a8298a917d6305a04cd5feb
+LOG_ORIGIN_MAIN=475c5377 docs(release): add real task acceptance scope evidence
+```
+
+这说明 `0.6.0-preview.126` 的版本号和本报告已经进入远端 `main`。它只代表源码和发布证据可追溯，不代表本机 live 已切换到 `.126`；现场仍保持 `0.6.0-preview.125`。
