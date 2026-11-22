@@ -1,6 +1,6 @@
 # 项目状态（自动生成，勿手改）
 
-> 生成时间 2026-11-22 16:53:30　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
+> 生成时间 2026-11-22 17:51:12　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
 
 ## 一、产品主线
 
@@ -33,6 +33,9 @@
 **待修的问题（bug / 架构）**
 - `L-0007` 【launchd 陈旧项·非 Stop 复发链】freshness 门禁真机实测 4 条 stale：ai.danta.codex-proxy-watchdog
 
+**等你确认（机器已做完，好不好只有你能判）**
+- `L-0019` 打开自动挡面板自然语言触发不稳定：用户说“打开自动挡面板”后，Codex 会话只分析入口、没有调用 render_autopilot_panel
+
 ## 三、问题台账
 
 **gate（1 待处理）**
@@ -42,38 +45,129 @@
 
 ## 四、进展
 
-- `P-0197` [已落盘] @ `b5cb485745` codex/truthctl-runtime-precedence-20261122 验证门禁通过，已落盘 main @ b5cb485745；改动 2 个文件：ops/kgctl.py（+32/-4）、ops/test-runtime-truthctl-selection.py（+24/-1）｜2 files changed, 56 insertions(+), 5 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0180
-- `P-0198` [在途] 受控换代 0.6.0-preview.124 完成：修复在用户现场生效
-- `P-0199` [在途] 受控换代 0.6.0-preview.125：现场生效门禁随版发布
 - `P-0200` [已落盘] @ `2f1a0398bd` 网络恢复后单次核验并推送：curl -sS -o /dev/null -w "%{http_code}\n" --connect-timeout 5 --max-time 10 https://github.com -> 200, CURL_EXIT=0；git fetch origin main -> FETCH_EXIT=0, LOCAL=2f1a0398bd2875cbf4bc21c243b62a09b93e1451, ORIGIN_MAIN=60aa31beb80fb010777ba562ae7cf92d1fd3babd, ANCESTOR_EXIT=0；git push origin codex/release-124-truthctl-runtime-20261122:main -> 60aa31be..2f1a0398, PUSH_EXIT=0；git ls-remote origin refs/heads/main -> 2f1a0398bd2875cbf4bc21c243b62a09b93e1451 refs/heads/main, LS_REMOTE_EXIT=0。本机现场：install-state 0.6.0-preview.125, source_commit=2f1a0398bd2875cbf4bc21c243b62a09b93e1451；daemon PID 70368；runtime-install-contract status ok, unknown=[], failures=[]。
 - `P-0201` [已落盘] @ `780021fb69` codex/release-124-truthctl-runtime-20261122 验证门禁通过，已落盘 main @ 780021fb69；改动 11 个文件：docs/PRE_ACCEPTANCE_STANDARD.md（+27/-6）、docs/PRODUCT_CONTRACT.md（+1/-1）、ops/acceptance_dictionary.py（+46/-9）、ops/central_mcp.py（+19/-0）、ops/dynamic_acceptance_scope.py（+21/-8），另有 6 个文件｜11 files changed, 276 insertions(+), 40 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0203` [已落盘] @ `c31ee080b3` cwd=/Users/danta/.newmax/workspace/ca-truthctl-runtime-precedence-20261122-trunk-trunk; python3 ops/test-truth-sync-ignored-views.py -> EXIT=0; python3 ops/test-specialized-acceptance-executors.py -> EXIT=0; python3 ops/test-pre-acceptance.py -> EXIT=0; python3 ops/test-acceptance-dictionary.py -> EXIT=0; python3 ops/test-dynamic-acceptance-scope.py -> EXIT=0; python3 ops/test-generate-acceptance-scope-tool.py -> EXIT=0; python3 ops/test-acceptance-evidence.py -> EXIT=0; python3 ops/test-gate-registration.py -> EXIT=0; python3 -m py_compile ... -> PY_COMPILE_EXIT=0; python3 -u ops/selftest.py -> SELFTEST_EXIT=0; git push origin HEAD:refs/heads/main -> PUSH_EXIT=0; git ls-remote origin refs/heads/main -> c31ee080b3efb2202acd62b6af53aef29b8f3ef3
 - `P-0204` [已落盘] @ `c31ee080b3` 动态验收专项执行器已进入 origin/main；专项和最小充分范围门禁通过；现场安装版本暂未换代，未宣称用户现场已生效
 - `P-0206` [在途] 机器侧已修并换代到 live .128：setup/MCP 触发文案已落盘，trigger/gate/panel 渲染门禁与 MCP 实调全 PASS；宿主面板视觉与真实打开需用户新开会话确认
+- `P-0207` [已落盘] @ `a66902bcb0` codex/resolve-land-clean-worktree-gate-20261122 验证门禁通过，已落盘 main @ a66902bcb0；改动 1 个文件：CONTEXT.md（+8/-0）｜1 file changed, 8 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- `P-0208` [在途] @ `300ea39314` codex/disk-admission-fix-20261105 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
+- `P-0209` [在途] @ `07b17402d8` codex/disk-reap-into-repo 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
 
 ## 五、验收进度
 
-**需要你验收（6）**
-- `A-0005` [P0] 菜单栏 Companion 在真实桌面启动后可用
-  - 1) 终端跑 bash install.sh（会装到 ~/Applications）2) open ~/Applications/CodexAutopilotCompanion.app 3) 看菜单栏是否出现自动挡图标 4) 点图标：应看到总开关、当前任务、需要处理、派活入口 5) ⌥⌘D 应能打开完整面板
-- `A-0006` [P0] 面板首屏在 Codex 里显示真实状态，关总闸后有明确关闭态
-  - 1) 在 Codex 里打开自动挡面板 2) 首屏应显示：是否开启、当前项目、正在处理什么、下一步、需要你处理 3) 点「原生自检」，结果应如实（连不上就说连不上）4) 关掉总闸，首屏应显示已关闭、Codex 已恢复原生状态
-- `A-0007` [P0] 跨应用入口逐个可用（快捷键/截图/附件/服务菜单）
-  - 1) 在任意 app 里按 ⌥⌘S 截图并加一句话派活 2) 把文件拖到菜单栏图标上派活 3) 选中一段文本 → 服务 → 发送到 Codex 自动挡 4) 每次派完，面板里都应出现对应的新任务，而不是各存一份
-- `A-0008` [P0] 一条真实需求端到端走完并留证据
-  - 1) 用任意入口提一条真实小需求 2) 观察它自动归类、面板出现阶段变化 3) 每个阶段面板与菜单栏状态一致 4) 结束时能看到真实验证命令与收口结果，而不是只有一句完成
+**需要你验收（2）**
 - `A-0022` [P0] 需要用户决策/验收时主动提醒并说明下一步
   - 1) 在正常 macOS 终端安装并打开 Companion 2) 制造或等待一项人工验收/需要拍板事项 3) 确认菜单栏出现警示图标和 macOS 通知 4) 打开 Codex 面板确认写清具体动作 5) 清掉事项后确认不再重复提醒
 - `A-0044` [P0] preview.11 真实桌面宿主原生派活与 Companion 进程就绪（机器自证，人工验收仍待确认）
   - 1) 打开菜单栏 Companion 2) 看到自动挡图标 3) 点开看到总开关/当前任务/派活入口 4) ⌥⌘D 回到 Codex 完整面板
 
-**已机器验收（36）**
-- `A-0001` [P0] 安装器完整路径（含菜单栏 Companion 真编译）在隔离 HOME 里真跑通
-- `A-0002` [P0] 全量自检 19 组通过
-- `A-0003` [P1] 菜单栏 Companion 产物是可安装的 .app（arm64、可执行、已签名、带服务菜单）
-- `A-0004` [P0] 总开关关掉后所有自动动作被拒绝，且不删除任何现场
-- `A-0009` [P0] 预览包验收可用一条命令跑完并如实报错
-- `A-0010` [P0] 统一入口真实端到端：派单→自动归类→台账→主线→面板
+**已机器验收（136）**
+- `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
+- `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
+- `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
+- `A-0005` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
+- `A-0006` [P1] codex/release-lineage-gate-20261118 门禁预跑（未落盘）
+- `A-0007` [P1] codex/truth-sync-union-20261118 门禁预跑（未落盘）
+- `A-0008` [P1] codex/truth-restore-union-20261118 门禁预跑（未落盘）
+- `A-0009` [P1] codex/gate-selftest-release-dir-20261118 门禁预跑（未落盘）
+- `A-0139` [P1] codex/resolve-autopilot-parallel-runtime-fix-20261019 落盘验收
+- `A-0140` [P1] codex/cli-help-guard-20261120 门禁预跑（未落盘）
+- `A-0141` [P1] codex/resolve-autopilot-exec-recover-min-20261020 落盘验收
+- `A-0071` [P1] 补记 codex/daemon-first-install-20261118 落盘验收（原 A-0006 被覆盖）
+- `A-0072` [P1] codex/truth-restore-land-record-20261118 落盘验收
+- `A-0073` [P1] codex/jsonl-truth-no-overwrite-20261118 落盘验收
+- `A-0074` [P1] codex/state-root-freshness-20261118 落盘验收
+- `A-0075` [P1] codex/truth-restore-union-20261118 落盘验收
+- `A-0076` [P1] codex/gate-selftest-release-dir-20261118 落盘验收
+- `A-0077` [P1] codex/tmp-owner-cleanup-20261118 门禁预跑（未落盘）
+- `A-0078` [P1] codex/tmp-owner-cleanup-20261118 落盘验收
+- `A-0081` [P1] codex/tmp-owner-cleanup-20261118 门禁预跑（未落盘）
+- `A-0082` [P1] codex/tmp-owner-cleanup-20261118 落盘验收
+- `A-0083` [P1] codex/panel-windshield-20261119 落盘验收
+- `A-0084` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
+- `A-0088` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
+- `A-0085` [P1] codex/guard-release-version-20261119 落盘验收
+- `A-0086` [P1] codex/guard-release-version-20261119 落盘验收
+- `A-0087` [P1] codex/panel-route-contract-20261119 落盘验收
+- `A-0089` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
+- `A-0090` [P1] codex/truth-close-open-ledger-20261119 落盘验收
+- `A-0091` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
+- `A-0092` [P1] codex/guard-release-version-20261119 落盘验收
+- `A-0094` [P1] codex/selftrack-mainline-20261119 落盘验收
+- `A-0095` [P1] codex/panel-interaction-design-20261119 落盘验收
+- `A-0096` [P1] codex/panel-compact-health-20261119 落盘验收
+- `A-0097` [P1] codex/route-health-20261119 落盘验收
+- `A-0098` [P1] codex/panel-attention-funnel-20261119 落盘验收
+- `A-0099` [P1] codex/context-self-learning-20261119 落盘验收
+- `A-0100` [P1] codex/panel-attention-hierarchy-20261119 落盘验收
+- `A-0101` [P1] codex/panel-human-copy-20261119 落盘验收
+- `A-0102` [P1] codex/authorized-followup-20261119 落盘验收
+- `A-0103` [P1] codex/context-self-learning-20261119 落盘验收
+- `A-0104` [P1] codex/panel-attention-final-copy-20261119 落盘验收
+- `A-0105` [P1] codex/preview103-live-release-truth-20261119 落盘验收
+- `A-0107` [P1] codex/authorized-followup-20261119 落盘验收
+- `A-0108` [P1] codex/arch-boundaries-port-20261119 落盘验收
+- `A-0109` [P1] codex/steward-contract-20261119 落盘验收
+- `A-0110` [P1] codex/context-learning-remote-identity-20261119 落盘验收
+- `A-0111` [P1] codex/context-learning-noise-guard-20261119 落盘验收
+- `A-0112` [P1] codex/release-selftest-fixture-20261119 落盘验收
+- `A-0113` [P1] codex/route-review-20261119 落盘验收
+- `A-0114` [P1] codex/release-docs-fixture-20261119 落盘验收
+- `A-0115` [P1] codex/runtime-docs-assets-20261119 落盘验收
+- `A-0116` [P1] codex/cross-project-constraint-guard-20261119 落盘验收
+- `A-0117` [P1] codex/panel-experience-design-20261119 落盘验收
+- `A-0118` [P1] codex/context-archive-20261119 落盘验收
+- `A-0119` [P1] codex/install-clean-source-fixture-20261119 落盘验收
+- `A-0120` [P1] codex/resolve-route-review-20261119 落盘验收
+- `A-0121` [P1] codex/runtime-freshness-20261119b 落盘验收
+- `A-0123` [P1] codex/pm-closure-loop-20261119 落盘验收
+- `A-0124` [P1] codex/native-panel-design-contract-20261119 落盘验收
+- `A-0125` [P1] codex/acceptance-loop-20261119 落盘验收
+- `A-0126` [P1] codex/native-panel-truth-close-20261119 落盘验收
+- `A-0127` [P1] codex/release-contract-final-20261119b 落盘验收
+- `A-0128` [P1] codex/runtime-freshness-20261119c 落盘验收
+- `A-0129` [P1] codex/release-preview-104-20261119 落盘验收
+- `A-0130` [P1] codex/runtime-loop-20261119 落盘验收
+- `A-0131` [P1] codex/context-release-104-20261120 落盘验收
+- `A-0132` [P1] codex/release-contract-layout-20261119 落盘验收
+- `A-0133` [P1] codex/resolve-runtime-freshness-20261119b 落盘验收
+- `A-0122` [P1] codex/release-contract-layout-20261119 落盘验收
+- `A-0134` [P1] codex/resolve-install-architecture-doc-20261119 落盘验收
+- `A-0135` [P1] codex/global-routing-review-20261120 落盘验收
+- `A-0136` [P1] codex/resolve-snapshot-budget-archive-20261113 落盘验收
+- `A-0137` [P1] codex/resolve-autopilot-close-gate-20261026 落盘验收
+- `A-0142` [P1] codex/resolve-autopilot-resolve-stderr 落盘验收
+- `A-0147` [P1] codex/resolve-autopilot-routing-context-20261119 落盘验收
+- `A-0148` [P1] codex/resolve-eval-loop-judge-20261110 落盘验收
+- `A-0149` [P1] codex/resolve-resource-admission-verify-narrowing-20261115 落盘验收
+- `A-0151` [P1] codex/resolve-reap-branch-preserve-20261111 落盘验收
+- `A-0155` [P1] codex/cross-entry-route-control-20261120 门禁预跑（未落盘）
+- `A-0093` [P1] codex/guard-release-version-20261119 门禁预跑（未落盘）
+- `A-0153` [P1] codex/resolve-autopilot-truth-sync-failclosed 落盘验收
+- `A-0152` [P1] codex/pm-research-decision-20261120 门禁预跑（未落盘）
+- `A-0154` [P1] codex/pm-research-decision-20261120 落盘验收
+- `A-0156` [P1] codex/cross-entry-route-control-20261120 门禁预跑（未落盘）
+- `A-0157` [P1] codex/cross-entry-route-control-20261120 落盘验收
+- `A-0158` [P1] codex/resolve-guard-release-version-20261119 落盘验收
+- `A-0159` [P1] codex/resolve-ledger-normalization-20261120 落盘验收
+- `A-0161` [P1] 0.6.0-preview.105 换代验证
+- `A-0162` [P1] codex/resolve-dedupe-load-20261120 落盘验收
+- `A-0164` [P1] codex/project-autonomy-main-port-20261121 门禁预跑（未落盘）
+- `A-0165` [P1] codex/project-autonomy-main-port-20261121 落盘验收
+- `A-0170` [P1] codex/experience-evidence-gate-20261121 落盘验收
+- `A-0172` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
+- `A-0174` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
+- `A-0173` [P1] codex/codesign-clone-reap-resilience-20261122 落盘验收
+- `A-0175` [P1] codex/context-projection-stale-wt-20261122 落盘验收
+- `A-0176` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
+- `A-0177` [P1] codex/context-projection-stale-wt-20261122 落盘验收
+- `A-0178` [P1] codex/installer-source-provenance-20261122 落盘验收
+- `A-0179` [P1] codex/disk-gate-immediate-reap-20261122 落盘验收
+- `A-0180` [P1] codex/truthctl-runtime-precedence-20261122 门禁预跑（未落盘）
+- `A-0181` [P1] codex/truthctl-runtime-precedence-20261122 落盘验收
+- `A-0182` [P1] codex/release-124-truthctl-runtime-20261122 落盘验收
+- `A-0183` [P1] 动态验收专项执行器远端合入门禁验收
 - `A-0011` [P0] 全量自检 20 组通过（覆盖 A-0002 的组数）
 - `A-0012` [P0] 面板首屏（含关闭态）每个值都来自真实控制层数据
 - `A-0013` [P0] 装出来的副本自带绑定：kgctl 认得出项目、MCP 能应答（不带任何环境变量）
@@ -104,10 +198,12 @@
 - `A-0043` [P1] codex/native-socket-lstat-v7 落盘验收
 - `A-0045` [P1] 真实入口端到端机器闭环：Companion 派需求->归类->台账->面板逻辑检查->收口
 - `A-0046` [P1] Companion 作为 UIElement 菜单栏应用在系统注册且驾驶舱可打开（机器自证）
+- `A-0184` [P1] codex/resolve-land-clean-worktree-gate-20261122 落盘验收
 
 ## 六、决策记录
 
-- `D-0001` Companion 打开 Codex 用 bundle id 而不是路径
+- `D-0001` 自动挡架构收敛为两平面七管家与一层全局健康
+- `D-0003` 受控换代边界与 MCP 重载策略
 - `D-0002` 北极星首问闭环率的唯一口径
 
 ## 七、产品状态（产品今天是怎么工作的）
@@ -130,9 +226,15 @@
 
 ## 八、判断逻辑（同一个判断，人只做一次）
 
-- `J-0001` [product] 需要用户行动的状态必须同时在主面板和菜单栏显性出现：面板说明要做什么，菜单栏负责把注意力拉回来；同一批待办去重提醒。
+- `J-0010` [gate] 面板新增能力必须同步进工具契约门禁和渲染状态门禁，不能只靠功能测试：功能合入不等于回归防线存在。
+- `J-0011` [process] 修复完成后必须同步翻 ledger 状态，否则闭环率会把已修复问题算成未闭环。
+- `J-0012` [arch] 常驻自追踪必须幂等：真相内容没变时不重写生成视图和生成时间。
+- `J-0013` [architecture] 管家是责任视图而非人类岗位表；运行时按 execute/control/evaluate 分工，状态管家的路线效用职责只做只读检测与授权后的复核闭环，不声称全局最优。
+- `J-0014` [arch] 路线与效用健康不是新增管家或自动纠偏器，而是 evaluate 层的只读责任视图；最优是可证伪闭环，目标是目标可核对、偏离可发现、纠偏有边界、纠偏后复测。
+- `J-0016` [process] CLI 写命令的帮助探测不得用 unsupported flag 试探；未知参数可能被子命令当成标题或正文并写入账本，先读总帮助或源码，确认支持后再调用。
+- `J-0019` [workflow] 源码合并不等于现场生效：换代必须回读 install-state、release 元数据、daemon plist 和 live PID 四重一致；取不到写 unknown，不写 0 或正常。
+- `J-0001` [product-architecture] 自动挡架构按“谁能改变事实”分平面，不按愿望数量加管家；全局健康只读，PM 不自动追问，验收截图不替人收口。
 - `J-0002` [process] 原生直连派活的最后一道闸是官方 remote-control 的 ChatGPT 登录/配对，不是 socket 路径或协议；不能用 API key 冒充 ChatGPT 身份，也不应把独立 app-server 会话包装成桌面宿主实时窗口。
 - `J-0003` [product] 机器闭环和人工验收不能混为一谈
 - `J-0017` [process] 源码合并不等于现场生效：换代必须回读 install-state、release 元数据、daemon plist 和 live PID 四重一致；取不到写 unknown，不写 0 或正常。 --scope workflow --why 2026-11-22 宪法页修复在源码和手工 tick 已通过，但当前安装版 .121 仍不含修复；只有受控换代并回读现场才能证明用户现场生效。
 - `J-0018` [workflow] 源码合并不等于现场生效：换代必须回读四重现场证据
-
