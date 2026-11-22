@@ -5648,9 +5648,27 @@ def cmd_land(args):
         sys.exit(f"已有 land 在进行（{LOCK}）")
     OPS.mkdir(parents=True, exist_ok=True)
     try:
-        _align_main()
-        pre = git("rev-parse", MAIN)
-        wt = _trunk_worktree()
+        # Check the configured trunk before aligning refs or switching branches.
+        # A shared checkout may hold unrelated user edits (for example
+        # ops/tasks/conflict_burden.json). The clean one-shot worktree already
+        # exists for this case, but _align_main()/reset_trunk_head() used to
+        # attempt a checkout first and fail closed on those edits.
+        trunk_before = _trunk_worktree()
+        dirty_trunk = [line for line in trunk_status(trunk_before)
+                       if not is_truth_path(line)
+                       and not _is_zero_loss_noise(
+                           line, _regenerable_head_paths(trunk_before))]
+        if dirty_trunk:
+            print(f"  ! 主干工作树有 {len(dirty_trunk)} 项非真相层改动，改用一次性干净落盘工作树")
+            print("  " + "\n  ".join(dirty_trunk[:8])[:600])
+            _align_main()
+            pre = git("rev-parse", MAIN)
+            clean_wt = _clean_land_worktree()
+            wt = clean_wt
+        else:
+            _align_main()
+            pre = git("rev-parse", MAIN)
+            wt = trunk_before
         reset_trunk_head(wt)
         _mirror_truth_into_trunk(wt)
         head_regenerable = _regenerable_head_paths(wt)
