@@ -63,6 +63,10 @@ PANEL_ROWS = (
          lambda f: bool(f.get("paused"))),
     _row("working/exec", UI_WORKING, "正在自动实现一条需求", "machine",
          lambda f: bool(f.get("exec_running"))),
+    # 持续运行没接上当前项目时，自动推进根本不会发生。它必须盖过「判不清归属」
+    # 这类待办，否则面板会同时说「不用你操作」和「需要你说一句」。
+    _row("daemon/problem", UI_SESSION_ONLY, "持续运行未连接，当前项目暂不推进", "system",
+         lambda f: bool(f.get("daemon_problem"))),
     _row("person/blocked", UI_BLOCKED, "有分支需要你拍板", "person",
          lambda f: int(f.get("blocked_count") or 0) > 0),
     _row("person/review", UI_BLOCKED, "需要你验收", "person",
@@ -78,8 +82,10 @@ PANEL_ROWS = (
     _row("idle", UI_IDLE, "运行中，暂无待办", "machine", lambda f: True),
 )
 
-# 「常驻没接上」的文案依赖是否在服务别的项目，所以单独留一条可覆盖的。
-SESSION_ONLY_OTHER_PROJECT = "当前项目未连接常驻守护"
+# 「常驻没接上」的完整解释只进提醒条；这里只保留短状态，避免同一事实在首屏说三次。
+SESSION_ONLY_OTHER_PROJECT = "系统在服务另一个项目，这个项目暂时不需要你操作"
+# 同一事实在首屏只说一次：alert 给完整结论，stage label 只给短状态。
+CURRENT_PROJECT_IDLE = "当前项目待命"
 
 # 单个工作项走到哪。台账的 status 词形很杂（open/todo/doing/wip/blocked…），
 # 归一成这四个之后，面板和台账才说得上是同一件事。
@@ -148,8 +154,9 @@ def panel_stage(facts=None) -> dict:
             hit = False
         if hit:
             label = row["label"]
-            if row["stage"] == "session_only" and f.get("daemon_other_project"):
-                label = SESSION_ONLY_OTHER_PROJECT
+            if (row["stage"] in ("session_only", "daemon/problem")
+                    and f.get("daemon_other_project")):
+                label = CURRENT_PROJECT_IDLE
             return {"stage": row["stage"], "ui_state": row["ui_state"],
                     "label": label, "owner": row["owner"]}
     # PANEL_ROWS 末行恒真，走到这里说明表被改坏了；给一个安全结论而不是崩掉面板。

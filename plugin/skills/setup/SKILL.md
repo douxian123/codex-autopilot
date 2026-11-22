@@ -1,12 +1,12 @@
 ---
 name: setup
-description: Codex 自动挡的入门引导。用户第一次装好、问“这个怎么用 / 总输入框在哪 / 怎么开怎么关 / 现在开着吗 / 它到底帮我做了什么”时使用。用大白话把一件事讲清楚：你平时打字的那个 Codex 输入框就是总输入框，零散问题直接说，其余交给自动挡。
+description: Codex Autopilot 的入门引导。用户第一次装好、问“这个怎么用 / 在哪里打开 / 怎么开怎么关 / 现在开着吗”时使用。用大白话把一件事讲清楚：继续用原来的 Codex 输入框，其余交给 Autopilot。
 ---
 
-# Codex 自动挡 · 入门
+# Codex Autopilot · 入门
 
 ## 一句话
-你平时打字的那个 **Codex 输入框，就是总输入框**。视觉不对、体验别扭、冒出一个 bug——
+你平时打字的那个 **Codex 输入框**就是入口。视觉不对、体验别扭、冒出一个 bug——
 原样说出来就行，不用新建对话、不用挑分支、不用派给哪个角色。归类、记录、追踪、收口由自动挡自己做。
 
 ## 它替你做了什么
@@ -25,29 +25,29 @@ description: Codex 自动挡的入门引导。用户第一次装好、问“这�
    ./install.sh --refresh-plugin --verify /path/to/your-project
    ```
    这里两个路径都要替换成真实绝对路径；`/path/to/your-project` 必须存在。
-2. 重启 Codex 桌面端 / CLI，在 Plugins → Personal 里确认「Codex 自动挡」已安装。
+2. 重启 Codex 桌面端 / CLI，在 Plugins → Personal 里确认「Codex Autopilot」已安装。
 3. 回到任意项目的对话，直接说话。例如：
    > 左边导航排版坏了，顺便这个按钮点着没反应，另外首页有点慢。
-4. 需要看状态时，说一句“打开自动挡面板”。这句话是一个明确动作：助手必须马上调用
+4. 需要看状态时，说一句“打开 Codex Autopilot 面板”。这句话是一个明确动作：助手必须马上调用
    `render_autopilot_panel` 工具，不要只解释入口在哪里，也不要只去侧栏里找按钮。
-   面板里有：怎么用、现在在做什么、为什么、替你完成了什么、随时暂停。
+   面板里有：需要你的决定、系统正在做什么、真正闭环了什么，并可随时暂停。
    点「高级」还能看到：产品状态（它现在为你做什么）、判断逻辑（同一个判断只做一次）、
    最近一次自验证（真实跑过的命令与结果）。
 
 ## 面板在哪
-- 对话里说“打开自动挡面板” -> 必须调用 `render_autopilot_panel` 工具，结果以
+- 对话里说“打开 Codex Autopilot 面板” -> 必须调用 `render_autopilot_panel` 工具，结果以
   MCP App / 内联卡片形式直接出现在对话里。
-- 给助手的精确指令：`请调用 render_autopilot_panel 工具打开自动挡面板。`
-- 全局侧栏 / 对话侧栏的「自动挡」入口 -> 宿主渲染的完整面板，不另开浏览器。
-- 开关：Plugins -> Personal -> Codex 自动挡 -> 设置；由 Codex 用原生设置控件渲染。
-- 面板第一屏就是给不熟的人看的：怎么用 + 当前状态 + 暂停按钮；点「高级」才展开开关与队列。
+- 给助手的精确指令：`请调用 render_autopilot_panel 工具打开 Codex Autopilot 面板。`
+- 全局侧栏 / 对话侧栏的「Autopilot」入口 -> 宿主渲染的完整面板，不另开浏览器。
+- 开关：Plugins -> Personal -> Codex Autopilot -> 设置；由 Codex 用原生设置控件渲染。
+- 面板第一屏只回答三件事：需要你决定什么、系统正在做什么、真正闭环了什么；点「高级」才展开开关与证据。
 
 ## 工具不可见时怎么说
 如果当前会话没有暴露 `render_autopilot_panel`，助手必须原样说明：
 
 ```text
 当前会话没有暴露 render_autopilot_panel，无法打开原生面板。
-请新开 Codex 会话或重启 Codex 桌面端，再确认 Plugins -> Personal -> Codex 自动挡 已启用。
+请新开 Codex 会话或重启 Codex 桌面端，再确认 Plugins -> Personal -> Codex Autopilot 已启用。
 ```
 
 正确的现场验证顺序：
@@ -55,14 +55,14 @@ description: Codex 自动挡的入门引导。用户第一次装好、问“这�
 1. 先在 Codex 里新开一个对话，不要复用刷新插件前创建的旧对话。
 2. 如果新对话仍看不到工具，完全退出 Codex 桌面端再打开；插件 MCP 工具在会话启动时注入，旧会话不会热更新。
 3. 用 `codex mcp get codex-autopilot` 确认本机注册仍为 `enabled: true`；若不是，重新执行自动挡安装器的 `--refresh-plugin --verify <真实项目路径>`。
-4. 新会话里说“请调用 render_autopilot_panel 工具打开自动挡面板”。只有 MCP App / 内联卡片 / 侧栏面板出现才算成功。
+4. 新会话里说“请调用 render_autopilot_panel 工具打开 Codex Autopilot 面板”。只有 MCP App / 内联卡片 / 侧栏面板出现才算成功。
    工具能被 `tool_search` 搜到，不等于当前会话能直接调用。若手写调用原样返回
    `unsupported call: mcp__codex_autopilot__render_autopilot_panel`，这是宿主把工具放在
    deferred namespace，没有暴露 direct function；不要继续试 `.` / `::` / `__` 变体，
    也不要用网页或浏览器面板冒充。此时只能新开会话或重启宿主，让工具重新注入。
 
 禁止把 `docs/CONTROL_PLANE.html`、`companion_api.py panel`、`kgctl dash --open`
-或任何浏览器页面当作“自动挡面板”交付。它们只是内部诊断驾驶舱，不是原生面板。
+或任何浏览器页面当作“Codex Autopilot 面板”交付。它们只是内部诊断驾驶舱，不是原生面板。
 只有在 `render_autopilot_panel` 调用成功，并且结果以 MCP App / 内联卡片 /
 对话侧栏 / 全局侧栏出现时，才算“面板已打开”。
 
@@ -96,7 +96,7 @@ python3 ~/plugins/codex-autopilot/releases/<version>/ops/codex_native.py probe -
 ## 常用操作（用户可以直接说，也可以让面板做）
 - “暂停自动挡” / “恢复自动挡” -> 暂停后不再启动新工作，当前 Git 操作安全收尾。
 - “现在检查一轮” -> 立刻跑一个周期（暂停中会拒绝，不会偷偷跑）。
-- 高级里可开关：自动合入安全改动、自动拆解冲突、自动移植小改动、后台常驻。
+- 高级里可开关：自动合入安全改动、自动拆解冲突、自动移植小改动、持续运行。
 
 ## 边界
 - 它不改 Codex 本体、不换输入框、不要求你改工作习惯。

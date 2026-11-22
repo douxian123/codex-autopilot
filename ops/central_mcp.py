@@ -29,6 +29,26 @@ from datetime import datetime, timezone
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "codex-autopilot"
 
+# 面向用户的任务等级：只暴露三个用户能判断的词，底层仍映射到 model + effort。
+MODEL_ROUTE_LEVELS = ("quick", "standard", "deep")
+MODEL_ROUTE_DEFAULTS = {
+    "quick": {"model": None, "reasoning_effort": "low"},
+    "standard": {"model": None, "reasoning_effort": "medium"},
+    "deep": {"model": None, "reasoning_effort": "high"},
+}
+MODEL_ROUTE_EFFORTS = ("low", "medium", "high")
+MODEL_ROUTE_LABELS = {
+    "quick": "快速处理",
+    "standard": "标准施工",
+    "deep": "深度决策",
+}
+GOAL_OVERRIDE_MAX = 240
+MODEL_ROUTE_DESCRIPTIONS = {
+    "quick": "小修、门禁、界面来回，优先响应",
+    "standard": "常规实现与验证，按项目默认通道",
+    "deep": "架构、PRD、取舍判断，允许更慢更细",
+}
+
 # 本进程启动时所在的 ops/，也就是**正在跑的这份代码**。
 # 注意它不等于「现在装的是哪一份」：Codex 升级插件会删掉旧的版本目录，而这个
 # 已经在跑的进程不会重启（见 2026-11-16 的陈旧进程事故）。所以凡是去调
@@ -615,7 +635,7 @@ def _renderer_contract_summary():
 def _steward_health(payload):
     """七管家健康条：把七个管家的真实状态收敛成一份面板可读的清单。
 
-    用户问过「面板要怎么做」，也给过「万法归一入口 + 背后许多管家」的完整设想。
+    用户问过「面板要怎么做」，也给过「单一入口 + 背后许多管家」的完整设想。
     面板此前只散着显示路由/合并/实现/项目经理的一部分，状态与上下文管家按到最近
     才有卡 —— 没有一个地方能一眼看出**哪个管家断了**。这里只做**聚合**，判据全部
     来自各处已经算好的真实字段，不重算、不新增第二套真相。
@@ -1384,7 +1404,7 @@ TOOLS = [
     },
     {
         "name": "autopilot_status",
-        "description": "自动挡的当前状态：总开关 on/draining/off/error、自动开关、Codex 原生 task/worktree 映射（仅已有真实记录）、正在做什么和需要处理的事项。面板用它渲染；fast=true 只读缓存。",
+        "description": "Codex Autopilot 的当前状态：总开关 on/draining/off/error、自动开关、Codex 原生 task/worktree 映射（仅已有真实记录）、正在做什么和需要处理的事项。面板用它渲染；fast=true 只读缓存。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1413,7 +1433,7 @@ TOOLS = [
     },
     {
         "name": "autopilot_control",
-        "description": "控制自动挡总开关与运行状态。disable 关闭外挂并拒绝新自动工作，enable 恢复；pause 暂停推进但允许安全收尾，resume 恢复；其余 action 控制自动动作和后台常驻。",
+        "description": "控制 Codex Autopilot 总开关与运行状态。disable 关闭外挂并拒绝新自动工作，enable 恢复；pause 暂停推进但允许安全收尾，resume 恢复；其余 action 控制自动动作和持续运行。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1507,7 +1527,7 @@ TOOLS = [
     },
     {
         "name": "render_autopilot_panel",
-        "description": "打开自动挡原生面板（MCP App：inline 卡片 / 对话侧栏 / 全局侧栏 / 全屏）。用户说“打开自动挡面板 / 面板打不开 / 自动挡在哪看”时必须立即调用本工具，不要只解释入口、不要只去侧栏找按钮，也不要打开 CONTROL_PLANE.html / companion panel / browser 页面冒充面板。面板第一屏用大白话说明：它是什么、怎么用（普通 Codex 输入框就是总输入框，不用新建对话或分支）、它替你做了什么、现在在做什么、你需要做什么、随时可暂停。",
+        "description": "打开 Codex Autopilot 原生面板（MCP App：inline 卡片 / 对话侧栏 / 全局侧栏 / 全屏）。用户说“打开 Codex Autopilot 面板 / 打开自动挡面板 / 面板打不开 / 面板在哪看”时必须立即调用本工具，不要只解释入口、不要只去侧栏找按钮，也不要打开 CONTROL_PLANE.html / companion panel / browser 页面冒充面板。面板第一屏用大白话说明：需要你决定什么、系统正在做什么、真正闭环了什么，并可随时暂停。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         "_meta": {
             "ui": {"resourceUri": PANEL_URI},
@@ -1518,8 +1538,8 @@ TOOLS = [
                 "entrypoints": [{"type": "global"}, {"type": "thread"}],
                 "preferredModelDisplayMode": "inline",
             },
-            "openai/toolInvocation/invoking": "打开自动挡面板…",
-            "openai/toolInvocation/invoked": "自动挡面板已打开。",
+            "openai/toolInvocation/invoking": "打开 Codex Autopilot 面板…",
+            "openai/toolInvocation/invoked": "Codex Autopilot 面板已打开。",
         },
     },
     {
@@ -1570,6 +1590,53 @@ TOOLS = [
             "type": "object",
             "properties": {"values": {"type": "object"}},
             "required": ["values"],
+        },
+    },
+    {
+        "name": "project_goal_read",
+        "description": "读取当前绑定项目的用户目标与自动生成目标。用户目标为空时，面板显示自动生成目标。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "project_goal_update",
+        "description": "更新当前绑定项目的用户目标；传空字符串会清除覆盖并恢复自动生成目标。只影响当前项目，不动其他项目。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_path": {"type": "string", "description": "可选；目标项目根目录。留空表示当前绑定项目。项目卡编辑必须传该项目自己的路径。"},
+                "goal": {"type": "string", "description": "用户填写的目标；留空表示恢复自动生成目标。"},
+                "confirm": {"type": "boolean", "description": "必须由用户显式确认后写入。"},
+            },
+            "required": ["goal", "confirm"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "model_routes_read",
+        "description": "读取全局任务模型路由：快速处理、标准施工、深度决策各自的模型与推理程度。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "model_routes_update",
+        "description": "更新全局任务模型路由。未填模型的等级继续沿用现有 fast/slow 通道，不会新建另一套调度器。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "routes": {
+                    "type": "object",
+                    "properties": {
+                        "quick": {"type": "object"},
+                        "standard": {"type": "object"},
+                        "deep": {"type": "object"},
+                    },
+                    "additionalProperties": False,
+                },
+                "confirm": {"type": "boolean", "description": "必须由用户显式确认后写入。"},
+            },
+            "required": ["routes", "confirm"],
+            "additionalProperties": False,
         },
     },
     {
@@ -1827,17 +1894,18 @@ TOOLS = [
 SETTINGS_READ_TOOL = "autopilot_settings_read"
 SETTINGS_UPDATE_TOOL = "autopilot_settings_update"
 
+
 SETTINGS_SCHEMA = {
     "type": "object",
     "properties": {
         "enabled": {
             "type": "boolean",
-            "title": "启用 Codex 自动挡",
-            "description": "关闭后停止自动挡的 intake、调度与后台动作；已有任务和工作区保留。",
+            "title": "启用 Codex Autopilot",
+            "description": "关闭后停止 Codex Autopilot 的接收、调度与持续运行；已有任务和工作区保留。",
         },
         "paused": {
             "type": "boolean",
-            "title": "暂停自动挡",
+            "title": "暂停 Codex Autopilot",
             "description": "暂停后不再启动新工作；正在跑的 Git 操作会安全收尾。",
         },
         "auto_land": {
@@ -1862,7 +1930,7 @@ SETTINGS_SCHEMA = {
         },
         "daemon_enabled": {
             "type": "boolean",
-            "title": "后台常驻",
+            "title": "持续运行",
             "description": "用系统自带的常驻机制定时检查；关掉后只在对话里手动触发。",
         },
     },
@@ -1883,7 +1951,7 @@ SETTINGS_LAYOUT = [
         {"kind": "property", "property": "auto_port"},
         {"kind": "property", "property": "auto_exec"},
     ]},
-    {"kind": "group", "title": "后台", "items": [
+    {"kind": "group", "title": "持续运行", "items": [
         {"kind": "property", "property": "daemon_enabled"},
     ]},
 ]
@@ -1896,6 +1964,145 @@ def _json_file(path):
         return {}
 
 
+def _central_config_path(repo=None):
+    root = Path(repo or os.environ.get("KG_REPO") or _fallback_repo()).expanduser()
+    return root / "ops" / "central.config.json"
+
+
+def _atomic_write_json(path: Path, data: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                   encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _truth_dir_for(project_path=None):
+    repo = Path(project_path or os.environ.get("KG_REPO") or _fallback_repo()).expanduser()
+    return repo.resolve() / "ops" / "truth"
+
+
+def _goal_text(ml):
+    """用户目标优先；没有用户目标时退回自动摘要。"""
+    ml = ml if isinstance(ml, dict) else {}
+    override = str(ml.get("goal_override") or "").strip()
+    auto = str(ml.get("one_liner") or "").strip()
+    return override or auto, override, auto
+
+
+def _project_goal_payload(project_path=None):
+    path = _truth_dir_for(project_path) / "mainline.json"
+    ml = _json_file(path)
+    goal, override, auto = _goal_text(ml)
+    return {
+        "project_path": str(Path(project_path).expanduser().resolve()) if project_path else None,
+        "goal": goal,
+        "goal_override": override,
+        "auto_goal": auto,
+        "editable": True,
+        "source": "user" if override else ("auto" if auto else "missing"),
+        "__text__": goal or "这个项目还没有可显示的目标。",
+    }
+
+
+def _project_goal_update(goal, project_path=None):
+    guard = control_state.mutation_guard()
+    if guard:
+        return guard, 2
+    text = str(goal or "").strip()
+    if len(text) > GOAL_OVERRIDE_MAX:
+        return "项目目标请控制在 %d 字以内。" % GOAL_OVERRIDE_MAX, 2
+    tdir = _truth_dir_for(project_path)
+    if project_path:
+        repo = tdir.parent.parent
+        if not repo.is_dir() or not (repo / ".git").exists():
+            return "找不到这个项目目录；目标没有写入。", 2
+    path = tdir / "mainline.json"
+    try:
+        ml = _json_file(path)
+        if text:
+            ml["goal_override"] = text
+        else:
+            ml.pop("goal_override", None)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_json(path, ml)
+    except OSError as exc:
+        return "项目目标未写入：%s" % exc, 2
+    payload = _project_goal_payload(project_path)
+    payload["persisted"] = True
+    payload["__text__"] = ("目标已更新；只影响当前项目。"
+                           if text else "用户目标已清空；面板恢复自动摘要。")
+    return payload, 0
+
+
+def _model_routes_read_payload():
+    data = _json_file(_central_config_path())
+    cfg = data.get("auto_exec") if isinstance(data.get("auto_exec"), dict) else {}
+    configured = cfg.get("model_routes") if isinstance(cfg.get("model_routes"), dict) else {}
+    legacy_effort = str(cfg.get("reasoning_effort") or "").strip()
+    levels = []
+    routes = {}
+    labels = MODEL_ROUTE_LABELS
+    for key in MODEL_ROUTE_LEVELS:
+        row = configured.get(key) if isinstance(configured.get(key), dict) else {}
+        model = str(row.get("model") or "").strip() or None
+        effort = str(row.get("reasoning_effort") or row.get("effort") or "").strip()
+        if effort not in MODEL_ROUTE_EFFORTS:
+            effort = legacy_effort if legacy_effort in MODEL_ROUTE_EFFORTS else \
+                MODEL_ROUTE_DEFAULTS[key]["reasoning_effort"]
+        source = "project" if (row.get("model") or row.get("reasoning_effort")
+                               or row.get("effort")) else ("legacy" if legacy_effort else "default")
+        routes[key] = {"model": model, "reasoning_effort": effort}
+        levels.append({"key": key, "label": labels[key],
+                       "description": MODEL_ROUTE_DESCRIPTIONS[key],
+                       "model": model or "", "reasoning_effort": effort,
+                       "source": source})
+    return {"levels": levels, "routes": routes,
+            "__text__": "任务模型：快速处理 / 标准施工 / 深度决策"}
+
+
+def _model_routes_update(routes):
+    guard = control_state.mutation_guard()
+    if guard:
+        return guard, 2
+    if not isinstance(routes, dict):
+        return "model_routes_update 需要 routes。", 2
+    normalized = {}
+    for key in MODEL_ROUTE_LEVELS:
+        row = routes.get(key)
+        if row is None:
+            continue
+        if not isinstance(row, dict):
+            return "%s 的模型路由格式不对。" % key, 2
+        model = str(row.get("model") or "").strip()
+        if len(model) > 200:
+            return "%s 的模型名太长。" % key, 2
+        effort = str(row.get("reasoning_effort") or row.get("effort") or "").strip()
+        if effort and effort not in MODEL_ROUTE_EFFORTS:
+            return "%s 的推理程度只支持 low / medium / high。" % key, 2
+        item = {"model": model or None, "reasoning_effort": effort or None}
+        item = {k: v for k, v in item.items() if v is not None}
+        if item:
+            normalized[key] = item
+    path = _central_config_path()
+    try:
+        data = _json_file(path) if path.exists() else {}
+        cfg = data.get("auto_exec") if isinstance(data.get("auto_exec"), dict) else {}
+        if normalized:
+            cfg["model_routes"] = normalized
+        else:
+            cfg.pop("model_routes", None)
+        data["auto_exec"] = cfg
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_json(path, data)
+    except OSError as exc:
+        return "任务模型路由未写入：%s" % exc, 2
+    payload = _model_routes_read_payload()
+    payload["persisted"] = True
+    payload["__text__"] = "任务模型已保存。"
+    return payload, 0
+
+
 def _daemon_state():
     return _json_file(RUNTIME / "state.json")
 
@@ -1904,7 +2111,7 @@ def _daemon_live():
     """从 launchd 读取存活状态和绑定项目，不用受沙箱限制的 kill(pid, 0)。
 
     判据只有一份（ops/daemon_liveness.py），与 kgctl status / doctor 共用；
-    否则面板和 CLI 会各说各话：CLI 报「未安装」而面板仍显示「后台常驻=开」。
+    否则面板和 CLI 会各说各话：CLI 报「未安装」而面板仍显示「持续运行=开」。
     """
     try:
         import daemon_liveness
@@ -2253,7 +2460,9 @@ def _read_project_truth(root):
 
     ml = _json_file(truth / "mainline.json")
     mainline_product = ml.get("product") or ""
-    mainline_one_liner = ml.get("one_liner") or ""
+    auto_goal = ml.get("one_liner") or ""
+    goal_override = ml.get("goal_override") or ""
+    mainline_one_liner = goal_override or auto_goal
     mainline_stage = ml.get("stage") or ""
     road = _roadmap_rows(ml)
     current_step = next((r for r in road if r.get("status") == "doing"), None)
@@ -2271,6 +2480,8 @@ def _read_project_truth(root):
         "route_tasks": route_tasks,
         "product": mainline_product,
         "one_liner": mainline_one_liner,
+        "auto_goal": auto_goal,
+        "goal_override": goal_override,
         "stage": mainline_stage,
         "quality_gate": _read_quality_gate(root),
         "engineering_radar": _read_engineering_radar(root),
@@ -2320,6 +2531,8 @@ def _project_folders(fast=True):
             "active": bool(meta.get("active") or (meta.get("path") or current) == current),
             "product": data.get("product") or meta.get("product") or Path(meta.get("path") or current).name,
             "one_liner": data.get("one_liner") or meta.get("one_liner") or "",
+            "auto_goal": data.get("auto_goal") or "",
+            "goal_override": data.get("goal_override") or "",
             "stage": data.get("stage") or meta.get("stage") or "",
             "source_thread_id": meta.get("source_thread_id"),
             "current_step": data.get("current_step") or "路线待拆解",
@@ -2350,11 +2563,16 @@ def _project_folders(fast=True):
         "active": True,
         "product": ml.get("product") or Path(current).name,
         "one_liner": ml.get("one_liner") or "",
+        "auto_goal": ml.get("auto_goal") or "",
+        "goal_override": ml.get("goal_override") or "",
         "stage": ml.get("stage") or "",
         "source_thread_id": current_meta.get("source_thread_id"),
         "quality_gate": current_meta.get("quality_gate"),
     }, {
         "roadmap": road,
+        "one_liner": ml.get("one_liner") or "",
+        "auto_goal": ml.get("auto_goal") or "",
+        "goal_override": ml.get("goal_override") or "",
         "current_step": (current_step or {}).get("step") or "路线待拆解",
         "current_step_status": (current_step or {}).get("status") or "todo",
         "doing_items": board.get("doing") or [],
@@ -2727,7 +2945,9 @@ def _mainline_summary(limit=6):
     doc = base / "docs" / "PRODUCT_MAINLINE.md"
     return {
         "product": ml.get("product"),
-        "one_liner": ml.get("one_liner"),
+        "one_liner": _goal_text(ml)[0],
+        "auto_goal": _goal_text(ml)[2],
+        "goal_override": _goal_text(ml)[1],
         "stage": ml.get("stage"),
         "north_star": ml.get("north_star"),
         "focus": (ml.get("current_focus") or [])[:4],
@@ -3028,6 +3248,8 @@ def _status_payload(fast=True):
                 "action": "none",
             },
             "mainline": {},
+            "project_goal": _project_goal_payload(),
+            "model_routes": _model_routes_read_payload(),
             "route": {},
             "roadmap": [],
             "project_folders": [],
@@ -3115,6 +3337,7 @@ def _status_payload(fast=True):
         "daemon_live": bool(live),
         "daemon_other_project": bool(
             job_running and daemon_project and daemon_project != current_project),
+        "daemon_problem": bool(daemon_problem),
         "queued_count": (1 if (summary.get("clean") or summary.get("merged")) else 0),
     })
     state_key, state_label = stage["ui_state"], stage["label"]
@@ -3163,8 +3386,8 @@ def _status_payload(fast=True):
         doing = f"正在处理 {len(rtasks)} 条冲突，拆成可执行任务后逐条收口"
         why = "冲突不丢给你逐条裁决，先自动拆成任务，解完再走同一道门禁"
     elif job_running and daemon_project and daemon_project != current_project:
-        doing = "后台正在服务别的项目；当前项目会等自己的轮次"
-        why = "常驻守护按项目分开，当前项目只走自己的进度"
+        doing = "当前项目待命"
+        why = "另一个项目正在推进；完整说明见最上方的提醒。"
     else:
         doing = "已检查一轮，当前没有能安全自动合入的分支"
         why = "和 main 冲突的、或门禁没过的，不会被自动合，等你处理"
@@ -3313,6 +3536,8 @@ def _status_payload(fast=True):
         "acceptance_criteria": _acceptance_criteria_summary(),
         "autonomy": _autonomy_summary(st),
         "mainline": _mainline_summary(),
+        "project_goal": _project_goal_payload(),
+        "model_routes": _model_routes_read_payload(),
         # fast=True 是面板/开关那条路：只读缓存，不连宿主，绝不因此变慢。
         "route": _route_summary(timeout=0.0 if fast else None),
         "roadmap": _roadmap(),
@@ -3352,10 +3577,10 @@ def _status_payload(fast=True):
 
 
 def _daemon_switch_label(enabled, daemon):
-    """后台常驻这一格反映「是不是真在跑」，不是照念配置位。
+    """持续运行这一格反映「是不是真在跑」，不是照念配置位。
 
     2026-11-11 实测：control.json 写着 daemon_enabled=true，launchd 里那个 job 根本
-    不存在、ps 里没有 central_daemon，状态面却仍打印「后台常驻=开」。用户看到的是
+    不存在、ps 里没有 central_daemon，状态面却仍打印「持续运行=开」。用户看到的是
     「开着」，实际一步没动 —— 这正是「感觉不到增益」的机械根因。
 
     三态：关 / 开 / 开但没在跑。没在跑时点明「没进程接活」，让配置位和现实分开。
@@ -3380,7 +3605,7 @@ def _status_text(payload):
         _closure_rate_line(payload.get("closure_rate")),
         # 自动实现排在最前：它是「需求会不会被真的写出来」这一格。少了它，
         # 一行全绿却一步没实现——和「守护没在跑却显示开着」是同一个坑。
-        "开关：自动实现=%s  自动合入=%s  自动拆冲突=%s  自动移植=%s  后台常驻=%s"
+        "开关：自动实现=%s  自动合入=%s  自动拆冲突=%s  自动移植=%s  持续运行=%s"
         % ("开" if sw["auto_exec"] else "关（只记账，不实现）",
            "开" if sw["auto_land"] else "关",
            "开" if sw["auto_resolve"] else "关",
@@ -3582,7 +3807,8 @@ def call_tool(name, args):
         "project_status", "next_actions", "product_state", "distill_review",
         "suggest_branch", "resolve_list", "resolve_plan", "generate_context",
         "dashboard", "autopilot_status", "render_autopilot_panel",
-        "autopilot_settings_read", "codex_native_threads", "codex_native_probe",
+        "autopilot_settings_read", "project_goal_read", "model_routes_read",
+        "codex_native_threads", "codex_native_probe",
         "harness_tune_list", "constraint_candidates_list", "context_archive",
         "acceptance_criteria_list", "generate_acceptance_scope", "route_preview",
         "followup_list",
@@ -3594,6 +3820,7 @@ def call_tool(name, args):
     control_tools = {
         "autopilot_control", "autopilot_run_once",
         "autopilot_settings_update",
+        "project_goal_update", "model_routes_update",
     }
     native_mutation_tools = {
         "codex_native_create_section", "codex_native_start_thread",
@@ -4222,6 +4449,18 @@ def call_tool(name, args):
         return _settings_read_payload(), 0
     if name == "autopilot_settings_update":
         return _settings_update(args.get("set") or {})
+    if name == "project_goal_read":
+        return _project_goal_payload(), 0
+    if name == "project_goal_update":
+        if not bool(args.get("confirm")):
+            return "更新项目目标需要 confirm=true。", 2
+        return _project_goal_update(args.get("goal"), args.get("project_path"))
+    if name == "model_routes_read":
+        return _model_routes_read_payload(), 0
+    if name == "model_routes_update":
+        if not bool(args.get("confirm")):
+            return "更新任务模型需要 confirm=true。", 2
+        return _model_routes_update(args.get("routes"))
     if name == "render_autopilot_panel":
         panel = _panel_html_path()
         if panel is None:
@@ -4286,9 +4525,9 @@ def handle(msg):
                 "会把它和「当前在做什么 / 还差什么 / 可验收项」一起返回。用户只想提一次"
                 "：收到零散需求就用 intake_request 收口，系统自己负责归类、落账、推进到"
                 "验收，不要把「该放哪个对话/分支/角色」反过来问用户。"
-                "用户问“自动挡在哪看 / 怎么用 / 现在开着吗 / 做了什么”时，调用 "
+                "用户问“Codex Autopilot 在哪看 / 怎么用 / 现在开着吗 / 做了什么”时，调用 "
                 "render_autopilot_panel 打开面板（含小白说明与开关）；要看纯文本状态用 "
-                "autopilot_status；要暂停/恢复/开关自动动作或后台常驻用 autopilot_control。"
+                "autopilot_status；要暂停/恢复/开关自动动作或持续运行用 autopilot_control。"
             ),
         })
         return
@@ -4300,8 +4539,8 @@ def handle(msg):
     if method == "resources/list":
         _result(rid, {"resources": [{
             "uri": PANEL_URI,
-            "name": "Codex 自动挡面板",
-            "description": "自动挡的状态面板：怎么用、正在做什么、为什么、替你完成了什么、要不要你拍板、可暂停与开关。",
+            "name": "Codex Autopilot 面板",
+            "description": "Codex Autopilot 的状态面板：正在做什么、需要你决定什么、已经闭环了什么，以及可暂停与开关。",
             "mimeType": "text/html;profile=mcp-app",
         }]})
         return

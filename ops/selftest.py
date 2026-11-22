@@ -4959,6 +4959,86 @@ def test_model_channel_identity_and_dead_channel_fallback():
           "全通道不可用时本拍不派活并记成可续跑的通道失败；探活关闭时放行。")
 
 
+def test_model_routes_are_user_facing_not_decorative():
+    """面板上的三档任务模型必须真的决定分类、模型和推理程度。
+
+    这三档是用户能配置的产品语义，不是摆设；但只要有一处没接到派活链路，
+    用户就会以为改了配置却毫无变化。反过来，三档留空时必须继续沿用旧的
+    fast_model / slow_model，避免老项目升级后派活路径突然变化。
+    """
+    import importlib
+    import os
+    import sys
+    from unittest import mock
+    from pathlib import Path
+
+    ops = Path(__file__).resolve().parent
+    if str(ops) not in sys.path:
+        sys.path.insert(0, str(ops))
+    import central_daemon
+    importlib.reload(central_daemon)
+
+    cases = [
+        ({"kind": "bug"}, "quick"),
+        ({"kind": "gate"}, "quick"),
+        ({"kind": "visual"}, "quick"),
+        ({"kind": "ux"}, "quick"),
+        ({"kind": "arch"}, "deep"),
+        ({"kind": "prd"}, "deep"),
+        ({"kind": "research"}, "deep"),
+        ({"kind": "decision"}, "deep"),
+        ({"kind": "implementation"}, "standard"),
+        ({}, "standard"),
+    ]
+    for item, expected in cases:
+        actual = central_daemon._exec_route_level(item)
+        assert actual == expected, f"任务分类错了：{item} -> {actual}，期望 {expected}"
+
+    routed_cfg = {
+        "model": None,
+        "fast_model": "legacy-fast",
+        "slow_model": "legacy-slow",
+        "reasoning_effort": "medium",
+        "model_routes": {
+            "quick": {"model": "route-fast", "reasoning_effort": "low"},
+            "standard": {"model": None, "reasoning_effort": "medium"},
+            "deep": {"model": "route-deep", "reasoning_effort": "high"},
+        },
+    }
+    assert central_daemon._exec_model({"kind": "bug"}, routed_cfg) == "route-fast"
+    assert central_daemon._exec_model({"kind": "arch"}, routed_cfg) == "route-deep"
+    assert central_daemon._exec_route_effort({"kind": "bug"}, routed_cfg) == "low"
+    assert central_daemon._exec_route_effort({"kind": "arch"}, routed_cfg) == "high"
+
+    legacy_cfg = {
+        "model": None,
+        "fast_model": "legacy-fast",
+        "slow_model": "legacy-slow",
+        "reasoning_effort": "medium",
+        "model_routes": {},
+    }
+    assert central_daemon._exec_model({"kind": "bug"}, legacy_cfg) == "legacy-fast"
+    assert central_daemon._exec_model({"kind": "implementation"}, legacy_cfg) == "legacy-slow"
+    assert central_daemon._exec_route_effort({"kind": "bug"}, legacy_cfg) == "medium"
+
+    job = {
+        "id": "L-9300",
+        "item": {"id": "L-9300", "kind": "arch", "title": "架构取舍"},
+        "cfg": dict(routed_cfg, sandbox="workspace-write"),
+        "worktree": "/tmp",
+        "codex": ["codex"],
+        "model": "route-deep",
+    }
+    with mock.patch.dict(os.environ, {"KG_MODEL_PROBE": "off"}), \
+         mock.patch.object(central_daemon, "_exec_prompt", return_value="test prompt"):
+        cmd = central_daemon._exec_command(job)
+    joined = " ".join(cmd)
+    assert "-m route-deep" in joined, joined
+    assert 'model_reasoning_effort="high"' in joined, joined
+
+    print("selftest ok: 用户配置的三档任务模型真实接入分类、模型和推理程度，留空时保留 legacy 通道。")
+
+
 def test_relaunch_never_reuses_dead_channel():
     """每一次真起会话（含重试重挂）都必须重新确认通道活着。
 
@@ -7471,7 +7551,8 @@ def test_mcp_contract():
               "params": {"uri": uri}})
         contents = recv()["result"]["contents"][0]
         assert contents["mimeType"] == "text/html;profile=mcp-app"
-        assert "总输入框" in contents["text"], "面板没讲清「总输入框」"
+        assert "项目进度会在这里汇总" in contents["text"], "面板没讲清首屏定位"
+        assert "需要你的决定" in contents["text"], "面板没给出用户决策入口"
         for anchor in ("productList", "judgmentList", "verifyBox", "mainlineBox",
                        "roadmapBox", "acceptBox", "progressBox", "pmBriefingBox"):
             assert anchor in contents["text"], f"面板缺少 {anchor}"
@@ -8033,8 +8114,8 @@ def test_daemon_liveness_shared_judge():
     msg = daemon_liveness.liveness_problem(st_other, True)
     assert msg and "别的账本" in msg, msg
     headline, detail = daemon_liveness.liveness_need_action(st_other, True)
-    assert headline and "后台现在在服务别的项目" in headline, headline
-    assert "当前项目要等自己的轮次" in headline, headline
+    assert headline and "系统在服务另一个项目" in headline, headline
+    assert "暂时不需要你操作" in headline, headline
     assert detail and "别的账本" in detail and "/tmp/proj-b" in detail, detail
     assert "/tmp/proj-b" not in headline, "首屏结论不该塞工程路径"
 
@@ -8567,6 +8648,7 @@ if __name__ == "__main__":
     test_project_autonomy_result_sync()
     test_exec_model_balance_fallback()
     test_model_channel_identity_and_dead_channel_fallback()
+    test_model_routes_are_user_facing_not_decorative()
     test_relaunch_never_reuses_dead_channel()
     test_exec_model_fallback_relaunch_is_async()
     test_parallel_exec_slots()

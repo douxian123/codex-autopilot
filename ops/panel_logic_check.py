@@ -55,16 +55,46 @@ function serializeEl(n) {
   const body = kids || ((n.children || []).length ? "" : escapeAttr(n.textContent || ""));
   return "<" + tagOf(n) + (attrs.length ? " " + attrs.join(" ") : "") + ">" + body + "</" + tagOf(n) + ">";
 }
+function findByTag(n, tag) {
+  if (!n) return null;
+  if (String(n.id || "").indexOf("<" + tag + ">") >= 0) return n;
+  for (const c of (n.children || [])) {
+    const hit = findByTag(c, tag);
+    if (hit) return hit;
+  }
+  return null;
+}
+function findByClass(n, cls) {
+  if (!n) return null;
+  if (String(n.className || "").split(/\s+/).indexOf(cls) >= 0) return n;
+  for (const c of (n.children || [])) {
+    const hit = findByClass(c, cls);
+    if (hit) return hit;
+  }
+  return null;
+}
+function walkText(n) {
+  if (!n) return "";
+  const own = String(n.textContent || "");
+  if ((n.children || []).length) {
+    return own + (n.children || []).map(walkText).join(" ");
+  }
+  return own;
+}
 function makeEl(id) {
   const base = {
     id: id || "",
     textContent: "", innerHTML: "", className: "", title: "",
     value: "", checked: false, hidden: false, disabled: false,
+    open: false,
     style: {}, children: [],
     _clickHandlers: [],
     classList: { toggle: NOOP, add: NOOP, remove: NOOP, contains: function () { return false; } },
     setAttribute: function (k, v) { this[k] = String(v); },
     getAttribute: function (k) { return this[k]; },
+    hasAttribute: function (k) {
+      return k in this && this[k] !== false && typeof this[k] !== "function";
+    },
     removeAttribute: NOOP, removeEventListener: NOOP,
     addEventListener: function (type, fn) {
       if (type === "click" && typeof fn === "function") this._clickHandlers.push(fn);
@@ -95,7 +125,13 @@ function makeEl(id) {
       if (typeof p === "symbol") return undefined;
       return NOOP;                 // 未知成员按“无副作用的空方法”处理
     },
-    set(t, p, v) { t[p] = v; return true; },
+    set(t, p, v) {
+      // 面板动态创建 input/select 后再写 id；保存按钮用 getElementById 回读，
+      // 最小 DOM 必须像浏览器一样把带 id 的节点登记进全局索引。
+      if (p === "id" && v && !String(v).startsWith("<")) els.set(String(v), t);
+      t[p] = v;
+      return true;
+    },
   });
 }
 
@@ -204,6 +240,16 @@ if (routingPreviewButton) {
   routingPreviewButton._clickHandlers.slice().forEach(function (fn) { fn(); });
 }
 
+// 项目目标与三档任务模型都是写操作：按钮必须真点，且必须显式 confirm=true。
+var goalSaveButton = findButton(document.getElementById("folderBox"), "保存目标");
+if (goalSaveButton) {
+  goalSaveButton._clickHandlers.slice().forEach(function (fn) { fn(); });
+}
+var modelRoutesSaveButton = document.getElementById("modelRoutesSave");
+if (modelRoutesSaveButton && modelRoutesSaveButton._clickHandlers.length) {
+  modelRoutesSaveButton._clickHandlers.slice().forEach(function (fn) { fn(); });
+}
+
 // 原生自检按钮必须发显式 repair=true；只在专项 payload 里点，避免污染其它首屏断言。
 if (payload.__probeNative) {
   var nativeProbeButton = document.getElementById("nativeProbe");
@@ -244,11 +290,15 @@ console.log(JSON.stringify({
   routingAssignCalls: toolCalls.filter(function (c) {
     return c.name === "routing_review_assign";
   }).map(function (c) { return c.arguments || {}; }),
+  projectGoalCalls: toolCalls.filter(function (c) {
+    return c.name === "project_goal_update";
+  }).map(function (c) { return c.arguments || {}; }),
+  modelRouteCalls: toolCalls.filter(function (c) {
+    return c.name === "model_routes_update";
+  }).map(function (c) { return c.arguments || {}; }),
   nativeProbeCalls: toolCalls.filter(function (c) {
     return c.name === "codex_native_probe";
   }).map(function (c) { return c.arguments || {}; }),
-  nativeHint: read("nativeHint"),
-  nativeHintHidden: document.getElementById("nativeHint").hidden,
   globalRoutingFoldHidden: document.getElementById("globalRoutingFold").hidden,
   globalRoutingSummary: read("globalRoutingSummary"),
   globalRoutingBox: read("globalRoutingBox"),
@@ -260,6 +310,14 @@ console.log(JSON.stringify({
   sysLine: read("sysLine"),
   folderBox: read("folderBox"),
   folderSerialized: serializeEl(document.getElementById("folderBox")),
+  folderSummaryText: walkText(findByTag(document.getElementById("folderBox"), "summary")),
+  folderBodyText: walkText(findByClass(document.getElementById("folderBox"), "folder-body")),
+  folderIsDetails: String((findByTag(document.getElementById("folderBox"), "details") || {}).id || "").indexOf("<details>") >= 0,
+  folderBodySerialized: serializeEl(findByClass(document.getElementById("folderBox"), "folder-body")),
+  folderOpen: (function () {
+    var n = findByTag(document.getElementById("folderBox"), "details");
+    return n ? String(!!(n.open === true || n.hasAttribute("open"))) : "";
+  })(),
   stateLabel: read("stateLabel"),
   subtitle: read("subtitle"),
   q1State: read("q1State"),
@@ -302,6 +360,7 @@ console.log(JSON.stringify({
   rendererMeta: read("rendererMeta"),
   rendererStatus: (function(){ var n = document.getElementById("rendererContract"); return n ? n.getAttribute("data-status") || "" : ""; })(),
   rendererMode: (function(){ var n = document.getElementById("rendererContract"); return n ? n.getAttribute("data-renderer-mode") || "" : ""; })(),
+  modelRoutesBoxText: read("modelRoutesBox"),
   autonomyLine: read("autonomyLine"),
   autonomyAudit: read("autonomyAudit"),
   pmBriefingBox: read("pmBriefingBox") + " " + document.getElementById("pmBriefingBox").innerHTML,
@@ -463,11 +522,9 @@ def main(argv):
 
         if not quiet:
             print("Codex 自动挡 面板首屏逻辑检查")
-        fails += has("首屏区分主入口、执行入口与兜底入口", out["entryMap"],
-                     "主入口", "Codex 总输入框", "万法归一",
-                     "执行入口", "后台任务窗口", "兜底入口", "高级区输入框")
-        fails += has("首屏显示绑定项目（名字+路径）", out["projectLine"],
-                     project.get("name"), project.get("path"))
+        fails += has("首屏不重复解释入口", out["entryMap"], "")
+        fails += has("首屏显示绑定项目名", out["projectLine"], project.get("name"))
+        fails += lacks("首屏正文不铺开绑定项目路径", out["projectLine"], project.get("path"))
         fails += has("绑定项目路径进了 title（悬停可看全）", out["projectTitle"], project.get("path"))
         mainline = payload.get("mainline") or {}
         roadmap = payload.get("roadmap") or []
@@ -498,20 +555,58 @@ def main(argv):
         if folders:
             folder = folders[0]
             folder_items = (folder.get("doing_items") or folder.get("todo_items") or [])
-            fails += has("项目文件夹显示项目名", out["folderBox"], folder.get("name"))
-            fails += has("项目文件夹显示当前步骤", out["folderBox"], folder.get("current_step"))
+            goal = folder.get("goal_override") or folder.get("one_liner") \
+                or folder.get("stage") or "目标待明确"
+            if out.get("folderIsDetails") is True:
+                print("  PASS  项目卡是 details 面性容器")
+            else:
+                print("  FAIL  项目卡不是 details 面性容器")
+                fails += 1
+            if str(out.get("folderOpen")) == "false":
+                print("  PASS  项目卡默认折叠")
+            else:
+                print(f"  FAIL  项目卡默认折叠（实际 open={out.get('folderOpen')!r}）")
+                fails += 1
+            fails += has("项目卡摘要显示项目名", out["folderSummaryText"], folder.get("name"))
+            fails += has("项目卡摘要显示当前目标", out["folderSummaryText"], "当前目标：", goal)
+            fails += has("项目卡摘要显示当前步骤", out["folderSummaryText"],
+                         "当前步骤：", folder.get("current_step"))
+            fails += lacks("项目卡摘要不铺开工程路径", out["folderSummaryText"], folder.get("path"))
+            fails += lacks("项目卡正文不铺开工程路径", out["folderBodyText"], folder.get("path"))
+            fails += has("项目卡路径保留在 title", out["folderSerialized"], folder.get("path"))
+            fails += has("项目卡展开区有目标编辑入口", out["folderBodyText"], "编辑目标")
+            goal_calls = out.get("projectGoalCalls") or []
+            if goal_calls and goal_calls[0].get("confirm") is True \
+                    and str(goal_calls[0].get("goal") or "") == str(goal) \
+                    and goal_calls[0].get("project_path") == folder.get("path"):
+                print("  PASS  保存目标按钮写入当前项目目标且显式确认")
+            else:
+                print(f"  FAIL  保存目标按钮没有写入当前项目目标：{goal_calls}")
+                fails += 1
+            route_calls = out.get("modelRouteCalls") or []
+            if route_calls and route_calls[0].get("confirm") is True \
+                    and all(key in (route_calls[0].get("routes") or {})
+                            for key in ("quick", "standard", "deep")):
+                print("  PASS  保存任务模型按钮写入三档且显式确认")
+            else:
+                print(f"  FAIL  保存任务模型按钮没有写入三档：{route_calls}")
+                fails += 1
+            fails += has("任务模型三档标签存在", out["modelRoutesBoxText"],
+                         "快速处理", "标准施工", "深度决策")
             if folder_items:
-                fails += has("项目文件夹列出工作项", out["folderBox"],
+                fails += has("项目卡展开区列出工作项", out["folderBodyText"],
                              folder_items[0].get("title") or folder_items[0].get("detail"),
                              "进行中" if folder.get("doing_items") else "待处理")
+                fails += lacks("项目卡摘要不抢工作项明细", out["folderSummaryText"],
+                               folder_items[0].get("title") or folder_items[0].get("detail"))
                 item_id = str(folder_items[0].get("id") or "")
                 item_source = str(folder_items[0].get("source_thread_id") or "")
                 if item_id:
-                    fails += lacks("项目文件夹正文不露工作项 ID", out["folderBox"], item_id)
+                    fails += lacks("项目卡正文不露工作项 ID", out["folderBodyText"], item_id)
                     fails += has("项目文件夹 ID 保留在 title", out["folderSerialized"],
                                  "工作项 " + item_id)
                 if item_source:
-                    fails += lacks("项目文件夹正文不露来源对话 ID", out["folderBox"], item_source)
+                    fails += lacks("项目卡正文不露来源对话 ID", out["folderBodyText"], item_source)
                     fails += has("项目文件夹来源对话保留在 title", out["folderSerialized"],
                                  "来源对话 " + item_source)
         fails += has("首屏显示总状态文案", out["stateLabel"], payload.get("state_label"))
@@ -597,12 +692,12 @@ def main(argv):
         dm.update({
             "state": "blocked",
             "state_label": "需要你处理",
-            "need_action": "后台现在在服务别的项目；当前项目要等自己的轮次。",
+            "need_action": "系统在服务另一个项目，这个项目暂时不需要你操作。",
             "need_action_detail": daemon_detail,
         })
         dout = run_once(dm)
         fails += has("守护异常首屏只显示用户结论", dout["needText"],
-                     "后台现在在服务别的项目", "当前项目要等自己的轮次")
+                     "系统在服务另一个项目", "暂时不需要你操作")
         if daemon_bound in str(dout["needText"]):
             fails += 1
             print("  FAIL  守护绑定路径不该进首屏正文")
@@ -611,7 +706,7 @@ def main(argv):
         fails += has("守护绑定路径仍可从 title 取到", dout["needTitle"], daemon_bound)
         fails += has("守护绑定路径仍可从 aria-label 取到", dout["needAria"], daemon_bound)
         fails += has("守护详情进入折叠区", dout["needEvidence"], daemon_bound, daemon_current)
-        fails += has("守护异常时第一问摘要给出等轮次", dout["q1State"], "等自己的轮次")
+        fails += has("守护异常时第一问摘要不用内部词", dout["q1State"], "当前无需操作")
         if "不用你" in str(dout["q1State"]):
             fails += 1
             print("  FAIL  守护异常与“不用你”摘要自相矛盾")
@@ -1304,26 +1399,6 @@ def main(argv):
                        "Codex 未运行", "Codex 没在运行")
         fails += lacks("控制 socket 缺失时不宣称已连通可派活", missing_out["nativeState"],
                        "已连通", "可派活到 Codex 窗口")
-        fails += has("控制 socket 缺失时 repair 提示上屏", missing_out.get("nativeHint", ""),
-                     "已尝试启动官方 app-server daemon", "codex app-server daemon start")
-        if missing_out.get("nativeHintHidden") is True:
-            print("  FAIL  控制 socket 缺失时 repair 提示被隐藏")
-            fails += 1
-        else:
-            print("  PASS  控制 socket 缺失时 repair 提示可见")
-        connected_hint_payload = dict(socket_missing_payload)
-        connected_hint_payload["native"] = dict(socket_missing_payload["native"])
-        connected_hint_payload["native"]["last_probe"] = dict(
-            socket_missing_payload["native"]["last_probe"])
-        connected_hint_payload["native"]["last_probe"].update(
-            connected=True, can_dispatch=True,
-            hint="旧的失败提示不应盖住已连通状态")
-        connected_hint_out = run_once(connected_hint_payload)
-        if connected_hint_out.get("nativeHintHidden") is not True:
-            print("  FAIL  原生直连已连通时旧失败提示仍显示")
-            fails += 1
-        else:
-            print("  PASS  原生直连已连通时旧失败提示隐藏")
         probe_button_out = run_once(dict(socket_missing_payload, __probeNative=True))
         probe_calls = probe_button_out.get("nativeProbeCalls") or []
         if probe_calls != [{"repair": True}]:

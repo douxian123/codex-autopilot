@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""回归：自然语言“打开自动挡面板”必须映射到 render_autopilot_panel 工具。"""
+"""回归：打开 Codex Autopilot 面板的自然语言必须映射到 render_autopilot_panel 工具。"""
 
 import json
 import os
@@ -17,16 +17,29 @@ if not setup_path.is_file():
 setup = setup_path.read_text(encoding="utf-8")
 mcp = (OPS / "central_mcp.py").read_text(encoding="utf-8")
 
+def has_any(text: str, *needles: str) -> bool:
+    return any(needle in text for needle in needles)
+
+
+# “自动挡”是内部旧称，只作为兼容触发语；公开品牌和面板文案使用 Codex Autopilot。
 checks = {
     "setup 写明必须调用工具": "必须马上调用\n   `render_autopilot_panel` 工具" in setup,
-    "setup 提供可复制精确指令": "请调用 render_autopilot_panel 工具打开自动挡面板。" in setup,
+    "setup 提供可复制精确指令": has_any(
+        setup,
+        "请调用 render_autopilot_panel 工具打开 Codex Autopilot 面板。",
+        "请调用 render_autopilot_panel 工具打开自动挡面板。",
+    ),
     "setup 写明 deferred 工具不算现场成功": (
         "工具能被 `tool_search` 搜到，不等于当前会话能直接调用" in setup
     ),
     "setup 写明直接调用 unsupported 的止损": (
         "unsupported call: mcp__codex_autopilot__render_autopilot_panel" in setup
     ),
-    "MCP 描述写明自然语言触发": "用户说“打开自动挡面板 / 面板打不开 / 自动挡在哪看”时必须立即调用本工具" in mcp,
+    "MCP 描述写明自然语言触发": has_any(
+        mcp,
+        "用户说“打开 Codex Autopilot 面板 / 打开自动挡面板 / 面板打不开 / 面板在哪看”时必须立即调用本工具",
+        "用户说“打开自动挡面板 / 面板打不开 / 自动挡在哪看”时必须立即调用本工具",
+    ),
     "MCP 明确禁止只解释入口": "不要只解释入口、不要只去侧栏找按钮" in mcp,
     "setup 写明 unsupported 止损": (
         "unsupported call: mcp__codex_autopilot__render_autopilot_panel" in setup
@@ -78,7 +91,7 @@ if codex_cli.is_file():
                 str(codex_cli),
                 "debug",
                 "prompt-input",
-                "请调用 render_autopilot_panel 工具打开自动挡面板。",
+                "请调用 render_autopilot_panel 工具打开 Codex Autopilot 面板。",
             ],
             cwd=str(ROOT),
             text=True,

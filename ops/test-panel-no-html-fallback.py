@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""回归：打开自动挡面板时禁止用 HTML 驾驶舱冒充原生面板。"""
+"""回归：打开 Codex Autopilot 面板时禁止用 HTML 驾驶舱冒充原生面板。"""
 
 from pathlib import Path
 
@@ -19,12 +19,24 @@ setup = read_skill("setup")
 central = read_skill("central-command")
 mcp = (OPS / "central_mcp.py").read_text(encoding="utf-8")
 
+def has_any(text: str, *needles: str) -> bool:
+    return any(needle in text for needle in needles)
+
+
 checks = {
-    "setup 禁止 CONTROL_PLANE 当面板": "任何浏览器页面当作“自动挡面板”交付" in setup,
+    "setup 禁止 CONTROL_PLANE 当面板": has_any(
+        setup,
+        "任何浏览器页面当作“Codex Autopilot 面板”交付",
+        "任何浏览器页面当作“自动挡面板”交付",
+    ),
     "setup 声明原生成功判据": "MCP App / 内联卡片 /\n对话侧栏 / 全局侧栏出现时，才算“面板已打开”" in setup,
     "central 禁止 companion fallback": "不得改用 `docs/CONTROL_PLANE.html`、`companion_api.py panel`" in central,
     "central 明确内部诊断命名": "`CONTROL_PLANE.html` 只能叫“内部诊断驾驶舱”" in central,
-    "MCP 工具硬性触发": "用户说“打开自动挡面板 / 面板打不开 / 自动挡在哪看”时必须立即调用本工具" in mcp,
+    "MCP 工具硬性触发": has_any(
+        mcp,
+        "用户说“打开 Codex Autopilot 面板 / 打开自动挡面板 / 面板打不开 / 面板在哪看”时必须立即调用本工具",
+        "用户说“打开自动挡面板 / 面板打不开 / 自动挡在哪看”时必须立即调用本工具",
+    ),
 }
 
 failed = [name for name, ok in checks.items() if not ok]

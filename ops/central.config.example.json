@@ -34,6 +34,11 @@
     "timeout": 3600,
     "sandbox": "workspace-write",
     "model": null,
+    "model_routes": {
+      "quick": {"model": null, "reasoning_effort": "low"},
+      "standard": {"model": null, "reasoning_effort": "medium"},
+      "deep": {"model": null, "reasoning_effort": "high"}
+    },
     "retries": 3
   }
 }

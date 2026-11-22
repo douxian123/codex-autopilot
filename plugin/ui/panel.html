@@ -30,7 +30,6 @@
     --brand-700:#0E8266;
     --brand-800:#0C654F;
     --brand:var(--brand-600);
-    --brand-mark-a:#35A88A; --brand-mark-b:#0C654F;
 
     /* semantic · 同样优先宿主语义色 */
     --ok:var(--color-text-success,#0E7A57);
@@ -71,8 +70,6 @@
 
   /* ---- header ---- */
   .hdr{display:flex;align-items:center;gap:12px;margin-bottom:14px}
-  .brand{width:34px;height:34px;border-radius:11px;background:linear-gradient(150deg,var(--brand-mark-a),var(--brand-mark-b));display:grid;place-items:center;flex:0 0 auto;box-shadow:0 1px 2px rgba(51,58,132,.30),inset 0 1px 0 rgba(255,255,255,.22)}
-  .brand svg{width:18px;height:18px}
   .hdr-tx{flex:1 1 auto;min-width:0}
   .hdr-title{font-size:16px;font-weight:650;letter-spacing:0;color:var(--ink)}
   .hdr-sub{font-size:12.5px;color:var(--ink-3);margin-top:1px}
@@ -81,10 +78,6 @@
   .iconbtn:hover{background:var(--surface-2);color:var(--ink);border-color:var(--neutral-line)}
   .iconbtn svg{width:15px;height:15px}
   body.adv .iconbtn.adv{background:var(--brand-50);border-color:var(--brand-200);color:var(--brand-700)}
-
-  /* 入口说明：常驻但不抢三问的注意力。只说用途，不暴露线程 ID 或内部术语。 */
-  .entrymap{display:flex;flex-wrap:wrap;gap:4px 14px;margin:-2px 0 12px;padding:8px 11px;background:var(--surface-2);border:1px solid var(--line-2);border-left:2px solid var(--brand-200);border-radius:var(--r-sm);font-size:11.5px;color:var(--ink-3)}
-  .entrymap b{color:var(--ink-2);font-weight:600}
 
   /* ---- hero ---- */
   .hero{background:var(--surface);border:1px solid var(--line);border-left:3px solid var(--acc);border-radius:var(--r);padding:16px 18px 15px;margin-bottom:11px;box-shadow:var(--shadow-2)}
@@ -113,6 +106,7 @@
   .qhead .qstate{margin-left:auto;font-size:11.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .q .alert{margin-bottom:10px}
   .q .hero,.q .card{box-shadow:none;border-radius:var(--r-sm);margin-bottom:0}
+  .q .card[hidden]{display:none}
   .q .card .chead{margin-bottom:10px}
   .q .card + .card,.q .northstar,.q .sysline{margin-top:10px}
   .sysline{font-size:11.5px;color:var(--ink-3);line-height:1.6;overflow-wrap:anywhere}
@@ -180,25 +174,48 @@
   .orientation-note{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);font-size:12px;color:var(--ink-2)}
   .orientation-note b{color:var(--ink);font-weight:650}
   .folders{display:grid;gap:9px}
-  .folder{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2);overflow:hidden}
+  .folder{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2);overflow:hidden;box-shadow:var(--shadow-1)}
   .folder.active{border-color:var(--brand-200);background:var(--brand-50)}
-  .folder-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;padding:11px 13px}
-  .folder-title{font-size:13px;font-weight:650;color:var(--ink);overflow-wrap:anywhere}
-  .folder-meta{margin-top:3px;color:var(--ink-3);font-size:11.5px;overflow-wrap:anywhere}
+  .folder>summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr) auto 10px;gap:10px;align-items:start;padding:13px 13px;min-height:44px;transition-property:background-color;transition-duration:150ms;transition-timing-function:ease-out}
+  .folder>summary::-webkit-details-marker{display:none}
+  .folder>summary:hover{background:var(--surface)}
+  .folder>summary:focus-visible{outline:2px solid var(--brand-200);outline-offset:-2px}
+  .folder-chevron{width:6px;height:6px;margin-top:7px;border-right:1.5px solid var(--ink-3);border-bottom:1.5px solid var(--ink-3);transform:rotate(45deg);transition:transform .15s ease}
+  .folder[open] .folder-chevron{transform:rotate(225deg);margin-top:9px}
+  .folder-body{padding:0 13px 13px;background:var(--surface-2)}
+  .folder-title{font-size:13px;font-weight:650;color:var(--ink);overflow-wrap:anywhere;text-wrap:balance}
+  .folder-goal{margin-top:4px;color:var(--ink-2);font-size:12px;line-height:1.45;overflow-wrap:anywhere;text-wrap:pretty;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .folder-source{margin-top:4px;color:var(--ink-3);font-size:11px;overflow-wrap:anywhere}
   .folder-source b{color:var(--ink-2);font-weight:600}
   .folder-error{margin-top:6px;color:var(--warn);font-size:11.5px;overflow-wrap:anywhere}
   .folder-step{margin-top:5px;color:var(--brand-700);font-size:12px;font-weight:600;overflow-wrap:anywhere}
   .folder-stats{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
-  .fstat{font-size:10.5px;border-radius:999px;padding:2px 8px;background:var(--surface);border:1px solid var(--line);color:var(--ink-3);white-space:nowrap}
+  .fstat{font-size:10.5px;border-radius:999px;padding:3px 8px;background:var(--surface);border:1px solid var(--line);color:var(--ink-3);white-space:nowrap;font-variant-numeric:tabular-nums}
   .fstat.warn{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
   .fstat.live{background:var(--brand-50);border-color:var(--brand-100);color:var(--brand-700)}
-  .folder-work{border-top:1px solid var(--line-2);background:var(--surface)}
-  .folder-work-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:baseline;padding:7px 13px;border-bottom:1px solid var(--line-2);font-size:11.5px}
-  .folder-work-row:last-child{border-bottom:0}
+  .folder-work{background:var(--surface);border-radius:9px;padding:4px 10px;margin-top:3px}
+  .folder-work-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:baseline;padding:7px 0;font-size:11.5px}
+  .folder-work-row+.folder-work-row{border-top:1px solid var(--line-2)}
   .folder-work-row .id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink-3);font-size:10.5px}
   .folder-work-row .name{min-width:0;color:var(--ink-2);overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .folder-work-row .state{color:var(--ink-3);white-space:nowrap}
+  .folder-goal-editor{margin-top:9px;padding:9px 10px;background:var(--surface);border:1px solid var(--line);border-radius:9px}
+  .folder-goal-editor label{display:block;font-size:11.5px;color:var(--ink-3);margin-bottom:5px}
+  .folder-goal-editor textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink);font:inherit;font-size:12.5px;padding:7px 9px}
+  .folder-goal-actions{display:flex;gap:8px;align-items:center;margin-top:7px}
+  .folder-goal-actions .btn{padding:5px 11px;font-size:12px}
+  .folder-edit-goal{margin-top:9px;padding:4px 10px;font-size:11.5px}
+  .model-route-row{display:grid;grid-template-columns:92px minmax(0,1fr) 112px;gap:9px;align-items:center;padding:9px 0;border-top:1px solid var(--line-2)}
+  .model-route-row:first-child{border-top:0}
+  .model-route-row .mr-label{font-size:12.5px;font-weight:650;color:var(--ink)}
+  .model-route-row .mr-label span{display:block;font-size:11px;font-weight:400;color:var(--ink-3);margin-top:1px;line-height:1.35}
+  .model-route-row input,.model-route-row select{min-width:0;width:100%;height:32px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink);font:inherit;font-size:12px;padding:0 9px}
+  .model-route-actions{display:flex;gap:10px;align-items:center;margin-top:10px;border-top:1px solid var(--line-2);padding-top:10px}
+  .model-route-actions .tiny{flex:1 1 auto;min-width:0}
+  @media (max-width:440px){
+    .model-route-row{grid-template-columns:1fr 1fr}
+    .model-route-row .mr-label{grid-column:1 / -1}
+  }
   .lane-group{margin-top:10px}
   .lane-head{display:flex;align-items:baseline;gap:7px;margin:0 0 6px;color:var(--ink-3);font-size:11px;font-weight:650}
   .lane-head span{font-weight:500}
@@ -386,8 +403,6 @@
   .projline{margin-top:8px;overflow-wrap:anywhere}
   .nativeline #nativeState{font-size:12.5px;color:var(--ink-2);line-height:1.5}
   .nativeline .btn{padding:5px 10px;font-size:12px;border-radius:8px;flex:0 0 auto}
-  .nativeline .nativehint{flex:1 1 100%;font-size:11.5px;line-height:1.5;color:var(--ink-3);overflow-wrap:anywhere}
-  .nativeline .nativehint[hidden]{display:none}
   .intake-state{font-size:12px;color:var(--ink-3);min-width:0;overflow-wrap:anywhere}
   .overview-detail{margin:18px 0}
   .overview-detail>summary{list-style:none;cursor:pointer;padding:11px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:13px;font-weight:600;color:var(--ink)}
@@ -476,9 +491,6 @@
 <div class="wrap">
 
   <header class="hdr">
-    <span class="brand" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" stroke="#fff"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12z"/></svg>
-    </span>
     <div class="hdr-tx">
       <div class="hdr-title">Codex Autopilot</div>
       <div class="hdr-sub" id="subtitle">正在读取状态…</div>
@@ -493,23 +505,12 @@
     </div>
   </header>
 
-  <!-- 首屏只回答三件事，其余一律下沉。健康时不占空间。 -->
-  <div class="entrymap" id="entryMap" aria-label="入口说明">
-    <span><b>主入口</b>：Codex 总输入框，万法归一</span>
-    <span><b>执行入口</b>：后台任务窗口，只汇报状态</span>
-    <span><b>兜底入口</b>：高级区输入框</span>
-  </div>
-
   <section class="q" id="q1">
-    <div class="qhead"><span class="qn">1</span><h2>有东西需要我吗？</h2><span class="qstate" id="q1State"></span></div>
+    <div class="qhead"><span class="qn">1</span><h2>需要你的决定</h2><span class="qstate" id="q1State"></span></div>
     <div class="alert lv-ok" id="need">
       <span class="al-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/></svg></span>
       <span class="al-tx" id="needText">读取中…</span>
     </div>
-    <section class="card" id="acceptCard">
-      <div class="chead"><h2>待确认事项</h2><span class="count" id="accNote"></span></div>
-      <div id="acceptBox"></div>
-    </section>
   </section>
 
   <section class="q" id="q2">
@@ -538,19 +539,21 @@
       <div class="execnow" id="execNow" hidden><span class="edot"></span><span class="etx" id="execNowText"></span></div>
     </section>
     <div class="sysline" id="sysLine">正在读取常驻与调度…</div>
-    <div class="exp-contract" id="experienceContract" hidden aria-label="体验契约投影">
-      <strong id="experienceHeadline">体验契约读取中</strong>
-      <div class="exp-meta" id="experienceMeta"></div>
-    </div>
-    <div class="exp-contract" id="rendererContract" hidden data-renderer-mode="interim" aria-label="面板渲染契约">
-      <strong id="rendererHeadline">面板渲染契约读取中</strong>
-      <div class="exp-meta" id="rendererMeta"></div>
-    </div>
     <div class="stewards" id="stewardBar" aria-label="管家状态与全局健康"></div>
     <div class="sysline" id="autonomyLine" hidden></div>
     <details class="card fold engineering-detail" id="systemEvidenceFold">
       <summary>系统为什么这么判断</summary>
-      <div class="foldbody"><div class="sysline" id="systemDetail">正在读取运行指标…</div></div>
+      <div class="foldbody">
+        <div class="sysline" id="systemDetail">正在读取运行指标…</div>
+        <div class="exp-contract" id="experienceContract" hidden aria-label="体验契约投影">
+          <strong id="experienceHeadline">体验契约读取中</strong>
+          <div class="exp-meta" id="experienceMeta"></div>
+        </div>
+        <div class="exp-contract" id="rendererContract" hidden data-renderer-mode="interim" aria-label="面板渲染契约">
+          <strong id="rendererHeadline">面板渲染契约读取中</strong>
+          <div class="exp-meta" id="rendererMeta"></div>
+        </div>
+      </div>
     </details>
     <details class="card fold" id="globalRoutingFold" hidden>
       <summary id="globalRoutingSummary">全局待路由</summary>
@@ -706,7 +709,6 @@
       <div class="route-summary" id="routeSummary">任务由项目账本、工作区和 Codex 原生会话共同推进；Codex thread 的实时列表由宿主提供时再显示。</div>
       <div class="nativeline">
         <span id="nativeState">原生直连：正在读取…</span>
-        <div class="nativehint" id="nativeHint" hidden></div>
         <button class="btn" id="nativeProbe" type="button">原生自检</button>
       </div>
       <details class="fold" style="margin-top:10px"><summary>路线与工作区详情</summary><div class="foldbody"><div id="routeBox"></div></div></details>
@@ -762,6 +764,17 @@
       </div>
     </details>
 
+    <details class="card fold" id="modelRoutesFold">
+      <summary>任务模型</summary>
+      <div class="foldbody">
+        <div id="modelRoutesBox"><div class="empty">正在读取任务模型配置。</div></div>
+        <div class="model-route-actions">
+          <button class="btn primary" id="modelRoutesSave" type="button">保存任务模型</button>
+          <span class="tiny">留空表示沿用项目现有模型通道；推理程度只影响这里配置的等级。</span>
+        </div>
+      </div>
+    </details>
+
     <details class="card fold" open>
       <summary>自动动作</summary>
       <div class="foldbody">
@@ -782,8 +795,8 @@
           <button class="sw" data-key="auto_exec" aria-label="自动实现需求"></button>
         </div>
         <div class="switchrow">
-          <div><div class="t">后台常驻</div><div class="d">关掉 Codex 也按节奏推进，无需一直开着对话</div></div>
-          <button class="sw" data-key="daemon_enabled" aria-label="后台常驻"></button>
+          <div><div class="t">持续运行</div><div class="d">即使暂时离开 Codex，项目也会按已授权的规则继续推进</div></div>
+          <button class="sw" data-key="daemon_enabled" aria-label="持续运行"></button>
         </div>
       </div>
     </details>
@@ -792,7 +805,7 @@
       <summary>运行状态</summary>
       <div class="foldbody">
         <div class="grid2">
-          <div class="kv"><div class="l">后台常驻进程</div><div class="v" id="daemonLive">—</div></div>
+          <div class="kv"><div class="l">持续运行状态</div><div class="v" id="daemonLive">—</div></div>
           <div class="kv"><div class="l">上一轮时间</div><div class="v" id="lastCycle">—</div></div>
           <div class="kv"><div class="l">可合入队列</div><div class="v" id="qClean">—</div></div>
           <div class="kv"><div class="l">已合待回收</div><div class="v" id="qMerged">—</div></div>
@@ -857,7 +870,7 @@
     </details>
   </div>
 
-  <div class="foot">你平时使用的 Codex 总输入框，就是 Autopilot 的入口。</div>
+  <div class="foot">项目状态会在这里汇总；需要你决定时，面板会明确告诉你下一步。</div>
 </div>
 
 <script>
@@ -1030,7 +1043,7 @@
     else { pb.innerHTML = IC_PAUSE + "<span>暂停</span>"; pb.className = "btn danger"; }
     if (s.error) { el("subtitle").textContent = s.error; }
     else if (!s.enabled) { el("subtitle").textContent = "Autopilot 已关闭，Codex 保持原生状态"; }
-    else { el("subtitle").textContent = s.paused ? "已暂停，不再推进新工作" : "零散问题直接说，其余我来"; }
+    else { el("subtitle").textContent = s.paused ? "已暂停，不再推进新工作" : "项目进度会在这里汇总"; }
     var master = el("masterToggle");
     master.classList.toggle("on", !!s.enabled);
     master.setAttribute("aria-pressed", s.enabled ? "true" : "false");
@@ -1040,7 +1053,7 @@
     var proj = s.project || {};
     var pl = el("projectLine");
     if (pl) {
-      pl.textContent = "绑定项目：" + (proj.name || "未绑定") + (proj.path ? "（" + proj.path + "）" : "");
+      pl.textContent = "绑定项目：" + (proj.name || "未绑定");
       pl.title = proj.path || "";
     }
     var ml = s.mainline || {};
@@ -1079,6 +1092,7 @@
     renderProjectOverview(s);
     renderProjectMap(s.roadmap || [], s);
     renderFolders(s.project_folders || {}, s);
+    renderModelRoutes(s.model_routes);
     renderOrientation(s);
     renderAcceptance(humanAcc, s.machine_verified || []);
     renderPmBriefing(s.pm_briefing, s.authorized_followups);
@@ -1250,14 +1264,14 @@
     if (/验收/.test(action)) q1Lead = "要你验收";
     else if (/拍板|决定/.test(action)) q1Lead = "要你拍板";
     else if (/说一句|不知道|判不清|归属/.test(action)) q1Lead = "要说一句";
-    else if (/服务别的项目|轮次|常驻|守护/.test(action)) q1Lead = "等自己的轮次";
+    else if (/服务别的项目|服务另一个项目|暂时不需要|不需要你操作|无需操作|轮次|常驻|守护/.test(action)) q1Lead = "当前无需操作";
     else if (human.length) q1Lead = "要你验收";
     var q1Hint = q1Lead || "需关注";
     var q1State = human.length
       ? (q1Lead ? q1Lead + " · " + human.length + " 项等你" : human.length + " 项等你")
       : stuckN
         ? ((q1Lead && q1Lead !== "需关注" ? q1Lead + " · " : "") + stuckN + " 个卡点")
-        : (needAttention ? q1Hint : "不用你");
+        : (needAttention ? q1Hint : (q1Lead || "不用你"));
     setText("q1State", q1State);
     var q1 = el("q1"); if (q1) q1.className = "q" + (needAttention ? " has-need" : "");
 
@@ -1765,6 +1779,42 @@
     box.appendChild(meta);
   }
 
+  var MODEL_ROUTE_FALLBACK = [
+    {key:"quick", label:"快速处理", description:"小修、门禁、界面来回", model:"", reasoning_effort:"low"},
+    {key:"standard", label:"标准施工", description:"常规实现与验证", model:"", reasoning_effort:"medium"},
+    {key:"deep", label:"深度决策", description:"架构、PRD、取舍判断", model:"", reasoning_effort:"high"},
+  ];
+
+  function renderModelRoutes(routes){
+    var box = el("modelRoutesBox"); if (!box) return;
+    var levels = (routes && routes.levels) || MODEL_ROUTE_FALLBACK;
+    box.innerHTML = "";
+    levels.forEach(function(row){
+      var line = document.createElement("div"); line.className = "model-route-row";
+      line.setAttribute("data-route", row.key || "");
+      var label = document.createElement("div"); label.className = "mr-label";
+      label.textContent = row.label || "";
+      var desc = document.createElement("span"); desc.textContent = row.description || "";
+      label.appendChild(desc);
+      var model = document.createElement("input");
+      model.type = "text";
+      model.id = "modelRoute_" + (row.key || "");
+      model.placeholder = "沿用项目默认";
+      model.value = row.model || "";
+      model.setAttribute("aria-label", (row.label || "任务") + "模型");
+      var effort = document.createElement("select");
+      effort.id = "effortRoute_" + (row.key || "");
+      effort.setAttribute("aria-label", (row.label || "任务") + "推理程度");
+      [["low","低"],["medium","中"],["high","高"]].forEach(function(opt){
+        var o = document.createElement("option"); o.value = opt[0]; o.textContent = opt[1];
+        if (opt[0] === row.reasoning_effort) o.selected = true;
+        effort.appendChild(o);
+      });
+      line.appendChild(label); line.appendChild(model); line.appendChild(effort);
+      box.appendChild(line);
+    });
+  }
+
   function renderFolders(folders, s){
     var box = el("folderBox"); if (!box) return;
     box.innerHTML = "";
@@ -1776,26 +1826,83 @@
       return;
     }
     list.forEach(function(f){
-      var card = document.createElement("div");
+      // 项目卡默认是收起的面性容器：摘要只承担身份、目标、阶段和计数。
+      // 明细、门禁、工程雷达都进展开区，避免多项目并行时首屏变成日志墙。
+      var card = document.createElement("details");
       card.className = "folder" + (f.active ? " active" : "");
-      var head = document.createElement("div"); head.className = "folder-head";
+      card.title = [f.name || f.id || "未命名项目", f.path || ""].filter(Boolean).join(" · ");
+
+      var summary = document.createElement("summary");
       var info = document.createElement("div");
       var title = document.createElement("div"); title.className = "folder-title";
       title.textContent = f.name || f.id || "未命名项目";
-      var meta = document.createElement("div"); meta.className = "folder-meta";
-      meta.textContent = [f.product || "", f.path || ""].filter(Boolean).join(" · ");
+      var goal = document.createElement("div"); goal.className = "folder-goal";
+      goal.textContent = "当前目标：" + (f.goal_override || f.one_liner || f.stage || "目标待明确");
       var step = document.createElement("div"); step.className = "folder-step";
       step.textContent = "当前步骤：" + (f.current_step || "路线待拆解");
-      var source = document.createElement("div"); source.className = "folder-source";
-      source.textContent = "路线 " + (f.current_step || "待拆解");
-      source.title = f.source_thread_id
-        ? "来源对话 " + f.source_thread_id
-        : "未标注来源";
-      info.appendChild(title); info.appendChild(meta); info.appendChild(step); info.appendChild(source);
+      info.appendChild(title); info.appendChild(goal); info.appendChild(step);
+
+      var stats = document.createElement("div"); stats.className = "folder-stats";
+      var c = f.counts || {};
+      [["doing", c.doing || 0, "进行"], ["todo", c.todo || 0, "待办"], ["human", c.human || 0, "验收"]].forEach(function(row){
+        if (!row[1] && row[0] !== "doing") return;
+        var tag = document.createElement("span");
+        tag.className = "fstat" + (row[0] === "human" && row[1] ? " warn" : row[0] === "doing" && row[1] ? " live" : "");
+        tag.textContent = row[2] + " " + row[1];
+        stats.appendChild(tag);
+      });
+      var chevron = document.createElement("span");
+      chevron.className = "folder-chevron";
+      chevron.setAttribute("aria-hidden", "true");
+      summary.appendChild(info); summary.appendChild(stats); summary.appendChild(chevron);
+      card.appendChild(summary);
+
+      var body = document.createElement("div"); body.className = "folder-body";
+      var goalId = "goalEdit_" + String(f.id || f.path || f.name || "project").replace(/[^A-Za-z0-9_-]/g, "_");
+      var editBtn = document.createElement("button");
+      editBtn.className = "btn folder-edit-goal";
+      editBtn.type = "button";
+      editBtn.id = goalId + "_edit";
+      editBtn.textContent = "编辑目标";
+      editBtn.addEventListener("click", function(){
+        var wrap = document.getElementById(goalId);
+        if (wrap) wrap.hidden = !wrap.hidden;
+      });
+      body.appendChild(editBtn);
+      var editor = document.createElement("div");
+      editor.className = "folder-goal-editor";
+      editor.id = goalId;
+      editor.hidden = true;
+      var label = document.createElement("label");
+      label.textContent = "项目目标";
+      label.setAttribute("for", goalId + "_input");
+      var input = document.createElement("textarea");
+      input.id = goalId + "_input";
+      input.maxLength = 240;
+      input.value = f.goal_override || f.one_liner || f.stage || "";
+      var actions = document.createElement("div"); actions.className = "folder-goal-actions";
+      var save = document.createElement("button");
+      save.className = "btn primary"; save.type = "button"; save.textContent = "保存目标";
+      save.addEventListener("click", function(){
+        save.disabled = true;
+        callTool("project_goal_update", {project_path: f.path || currentCwd(), goal: input.value, confirm:true})
+          .then(function(){ toast("目标已保存", "ok"); return loadStatus(false); })
+          .catch(function(e){ toast("目标未保存：" + (e && e.message || e), "err"); })
+          .then(function(){ save.disabled = false; });
+      });
+      var cancel = document.createElement("button");
+      cancel.className = "btn"; cancel.type = "button"; cancel.textContent = "取消";
+      cancel.addEventListener("click", function(){
+        input.value = f.goal_override || f.one_liner || f.stage || "";
+        editor.hidden = true;
+      });
+      actions.appendChild(save); actions.appendChild(cancel);
+      editor.appendChild(label); editor.appendChild(input); editor.appendChild(actions);
+      body.appendChild(editor);
       if (f.readable === false){
         var err = document.createElement("div"); err.className = "folder-error";
         err.textContent = "项目账本读不到：" + (f.read_error || "未知原因");
-        info.appendChild(err);
+        body.appendChild(err);
       }
       var gate = f.quality_gate;
       if (gate && gate.status){
@@ -1807,14 +1914,14 @@
         gateLine.title = (gate.checks || []).map(function(checkRow){
           return checkRow.label + "：观测 " + String(checkRow.observed) + "/" + String(checkRow.expected);
         }).join("；");
-        info.appendChild(gateLine);
+        body.appendChild(gateLine);
       }
       var radar = f.engineering_radar;
       if (radar && radar.status === "unverified"){
         var radarError = document.createElement("div");
         radarError.className = "folder-error";
         radarError.textContent = "工程进度不可读：" + (radar.detail || "未知原因");
-        info.appendChild(radarError);
+        body.appendChild(radarError);
       } else if (radar && radar.layers) {
         var radarLine = document.createElement("div");
         radarLine.className = "folder-step";
@@ -1824,31 +1931,21 @@
           return layer.layer + " " + layer.completion + "%" +
             (layer.blocker ? "：" + layer.blocker : "");
         }).join("\n");
-        info.appendChild(radarLine);
+        body.appendChild(radarLine);
         if ((radar.next_steps || []).length){
           var next = document.createElement("div"); next.className = "folder-source";
           next.textContent = "下一步：" + radar.next_steps[0];
           next.title = radar.next_steps.join("\n");
-          info.appendChild(next);
+          body.appendChild(next);
         }
         if ((radar.blockers || []).length){
           var blocked = document.createElement("div");
           blocked.className = "folder-error";
           blocked.textContent = "卡点：" + radar.blockers[0];
           blocked.title = radar.blockers.join("\n");
-          info.appendChild(blocked);
+          body.appendChild(blocked);
         }
       }
-      var stats = document.createElement("div"); stats.className = "folder-stats";
-      var c = f.counts || {};
-      [["doing", c.doing || 0, "进行"], ["todo", c.todo || 0, "待办"], ["human", c.human || 0, "验收"]].forEach(function(row){
-        if (!row[1] && row[0] !== "doing") return;
-        var tag = document.createElement("span");
-        tag.className = "fstat" + (row[0] === "human" && row[1] ? " warn" : row[0] === "doing" && row[1] ? " live" : "");
-        tag.textContent = row[2] + " " + row[1];
-        stats.appendChild(tag);
-      });
-      head.appendChild(info); head.appendChild(stats); card.appendChild(head);
       var work = document.createElement("div"); work.className = "folder-work";
       // 工作项只在这里展开一次；路线图只负责「现在走到哪一步」，不复制明细。
       var doingRows = (f.doing_items || []).map(function(x){ return {x:x, state:"进行中"}; });
@@ -1873,7 +1970,7 @@
           line.appendChild(name); line.appendChild(state); work.appendChild(line);
         });
       }
-      card.appendChild(work); box.appendChild(card);
+      body.appendChild(work); card.appendChild(body); box.appendChild(card);
     });
   }
 
@@ -2262,15 +2359,6 @@
     if (probe && probe.at) { text += "（自检于 " + probe.at + "）"; }
     box.textContent = text;
     var tip = (probe && probe.reason) ? probe.reason : "";
-    if (probe && probe.hint) {
-      tip = (tip ? tip + " " : "") + probe.hint;
-    }
-    var hintBox = el("nativeHint");
-    if (hintBox) {
-      var hint = (probe && probe.hint) || "";
-      hintBox.textContent = hint;
-      hintBox.hidden = !hint || (probe && probe.connected);
-    }
     var btn = el("nativeProbe");
     if (btn) { btn.disabled = false; btn.title = tip || "真跑一次原生直连自检"; }
   }
@@ -2395,7 +2483,7 @@
     var note = el("accNote");
     if (note) note.textContent = human.length ? (human.length + " 项") : "";
     if (!human.length){
-      box.innerHTML = '<div class="empty">现在没有需要你亲自验收的项。只有必须人看（审美/手感/真实产品里点一下）的才会出现在这里。</div>';
+      return;
     } else {
       var ul = document.createElement("ul"); ul.className = "acc";
       human.forEach(function(a){
@@ -2445,7 +2533,7 @@
   function buildAcceptanceAction(a){
     var row = document.createElement("div"); row.className = "accact";
     var msg = document.createElement("span"); msg.className = "accmsg";
-    msg.textContent = "补图只追加附件，不会替你收口；确认通过才会把这条从首屏移走；不点就继续占着「待确认事项」。";
+    msg.textContent = "补图只追加附件，不会替你收口；确认通过才会把这条从首屏移走；不点就继续留在验收清单里。";
     var actions = document.createElement("div"); actions.className = "accbtns";
     var shotBtn = document.createElement("button");
     shotBtn.className = "btn"; shotBtn.type = "button";
@@ -2515,7 +2603,7 @@
 
   var KIND_LABEL = {
     cycle_done:"完成一轮", pause:"已暂停", resume:"已恢复", run_once:"手动跑了一轮",
-    switch:"切换开关", daemon:"后台常驻变更"
+    switch:"切换开关", daemon:"持续运行变更"
   };
   function renderEvents(events){
     var ul = el("eventList"); if(!ul) return; ul.innerHTML = "";
@@ -2541,7 +2629,7 @@
       return bits.join("，");
     }
     if (e.kind === "switch") return (e.name||"") + " -> " + (e.value ? "开" : "关");
-    if (e.kind === "daemon") return e.enabled ? "已开启后台常驻" : "已关闭后台常驻";
+    if (e.kind === "daemon") return e.enabled ? "已开启持续运行" : "已关闭持续运行";
     return "";
   }
 
@@ -2809,6 +2897,21 @@
     });
   });
 
+  var modelRoutesSave = el("modelRoutesSave");
+  if (modelRoutesSave) modelRoutesSave.addEventListener("click", function(){
+    var routes = {};
+    ["quick","standard","deep"].forEach(function(key){
+      var model = el("modelRoute_" + key);
+      var effort = el("effortRoute_" + key);
+      routes[key] = {model: model ? model.value : "", reasoning_effort: effort ? effort.value : ""};
+    });
+    modelRoutesSave.disabled = true;
+    callTool("model_routes_update", {routes: routes, confirm:true})
+      .then(function(){ toast("任务模型已保存", "ok"); return loadStatus(false); })
+      .catch(function(e){ toast("任务模型未保存：" + (e && e.message || e), "err"); })
+      .then(function(){ modelRoutesSave.disabled = false; });
+  });
+
   el("advBtn").addEventListener("click", function(){
     var on = document.body.classList.toggle("adv");
     if (on) { loadStatus(); window.scrollTo({top: document.body.scrollHeight, behavior:"smooth"}); }
@@ -2823,10 +2926,7 @@
     callTool("codex_native_probe", {repair:true}).then(function(res){
       var probe = (res && res.last_probe) || res || {};
       if (probe.connected) { toast("原生直连已连通：可以把任务派进 Codex 窗口", "ok"); }
-      else if (probe.repair && probe.repair.attempted) {
-        toast("已尝试启动官方 daemon，但原生直连仍不可用：" + (probe.repair.detail || probe.reason || "原因见下方提示"), "err");
-      }
-      else { toast("原生直连不可用：" + (probe.reason || "原因见原生直连这一行"), "err"); }
+      else { toast("还不能把任务派进 Codex 窗口，请稍后重试。", "err"); }
       return loadStatus(false);
     }).catch(function(e){ toast("自检失败：" + (e && e.message || e), "err"); })
       .then(function(){ btn.disabled = false; });
