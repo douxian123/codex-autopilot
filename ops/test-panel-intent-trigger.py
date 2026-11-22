@@ -16,6 +16,7 @@ if not setup_path.is_file():
     setup_path = ROOT / "skills" / "setup" / "SKILL.md"
 setup = setup_path.read_text(encoding="utf-8")
 mcp = (OPS / "central_mcp.py").read_text(encoding="utf-8")
+installer = (ROOT / "install.sh").read_text(encoding="utf-8")
 
 def has_any(text: str, *needles: str) -> bool:
     return any(needle in text for needle in needles)
@@ -43,6 +44,9 @@ checks = {
     "MCP 明确禁止只解释入口": "不要只解释入口、不要只去侧栏找按钮" in mcp,
     "setup 写明 unsupported 止损": (
         "unsupported call: mcp__codex_autopilot__render_autopilot_panel" in setup
+    ),
+    "安装器把面板工具排除 deferred 桥": (
+        '"omit_tools_from": ["deferred"]' in installer
     ),
 }
 
@@ -114,6 +118,34 @@ if codex_cli.is_file():
         config = config_path.read_text(encoding="utf-8")
         stale_app_tools = "codex-app-tools/26.1103.60933" in config
         checks["宿主 app-tools MCP 未指向过期版本"] = not stale_app_tools
+
+    install_state_path = Path.home() / "plugins" / "codex-autopilot" / "install-state.json"
+    if install_state_path.is_file():
+        try:
+            install_state = json.loads(install_state_path.read_text(encoding="utf-8"))
+            version = install_state.get("version")
+        except (OSError, ValueError, TypeError):
+            version = None
+        if version:
+            installed_mcp = (
+                Path.home()
+                / ".codex"
+                / "plugins"
+                / "cache"
+                / "personal"
+                / "codex-autopilot"
+                / str(version)
+                / ".mcp.json"
+            )
+            if installed_mcp.is_file():
+                try:
+                    manifest = json.loads(installed_mcp.read_text(encoding="utf-8"))
+                    server = manifest.get("mcpServers", {}).get("codex-autopilot", {})
+                    checks["已安装面板工具排除 deferred 桥"] = (
+                        "deferred" in (server.get("omit_tools_from") or [])
+                    )
+                except (OSError, ValueError, TypeError):
+                    checks["已安装面板工具排除 deferred 桥"] = False
 
 failed = [name for name, ok in checks.items() if not ok]
 for name, ok in checks.items():
