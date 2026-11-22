@@ -229,7 +229,8 @@ PM 管家每轮不是只问“任务做完了吗”，而要复核：用户能�
 - [x] 项目自主运行具备暂停、等待人工、预算熔断、重试上限、空转检测和恢复路径。证据：`python3 ops/selftest.py` 的预算、worker、恢复与人工边界回归。
 - [x] 面板缺数据时显示 `unknown` 或明确缺失，不把缺失写成 0、正常或完成。证据：`python3 ops/panel_logic_check.py`、`python3 ops/panel_render_check.py --no-shot`。
 - [x] 原生直连缺桌面控制 socket 时，面板显示「只读历史，不能派活」，不误报「Codex 未运行」或「已连通可派活」。证据：`python3 ops/panel_logic_check.py` 覆盖 socket 缺失断言，`python3 -u ops/selftest.py` 覆盖三种状态文案；release 根目录运行 `AUTOPILOT_CHROMIUM=<headless-shell> python3 ops/panel_render_check.py --no-shot` 全部通过。
-- [x] 安装态与已生成 release 分开表述：生成 release 不等于现场已安装；当前安装版本以 `install-state.json` / `codex plugin list --json` 为准。证据：`~/plugins/codex-autopilot/install-state.json` 仍为 `0.6.0-preview.113`，`python3 .../repoint_launchd.py --check` 输出当前安装基准路径。
+- [x] 安装态与已生成 release 分开表述：生成 release 不等于现场已安装；当前安装版本以 `install-state.json` / `codex plugin list --json` 为准。证据：2026-11-22 现场 `~/plugins/codex-autopilot/install-state.json` 为 `0.6.0-preview.119`，`codex plugin list` 显示同版本已安装启用，发版后应以安装态文件复查。
+- [x] 原生直连缺控制 socket 时，显式「原生自检」会启动官方 `codex app-server daemon start` 并复验，不杀桌面端、不改 provider、不把命令退出码当成连接成功。证据：`python3 ops/codex_native.py probe --repair`、`python3 ops/panel_logic_check.py`、`python3 -u ops/selftest.py`。
 
 ### 6.3 PM 质量验收
 

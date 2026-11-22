@@ -386,6 +386,8 @@
   .projline{margin-top:8px;overflow-wrap:anywhere}
   .nativeline #nativeState{font-size:12.5px;color:var(--ink-2);line-height:1.5}
   .nativeline .btn{padding:5px 10px;font-size:12px;border-radius:8px;flex:0 0 auto}
+  .nativeline .nativehint{flex:1 1 100%;font-size:11.5px;line-height:1.5;color:var(--ink-3);overflow-wrap:anywhere}
+  .nativeline .nativehint[hidden]{display:none}
   .intake-state{font-size:12px;color:var(--ink-3);min-width:0;overflow-wrap:anywhere}
   .overview-detail{margin:18px 0}
   .overview-detail>summary{list-style:none;cursor:pointer;padding:11px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:13px;font-weight:600;color:var(--ink)}
@@ -704,6 +706,7 @@
       <div class="route-summary" id="routeSummary">任务由项目账本、工作区和 Codex 原生会话共同推进；Codex thread 的实时列表由宿主提供时再显示。</div>
       <div class="nativeline">
         <span id="nativeState">原生直连：正在读取…</span>
+        <div class="nativehint" id="nativeHint" hidden></div>
         <button class="btn" id="nativeProbe" type="button">原生自检</button>
       </div>
       <details class="fold" style="margin-top:10px"><summary>路线与工作区详情</summary><div class="foldbody"><div id="routeBox"></div></div></details>
@@ -2259,8 +2262,14 @@
     if (probe && probe.at) { text += "（自检于 " + probe.at + "）"; }
     box.textContent = text;
     var tip = (probe && probe.reason) ? probe.reason : "";
-    if (probe && probe.hint && probe.blocked_by === "remote-control-chatgpt-pairing") {
+    if (probe && probe.hint) {
       tip = (tip ? tip + " " : "") + probe.hint;
+    }
+    var hintBox = el("nativeHint");
+    if (hintBox) {
+      var hint = (probe && probe.hint) || "";
+      hintBox.textContent = hint;
+      hintBox.hidden = !hint || (probe && probe.connected);
     }
     var btn = el("nativeProbe");
     if (btn) { btn.disabled = false; btn.title = tip || "真跑一次原生直连自检"; }
@@ -2811,9 +2820,12 @@
     var btn = this; btn.disabled = true;
     var box = el("nativeState");
     if (box) { box.textContent = "原生直连：正在自检…"; }
-    callTool("codex_native_probe", {}).then(function(res){
+    callTool("codex_native_probe", {repair:true}).then(function(res){
       var probe = (res && res.last_probe) || res || {};
       if (probe.connected) { toast("原生直连已连通：可以把任务派进 Codex 窗口", "ok"); }
+      else if (probe.repair && probe.repair.attempted) {
+        toast("已尝试启动官方 daemon，但原生直连仍不可用：" + (probe.repair.detail || probe.reason || "原因见下方提示"), "err");
+      }
       else { toast("原生直连不可用：" + (probe.reason || "原因见原生直连这一行"), "err"); }
       return loadStatus(false);
     }).catch(function(e){ toast("自检失败：" + (e && e.message || e), "err"); })

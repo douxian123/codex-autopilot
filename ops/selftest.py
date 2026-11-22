@@ -3075,6 +3075,71 @@ def test_native_socket_lstat():
     print("selftest ok: socket symlink 入口按 lstat 识别，权限挡目标不再误报成不存在。")
 
 
+def test_native_repair_probe():
+    """显式 repair 只能修 socket 缺失，不能把启动命令成功伪造成可派活。"""
+    import importlib
+    from unittest import mock
+
+    sys.path.insert(0, str(OPS))
+    import codex_native
+    import central_mcp
+    importlib.reload(codex_native)
+    importlib.reload(central_mcp)
+
+    ok_repair = {
+        "attempted": True, "ok": True, "status": "started",
+        "command": "codex app-server daemon start", "exit_code": 0, "detail": "started",
+    }
+    failed_repair = {
+        "attempted": True, "ok": False, "status": "exit_zero_unconfirmed",
+        "command": "codex app-server daemon start", "exit_code": 0, "detail": "no socket",
+    }
+
+    # 默认自检绝不碰 daemon：只在用户显式点「原生自检」时才允许 repair。
+    with mock.patch.object(codex_native, "_socket_present", return_value=False), \
+         mock.patch.object(codex_native, "_repair_control_socket") as repair_mock:
+        result = codex_native.probe(timeout=1)
+        repair_mock.assert_not_called()
+        assert result["connected"] is False and result["can_dispatch"] is False, result
+
+    # 缺 socket + repair：必须尝试官方 daemon；但 daemon 说 started 后 socket 仍没出现，
+    # 也只能报只读历史，不能靠 exit_code 或 repair.ok 谎报 connected。
+    with mock.patch.object(codex_native, "_socket_present", return_value=False), \
+         mock.patch.object(codex_native, "_repair_control_socket", return_value=ok_repair) as repair_mock, \
+         mock.patch.object(codex_native, "_wait_for_control_socket", return_value=False) as wait_mock, \
+         mock.patch.object(codex_native, "_history_snapshot", return_value=[]):
+        result = codex_native.probe(timeout=1, repair=True)
+        repair_mock.assert_called_once()
+        wait_mock.assert_called_once()
+        assert result["repair"]["ok"] is True, result
+        assert result["socket_present"] is False, result
+        assert result["connected"] is False and result["can_dispatch"] is False, result
+        assert "只能只读看历史" in result["reason"], result
+        assert "不能派活" in result["reason"], result
+
+    # repair 失败时把命令原文和详情留在 hint 里，用户能复核到底是哪一步没成。
+    with mock.patch.object(codex_native, "_socket_present", return_value=False), \
+         mock.patch.object(codex_native, "_repair_control_socket", return_value=failed_repair), \
+         mock.patch.object(codex_native, "_history_snapshot", return_value=[]):
+        result = codex_native.probe(timeout=1, repair=True)
+        assert "已尝试启动官方 app-server daemon" in result["hint"], result
+        assert "codex app-server daemon start" in result["hint"], result
+        assert result["can_dispatch"] is False, result
+
+    schemas = {tool["name"]: tool.get("inputSchema", {}) for tool in central_mcp.TOOLS}
+    schema = schemas.get("codex_native_probe") or {}
+    assert "repair" in (schema.get("properties") or {}), schema
+    assert schema.get("additionalProperties") is False, schema
+
+    with mock.patch.object(central_mcp.codex_native, "probe", return_value={"connected": True}) as probe_mock, \
+         mock.patch.object(central_mcp.codex_native, "record_probe"):
+        result = central_mcp.call_tool("codex_native_probe", {"repair": True})
+        assert result == {"connected": True}, result
+        probe_mock.assert_called_once_with(repair=True)
+
+    print("selftest ok: 原生自检 repair 只在显式触发时启动 daemon，失败或 socket 未出现都不谎报可派活。")
+
+
 def test_native_status_socket_missing_is_honest():
     """socket 缺失时只说 socket 缺失，绝不误报成 Codex 没运行或已可派活。"""
     import importlib
@@ -8315,6 +8380,7 @@ if __name__ == "__main__":
     test_panel_first_screen()
     test_codex_native_bridge()
     test_native_socket_lstat()
+    test_native_repair_probe()
     test_native_status_socket_missing_is_honest()
     test_native_section_grouping()
     test_native_thread_title_contract()

@@ -17,6 +17,7 @@
   settings [key=value]...         读/改自动动作开关
   events [n]                      最近的事件流水
   native-probe                    真跑一次原生直连自检并记下结果
+  native-probe --repair           缺控制 socket 时启动官方 app-server daemon 后复验
 """
 
 from __future__ import annotations
@@ -200,7 +201,7 @@ def main(argv):
     if action == "native-probe":
         import codex_native
 
-        result = codex_native.probe()
+        result = codex_native.probe(repair="--repair" in argv[1:])
         codex_native.record_probe(result)
         return _result({"ok": True, "native": result},
                        0 if result.get("connected") else 1)

@@ -1436,8 +1436,12 @@ TOOLS = [
     },
     {
         "name": "codex_native_probe",
-        "description": "真跑一次「原生直连」自检：桌面端控制 socket 通不通、能不能把任务派进 Codex 窗口。结果会记下来，面板显示的是这次实测结果而不是猜测。",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "description": "真跑一次「原生直连」自检：桌面端控制 socket 通不通、能不能把任务派进 Codex 窗口。缺 socket 时可显式要求启动官方 app-server daemon 修复，不会杀桌面端、不改 provider。结果会记下来，面板显示的是这次实测结果而不是猜测。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"repair": {"type": "boolean", "description": "仅在控制 socket 缺失时启动官方 app-server daemon；默认 false"}},
+            "additionalProperties": False,
+        },
     },
     {
         "name": "codex_native_create_section",
@@ -3667,7 +3671,7 @@ def call_tool(name, args):
     if name == "codex_native_probe":
         # 自检是诊断动作：不碰任务、不碰账本，所以即使总开关关着也允许跑，
         # 否则用户没法在「关着」的时候判断到底是不是权限/环境的问题。
-        result = codex_native.probe()
+        result = codex_native.probe(repair=bool(args.get("repair")))
         codex_native.record_probe(result)
         return result
     if name == "capture_request":
