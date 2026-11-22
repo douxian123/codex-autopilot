@@ -122,6 +122,20 @@ class CoveredNameIndex:
         return None
 
 
+def coverage_index(roots: List[Path]) -> CoveredNameIndex:
+    """Index only content that survives this prune run.
+
+    A candidate snapshot must never be indexed as its own covering root, and
+    older snapshots must not be used either: they can be removed in the same
+    run. Otherwise a unique file is proved covered by itself and unlinked
+    without ever reaching archive_unique().
+    """
+    index = CoveredNameIndex()
+    for root in roots:
+        index.add_tree(root)
+    return index
+
+
 def safe_rel(rel: Path) -> Path:
     parts = [re.sub(r"[^A-Za-z0-9._-]+", "_", part) for part in rel.parts]
     parts = [part or "_" for part in parts]
@@ -328,7 +342,6 @@ def main() -> int:
         archive.mkdir(parents=True, exist_ok=True)
     known_content: Dict[Tuple[str, int], Path] = {}
     global_queue: List[Path] = []
-    name_index = CoveredNameIndex()
     archive_cap = args.archive_cap_mib * 1024 * 1024
     archive_bytes = [archive_usage(archive) if not args.keep_archive else 0]
     dirs = sorted(
@@ -345,9 +358,14 @@ def main() -> int:
                     continue
                 known_content.setdefault(key, path)
                 global_queue.append(path)
-        name_index.add_tree(archive)
-    for d in dirs:
-        name_index.add_tree(d)
+
+    def cover_index_for(position: int) -> CoveredNameIndex:
+        roots: List[Path] = []
+        if not args.keep_archive:
+            roots.append(archive)
+        roots.append(args.source)
+        roots.extend(dirs[:position])
+        return coverage_index(roots)
 
     removable, retained = prunable_snapshots(
         args.source, args.snapshots, max(1, args.keep),
@@ -362,9 +380,9 @@ def main() -> int:
                 if resolved.parent != parent:
                     print(f"snapshot prune keep {path.name} (path escaped snapshots root)")
                     continue
-                index = next(i for i, d in enumerate(dirs) if d == path)
+                position = next(i for i, d in enumerate(dirs) if d == path)
                 ok, reason = prune_snapshot_files(
-                    path, [args.source, *dirs[:index]], name_index,
+                    path, [args.source, *dirs[:position]], cover_index_for(position),
                     archive, known_content, global_queue,
                     archive_bytes, archive_cap)
                 if ok:
@@ -372,6 +390,8 @@ def main() -> int:
                     removed += 1
                 else:
                     print(f"snapshot prune keep {path.name} (unprotected: {reason})")
+            except StopIteration:
+                print(f"snapshot prune keep {path.name} (snapshot set changed)")
             except OSError as exc:
                 print(f"snapshot prune keep {path.name} ({exc})")
     for path, reason in retained:
@@ -382,9 +402,9 @@ def main() -> int:
                 parent = args.snapshots.resolve(strict=True)
                 if resolved.parent != parent:
                     continue
-                index = next(i for i, d in enumerate(dirs) if d == path)
+                position = next(i for i, d in enumerate(dirs) if d == path)
                 ok, why = prune_snapshot_files(
-                    path, [args.source, *dirs[:index]], name_index,
+                    path, [args.source, *dirs[:position]], cover_index_for(position),
                     archive, known_content, global_queue,
                     archive_bytes, archive_cap)
                 if ok:
@@ -392,6 +412,8 @@ def main() -> int:
                     removed += 1
                 else:
                     print(f"snapshot prune keep {path.name} (unprotected: {why})")
+            except StopIteration:
+                print(f"snapshot prune keep {path.name} (snapshot set changed)")
             except OSError as exc:
                 print(f"snapshot prune keep {path.name} ({exc})")
     print(

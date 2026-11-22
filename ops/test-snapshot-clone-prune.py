@@ -244,6 +244,43 @@ def main():
                [gzip.decompress(path.read_bytes()) for path in archived_files],
                usage))
 
+    with tempfile.TemporaryDirectory(prefix="snapshot-prune-self-index-") as tmp:
+        root = Path(tmp)
+        source = root / "sessions"
+        snapshots = root / "snapshots"
+        archive = root / "archive"
+        source.mkdir()
+        old = snapshots / "20260101-000000"
+        newer = snapshots / "20260102-000000"
+        old_history = b"unique old history must be archived\n"
+        write(old / "unique.jsonl", old_history)
+        write(newer / "unique.jsonl", b"newer unrelated bytes\n")
+        old_ns = time.time_ns() - 10_000_000_000
+        new_ns = time.time_ns()
+        os.utime(old, ns=(old_ns, old_ns))
+        os.utime(newer, ns=(new_ns, new_ns))
+
+        result = subprocess.run(
+            [SYSTEM_PYTHON, str(HELPER),
+             "--source", str(source),
+             "--snapshots", str(snapshots),
+             "--archive", str(archive),
+             "--keep", "1"],
+            capture_output=True, text=True)
+        archived = [
+            path for path in archive.rglob("*.gz")
+            if path.is_file()
+        ]
+        check("候选快照不能靠自身副本证明已覆盖而丢掉独有历史",
+              result.returncode == 0
+              and not old.exists()
+              and len(archived) == 1
+              and gzip.decompress(archived[0].read_bytes()) == old_history,
+              (result.returncode, result.stdout.strip(), result.stderr.strip(),
+               old.exists(), archived,
+               [gzip.decompress(path.read_bytes()) for path in archived
+                if path.is_file()]))
+
     snapshot_sh = (OPS / "guards/snapshot.sh").read_text(encoding="utf-8")
     check("快照使用 APFS clone 而不是会跟随追加写入的硬链接",
           "cp -cR" in snapshot_sh and "cp -al" not in snapshot_sh)
