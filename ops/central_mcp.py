@@ -632,6 +632,42 @@ def _renderer_contract_summary():
     }
 
 
+def _steward_recent_completed(limit=3):
+    """Return conservatively attributed recent progress for steward details."""
+    # 公共 gate / product / project 等词会同时命中多个职责，不能拿来做归属。
+    # 只接受明确的 lane 标记或职责专属中文标题；判不清就留在项目级最近完成。
+    rules = (
+        ("context", ("context",), ("上下文", "约束", "归档")),
+        ("route", ("route", "router", "routing"), ("路由", "归属", "待路由")),
+        ("merge", ("land", "merge", "conflict", "resolve"), ("合入", "合并", "冲突", "收拢")),
+        ("tune", ("runtime", "freshness", "harness", "disk"), ("运行态", "状态管家", "换代", "磁盘门禁")),
+        ("exec", ("exec", "implement", "worker"), ("实现管家", "自动实现", "施工")),
+        ("accept", ("acceptance", "verification", "verify"), ("验收", "验收标准", "验证")),
+        ("pm", ("panel", "pm", "prd"), ("项目经理", "项目路线", "面板首屏")),
+    )
+    latest = {}
+    for row in _read_jsonl(_truth_dir() / "progress.jsonl"):
+        if row.get("id"):
+            latest[row["id"]] = row
+    out = {key: [] for key, _, _ in rules}
+    rows = sorted(latest.values(), key=lambda row: str(row.get("ts") or ""), reverse=True)
+    for row in rows:
+        if row.get("status") not in ("done", "wontfix"):
+            continue
+        lane = str(row.get("lane") or "").lower()
+        title = " ".join(str(row.get("title") or row.get("summary") or "").split())
+        title_lower = title.lower()
+        matches = []
+        for key, lane_needles, title_needles in rules:
+            if any(n in lane for n in lane_needles) or any(n in title_lower for n in title_needles):
+                matches.append(key)
+        key = matches[0] if len(matches) == 1 else None
+        if not key or len(out[key]) >= limit:
+            continue
+        out[key].append({"title": title[:120], "ts": row.get("ts") or ""})
+    return out
+
+
 def _steward_health(payload):
     """七管家健康条：把七个管家的真实状态收敛成一份面板可读的清单。
 
@@ -663,6 +699,7 @@ def _steward_health(payload):
     blocked = payload.get("blocked") or {}
 
     rows = []
+    recent_by_key = _steward_recent_completed()
 
     # 1. 上下文管家：自动收录候选 + 生效约束条数。候选待确认 = 需要人，不是故障。
     try:
@@ -832,8 +869,21 @@ def _steward_health(payload):
     counts = {}
     for r in rows:
         counts[r["state"]] = counts.get(r["state"], 0) + 1
+    descriptions = {
+        "context": "维护项目约束与历史上下文",
+        "route": "将新需求归入正确项目",
+        "merge": "把通过门禁的改动安全收口",
+        "tune": "观察运行状态并提出调整建议",
+        "exec": "在授权范围内实现工程项",
+        "pm": "整理项目目标、路线和下一步",
+        "accept": "先完成机器自验，再交给你确认",
+        "health": "汇总项目真相、运行和验收状态",
+    }
     for row in rows:
         row["label"] = _ui_text(row.get("label"), "状态取不到")
+        key = row.get("key")
+        row["description"] = descriptions.get(key, "当前职责状态")
+        row["recent_completed"] = recent_by_key.get(key, [])
     return {"rows": rows, "counts": counts}
 
 

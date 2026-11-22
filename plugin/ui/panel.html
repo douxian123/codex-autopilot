@@ -111,23 +111,35 @@
   .q .card + .card,.q .northstar,.q .sysline{margin-top:10px}
   .sysline{font-size:11.5px;color:var(--ink-3);line-height:1.6;overflow-wrap:anywhere}
   .need-evidence[hidden]{display:none}
-  /* 管家健康条：首屏只留一行摘要和短名状态条，完整解释走 title / aria-label。
+  /* 管家健康条：颜色点是默认信息，名称与解释只在悬停/展开时出现。
      attention 才用警告色；off 是用户自己关的，用中性灰，不冒充故障。 */
-  .stewards{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);display:flex;align-items:center;flex-wrap:wrap;gap:5px 10px}
+  .stewards{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);display:flex;align-items:center;gap:8px}
   .exp-contract{margin-top:10px;padding:8px 10px;border:1px solid var(--line-2);border-left:2px solid var(--brand-200);border-radius:var(--r-xs);background:var(--surface-2);font-size:11.5px;line-height:1.55;color:var(--ink-2)}
   .exp-contract[hidden]{display:none}
   .exp-contract strong{color:var(--ink);font-weight:650}
   .exp-contract .exp-meta{margin-top:3px;color:var(--ink-3);font-size:11px;overflow-wrap:anywhere}
-  .steward-summary{font-size:11.5px;color:var(--ink-3);white-space:nowrap}
-  .steward-strip{display:flex;align-items:center;flex-wrap:wrap;gap:4px 9px}
-  .steward{display:inline-flex;align-items:center;gap:4px;font-size:11px;color:var(--ink-2);line-height:1.4;white-space:nowrap}
-  .steward .sdot{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:var(--ink-3);opacity:.55}
-  .steward.s-ok .sdot{background:var(--ok);opacity:.85}
+  .steward-summary{font-size:11px;color:var(--ink-3);white-space:nowrap}
+  .steward-strip{display:flex;align-items:center;gap:3px}
+  .steward{position:relative;width:28px;height:28px;padding:0;border:0;border-radius:50%;background:transparent;display:grid;place-items:center;cursor:pointer}
+  .steward:hover,.steward:focus-visible{background:var(--surface-3)}
+  .steward .sdot{display:block;width:9px;height:9px;border-radius:50%;background:var(--ink-3);opacity:.55;box-shadow:0 0 0 2px transparent;transition:box-shadow .15s,transform .15s}
+  .steward:hover .sdot,.steward:focus-visible .sdot{transform:scale(1.12);box-shadow:0 0 0 2px var(--surface),0 0 0 3px var(--line)}
+  .steward.s-ok .sdot{background:var(--ok);opacity:.9}
   .steward.s-attention .sdot{background:var(--warn);opacity:1}
-  .steward.s-attention{color:var(--warn)}
-  .steward.s-off{color:var(--ink-3)}
-  .steward.s-unknown{color:var(--ink-3)}
-  .steward.s-unknown .sdot{background:var(--ink-3);opacity:.4}
+  .steward.s-off .sdot{background:var(--ink-3);opacity:.48}
+  .steward.s-unknown .sdot{background:var(--ink-3);opacity:.38}
+  .steward-detail{margin-top:9px;padding:11px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2);font-size:12px;color:var(--ink-2)}
+  .steward-detail[hidden]{display:none}
+  .steward-detail-head{display:flex;align-items:center;gap:7px;color:var(--ink);font-weight:650}
+  .steward-detail-head .sdot{width:8px;height:8px;border-radius:50%;background:var(--ink-3);flex:0 0 auto}
+  .steward-detail-head.s-ok .sdot{background:var(--ok)}
+  .steward-detail-head.s-attention .sdot{background:var(--warn)}
+  .steward-detail-head.s-off .sdot,.steward-detail-head.s-unknown .sdot{background:var(--ink-3)}
+  .steward-detail-status{margin-top:5px;color:var(--ink-3);line-height:1.5}
+  .steward-detail-recent{margin-top:9px;padding-top:8px;border-top:1px solid var(--line-2)}
+  .steward-detail-recent strong{display:block;color:var(--ink);font-weight:600;margin-bottom:4px}
+  .steward-detail-recent ul{margin:0;padding-left:17px}
+  .steward-detail-recent li{margin:2px 0;overflow-wrap:anywhere}
 
   .hero-bar{height:3px;border-radius:999px;background:var(--surface-3);margin-top:13px;overflow:hidden}
   .hero-bar span{display:block;height:100%;width:34%;border-radius:999px;background:var(--acc);opacity:0}
@@ -539,7 +551,8 @@
       <div class="execnow" id="execNow" hidden><span class="edot"></span><span class="etx" id="execNowText"></span></div>
     </section>
     <div class="sysline" id="sysLine">正在读取常驻与调度…</div>
-    <div class="stewards" id="stewardBar" aria-label="管家状态与全局健康"></div>
+    <div class="stewards" id="stewardBar" aria-label="管家健康状态"></div>
+    <div class="steward-detail" id="stewardDetail" hidden aria-live="polite"></div>
     <div class="sysline" id="autonomyLine" hidden></div>
     <details class="card fold engineering-detail" id="systemEvidenceFold">
       <summary>系统为什么这么判断</summary>
@@ -1362,48 +1375,76 @@
 
   var LANE_LABEL = {design:"体验 / 视觉", bug:"Bug", arch:"架构", gate:"门禁", reprocess:"待重排"};
   function laneLabel(lane){ return LANE_LABEL[lane] || lane || "未分泳道"; }
-  // 管家健康条：首屏只显示摘要和短名状态条；完整解释放在 title / aria-label，
-  // 鼠标悬停或读屏器可以拿到，但不占用户默认注意力。四态语义仍由控制层给出，
-  // 面板照抄顺序，不自己重排判据。
+  // 管家健康条：首屏只显示可点击的颜色点；名称、状态和最近工作在点开后出现。
+  // title / aria-label 保留完整语义，颜色只是扫视入口，不承担唯一的无障碍信息。
   var STEWARD_SHORT = {context:"上下文", route:"路由", merge:"合并", tune:"状态",
     exec:"实现", pm:"项目", accept:"验收", health:"全局健康"};
   var STEWARD_STATE = {ok:"正常", attention:"需关注", off:"已关闭", unknown:"取不到"};
   function renderStewards(st){
     var box = el("stewardBar"); if (!box) return;
     box.innerHTML = "";
+    var detail = el("stewardDetail");
+    if (detail){ detail.innerHTML = ""; detail.hidden = true; }
     var rows = (st && st.rows) || [];
     if (!rows.length){
-      var empty = document.createElement("div");
-      empty.className = "steward-summary"; empty.textContent = "管家状态取不到";
-      box.appendChild(empty);
+      box.setAttribute("aria-label", "管家健康状态取不到");
       return;
     }
-    var summary = document.createElement("div");
-    summary.className = "steward-summary";
-    var counts = (st && st.counts) || {};
-    var order = ["attention", "unknown", "off", "ok"];
-    var parts = [];
-    order.forEach(function(key){
-      var n = counts[key];
-      if (typeof n === "number") parts.push(n + " " + (STEWARD_STATE[key] || key));
-    });
-    summary.textContent = "管家状态：" + (parts.length ? parts.join(" · ") : "取不到");
-    box.appendChild(summary);
     var strip = document.createElement("div"); strip.className = "steward-strip";
     rows.forEach(function(r){
-      var li = document.createElement("span");
+      var li = document.createElement("button");
+      li.type = "button";
       li.className = "steward s-" + (r.state || "unknown");
       var full = (r.label || "") + "（" + (STEWARD_STATE[r.state] || (r.state || "取不到")) + "）";
       li.title = full;
       li.setAttribute("aria-label", full);
       li.setAttribute("data-key", r.key || "");
       var dot = document.createElement("span"); dot.className = "sdot";
-      var tx = document.createElement("span");
-      tx.className = "sname";
-      tx.textContent = STEWARD_SHORT[r.key] || (r.label || "").split("：")[0];
-      li.appendChild(dot); li.appendChild(tx); strip.appendChild(li);
+      dot.setAttribute("aria-hidden", "true");
+      li.appendChild(dot);
+      li.addEventListener("click", function(){ renderStewardDetail(r, st); });
+      strip.appendChild(li);
     });
     box.appendChild(strip);
+  }
+
+  function renderStewardDetail(row, all){
+    var detail = el("stewardDetail");
+    if (!detail) return;
+    var state = row.state || "unknown";
+    var label = STEWARD_SHORT[row.key] || (row.label || "管家").split("：")[0];
+    var status = STEWARD_STATE[state] || "取不到";
+    var description = row.description || row.label || "当前状态取不到";
+    var recent = Array.isArray(row.recent_completed) ? row.recent_completed.slice(0, 3) : [];
+    detail.innerHTML = "";
+    var head = document.createElement("div");
+    head.className = "steward-detail-head s-" + state;
+    var dot = document.createElement("span"); dot.className = "sdot"; dot.setAttribute("aria-hidden", "true");
+    var title = document.createElement("span"); title.textContent = label;
+    head.appendChild(dot); head.appendChild(title); detail.appendChild(head);
+    var stateText = document.createElement("div");
+    stateText.className = "steward-detail-status";
+    stateText.textContent = status + " · " + description;
+    detail.appendChild(stateText);
+    var recentBox = document.createElement("div");
+    recentBox.className = "steward-detail-recent";
+    var recentTitle = document.createElement("strong"); recentTitle.textContent = "最近完成";
+    recentBox.appendChild(recentTitle);
+    if (recent.length){
+      var list = document.createElement("ul");
+      recent.forEach(function(item){
+        var li = document.createElement("li");
+        li.textContent = typeof item === "string" ? item : (item.title || item.text || "一项工作已完成");
+        list.appendChild(li);
+      });
+      recentBox.appendChild(list);
+    } else {
+      var empty = document.createElement("div"); empty.className = "d";
+      empty.textContent = "暂无可按管家归属确认的记录";
+      recentBox.appendChild(empty);
+    }
+    detail.appendChild(recentBox);
+    detail.hidden = false;
   }
 
   // 全局待路由箱不属于当前项目，所以只在真有未复核项时出现；0 条不占首屏，
