@@ -42,6 +42,8 @@ def main():
         repo = Path(tmp) / "repo"
         truth = repo / "ops" / "truth"
         truth.mkdir(parents=True)
+        write_text(repo / "docs" / "PROJECT_GLOBAL_RULES.md",
+                   "# 项目全局规则\n\n一个任务只确认一次位置；禁止先改后搬。\n")
         write_text(repo / "docs" / "experience" / "GENERAL_EXPERIENCE_CONSTITUTION.md",
                    "# 通用体验宪法\n\n语义先于样式。\n")
 
@@ -94,10 +96,12 @@ def main():
               "用户说不是那个意思" in text and "这条不算" in text)
         check("判断逻辑和书面宪法引用都在",
               "用户说过的规范先候选" in text
+              and "一个任务只确认一次位置" in text
+              and "PROJECT_GLOBAL_RULES.md" in text
               and "docs/experience/GENERAL_EXPERIENCE_CONSTITUTION.md" in text)
-        check("缺口如实列出未确认高优先项和缺失书面文档",
+        check("缺口如实列出未确认高优先项，书面文档不再缺失",
               "高优先候选仍待人确认" in text
-              and "docs/PROJECT_GLOBAL_RULES.md" in text)
+              and "书面宪法文件不存在" not in text)
 
         check("首次写宪法页成功", mod.write_page(repo=str(repo), generated_at="2026-11-21 00:00:00") == 0)
         page = repo / "docs" / "PROJECT_CONSTITUTION.md"
