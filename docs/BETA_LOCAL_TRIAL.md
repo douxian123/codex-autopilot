@@ -2,6 +2,20 @@
 
 版本：`0.6.0-preview.139`
 
+## 从哪里拿这个 beta
+
+公开 beta 的发布入口是 GitHub 的
+[`v0.6.0-preview.139` prerelease](https://github.com/douxian123/codex-autopilot/releases/tag/v0.6.0-preview.139)。
+它是源码 tag，不要求装未知二进制；从 tag 检出后运行仓库自带的安装脚本即可：
+
+```bash
+git clone --branch v0.6.0-preview.139 --depth 1 https://github.com/douxian123/codex-autopilot.git
+cd codex-autopilot
+./install.sh --refresh-plugin /absolute/path/to/your-project
+```
+
+安装脚本把运行时代码复制进插件自己的版本目录，不会要求你的项目先装一份运行时代码。
+
 ## 这份 beta 准备交付什么
 
 B1 只覆盖**本地主链**：在 Codex 里继续用原来的输入框提需求，由插件完成记录、路由、验证、产品状态与面板呈现。公开安装默认只装这条主链，不替用户接管机器。
@@ -73,6 +87,6 @@ codex plugin list --json
 
 ## 已知边界
 
-- 公开试用前仍需完成隔离 HOME 安装验收与门禁；尚未承诺原生子对话派活在真实桌面窗口稳定出现。
+- 隔离 HOME 安装验收与全量门禁已完成；尚未承诺原生子对话派活在真实桌面窗口稳定出现。
 - 跨机移植包默认不含 `~/.codex/auth.json`，但 provider 配置仍属敏感信息；一次性令牌只防裸路径访问，仍然使用明文 HTTP，只在可信 WiFi 使用。
 - 回归过程中若宿主仍加载旧会话的 `.136` 等旧插件，属于会话注入问题；用新会话或重启宿主验证，不要拿旧会话结果代表 B1。
