@@ -52,5 +52,17 @@
    "docs/PRODUCT_MAINLINE.md"
   ],
   "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@6875a09c76fba364d96caa74e3581b512c90c64d@fc100b4854d424a4dd7ded13d7e2b0d173d92b0b": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md",
+   "docs/PROJECT_CONSTITUTION.md",
+   "ops/truth/product_state.json"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@e33f1ac4b509cb5545dc8ea0f1fff3a2e5539136@fc100b4854d424a4dd7ded13d7e2b0d173d92b0b": {
+  "conflict_files": [],
+  "unresolved_marker_files": []
  }
 }
