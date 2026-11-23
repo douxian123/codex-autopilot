@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-23 23:36:51　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-24 00:03:35　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -53,7 +53,6 @@
 
 ## 最近在推进
 
-- [已落盘] @ 780021fb69 codex/release-124-truthctl-runtime-20261122 验证门禁通过，已落盘 main @ 780021fb69；改动 11 个文件：docs/PRE_ACCEPTANCE_STANDARD.md（+27/-6）、docs/PRODUCT_CONTRACT.md（+1/-1）、ops/acceptance_dictionary.py（+46/-9）、ops/central_mcp.py（+19/-0）、ops/dynamic_acceptance_scope.py（+21/-8），另有 6 个文件｜11 files changed, 276 insertions(+), 40 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ c31ee080b3 cwd=/Users/danta/.newmax/workspace/ca-truthctl-runtime-precedence-20261122-trunk-trunk; python3 ops/test-truth-sync-ignored-views.py -> EXIT=0; python3 ops/test-specialized-acceptance-executors.py -> EXIT=0; python3 ops/test-pre-acceptance.py -> EXIT=0; python3 ops/test-acceptance-dictionary.py -> EXIT=0; python3 ops/test-dynamic-acceptance-scope.py -> EXIT=0; python3 ops/test-generate-acceptance-scope-tool.py -> EXIT=0; python3 ops/test-acceptance-evidence.py -> EXIT=0; python3 ops/test-gate-registration.py -> EXIT=0; python3 -m py_compile ... -> PY_COMPILE_EXIT=0; python3 -u ops/selftest.py -> SELFTEST_EXIT=0; git push origin HEAD:refs/heads/main -> PUSH_EXIT=0; git ls-remote origin refs/heads/main -> c31ee080b3efb2202acd62b6af53aef29b8f3ef3
 - [已落盘] @ c31ee080b3 动态验收专项执行器已进入 origin/main；专项和最小充分范围门禁通过；现场安装版本暂未换代，未宣称用户现场已生效
 - [在途] 机器侧已修并换代到 live .128：setup/MCP 触发文案已落盘，trigger/gate/panel 渲染门禁与 MCP 实调全 PASS；宿主面板视觉与真实打开需用户新开会话确认
@@ -63,11 +62,10 @@
 - [在途] launchd 陈旧路径已收口：10 条 guard plist 从 .145 收回到 .140，freshness 门禁 0 条旧路径，product_eval 5/5；外部 ok8888 bridge 保持登记 external，不动用户服务
 - [在途] B1 本地主链公开 beta 闭环证据已汇总到专用状态根：.140 / product_eval 5/5 / launchd freshness 0 stale / 全局待路由清零
 - [在途] 机器侧可交付；旧会话面板可见性未闭环，L-0019 必须在新会话由人确认。
+- [已落盘] @ d845d0dc1d codex/route-ownership-contract-20261123 验证门禁通过，已落盘 main @ d845d0dc1d；改动 3 个文件：ops/selftest.py（+1/-0）、ops/test-central-command-followup-contract.py（+22/-0）、plugin/skills/central-command/SKILL.md（+7/-0）｜3 files changed, 30 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0175` [P1] codex/context-projection-stale-wt-20261122 落盘验收
-  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0176` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0177` [P1] codex/context-projection-stale-wt-20261122 落盘验收
@@ -89,6 +87,8 @@
 - `A-0185` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0186` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0197` [P1] codex/route-ownership-contract-20261123 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 
 ## 还差什么
@@ -248,11 +248,12 @@
 - `A-0184` [P1] codex/resolve-land-clean-worktree-gate-20261122 落盘验收
 - `A-0185` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
 - `A-0186` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
+- `A-0197` [P1] codex/route-ownership-contract-20261123 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：15 条
-- 累计落盘：112 条
+- 累计落盘：113 条
 - 未决问题：0 条
-- 已验收：138 条
+- 已验收：139 条
 
