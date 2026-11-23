@@ -303,7 +303,7 @@ def main(argv):
         blocked = state.get("blocked") or {}
         if any(blocked.get(k) for k in ("failures", "resolve", "exec")):
             return "等待处理卡点"
-        return state.get("doing") or "当前没有进行中的工作"
+        return "等待下一项工作" if "待命" in str(state.get("doing") or "") else (state.get("doing") or "当前没有进行中的工作")
 
     def visible_doing(text):
         return str(snapshot.get("focusDoing") or "").strip() == text

@@ -931,7 +931,8 @@
   #folderCard .folder-progress-value{font-size:10px}
   #folderCard .folder-body{padding:0 13px 13px;background:var(--surface-2)}
   #folderCard>.chead h2{font-size:13px;color:var(--ink-2)}
-  #projectOverview{background:var(--surface-2);border:0;border-radius:8px}
+  #projectOverview{background:var(--surface-2);border:0;border-radius:8px;margin-bottom:0;padding-bottom:10px}
+  #mapCard{background:var(--surface-2);border-radius:0 0 8px 8px;padding-top:10px}
 
   #folderCard>.chead h2{font-size:13px;color:var(--ink-2)}
   #projectOverview{background:var(--surface-2);border:0;border-radius:8px}
@@ -965,10 +966,6 @@
   #projectOverview .overview-progress::before{content:"";display:block;width:var(--progress,0%);height:100%;background:var(--brand-500);border-radius:inherit}
 
   #q2{margin-bottom:14px}
-  #q2 .triple .cell:first-child .v,
-  #q2 .triple .cell:nth-child(2) .v{font-size:0}
-  #q2 .triple .cell:first-child .v::after,
-  #q2 .triple .cell:nth-child(2) .v::after{content:"待命";font-size:12px}
   #q2 .qhead{display:none}
   #q2 .hero{padding:0;margin:0}
   #q2 .hero-top{display:none}
@@ -983,11 +980,11 @@
   #q2 .stewards::before{content:"";display:block;width:5px;height:5px;margin:8px 3px 0 0;border-radius:50%;background:var(--ink-3);opacity:.35}
   #q2>#stewardBar{display:flex !important}
 
-  #q3{margin-bottom:16px}
+  #q3{margin-bottom:16px;order:7}
   #q3 .qhead{padding:10px 0 4px}
   #q3 #recentCard .list li{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-  #needEvidenceFold,#acceptCard,#routeOverview,#advanced,.overview-detail,#guide,.ctrl{order:8}
+  #needEvidenceFold,#acceptCard,#routeOverview,#advanced,.overview-detail,#guide,.ctrl{order:9}
   #needEvidenceFold{display:none}
   body.has-accept #acceptCard{display:block}
   #acceptCard{display:none}
@@ -1761,7 +1758,9 @@
     }
     if (pct) pct.textContent = p == null ? "—" : p + "%";
     var project = s.project || {}, ml = s.mainline || {};
-    setText("overviewTitle", userProjectName(project.name || ml.product || "当前项目"));
+    var overviewName = userProjectName(project.name || ml.product || "当前项目");
+    // 页首表达产品品牌，项目卡表达当前绑定对象；两者不承担同一语义。
+    setText("overviewTitle", overviewName);
     var current = road.filter(function(x){ return x.status === "doing"; })[0] || road.filter(function(x){ return x.status === "next"; })[0];
     var human = s.human_acceptance || [], blocked = s.blocked || {};
     var hasBlock = (blocked.failures || []).length || (blocked.resolve || []).length || (blocked.exec || []).length;
@@ -2662,7 +2661,8 @@
     var stateBase = s.enabled === false ? "已关闭" : (s.paused ? "已暂停" : (s.error ? "异常" :
       ((s.exec_now || doingItems.length) ? "运行中" : "待命")));
     var stateLabel = s.state_label || "读取中";
-    var statusText = stateBase === stateLabel ? stateBase : stateBase + " · " + stateLabel;
+    var idleState = stateBase === "待命" || /待命/.test(String(stateLabel));
+    var statusText = idleState ? "待命" : (stateBase === stateLabel ? stateBase : stateBase + " · " + stateLabel);
     if (s.error) statusText = "异常 · " + s.error;
     else if (human.length) statusText = "运行中 · 等你验收";
     else if (hasBlock) statusText = "运行中 · 有卡点要处理";
@@ -2674,7 +2674,7 @@
     // 兜底必须落到控制层算出的权威 doing：它已经处理了「守护绑定别的项目」「已检查
     // 一轮没有可合分支」「暂停/关闭」这些情况。旧版这里硬写「当前没有进行中的工作」，
     // 于是 control plane 说了实话、面板却显示空白态 —— 面板渲染门禁实测抓到这条。
-    else workText = (/待命/.test(String(s.doing || "")) ? "当前项目待命" : (s.doing || "当前没有进行中的工作"));
+    else workText = (/待命/.test(String(s.doing || "")) ? "等待下一项工作" : (s.doing || "当前没有进行中的工作"));
     var stepText = activeRoad
       ? (activeRoad.step || "当前路线") + " · " + ((s.exec_now || doingItems.length) ? "进行中" : "待推进")
       : "路线待拆解 · 项目：" + (proj.name || "未绑定");

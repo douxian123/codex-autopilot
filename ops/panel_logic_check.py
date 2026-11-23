@@ -644,7 +644,7 @@ def main(argv):
         if payload.get("enabled"):
             # 有待人工验收项时，首屏状态会叠加「等你验收」（见下方 review 分支），
             # 这里只校验控制层允许的开启语义；没有 exec/doing 时必须诚实显示待命。
-            expected_status = "运行中" if (payload.get("exec_now") or payload.get("doing_items")) else "当前项目待命"
+            expected_status = "运行中" if (payload.get("exec_now") or payload.get("doing_items")) else "待命"
             fails += has("一眼三问：状态", out["focusStatus"], expected_status)
         else:
             fails += has("一眼三问：状态", out["focusStatus"], "已关闭")
@@ -677,7 +677,7 @@ def main(argv):
             # 别的项目」「已检查一轮没有可合分支」「暂停/关闭」等情况；面板旧实现
             # 硬写「当前没有进行中的工作」，于是控制层说了实话、面板显示空白态
             # （panel-render 门禁实测抓到）。这里要求逐字相等，比旧的子串包含更严。
-            expected_doing = payload.get("doing") or "没有进行中"
+            expected_doing = "等待下一项工作" if "待命" in str(payload.get("doing") or "") else (payload.get("doing") or "没有进行中")
             actual_doing = str(out["focusDoing"])
             if actual_doing == expected_doing:
                 print("  PASS  一眼三问：无工作项时逐字显示控制层权威结论")
