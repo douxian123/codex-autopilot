@@ -1069,6 +1069,8 @@
   #globalRoutingFold{display:block!important;margin:0 0 10px!important;padding:0!important;border:0!important;background:transparent!important}
   #globalRoutingFold summary{display:block!important;padding:5px 0!important;color:var(--ink-3)!important;font-size:10.5px!important}
   #globalRoutingFold[hidden]{display:none!important}
+  #q1>#globalRoutingFold{margin:4px 0 0!important;padding:8px 10px!important;background:var(--surface-2)!important;border-radius:6px!important}
+  #q1>#globalRoutingFold summary{display:none!important}
   body{overflow-x:hidden!important}
 
   /* The master switch is a control row, not a panel within the panel. */
@@ -1681,7 +1683,10 @@
     var map = el("mapCard");
     var recent = el("q3");
     var folder = el("folderCard");
+    var routing = el("globalRoutingFold");
+    var firstQuestion = el("q1");
     if (!overview || !current || !map || !recent || !folder) return;
+    if (routing && firstQuestion && routing.parentNode !== firstQuestion) firstQuestion.appendChild(routing);
     var shell = document.createElement("section");
     shell.id = "activeProjectShell";
     shell.className = "active-project-shell";
@@ -1691,6 +1696,17 @@
     shell.appendChild(current);
     shell.appendChild(map);
     shell.appendChild(recent);
+    if (routing && firstQuestion && !routing.dataset.bound) {
+      var alert = firstQuestion.querySelector(".alert");
+      if (alert) {
+        alert.style.cursor = "pointer";
+        alert.title = "点击查看待路由详情";
+        alert.addEventListener("click", function(){
+          routing.hidden = !routing.hidden;
+        });
+      }
+      routing.dataset.bound = "true";
+    }
   }
 
   function render(s){
