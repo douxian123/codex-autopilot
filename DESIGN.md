@@ -2,11 +2,11 @@
 
 ## Source of truth
 
-Status: Active. Date: 2026-11-22.
+Status: Active. Date: 2026-11-23.
 
 Surfaces: Codex 插件面板（`plugin/ui/panel.html`）、MCP UI resource、Companion 状态锚点。
 
-Evidence reviewed: `docs/PANEL_INTERACTION_DESIGN.md`、`plugin/ui/panel.html`、插件元数据、已发布 `0.6.0-preview.121` 面板、`@openai/apps-sdk-ui` 调研结论（`0.2.2`，MIT）、`docs/OPENSOURCE_RESEARCH.md`、用户关于原生风格与注意力秩序的历史规范。当前 `panel.html` 仍是 reference implementation，不是最终像素稿；真实宿主截图验收尚未完成。
+Evidence reviewed: `docs/PANEL_INTERACTION_DESIGN.md`、`plugin/ui/panel.html`、插件元数据、已发布 `0.6.0-preview.121` 面板、`@openai/apps-sdk-ui` 调研结论（`0.2.2`，MIT）、`docs/OPENSOURCE_RESEARCH.md`、用户关于原生风格与注意力秩序的历史规范。当前 `panel.html` 仍是 interim renderer / reference implementation，不是最终像素稿；真实 Codex 宿主截图验收尚未完成。
 
 ## Brand
 
@@ -37,7 +37,9 @@ Context: Codex 桌面端侧栏面板，窄容器、高频扫视、低容忍噪�
 
 Attention order: 需要你的决定 > 当前状态与当前目标 > 真实闭环 > 项目内工程详情 > 全局配置与归档。
 
-项目卡是主要容器，采用面性卡片而非线性任务列表。折叠态保留：项目名、状态、当前阶段、当前步骤、整体进度、当前目标。展开态才显示工程项、验收、档案、证据。项目目标可自动生成，也可用户修改；清空后恢复自动摘要。
+当前绑定项目由一张面性主卡承载：身份、目标、总体进度、现在是什么状态、现在在做什么、工程步骤和最近完成只出现一次。其他项目使用同级但更简洁的面性折叠卡；折叠态只保留项目名、状态、当前步骤、整体进度和当前目标，展开态才显示工程项、验收、档案、证据。当前项目不再出现在“其他项目”列表里，避免同一对象重复占用注意力。
+
+项目目标可自动生成，也可用户修改；清空后恢复自动摘要。项目自主运行是当前项目级授权，收在当前项目主卡的折叠入口里，不得被搬到其他项目卡中。全局总开关、模型路由和全局待路由箱位于项目卡之外。
 
 模型路由属于全局配置，放在项目卡外，按“快速处理 / 标准施工 / 深度决策”表达。全局待路由箱同样放在项目卡外。上下文档案、全量 PRD、决策待确认项、验收清单按项目归属收纳。
 
@@ -45,6 +47,8 @@ Attention order: 需要你的决定 > 当前状态与当前目标 > 真实闭环
 
 - 首屏只放用户值得注意的信息；可观测性从“默认展示”改为“需要时可查”。
 - 装饰线只在区分真实层级时使用；能用留白、字重、底色分区表达时，不新增边框。
+- 首屏只保留一个最终视觉层。旧实验样式必须删除，不能靠层叠覆盖“碰巧看起来正确”；后续样式改动继续按单一 owner 维护。
+- 第一问只承载真实人工动作：人工验收、明确拍板/产品方向/删数据/发布、全局待路由归属确认、无法自动解决且需要人处理的阻塞。普通卡点、冲突计数和守护等待留在工程详情，不点亮第一问。
 - 管家状态压缩成一排颜色点；颜色只承担快速扫视。点击某个点后，详情直接从当前状态结论开始，不重复显示内部角色名称；最近完成默认显示三条，更早记录收进可展开的历史区。
 - 按钮最多两个主操作；未知状态用中性色和“取不到”，不用绿色伪装正常。
 - 用户可见文案必须是人话；内部术语、命令、ID、路径只进 `title` 或折叠证据。
@@ -65,7 +69,7 @@ Imagery/iconography: 使用熟悉的线性图标，避免手绘 SVG 装饰；图
 
 ## Components
 
-现有面板组件：header、三问 section、project card、alert、switch row、details fold、list、badge、progress、toast。新实现优先复用 `@openai/apps-sdk-ui` 的 `Button`、`Badge`、`Alert`、`Avatar`、`Input`、`Textarea`、`Select`、`Switch`、`Slider`、`Tooltip`、`Popover`、`Menu`、`Markdown`、`CodeBlock`、`Icon`，不另造平行设计系统。
+现有面板组件：header、active project surface、other project card、alert、switch row、details fold、list、badge、progress、toast。新实现优先复用 `@openai/apps-sdk-ui` 的 `Button`、`Badge`、`Alert`、`Avatar`、`Input`、`Textarea`、`Select`、`Switch`、`Slider`、`Tooltip`、`Popover`、`Menu`、`Markdown`、`CodeBlock`、`Icon`，不另造平行设计系统。
 
 Token ownership: 颜色与圆角由宿主 CSS 变量拥有；组件局部尺寸由组件自身拥有；产品语义（状态、阶段、路由等级）由面板数据契约拥有。
 
@@ -95,7 +99,7 @@ Disabled/off: 用中性灰，不用警告色；关闭状态明确说明 Codex �
 
 ## Implementation constraints
 
-当前实现是单文件 HTML + MCP JSON-RPC，先消费宿主 token；若迁移到 React，锁定 React 18/19，并按官方顺序引入 Tailwind 与 `@openai/apps-sdk-ui/css`。不得把当前 DOM 或 CSS 固化为“原生 Codex 组件”。每次 UI 改动必须同步更新 `ops/panel_logic_check.py` 与 `ops/panel_render_check.py`，并在真实宿主截图验收前明确标注未验证。
+当前实现是单文件 HTML + MCP JSON-RPC，已消费 `@openai/apps-sdk-ui` 语义 token，但尚未复用其 React 组件层，因此不能宣称 `componentized`。若迁移到 React，锁定 React 18/19，并按官方顺序引入 Tailwind 与 `@openai/apps-sdk-ui/css`。不得把当前 DOM 或 CSS 固化为“原生 Codex 组件”。每次 UI 改动必须同步更新 `ops/panel_logic_check.py` 与 `ops/panel_render_check.py`；真实 Codex 宿主截图验收完成前，`final_visual_approved` 保持 `false`。
 
 ## Open questions
 

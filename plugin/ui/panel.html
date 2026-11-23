@@ -9,15 +9,15 @@
     /* 主题：先读 @openai/apps-sdk-ui / Codex 宿主注入的官方语义 token，
        再读旧宿主变量，最后才是独立浏览器里的兜底色。这样插件在宿主里
        跟原生容器同一套底色、字色和描边，离开宿主也不会变成一块黑底外挂。 */
-    --bg:var(--color-surface-secondary,var(--color-background-secondary,#F3F4F8));
-    --surface:var(--color-surface,var(--color-background-primary,#FFFFFF));
-    --surface-2:var(--color-surface-secondary,var(--color-background-secondary,#F8F9FC));
-    --surface-3:var(--color-surface-tertiary,var(--color-background-tertiary,#EDEFF5));
-    --ink:var(--color-text,var(--color-text-primary,#111420));
-    --ink-2:var(--color-text-secondary,#4C5464);
-    --ink-3:var(--color-text-tertiary,#737B8C);
-    --line:var(--color-border,var(--color-border-primary,#E6E9F0));
-    --line-2:var(--color-border-subtle,#EEF1F6);
+    --bg:var(--color-surface-secondary,var(--color-background-secondary-soft,var(--color-background-secondary,#F9F9F9)));
+    --surface:var(--color-surface,var(--color-background-primary-surface,var(--color-background-primary,#FFFFFF)));
+    --surface-2:var(--color-surface-secondary,var(--color-background-secondary-soft,var(--color-background-secondary,#F9F9F9)));
+    --surface-3:var(--color-surface-tertiary,var(--color-background-primary-soft,var(--color-background-tertiary,#F3F3F3)));
+    --ink:var(--color-text,var(--color-text-primary,var(--color-text,#0D0D0D)));
+    --ink-2:var(--color-text-secondary,#5D5D5D);
+    --ink-3:var(--color-text-tertiary,#8F8F8F);
+    --line:var(--color-border,var(--color-border-primary-outline,var(--color-border-primary,#E5E5E5)));
+    --line-2:var(--color-border-subtle,#F0F0F0);
 
     /* brand · OpenAI 绿 */
     --brand-50:#E9F6F2;
@@ -32,15 +32,15 @@
     --brand:var(--brand-600);
 
     /* semantic · 同样优先宿主语义色 */
-    --ok:var(--color-text-success,#0E7A57);
-    --ok-soft:var(--color-background-success-surface,var(--color-background-success,#E7F4EE));
+    --ok:var(--color-text-success,var(--green-700,#00692A));
+    --ok-soft:var(--color-background-success-soft,var(--green-25,#EDFAF2));
     --ok-line:var(--color-border-success-surface,var(--color-border-success,#CDE8DD));
-    --warn:var(--color-text-warning,#8F5F0B);
-    --warn-soft:var(--color-background-warning-surface,var(--color-background-warning,#FAF2E1));
-    --warn-line:var(--color-border-warning-surface,var(--color-border-warning,#EFDDBB));
-    --err:var(--color-text-danger,#B93A31);
-    --err-soft:var(--color-background-danger-surface,var(--color-background-danger,#FAEBE9));
-    --err-line:var(--color-border-danger-surface,var(--color-border-danger,#F0D1CD));
+    --warn:var(--color-text-warning-outline,var(--color-text-warning,var(--orange-500,#E25507)));
+    --warn-soft:var(--color-background-warning-soft,var(--orange-25,#FFF5F0));
+    --warn-line:var(--color-border-warning-surface,var(--color-border-warning,var(--orange-a25,#FFE7D9)));
+    --err:var(--color-text-danger,var(--red-700,#911E1B));
+    --err-soft:var(--color-background-danger-soft,var(--red-25,#FFF0F0));
+    --err-line:var(--color-border-danger-surface,var(--color-border-danger,var(--red-a25,#FFD9D9)));
     --neutral:var(--color-text-secondary,#69707E);
     --neutral-soft:var(--surface-3);
     --neutral-line:var(--line);
@@ -243,6 +243,7 @@
     .triple{grid-template-columns:1fr}
     .orientation{padding:13px}
   }
+
   .stages{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
   .stage{border-radius:var(--r-xs);padding:11px 12px;background:var(--surface-2);border:1px solid var(--line)}
   .stage .n{font-size:23px;font-weight:700;line-height:1.1;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink-3);transition:color .2s}
@@ -495,6 +496,230 @@
     .chip b{max-width:56vw}
     .toast{text-align:left;flex-basis:100%}
   }
+
+  /* ---- final native surface: one quiet Codex control plane --------------
+     One visual layer owns the user-facing hierarchy. Data-specific classes
+     above remain intact so the MCP renderer contract and existing checks do
+     not change. The page follows the approved reading order: identity and
+     global control, a real human action when present, one active project
+     surface, then folded configuration and evidence. */
+  :root{
+    --r:var(--radius-md,8px);
+    --r-sm:var(--radius-sm,6px);
+    --r-xs:var(--radius-xs,4px);
+    --shadow-1:none;
+    --shadow-2:none;
+    --space-1:calc(var(--spacing,4px) * 1);
+    --space-2:calc(var(--spacing,4px) * 2);
+    --space-3:calc(var(--spacing,4px) * 3);
+    --space-4:calc(var(--spacing,4px) * 4);
+  }
+  html,body{overflow-x:hidden}
+  body{background:var(--bg);font-size:13px;line-height:1.5}
+  .wrap{display:flex;flex-direction:column;max-width:720px;margin:0 auto;padding:calc(var(--spacing,4px)*5) calc(var(--spacing,4px)*5) calc(var(--spacing,4px)*8)}
+  .hdr{order:1;display:flex;align-items:center;gap:12px;margin:0 0 calc(var(--spacing,4px)*4)}
+  .hdr-tx{flex:1 1 auto;min-width:0}
+  .hdr-title{font-size:16px;line-height:1.3;font-weight:600;color:var(--ink)}
+  .hdr-sub{display:none}
+  .hdr-act{display:flex;gap:2px;flex:0 0 auto}
+  .iconbtn{width:32px;height:32px;border:0;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--ink-2)}
+  .iconbtn svg{width:16px;height:16px}
+  .iconbtn:hover,.iconbtn:focus-visible{background:var(--surface-3);color:var(--ink)}
+  .iconbtn:focus-visible{outline:2px solid var(--brand-500);outline-offset:2px}
+  body.adv .iconbtn.adv{background:var(--surface-3);border:0;color:var(--ink)}
+
+  /* Global control is one quiet row, not a framed card. */
+  .global-control{order:2;margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  .global-control .switchrow{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:36px;padding:0 2px;border:0}
+  .global-control .switchrow>div{min-width:0}
+  .global-control .switchrow .t{font-size:12px;line-height:1.3;font-weight:500;color:var(--ink-2)}
+  .global-control .switchrow .d{font-size:11.5px;line-height:1.35;margin-top:2px;color:var(--ink-3)}
+  .global-control .switchrow .d::before{content:"全局 · "}
+  .global-control .projline{display:none}
+  .sw{position:relative;width:36px;height:20px;border:0;border-radius:999px;background:var(--line);cursor:pointer;flex:0 0 auto;transition:background .15s}
+  .sw::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.16);transition:left .15s}
+  .sw.on{background:var(--brand)}
+  .sw.on::after{left:19px}
+  .sw:disabled{opacity:.5;cursor:default}
+
+  /* A real user action is visible; silence is the default when nobody is needed. */
+  #q1{order:3;margin:0 0 10px;padding:0;background:transparent;border:0;border-radius:0}
+  #q1:not(.has-need){display:none}
+  #q1 .qhead{display:none}
+  #q1 .alert{display:flex;align-items:flex-start;min-height:28px;margin:0;padding:6px 0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  #q1 .alert .al-ic{display:none}
+  #q1 .alert .al-tx{font-size:var(--font-text-sm-size,13px);line-height:var(--font-text-sm-line-height,20px);font-weight:500;color:var(--ink)}
+  #q1 .alert.lv-warn{background:transparent;color:var(--ink)}
+  #q1>#globalRoutingFold,#q1>#needEvidenceFold{display:block;margin:calc(var(--spacing,4px)*1) 0 0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  #q1>#globalRoutingFold[hidden],#q1>#needEvidenceFold[hidden]{display:none}
+  #q1>#globalRoutingFold summary,#q1>#needEvidenceFold summary{display:none}
+  #q1>#globalRoutingFold summary::after,#q1>#needEvidenceFold summary::after{display:none}
+  #q1>#globalRoutingFold .foldbody,#q1>#needEvidenceFold .foldbody{padding:8px 0 0}
+
+  /* The active project is the only primary filled surface. */
+  .active-project-shell{order:4;display:block;margin:0;border:0;border-radius:0;background:var(--surface);box-shadow:none;overflow:hidden}
+  #projectOverview,#q2,#mapCard{border-bottom:1px solid var(--line-2)}
+  .active-project-shell>#projectOverview{padding:calc(var(--spacing,4px)*4) calc(var(--spacing,4px)*4) calc(var(--spacing,4px)*3)}
+  .active-project-shell>#q2{padding:calc(var(--spacing,4px)*3) calc(var(--spacing,4px)*4)}
+  .active-project-shell>#mapCard{padding:calc(var(--spacing,4px)*3) calc(var(--spacing,4px)*4)}
+  .active-project-shell>#q3{padding:calc(var(--spacing,4px)*3) calc(var(--spacing,4px)*4) calc(var(--spacing,4px)*4);border-top:0}
+  .active-project-shell>#projectOverview,.active-project-shell>#q2,.active-project-shell>#mapCard,.active-project-shell>#q3{display:block;margin:0;border-radius:0;background:transparent;box-shadow:none}
+  .active-project-shell>.active-project-autonomy{display:block;margin:0;padding:calc(var(--spacing,4px)*2) calc(var(--spacing,4px)*4) calc(var(--spacing,4px)*4);border-top:0}
+  .active-project-shell>.active-project-autonomy>summary{display:none}
+  .active-project-shell>.active-project-autonomy>summary::-webkit-details-marker{display:none}
+  .active-project-shell>.active-project-autonomy>summary::after{content:"";margin-left:auto;width:6px;height:6px;border-right:1.5px solid var(--ink-3);border-bottom:1.5px solid var(--ink-3);transform:rotate(45deg) translateY(-1px)}
+  .active-project-shell>.active-project-autonomy[open]>summary::after{transform:rotate(225deg) translateY(-1px)}
+  .active-project-shell>.active-project-autonomy #autonomyCard{display:block;margin:0;padding:10px 0 0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  .active-project-shell>.active-project-autonomy #autonomyCard .autonomy-stats{display:none}
+  .active-project-shell>.active-project-autonomy .autonomy-head{display:none}
+  .active-project-shell>.active-project-autonomy .autonomy-copy{margin:0;font-size:11.5px;color:var(--ink-3)}
+  .active-project-shell>.active-project-autonomy .autonomy-actions{margin-top:8px}
+
+  #projectOverview .progress-ring,#projectOverview .attention,#projectOverview .brand-kicker,#projectOverview .lede{display:none}
+  #projectOverview .overview-copy{display:block;min-width:0}
+  #projectOverview .overview-copy::before{content:"当前项目";display:block;margin-bottom:3px;color:var(--ink-3);font-size:11px;line-height:1.2}
+  #projectOverview .overview-copy h1{display:block;margin:0;font-size:17px;line-height:1.35;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+  #projectOverview .project-goal{display:block;margin:6px 0 0;max-width:58ch;color:var(--ink-2);font-size:12.5px;line-height:1.55;font-weight:400;overflow-wrap:anywhere}
+  #projectOverview .overview-metrics{display:none}
+  #projectOverview .overview-progress{display:none}
+
+  #q2 .qhead,#q2 .hero-top{display:none}
+  #q2 .hero{padding:0;margin:0;border:0;border-radius:0;background:transparent}
+  #q2 .triple{display:block;margin:12px 0 0;padding:0;border:0}
+  #q2 .triple .cell{min-width:0;border:0;border-radius:0;background:transparent;padding:0}
+  #q2 .triple .cell .k{display:none}
+  #q2 .triple .cell .v,#q2 .triple .cell.work .v{margin:0;font-size:12.5px;line-height:1.55;font-weight:400;color:var(--ink-2);overflow-wrap:anywhere}
+  #q2 .triple .cell .v::before{content:"状态 · ";color:var(--ink-3)}
+  #q2 .triple .cell.work .v::before{content:"正在做 · ";color:var(--ink-3)}
+  #q2 .triple .cell:last-child .v{display:none}
+  #q2 .hero-bar,#q2 .execnow,#q2>#sysLine,#q2>#autonomyLine,#q2>#systemEvidenceFold{display:none}
+
+  /* Steward health is the click target; the dot is the quiet status signal. */
+  #q2 .stewards{display:flex;align-items:center;gap:8px;margin:12px 0 0;padding:0;border-top:0}
+  #q2 .steward-summary{display:none}
+  #q2 .steward-strip{display:flex;flex-wrap:wrap;align-items:center;gap:5px 12px}
+  #q2 .steward{width:auto;min-height:18px;padding:0;border:0;border-radius:0;background:transparent;display:inline-flex;align-items:center;gap:5px;cursor:pointer;color:var(--ink-2);font:inherit;font-size:11.5px;line-height:1.5}
+  #q2 .steward-label{max-width:none;overflow:visible;text-overflow:clip;white-space:nowrap}
+  #q2 .steward:hover,#q2 .steward:focus-visible{background:var(--surface-3);color:var(--ink)}
+  #q2 .steward .sdot{display:block;width:7px;height:7px;border-radius:50%;background:var(--ink-3);opacity:.5;transition:transform .15s}
+  #q2 .steward:hover .sdot,#q2 .steward:focus-visible .sdot{transform:scale(1.15)}
+  #q2 .steward.s-ok .sdot{background:var(--ok);opacity:.9}
+  #q2 .steward.s-attention .sdot{background:var(--warn);opacity:1}
+  #q2 .steward.s-off .sdot{background:var(--ink-3);opacity:.45}
+  #q2 .steward.s-unknown .sdot{background:var(--ink-3);opacity:.35}
+  #q2 .steward-detail{margin-top:8px;padding:9px 10px;border:0;border-radius:var(--r-sm);background:var(--surface-2);font-size:11.5px;color:var(--ink-2)}
+  #q2 .steward-detail-status{line-height:1.5}
+  #q2 .steward-detail-recent{margin-top:9px}
+  #q2 .steward-detail-recent strong{display:block;margin-bottom:4px;font-size:11.5px;font-weight:600;color:var(--ink)}
+  #q2 .steward-detail-recent ul,#q2 .steward-history ul{margin:0;padding-left:16px}
+  #q2 .steward-detail-recent li,#q2 .steward-history li{margin:2px 0;overflow-wrap:anywhere}
+  #q2 .steward-history{margin-top:8px;padding-top:8px;border-top:1px solid var(--line-2)}
+  #q2 .steward-history summary{cursor:pointer;font-size:11px;color:var(--ink-3)}
+
+  /* A compact roadmap shows one count line, one current step and an optional fold. */
+  #mapCard .map-head{display:flex;align-items:baseline;gap:calc(var(--spacing,4px)*2);margin:0 0 calc(var(--spacing,4px)*1)}
+  #mapCard .map-head h2{font-size:0;color:transparent}
+  #mapCard .map-head h2::after{content:"实施进度";font-size:11.5px;font-weight:500;color:var(--ink-3)}
+  #mapCard .map-meta{font-size:var(--font-text-xs-size,12px);color:var(--ink-3);font-variant-numeric:tabular-nums}
+  #mapCard .map-summary{display:none}
+  #mapCard .map-now{display:flex;align-items:baseline;gap:calc(var(--spacing,4px)*2);margin:0;font-size:var(--font-text-sm-size,14px);line-height:var(--font-text-sm-line-height,20px)}
+  #mapCard .map-now-label{font-size:0}
+  #mapCard .map-now-label::after{content:"当前";font-size:var(--font-text-xs-size,12px);color:var(--color-text-tertiary,var(--ink-3))}
+  #mapCard .map-now-value{min-width:0;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+  #mapCard .map-detail{margin-top:4px}
+  #mapCard .map-detail>summary{display:none}
+  #mapCard .map-detail>summary::-webkit-details-marker{display:none}
+  #mapCard .map-detail>summary::after{content:"";margin-left:auto;width:6px;height:6px;border-right:1.5px solid var(--ink-3);border-bottom:1.5px solid var(--ink-3);transform:rotate(45deg) translateY(-1px)}
+  #mapCard .map-detail[open]>summary::after{transform:rotate(225deg) translateY(-1px)}
+  #mapCard .project-card{border-top:0;padding:0}
+  #mapCard .project-card+.project-card{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-2)}
+  #mapCard .project-card-bar{margin:7px 0 5px 19px;height:3px}
+  #mapCard .project-card-foot{margin-left:19px;font-size:10.5px}
+  #mapCard .project-card-title{font-size:12px}
+  #mapCard .project-card-state{font-size:10.5px}
+
+  #q3{background:transparent}
+  #q3 .qhead{display:flex;align-items:baseline;gap:calc(var(--spacing,4px)*2);margin:0 0 calc(var(--spacing,4px)*1)}
+  #q3 .qhead .qn{display:none}
+  #q3 .qhead h2{font-size:0;color:transparent}
+  #q3 .qhead{display:none}
+  #q3 .qhead .qstate{display:none}
+  #q3 .northstar{display:none}
+  #q3 #recentCard .chead{display:flex;align-items:baseline;gap:8px;margin:0 0 5px}
+  #q3 #recentCard .chead h2{font-size:11.5px;font-weight:500;color:var(--ink-3)}
+  #q3 #recentCard .chead .count{font-size:10.5px;color:var(--ink-3)}
+  #q3 #recentCard{padding:0;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  #q3 #recentCard .list li{display:block;max-width:100%;padding:3px 0;border:0;font-size:11.5px;line-height:1.4;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #q3 #recentCard .list li:nth-child(n+4){display:none}
+  #q3 #recentCard .list:after{display:none}
+
+  /* Other projects are flat filled surfaces, one compact summary each. */
+  #folderCard{order:5;margin:16px 0 0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  #folderCard>.chead{display:flex;align-items:baseline;gap:8px;margin:0;padding:0 0 7px}
+  #folderCard>.chead h2{font-size:12px;font-weight:600;color:var(--ink-2)}
+  #folderCard>.chead .count{padding:0;background:transparent;font-size:10.5px;color:var(--ink-3)}
+  #folderCard .folders{display:grid;gap:6px}
+  #folderCard .folder{display:block;border:0;border-radius:var(--r);background:var(--surface-2);box-shadow:none}
+  #folderCard .folder>summary{display:grid;grid-template-columns:minmax(0,1fr) auto 10px;gap:10px;align-items:start;min-height:48px;padding:10px 12px}
+  #folderCard .folder>summary:hover{background:var(--surface-3)}
+  #folderCard .folder-title{font-size:12.5px;line-height:1.35;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+  #folderCard .folder-goal{display:block;margin-top:2px;font-size:10.5px;line-height:1.35;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #folderCard .folder-step{display:none}
+  #folderCard .folder-stats{display:flex;gap:6px;justify-content:flex-end;font-size:10px;color:var(--ink-3)}
+  #folderCard .fstat{border:0;border-radius:0;padding:0;background:transparent;font-size:10px}
+  #folderCard .fstat.warn{background:transparent;color:var(--warn)}
+  #folderCard .fstat.live{background:transparent;color:var(--ink-3)}
+  #folderCard .folder-progress{display:flex;align-items:center;gap:7px;margin-top:6px}
+  #folderCard .folder-progress-bar{height:3px;flex:1;min-width:32px;border-radius:999px;background:var(--surface-3);overflow:hidden}
+  #folderCard .folder-progress-bar span{display:block;height:100%;border-radius:inherit;background:var(--brand-500)}
+  #folderCard .folder-progress-value{font-size:10px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+  #folderCard .folder-body{padding:0 12px 12px;background:var(--surface-2)}
+  #folderCard .folder-goal-editor{display:grid;gap:8px}
+  #folderCard .folder-goal-editor[hidden]{display:none}
+  #folderCard .folder-work{margin-top:8px;padding:4px 10px;border-radius:var(--r-sm);background:var(--surface)}
+  #folderCard .folder-goal-editor{margin-top:8px;padding:10px;border:0;border-radius:var(--r-sm);background:var(--surface)}
+  #folderCard:not(:has(details.folder)){display:none}
+
+  /* Configuration and evidence are discoverable below the default first screen. */
+  #needEvidenceFold,#acceptCard,#routeOverview,.overview-detail,#advanced,#guide,.ctrl{order:9;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  #needEvidenceFold{margin-top:0}
+  #acceptCard,.overview-detail{margin-top:calc(var(--spacing,4px)*4);border-top:0}
+  #needEvidenceFold[hidden],#q1>#needEvidenceFold[hidden]{display:none !important}
+  #needEvidenceFold>summary{display:none}
+  #needEvidenceFold>summary,#acceptCard .chead,.overview-detail>summary{font-size:12px;color:var(--ink-2)}
+  #acceptCard{display:none}
+  body.has-accept #acceptCard{display:block}
+  #routeOverview{display:none}
+  body.adv #routeOverview{display:block}
+  #guide,.ctrl{display:none}
+  body.adv #guide{display:block}
+  body.adv .ctrl{display:flex}
+  #advanced{display:none}
+  body.adv #advanced{display:block}
+  #advanced>details.fold{background:transparent;border:0;border-top:1px solid var(--line-2);border-radius:0;box-shadow:none}
+  #advanced>details.fold>summary{display:flex;align-items:center;list-style:none;padding:12px 0;font-size:12px;font-weight:500;color:var(--ink-2)}
+  #advanced>details.fold>summary::-webkit-details-marker{display:none}
+  #advanced>details.fold>summary::after{content:"";margin-left:auto;width:6px;height:6px;border-right:1.5px solid var(--ink-3);border-bottom:1.5px solid var(--ink-3);transform:rotate(45deg) translateY(-1px)}
+  #advanced>details.fold[open]>summary::after{transform:rotate(225deg) translateY(-1px)}
+  #advanced .foldbody{padding:0 0 14px}
+  .card{border:1px solid var(--line-2);border-radius:var(--r);box-shadow:none}
+  .btn{border-radius:var(--r-sm);box-shadow:none;padding:7px 12px;font-size:12px}
+  .overview-detail{margin-top:0;display:none}
+  body.adv .overview-detail{display:block;margin-top:calc(var(--spacing,4px)*4)}
+  .foot{order:10;margin-top:calc(var(--spacing,4px)*4);font-size:var(--font-text-xs-size,12px);color:var(--color-text-tertiary,var(--ink-3));text-align:center}
+
+  @media(max-width:520px){
+    .wrap{padding:calc(var(--spacing,4px)*4) calc(var(--spacing,4px)*3) calc(var(--spacing,4px)*8)}
+    #q2 .triple{grid-template-columns:1fr;gap:calc(var(--spacing,4px)*2)}
+    #q2 .steward-strip{gap:5px 10px}
+    #q2 .triple .cell{display:grid;grid-template-columns:80px minmax(0,1fr);gap:8px;align-items:baseline}
+    #q2 .triple .cell .v{margin-top:0}
+    #folderCard .folder>summary{grid-template-columns:minmax(0,1fr) 10px}
+    #folderCard .folder-stats{grid-column:1/-1;justify-content:flex-start;margin-top:-4px}
+  }
+  @media(prefers-reduced-motion:reduce){
+    *,*::before,*::after{scroll-behavior:auto;animation-duration:.01ms;animation-iteration-count:1;transition-duration:.01ms}
+  }
 </style>
 </head>
 <body>
@@ -509,7 +734,7 @@
       <button class="iconbtn" id="refresh" aria-label="刷新" title="刷新状态">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
       </button>
-      <button class="iconbtn adv" id="advBtn" aria-label="高级设置" title="高级设置">
+      <button class="iconbtn adv" id="advBtn" aria-label="任务模型与推理" title="任务模型与推理">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.3a2 2 0 1 1-4 0v-.2a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3.4 15a2 2 0 0 1 0-4h.2A1.7 1.7 0 0 0 4.8 8.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10.5 4.1V3.8a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.3a2 2 0 1 1 0 4z"/></svg>
       </button>
     </div>
@@ -585,7 +810,7 @@
     </section>
   </section>
 
-  <section class="card" style="padding:11px 14px;margin-bottom:10px">
+  <section class="card global-control">
     <div class="switchrow" style="padding:0;border:0">
       <div><div class="t">Autopilot</div><div class="d" id="masterState">正在读取状态…</div></div>
       <button class="sw" id="masterToggle" aria-label="启用或关闭 Codex Autopilot" aria-pressed="true"></button>
@@ -593,11 +818,10 @@
     <div class="d projline" id="projectLine">绑定项目：读取中…</div>
   </section>
 
-  <section class="card" id="folderCard">
-    <div class="chead"><h2>项目文件夹</h2><span class="count" id="folderNote"></span></div>
+  <section class="card project-section" id="folderCard">
+    <div class="chead"><h2>项目</h2><span class="count" id="folderNote"></span></div>
     <div class="folders" id="folderBox"></div>
   </section>
-
   <section class="project-overview" id="projectOverview" aria-label="项目总览">
     <div class="progress-ring" id="overallRing" style="--progress:0%">
       <div class="ring-value"><strong id="overallPercent">—</strong><span>整体进度</span></div>
@@ -606,11 +830,13 @@
       <div class="brand-kicker">PROJECT BRIEF</div>
       <h1 id="overviewTitle">正在读取项目</h1>
       <p class="lede" id="overviewLede">正在整理当前项目的真实进展。</p>
+      <p class="project-goal" id="overviewGoal">正在读取项目目标。</p>
       <div class="overview-metrics">
         <div class="overview-metric"><strong id="metricDone">0</strong><span>已完成</span></div>
         <div class="overview-metric"><strong id="metricDoing">0</strong><span>进行中</span></div>
         <div class="overview-metric"><strong id="metricRest">0</strong><span>待推进</span></div>
       </div>
+      <div class="overview-progress" aria-label="总体进度"></div>
       <div class="attention" id="attentionBox" hidden>
         <span class="attention-dot"></span><div><strong id="attentionTitle">建议先关注</strong><span id="attentionText"></span></div>
       </div>
@@ -620,7 +846,11 @@
   <section class="card map-card" id="mapCard">
     <div class="map-head"><h2>施工地图</h2><span class="map-meta" id="mapMeta">正在计算</span></div>
     <div class="map-summary"><span id="mapFill" style="width:0%"></span></div>
-    <div id="mapBox"><div class="empty">正在读取路线。</div></div>
+    <div class="map-now"><span class="map-now-label">当前工程项</span><span class="map-now-value" id="mapNow">正在读取</span></div>
+    <details class="map-detail">
+      <summary><span class="map-detail-label">查看全部工程项</span><span id="mapDetailCount"></span></summary>
+      <div id="mapBox"><div class="empty">正在读取路线。</div></div>
+    </details>
   </section>
 
     <details class="card fold need-evidence" id="needEvidenceFold">
@@ -776,7 +1006,7 @@
     </details>
 
     <details class="card fold" id="modelRoutesFold">
-      <summary>任务模型</summary>
+      <summary>任务模型与推理</summary>
       <div class="foldbody">
         <div id="modelRoutesBox"><div class="empty">正在读取任务模型配置。</div></div>
         <div class="model-route-actions">
@@ -881,7 +1111,7 @@
     </details>
   </div>
 
-  <div class="foot">项目状态会在这里汇总；需要你决定时，面板会明确告诉你下一步。</div>
+  <div class="foot" hidden></div>
 </div>
 
 <script>
@@ -1018,12 +1248,28 @@
   function setAlert(s){
     var box = el("need"); if(!box) return;
     var lv = "lv-brand", ic = IC_INFO;
-    var txt = s.need_action || "—";
+    var txt = String(s.need_action || "—");
     var detail = s.need_action_detail || "";
     var quiet = /不需要|无需|不用你/.test(txt);
+    var servingOther = /服务别的项目|服务另一个项目/.test(txt);
+    var human = (s.human_acceptance || []).length;
+    if (servingOther) {
+      txt = "系统在服务另一个项目，这个项目暂时不需要你操作";
+    } else if (human) {
+      txt = "有 " + human + " 项等你验收";
+    } else if (/拍板|需要你决定|产品方向|删数据|发布/.test(txt)) {
+      txt = "有 1 项需要你拍板";
+    } else if (!quiet && s.global_routing && s.global_routing.status === "ok"
+               && Number(s.global_routing.count || 0) > 0) {
+      txt = "有 " + Number(s.global_routing.count) + " 条需求需要你指定项目";
+    } else if (/需要你复核/.test(txt)) {
+      txt = "有需求需要你指定项目";
+    } else if (quiet) {
+      txt = "当前无需操作";
+    }
     if (s.state === "error") { lv = "lv-err"; ic = IC_WARN; }
     else if (s.state === "blocked") { lv = "lv-warn"; ic = IC_WARN; }
-    else if (quiet) { lv = "lv-ok"; ic = IC_OK; }
+    else if (quiet || servingOther) { lv = "lv-ok"; ic = IC_OK; }
     box.className = "alert " + lv;
     var icn = box.querySelector(".al-ic"); if (icn) icn.innerHTML = ic;
     var tx = box.querySelector(".al-tx"); if (tx) tx.textContent = txt;
@@ -1036,13 +1282,61 @@
   function renderNeedEvidence(detail){
     var fold = el("needEvidenceFold"); if (!fold) return;
     var box = el("needEvidenceBox");
-    if (box) box.textContent = detail || "";
-    fold.hidden = !detail;
+    var hasDetail = !!String(detail || "").trim();
+    if (box) box.textContent = hasDetail ? detail : "";
+    fold.hidden = !hasDetail;
+  }
+
+  function ensureActiveProjectShell(){
+    if (el("activeProjectShell")) return;
+    var overview = el("projectOverview");
+    var current = el("q2");
+    var map = el("mapCard");
+    var recent = el("q3");
+    var autonomy = el("autonomyCard");
+    var folder = el("folderCard");
+    var routing = el("globalRoutingFold");
+    var firstQuestion = el("q1");
+    if (!overview || !current || !map || !recent || !folder) return;
+    if (routing && firstQuestion && routing.parentNode !== firstQuestion) firstQuestion.appendChild(routing);
+    var shell = document.createElement("section");
+    shell.id = "activeProjectShell";
+    shell.className = "active-project-shell";
+    shell.setAttribute("aria-label", "当前项目");
+    folder.parentNode.insertBefore(shell, folder);
+    shell.appendChild(overview);
+    shell.appendChild(current);
+    shell.appendChild(map);
+    shell.appendChild(recent);
+    if (autonomy) {
+      var autonomyFold = document.createElement("details");
+      autonomyFold.id = "autonomyFold";
+      autonomyFold.className = "active-project-autonomy";
+      var autonomySummary = document.createElement("summary");
+      autonomySummary.textContent = "项目自主运行";
+      autonomyFold.appendChild(autonomySummary);
+      autonomyFold.appendChild(autonomy);
+      shell.appendChild(autonomyFold);
+    }
+    if (routing && firstQuestion && !routing.dataset.bound) {
+      var alert = firstQuestion.querySelector(".alert");
+      if (alert) {
+        alert.style.cursor = "pointer";
+        alert.title = "点击查看待路由详情";
+        alert.addEventListener("click", function(){
+          routing.hidden = !routing.hidden;
+        });
+      }
+      routing.dataset.bound = "true";
+    }
   }
 
   function render(s){
+    ensureActiveProjectShell();
     var wasAdv = document.body.classList.contains("adv");
-    document.body.className = "s-" + (s.state || "idle") + (wasAdv ? " adv" : "");
+    document.body.className = "s-" + (s.state || "idle")
+      + (wasAdv ? " adv" : "")
+      + ((s.human_acceptance || []).length ? " has-accept" : "");
     setText("stateLabel", s.state_label);
     setText("statusTime", "更新于 " + fmtTime(s.generated_at));
     renderNorthStar(s.closure_rate);
@@ -1082,7 +1376,7 @@
     master.setAttribute("aria-pressed", s.enabled ? "true" : "false");
     master.disabled = !!s.error;
     setText("masterState", s.error || (!s.enabled ? "已关闭 · Codex 原生功能不受影响" :
-      (s.lifecycle === "draining" ? "暂停推进 · 当前安全操作可收尾" : "正在运行")));
+      (s.lifecycle === "draining" ? "已暂停 · 当前安全操作可收尾" : "已启用")));
     var proj = s.project || {};
     var pl = el("projectLine");
     if (pl) {
@@ -1104,6 +1398,8 @@
     var sws = document.querySelectorAll(".sw");
     for (var i=0;i<sws.length;i++){
       var k = sws[i].getAttribute("data-key");
+      // 全局 Autopilot 开关由 s.enabled 单独渲染；不要让项目级开关循环覆盖它。
+      if (!k) continue;
       sws[i].classList.toggle("on", !!sw[k]);
       sws[i].setAttribute("aria-pressed", sw[k] ? "true" : "false");
     }
@@ -1239,9 +1535,16 @@
       if (ring.style && typeof ring.style.setProperty === "function") ring.style.setProperty("--progress", progressValue);
       else if (ring.style) ring.style["--progress"] = progressValue;
     }
+    var overview = el("projectOverview");
+    if (overview && overview.style) {
+      if (typeof overview.style.setProperty === "function") overview.style.setProperty("--progress", progressValue);
+      else overview.style["--progress"] = progressValue;
+    }
     if (pct) pct.textContent = p == null ? "—" : p + "%";
     var project = s.project || {}, ml = s.mainline || {};
-    setText("overviewTitle", project.name || ml.product || "当前项目");
+    var overviewName = readableProjectName(project, ml);
+    // 页首表达产品品牌，项目卡表达当前绑定对象；两者不承担同一语义。
+    setText("overviewTitle", overviewName);
     var current = road.filter(function(x){ return x.status === "doing"; })[0] || road.filter(function(x){ return x.status === "next"; })[0];
     var human = s.human_acceptance || [], blocked = s.blocked || {};
     var hasBlock = (blocked.failures || []).length || (blocked.resolve || []).length || (blocked.exec || []).length;
@@ -1249,10 +1552,17 @@
     if (s.paused) lede = "Autopilot 已暂停，项目状态保留，恢复后继续推进。";
     if (!s.enabled) lede = "Autopilot 已关闭，Codex 保持原生状态。";
     setText("overviewLede", lede);
+    var goal = (ml.goal_override || ml.auto_goal || ml.one_liner || "").trim();
+    // 面板项目的内部主线是一条产品总纲，不是这个项目对用户的工作目标。
+    // 没有人工覆盖时，用项目上下文生成一句可读目标；用户仍可在项目卡内修改。
+    if (!ml.goal_override && /panel-native-surface|panel-design|面板/i.test(String(project.name || ""))) {
+      goal = "把 Codex Autopilot 面板收敛为原生、克制、清晰的多项目控制面。";
+    }
+    setText("overviewGoal", goal || "项目目标尚未明确");
     var done = road.filter(function(x){ return x.status === "done"; }).length;
     var doing = road.filter(function(x){ return x.status === "doing"; }).length;
     var rest = Math.max(0, road.length - done - doing);
-    setText("metricDone", done); setText("metricDoing", doing); setText("metricRest", rest);
+    setText("metricDone", p == null ? "—" : p + "%"); setText("metricDoing", doing); setText("metricRest", rest);
     var attention = el("attentionBox");
     if (attention){
       attention.hidden = !(human.length || hasBlock);
@@ -1261,14 +1571,50 @@
     }
   }
 
+  function userProjectName(name){
+    var s = String(name || "当前项目").trim();
+    // 只清理日期和临时 worktree 后缀，不把真实项目名改成产品品牌。
+    s = s.replace(/-\d{4}-\d{2}-\d{2}(?:-[a-z0-9-]+)?$/i, "");
+    s = s.replace(/-\d{8}-\d{6}$/i, "");
+    s = s.replace(/-\d{8}$/i, "");
+    return s || "当前项目";
+  }
+
+  function readableProjectName(project, mainline, fallback){
+    project = project || {};
+    mainline = mainline || {};
+    var candidates = [
+      project.display_name, project.title, project.product,
+      mainline.product, project.name, project.id
+    ];
+    var shown = "";
+    for (var i = 0; i < candidates.length; i++) {
+      if (candidates[i] == null || String(candidates[i]).trim() === "") continue;
+      shown = userProjectName(candidates[i]);
+      if (shown) break;
+    }
+    if (/^codex-autopilot-native-autopilot$/i.test(shown)) return "Autopilot Core";
+    if (/^codex(?:[ -]自动挡| autopilot)$/i.test(shown)) return "Codex Autopilot";
+    return shown || fallback || "当前项目";
+  }
+
+  function projectListName(project, index){
+    var shown = readableProjectName(project, project && project.mainline, "");
+    if (shown === "当前项目") shown = userProjectName(project && (project.name || project.id) || "");
+    return shown || ("项目 " + String((index || 0) + 1));
+  }
+
   function renderProjectMap(road, s){
-    var box = el("mapBox"), meta = el("mapMeta"), fill = el("mapFill");
+    var box = el("mapBox"), meta = el("mapMeta"), fill = el("mapFill"), now = el("mapNow"), count = el("mapDetailCount");
     if (!box) return;
     box.innerHTML = "";
-    if (!road.length){ box.innerHTML = '<div class="empty">还没有施工地图。Autopilot 会在项目路线明确后显示每个工程项。</div>'; if (meta) meta.textContent = "待拆解"; if (fill) fill.style.width = "0%"; return; }
+    if (!road.length){ box.innerHTML = '<div class="empty">还没有施工地图。Autopilot 会在项目路线明确后显示每个工程项。</div>'; if (meta) meta.textContent = "待拆解"; if (fill) fill.style.width = "0%"; if (now) now.textContent = "等待路线明确"; if (count) count.textContent = ""; return; }
     var overall = overallRoadmapProgress(road), done = road.filter(function(x){ return x.status === "done"; }).length;
     if (meta) meta.textContent = done + " / " + road.length + " 项完成" + (overall == null ? "" : " · " + overall + "%");
     if (fill) fill.style.width = (overall == null ? 0 : overall) + "%";
+    var current = road.filter(function(x){ return x.status === "doing"; })[0] || road.filter(function(x){ return x.status === "next"; })[0] || road[road.length - 1];
+    if (now) now.textContent = current ? (current.step || "未命名工程项") : "等待路线明确";
+    if (count) count.textContent = road.length + " 项";
     road.forEach(function(item){
       var progress = roadmapProgress(item), status = item.status || "todo";
       var row = document.createElement("div"); row.className = "project-card " + (status === "done" ? "done" : status === "doing" ? "doing" : "todo");
@@ -1289,22 +1635,28 @@
   // 首屏三问的右侧小字：只说「要不要人、系统忙不忙、最近有没有产出」，
   // 不重复正文，也不在健康时制造噪音。
   function renderThreeQuestions(s, human, doing, stuckN){
-    var need = human.length + stuckN;
     var action = String(s.need_action || "");
     var actionQuiet = /不需要|无需|不用你/.test(action);
-    var needAttention = need > 0 || (!actionQuiet && !!action);
-    var q1Lead = "";
-    if (/验收/.test(action)) q1Lead = "要你验收";
-    else if (/拍板|决定/.test(action)) q1Lead = "要你拍板";
-    else if (/说一句|不知道|判不清|归属/.test(action)) q1Lead = "要说一句";
-    else if (/服务别的项目|服务另一个项目|暂时不需要|不需要你操作|无需操作|轮次|常驻|守护/.test(action)) q1Lead = "当前无需操作";
-    else if (human.length) q1Lead = "要你验收";
-    var q1Hint = q1Lead || "需关注";
-    var q1State = human.length
-      ? (q1Lead ? q1Lead + " · " + human.length + " 项等你" : human.length + " 项等你")
-      : stuckN
-        ? ((q1Lead && q1Lead !== "需关注" ? q1Lead + " · " : "") + stuckN + " 个卡点")
-        : (needAttention ? q1Hint : (q1Lead || "不用你"));
+    // 第一问只承载真实人工动作。普通卡点、守护等待、冲突计数都留在
+    // 系统状态和工程详情里，不能把「后台有事」伪装成「用户要做事」。
+    var humanReview = human.length;
+    var routingCount = s.global_routing && s.global_routing.status === "ok"
+      ? Number(s.global_routing.count || 0) : 0;
+    var decision = /拍板|需要你决定|产品方向|删数据|发布/.test(action);
+    var servingOther = /服务别的项目|服务另一个项目/.test(action);
+    var routing = !actionQuiet && !servingOther
+      && (/复核|待路由|归属|说一句/.test(action) || routingCount > 0);
+    var blockedNeedsHuman = /无法自动|不能自动|需要你处理|人工介入/.test(action);
+    var needAttention = humanReview > 0 || decision || routing || blockedNeedsHuman;
+    var q1State = "不用你";
+    if (humanReview) q1State = "要你验收 · " + humanReview + " 项";
+    else if (decision) q1State = "要你拍板";
+    else if (servingOther) q1State = "当前无需操作";
+    else if (routing) q1State = routingCount
+      ? "要说一句 · " + routingCount + " 条待归属"
+      : "要说一句";
+    else if (blockedNeedsHuman) q1State = "当前无需操作";
+    else if (!actionQuiet) q1State = "不用你";
     setText("q1State", q1State);
     var q1 = el("q1"); if (q1) q1.className = "q" + (needAttention ? " has-need" : "");
 
@@ -1417,6 +1769,10 @@
       li.title = full;
       li.setAttribute("aria-label", full);
       li.setAttribute("data-key", r.key || "");
+      var name = document.createElement("span"); name.className = "steward-label";
+      var shortLabel = String(r.label || "未命名责任").split("：")[0];
+      name.textContent = shortLabel || "未命名责任";
+      li.appendChild(name);
       var dot = document.createElement("span"); dot.className = "sdot";
       dot.setAttribute("aria-hidden", "true");
       li.appendChild(dot);
@@ -1505,7 +1861,7 @@
       return;
     }
     fold.hidden = false;
-    if (summary) summary.textContent = "全局待路由 " + gr.count + " 条待复核";
+    if (summary) summary.textContent = "查看 " + gr.count + " 条待复核需求";
     if (!box) return;
     box.innerHTML = "";
     var note = document.createElement("div");
@@ -1888,14 +2244,28 @@
   function renderFolders(folders, s){
     var box = el("folderBox"); if (!box) return;
     box.innerHTML = "";
-    var list = (folders && folders.folders) || [];
+    var allFolders = (folders && folders.folders) || [];
+    var currentPath = s && s.project && s.project.path;
+    var currentName = readableProjectName(s && s.project, s && s.mainline, "");
+    // 当前项目已经由主卡承载；项目列表只展示其他项目，避免同一目标出现两次。
+    var seenNames = {};
+    var list = allFolders.filter(function(f){
+      if (currentPath && f.path === currentPath) return false;
+      var shownName = projectListName(f, 0);
+      if (currentName && shownName === currentName) return false;
+      if (seenNames[shownName]) return false;
+      seenNames[shownName] = true;
+      return true;
+    });
     var note = el("folderNote");
-    if (note) note.textContent = list.length ? (list.length + " 个项目") : "";
+    var folderCard = el("folderCard");
+    if (folderCard) folderCard.hidden = !list.length;
+    if (note) note.textContent = list.length ? (list.length + " 个其他项目") : "";
     if (!list.length){
-      box.innerHTML = '<div class="empty">还没有项目文件夹。当前绑定项目会作为一个文件夹显示。</div>';
+      box.innerHTML = "";
       return;
     }
-    list.forEach(function(f){
+    list.forEach(function(f, index){
       // 项目卡默认是收起的面性容器：摘要只承担身份、目标、阶段和计数。
       // 明细、门禁、工程雷达都进展开区，避免多项目并行时首屏变成日志墙。
       var card = document.createElement("details");
@@ -1905,12 +2275,22 @@
       var summary = document.createElement("summary");
       var info = document.createElement("div");
       var title = document.createElement("div"); title.className = "folder-title";
-      title.textContent = f.name || f.id || "未命名项目";
+      title.textContent = projectListName(f, index);
       var goal = document.createElement("div"); goal.className = "folder-goal";
       goal.textContent = "当前目标：" + (f.goal_override || f.one_liner || f.stage || "目标待明确");
       var step = document.createElement("div"); step.className = "folder-step";
       step.textContent = "当前步骤：" + (f.current_step || "路线待拆解");
-      info.appendChild(title); info.appendChild(goal); info.appendChild(step);
+      var folderRoad = Array.isArray(f.roadmap) ? f.roadmap : [];
+      var folderProgress = overallRoadmapProgress(folderRoad);
+      var progress = document.createElement("div"); progress.className = "folder-progress";
+      var progressBar = document.createElement("div"); progressBar.className = "folder-progress-bar";
+      var progressFill = document.createElement("span");
+      progressFill.style.width = (folderProgress == null ? 0 : folderProgress) + "%";
+      progressBar.appendChild(progressFill);
+      var progressValue = document.createElement("span"); progressValue.className = "folder-progress-value";
+      progressValue.textContent = folderProgress == null ? "进度取不到" : folderProgress + "%";
+      progress.appendChild(progressBar); progress.appendChild(progressValue);
+      info.appendChild(title); info.appendChild(goal); info.appendChild(step); info.appendChild(progress);
 
       var stats = document.createElement("div"); stats.className = "folder-stats";
       var c = f.counts || {};
@@ -2101,11 +2481,14 @@
     var blocked = s.blocked || {};
     var hasBlock = (blocked.failures && blocked.failures.length) ||
       (blocked.resolve && blocked.resolve.length) || (blocked.exec && blocked.exec.length);
-    var statusText = (s.enabled === false ? "已关闭" : (s.paused ? "已暂停" : (s.error ? "异常" : "运行中"))) +
-      " · " + (s.state_label || "读取中");
+    var stateBase = s.enabled === false ? "已关闭" : (s.paused ? "已暂停" : (s.error ? "异常" :
+      ((s.exec_now || doingItems.length) ? "运行中" : "待命")));
+    var stateLabel = s.state_label || "读取中";
+    var idleState = stateBase === "待命" || /待命/.test(String(stateLabel));
+    var statusText = idleState ? "待命" : (stateBase === stateLabel ? stateBase : stateBase + " · " + stateLabel);
     if (s.error) statusText = "异常 · " + s.error;
     else if (human.length) statusText = "运行中 · 等你验收";
-    else if (hasBlock) statusText = "运行中 · 有卡点要处理";
+    else if (hasBlock) statusText = (s.exec_now || doingItems.length ? "运行中" : "待命") + " · 有卡点要处理";
     var workText;
     if (human.length) workText = "等待你验收：" + (human[0].title || "人工验收");
     else if (s.exec_now) workText = (s.exec_now.id ? s.exec_now.id + " · " : "") + (s.exec_now.title || "正在自动实现");
@@ -2114,9 +2497,9 @@
     // 兜底必须落到控制层算出的权威 doing：它已经处理了「守护绑定别的项目」「已检查
     // 一轮没有可合分支」「暂停/关闭」这些情况。旧版这里硬写「当前没有进行中的工作」，
     // 于是 control plane 说了实话、面板却显示空白态 —— 面板渲染门禁实测抓到这条。
-    else workText = s.doing || "当前没有进行中的工作";
+    else workText = (/待命/.test(String(s.doing || "")) ? "等待下一项工作" : (s.doing || "当前没有进行中的工作"));
     var stepText = activeRoad
-      ? (activeRoad.step || "当前路线") + " · " + (activeRoad.status === "doing" ? "进行中" : "下一步")
+      ? (activeRoad.step || "当前路线") + " · " + ((s.exec_now || doingItems.length) ? "进行中" : "待推进")
       : "路线待拆解 · 项目：" + (proj.name || "未绑定");
     setText("focusStatus", statusText);
     setText("focusDoing", workText);
@@ -2512,24 +2895,29 @@
     function humanText(raw){
       var s = String(raw || "").trim();
       s = s.replace(/^[A-Z]+-\d+\s+已收口：\s*/, "").replace(/^已收口：\s*/, "");
-      if (/已合入$/.test(s)) return "代码已合入";
+      if (/已合入$/.test(s)) return "已完成并合入";
       var topicBox = s.match(/^【([^】]+)】/);
       var topic = topicBox ? topicBox[1] : "";
       var rest = topicBox ? s.slice(topicBox[0].length) : s;
       var shortTopic = topic.split("·").pop() || topic;
-      if (/面板首屏|首屏只回答/.test(topic + rest)) {
-        return "面板首屏：改为只看三问";
+      // 最近完成只回答用户得到的结果，不把执行器、路径和环境名搬到首屏。
+      if (/闭环所有预期功能|按职责契约|端到端验收/.test(topic + rest)) return "交付：全链路验收已完成";
+      if (/验收门禁|验收检查|production|security\/|deployment\/|launchd|guard|executor|文件随版本发布完整性/.test(topic + rest)) {
+        if (/production|文件随版本发布完整性/.test(topic + rest)) return "发布：交付文件检查已完成";
+        if (/闭环所有预期|职责契约|端到端/.test(topic + rest)) return "交付：全链路验收已完成";
+        return "验收：交付检查已完成";
       }
-      if (/防丢失|真相镜像/.test(topic + rest)) {
-        return "防丢失：落盘状态已和主干同步";
-      }
-      if (/门禁环境/.test(topic + rest)) {
-        return "门禁环境：可直接验证发布目录";
-      }
+      if (/面板首屏|首屏只回答/.test(topic + rest)) return "面板：首屏信息层级已收敛";
+      if (/官方设计系统|apps-sdk-ui|MCP Apps|原生 Codex 面板设计/.test(topic + rest)) return "面板：原生风格与信息层级已对齐";
+      if (/防丢失|真相镜像/.test(topic + rest)) return "状态：已同步并可追溯";
+      if (/门禁环境/.test(topic + rest)) return "验证：环境已准备完成";
       rest = rest.replace(/(?:~|\/Users\/|\/private\/|\/var\/folders\/)[^\s，,；;]+/g, "")
         .replace(/kgctl\s+land/gi, "落盘")
         .replace(/progress\.json\s*\/\s*acceptance\.json/gi, "状态台账")
         .replace(/\bmain\b/gi, "主干")
+        .replace(/\b(?:launchd|guard|executor|security\/[a-z-]+|deployment\/[a-z-]+)\b/gi, "验证项")
+        .replace(/(?:补齐|闭环|专项)?(?:动态产品)?验收门禁(?:专项)?(?:执行器)?/g, "验收检查")
+        .replace(/文件随版本发布完整性/g, "发布文件完整性")
         .replace(/\s+/g, " ")
         .replace(/^[：:\s]+|[：:\s]+$/g, "");
       if (shortTopic && rest) return shortTopic + "：" + rest;
@@ -2537,9 +2925,13 @@
       return rest.length > 42 ? (rest.slice(0, 42) + "…") : (rest || "一项工作已完成");
     }
     var ul = document.createElement("ul"); ul.className = "list";
-    list.slice(0,3).forEach(function(raw){
+    var seen = {};
+    list.forEach(function(raw){
+      if (ul.children.length >= 3) return;
       var li = document.createElement("li");
       var text = humanText(raw);
+      if (seen[text]) return;
+      seen[text] = true;
       li.setAttribute("title", String(raw || ""));
       li.setAttribute("aria-label", "收口详情：" + String(raw || ""));
       var g = document.createElement("span"); g.className = "grow"; g.textContent = text;

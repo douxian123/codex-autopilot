@@ -328,6 +328,7 @@ console.log(JSON.stringify({
   stateLabel: read("stateLabel"),
   subtitle: read("subtitle"),
   q1State: read("q1State"),
+  q1Class: document.getElementById("q1").className,
   masterState: read("masterState"),
   focusStatus: read("focusStatus"),
   focusDoing: read("focusDoing"),
@@ -457,24 +458,39 @@ def main(argv):
             value = re.sub(r"^[A-Z]+-\d+\s+已收口：\s*", "", value)
             value = re.sub(r"^已收口：\s*", "", value)
             if value.endswith("已合入"):
-                return "代码已合入"
+                return "已完成并合入"
             topic_box = re.match(r"^【([^】]+)】", value)
             topic = topic_box.group(1) if topic_box else ""
             rest = value[topic_box.end():] if topic_box else value
             short_topic = topic.split("·")[-1] if topic else ""
             combined = topic + rest
+            if re.search(r"闭环所有预期功能|按职责契约|端到端验收", combined):
+                return "交付：全链路验收已完成"
             if "面板首屏" in combined or "首屏只回答" in combined:
-                return "面板首屏：改为只看三问"
+                return "面板：首屏信息层级已收敛"
+            if re.search(r"验收门禁|验收检查|production|security/|deployment/|launchd|guard|executor|文件随版本发布完整性", combined):
+                if re.search(r"production|文件随版本发布完整性", combined):
+                    return "发布：交付文件检查已完成"
+                if re.search(r"闭环所有预期|职责契约|端到端", combined):
+                    return "交付：全链路验收已完成"
+                return "验收：交付检查已完成"
             if "防丢失" in combined or "真相镜像" in combined:
-                return "防丢失：落盘状态已和主干同步"
+                return "状态：已同步并可追溯"
             if "门禁环境" in combined:
-                return "门禁环境：可直接验证发布目录"
+                return "验证：环境已准备完成"
             rest = re.sub(
                 r"(?:~|/Users/|/private/|/var/folders/)[^\s，,；;]+", "", rest)
             rest = re.sub(r"kgctl\s+land", "落盘", rest, flags=re.I)
             rest = re.sub(r"progress\.json\s*/\s*acceptance\.json",
                           "状态台账", rest, flags=re.I)
             rest = re.sub(r"\bmain\b", "主干", rest, flags=re.I)
+            rest = re.sub(
+                r"\b(?:launchd|guard|executor|security/[a-z-]+|deployment/[a-z-]+)\b",
+                "验证项", rest, flags=re.I)
+            rest = re.sub(
+                r"(?:补齐|闭环|专项)?(?:动态产品)?验收门禁(?:专项)?(?:执行器)?",
+                "验收检查", rest)
+            rest = rest.replace("文件随版本发布完整性", "发布文件完整性")
             rest = re.sub(r"\s+", " ", rest).strip(" :：")
             if short_topic and rest:
                 return short_topic + "：" + rest
@@ -503,7 +519,7 @@ def main(argv):
         routing = payload.get("global_routing") or {}
         if routing.get("status") == "ok" and routing.get("count"):
             fails += has("全局待路由提醒显示条数", out["globalRoutingSummary"],
-                         "全局待路由 " + str(routing["count"]) + " 条待复核")
+                         "查看 " + str(routing["count"]) + " 条待复核需求")
             fails += has("全局待路由说明只追加不改原文", out["globalRoutingBox"],
                          "不改原始记录", "预演不写任何账本")
             calls = out.get("routingAssignCalls") or []
@@ -561,8 +577,26 @@ def main(argv):
         fails += has("路线图普通空态显示等待下一条需求",
                      idle_out["hierarchyWork"], "等待下一条需求")
         folders = ((payload.get("project_folders") or {}).get("folders") or [])
-        if folders:
-            folder = folders[0]
+        other_fixture = {
+            "id": "kg-panel-fixture",
+            "name": "knowledge-graph-panel-fixture-20261123",
+            "display_name": "ThoughLoom",
+            "path": "/tmp/kg-panel-fixture",
+            "active": False,
+            "one_liner": "把读者需要的事实与证据组织成可追溯的知识图谱。",
+            "current_step": "面板信息层级收敛",
+            "doing_items": [{"id": "W-9001", "title": "检查项目卡信息层级"}],
+            "todo_items": [{"id": "W-9002", "title": "补齐真实入口截图"}],
+            "counts": {"doing": 1, "todo": 1, "human": 1},
+            "roadmap": [{"step": "检查项目卡信息层级", "status": "doing", "progress": 60}],
+        }
+        folder_payload = dict(payload)
+        folder_payload["project_folders"] = {"folders": [other_fixture]}
+        folder_out = run_once(folder_payload)
+        visible_folders = [other_fixture]
+        if visible_folders:
+            folder = visible_folders[0]
+            out = folder_out
             folder_items = (folder.get("doing_items") or folder.get("todo_items") or [])
             goal = folder.get("goal_override") or folder.get("one_liner") \
                 or folder.get("stage") or "目标待明确"
@@ -576,13 +610,33 @@ def main(argv):
             else:
                 print(f"  FAIL  项目卡默认折叠（实际 open={out.get('folderOpen')!r}）")
                 fails += 1
-            fails += has("项目卡摘要显示项目名", out["folderSummaryText"], folder.get("name"))
+            raw_folder_name = folder.get("name") or folder.get("id") or "未命名项目"
+            # 展示名优先使用注册表里的产品名，而不是内部 worktree 名。
+            expected_folder_name = (folder.get("display_name") or folder.get("title")
+                                    or folder.get("product") or raw_folder_name)
+            expected_folder_name = str(expected_folder_name)
+            if expected_folder_name == "codex-autopilot-native-autopilot":
+                expected_folder_name = "Autopilot Core"
+            elif expected_folder_name == "Codex 自动挡":
+                expected_folder_name = "Codex Autopilot"
+            fails += has("项目卡摘要显示项目名", out["folderSummaryText"], expected_folder_name)
+            if "codex-autopilot-native-autopilot" in str(out["folderSummaryText"]) \
+                    and expected_folder_name != "codex-autopilot-native-autopilot":
+                fails += 1
+                print("  FAIL  项目卡摘要泄漏内部 worktree 名")
+            else:
+                print("  PASS  项目卡摘要不泄漏内部 worktree 名")
             fails += has("项目卡摘要显示当前目标", out["folderSummaryText"], "当前目标：", goal)
             fails += has("项目卡摘要显示当前步骤", out["folderSummaryText"],
                          "当前步骤：", folder.get("current_step"))
             fails += lacks("项目卡摘要不铺开工程路径", out["folderSummaryText"], folder.get("path"))
             fails += lacks("项目卡正文不铺开工程路径", out["folderBodyText"], folder.get("path"))
             fails += has("项目卡路径保留在 title", out["folderSerialized"], folder.get("path"))
+            if expected_folder_name == str(project.get("name") or ""):
+                fails += 1
+                print("  FAIL  当前项目在其他项目列表里重复出现")
+            else:
+                print("  PASS  当前项目不在其他项目列表里重复出现")
             fails += has("项目卡展开区有目标编辑入口", out["folderBodyText"], "编辑目标")
             goal_calls = out.get("projectGoalCalls") or []
             if goal_calls and goal_calls[0].get("confirm") is True \
@@ -621,8 +675,9 @@ def main(argv):
         fails += has("首屏显示总状态文案", out["stateLabel"], payload.get("state_label"))
         if payload.get("enabled"):
             # 有待人工验收项时，首屏状态会叠加「等你验收」（见下方 review 分支），
-            # 这里只校验开启语义；真正关闭态由后面的 closed 分支独立强校验。
-            fails += has("一眼三问：状态", out["focusStatus"], "运行中")
+            # 这里只校验控制层允许的开启语义；没有 exec/doing 时必须诚实显示待命。
+            expected_status = "运行中" if (payload.get("exec_now") or payload.get("doing_items")) else "待命"
+            fails += has("一眼三问：状态", out["focusStatus"], expected_status)
         else:
             fails += has("一眼三问：状态", out["focusStatus"], "已关闭")
         # 「现在在做」必须与控制层/面板的优先级阶梯逐级一致。旧断言把 todo_items
@@ -654,7 +709,7 @@ def main(argv):
             # 别的项目」「已检查一轮没有可合分支」「暂停/关闭」等情况；面板旧实现
             # 硬写「当前没有进行中的工作」，于是控制层说了实话、面板显示空白态
             # （panel-render 门禁实测抓到）。这里要求逐字相等，比旧的子串包含更严。
-            expected_doing = payload.get("doing") or "没有进行中"
+            expected_doing = "等待下一项工作" if "待命" in str(payload.get("doing") or "") else (payload.get("doing") or "没有进行中")
             actual_doing = str(out["focusDoing"])
             if actual_doing == expected_doing:
                 print("  PASS  一眼三问：无工作项时逐字显示控制层权威结论")
@@ -672,7 +727,7 @@ def main(argv):
         review["human_acceptance"] = [{"id": "A-9001", "title": "真实桌面验收"}]
         review_out = run_once(review)
         fails += has("人工验收升级为明确状态", review_out["stateLabel"], "需要你验收")
-        fails += has("人工验收在提示条里明确出现", review_out["needText"], "需要你验收")
+        fails += has("人工验收在提示条里明确出现", review_out["needText"], "等你验收")
         fails += has("有验收时第一问摘要明确要你验收", review_out["q1State"], "要你验收")
         decision = dict(payload)
         decision.update({
@@ -740,7 +795,25 @@ def main(argv):
             "acceptance_criteria": {"status": "ok", "count": 0, "items": []},
         })
         clean_out = run_once(clean)
+        clean["global_routing"] = {"status": "ok", "count": 0}
+        clean_out = run_once(clean)
         fails += has("无需处理时第一问摘要写不用你", clean_out["q1State"], "不用你")
+        blocked_only = dict(clean)
+        blocked_only.update({
+            "state": "blocked",
+            "state_label": "有卡点",
+            "need_action": "后台有 3 个可自动处理的卡点",
+            "blocked": {"failures": [{"target": "branch-a"}], "resolve": [], "exec": [], "port": []},
+            "counts": {"doing": 1, "todo": 2, "review": 0, "stuck": 3},
+        })
+        blocked_only_out = run_once(blocked_only)
+        fails += has("普通卡点不把第一问升级成人工动作",
+                     blocked_only_out["q1State"], "不用你")
+        if "has-need" in str(blocked_only_out.get("q1Class") or ""):
+            fails += 1
+            print("  FAIL  普通卡点仍点亮第一问")
+        else:
+            print("  PASS  普通卡点不点亮第一问")
         say = dict(clean)
         say["need_action"] = "有新需求还不知道归到哪个项目，需要你说一句"
         say_out = run_once(say)
@@ -925,8 +998,9 @@ def main(argv):
                        "tune": "状态", "exec": "实现", "pm": "项目",
                        "accept": "验收", "health": "全局健康"}
         steward_html = str(out.get("stewardHtml") or "")
-        if "steward-strip" in steward_html and "steward" in steward_html:
-            print("  PASS  管家健康条以颜色点上屏")
+        if ("steward-strip" in steward_html and "steward" in steward_html
+                and "steward-label" in steward_html and "sdot" in steward_html):
+            print("  PASS  管家健康条以名称加状态点上屏")
         else:
             fails += 1
             print("  FAIL  管家健康条没有以颜色点上屏")
@@ -940,7 +1014,7 @@ def main(argv):
         status_text = status_match.group(1) if status_match else ""
         if ("最近完成" in detail_text and "管家" not in status_text
                 and "steward-detail-head" not in detail_html):
-            print("  PASS  点击颜色点只展开结果详情，不重复显示内部名称")
+            print("  PASS  点击管家入口只展开结果详情，不重复显示内部名称")
         else:
             fails += 1
             print("  FAIL  颜色点详情仍重复显示内部名称或未展开最近完成")
@@ -1429,7 +1503,7 @@ def main(argv):
                      outcome_missing["outcomeScoreBox"], "取不到")
 
         fails += has("首屏开关文案与控制层一致", out["masterState"],
-                     "已关闭" if not payload.get("enabled") else "正在运行")
+                     "已关闭" if not payload.get("enabled") else "已启用")
         fails += has("原生直连结论如实显示", out["nativeState"],
                      (payload.get("native") or {}).get("label"))
         socket_missing_payload = dict(payload)

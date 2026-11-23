@@ -56,7 +56,7 @@
 - `A-0044` [P0] preview.11 真实桌面宿主原生派活与 Companion 进程就绪（机器自证，人工验收仍待确认）
   - 1) 打开菜单栏 Companion 2) 看到自动挡图标 3) 点开看到总开关/当前任务/派活入口 4) ⌥⌘D 回到 Codex 完整面板
 
-**已机器验收（136）**
+**已机器验收（137）**
 - `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
@@ -193,6 +193,7 @@
 - `A-0045` [P1] 真实入口端到端机器闭环：Companion 派需求->归类->台账->面板逻辑检查->收口
 - `A-0046` [P1] Companion 作为 UIElement 菜单栏应用在系统注册且驾驶舱可打开（机器自证）
 - `A-0184` [P1] codex/resolve-land-clean-worktree-gate-20261122 落盘验收
+- `A-0185` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
 
 ## 六、决策记录
 
@@ -222,7 +223,6 @@
 
 ## 八、判断逻辑（同一个判断，人只做一次）
 
-- `J-0010` [gate] 面板新增能力必须同步进工具契约门禁和渲染状态门禁，不能只靠功能测试：功能合入不等于回归防线存在。
 - `J-0011` [process] 修复完成后必须同步翻 ledger 状态，否则闭环率会把已修复问题算成未闭环。
 - `J-0012` [arch] 常驻自追踪必须幂等：真相内容没变时不重写生成视图和生成时间。
 - `J-0013` [architecture] 管家是责任视图而非人类岗位表；运行时按 execute/control/evaluate 分工，状态管家的路线效用职责只做只读检测与授权后的复核闭环，不声称全局最优。
@@ -234,3 +234,4 @@
 - `J-0003` [product] 机器闭环和人工验收不能混为一谈
 - `J-0017` [process] 源码合并不等于现场生效：换代必须回读 install-state、release 元数据、daemon plist 和 live PID 四重一致；取不到写 unknown，不写 0 或正常。 --scope workflow --why 2026-11-22 宪法页修复在源码和手工 tick 已通过，但当前安装版 .121 仍不含修复；只有受控换代并回读现场才能证明用户现场生效。
 - `J-0018` [workflow] 源码合并不等于现场生效：换代必须回读四重现场证据
+- `J-0020` [process] 诊断「部分 Codex 对话持续报 upstream_stream_cut」时，先按精确错误对象匹配 emitter，再用 proxy.log 的 ROUTE 行按 thread_id 核对实际模型线路；同一时刻其他线程正常不能排除单线程绑定坏线路。

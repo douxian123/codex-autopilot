@@ -76,6 +76,20 @@ setTimeout(function(){
       body: body ? body.textContent.replace(/\\s+/g, " ").trim() : ""
     };
   }));
+  var autonomy = d ? d.getElementById("autonomyCard") : null;
+  out["autonomyParent"] = autonomy && autonomy.parentElement
+    ? (autonomy.parentElement.id || autonomy.parentElement.className || "") : "";
+  var owner = autonomy && autonomy.closest ? autonomy.closest("details.folder") : null;
+  out["autonomyInActiveProject"] = !!(autonomy && owner && owner.classList.contains("active") &&
+    owner.querySelector(".folder-body #autonomyCard") === autonomy);
+  out["autonomyVisible"] = !!(owner && owner.open);
+  var autonomyFold = autonomy && autonomy.closest ? autonomy.closest("details") : null;
+  out["autonomyInActiveShell"] = !!(autonomy && autonomyFold
+    && autonomyFold.id === "autonomyFold"
+    && autonomyFold.parentElement
+    && autonomyFold.parentElement.id === "activeProjectShell"
+    && autonomyFold.querySelector("#autonomyCard") === autonomy);
+  out["autonomyShellVisible"] = !!(autonomyFold && autonomyFold.open);
   out["acceptCardCount"] = d ? d.querySelectorAll("#acceptCard").length : 0;
   __IDS__.forEach(function(id){
     var domId = (id === "pmBriefingFoldOpen") ? "pmBriefingFold"
@@ -269,6 +283,8 @@ def main(argv):
             return []
 
     folders = ((payload.get("project_folders") or {}).get("folders") or [])
+    visible_folders = [f for f in folders
+                       if not project.get("path") or f.get("path") != project.get("path")]
 
     def visible(text):
         if not text:
@@ -293,7 +309,7 @@ def main(argv):
         blocked = state.get("blocked") or {}
         if any(blocked.get(k) for k in ("failures", "resolve", "exec")):
             return "等待处理卡点"
-        return state.get("doing") or "当前没有进行中的工作"
+        return "等待下一项工作" if "待命" in str(state.get("doing") or "") else (state.get("doing") or "当前没有进行中的工作")
 
     def visible_doing(text):
         return str(snapshot.get("focusDoing") or "").strip() == text
@@ -313,10 +329,13 @@ def main(argv):
         # 三问②的显示优先级与 plugin/ui/panel.html setFocusAnswers 一致。
         ("首屏显示正在做什么", expected_doing_text(payload)),
         ("首屏显示原生直连结论", (payload.get("native") or {}).get("label")),
-        ("有「项目文件夹」区块", "项目文件夹"),
-        ("有「工作项走到哪了」区块", "工作项走到哪了"),
-        ("有「验收证据与 Codex 工作区」区块", "验收证据与 Codex 工作区"),
-        ("项目卡以面性折叠容器呈现", len(folders) > 0 and len(project_folds(snapshot)) == len(folders)),
+        ("有「项目」区块", "项目"),
+        # 路线详情属于高级视图，不再占用默认首屏；这里验证入口仍保留，
+        # 避免把“默认不可见”误判成“功能被删除”。
+        ("高级区保留「工作项走到哪了」区块",
+         "routeOverview" in html or "工作项走到哪了" in html),
+        ("高级区保留「验收证据与 Codex 工作区」区块",
+         "验收证据与 Codex 工作区" in html),
         ("只有一张验收卡，不再重复空待确认卡",
          str(snapshot.get("acceptCardCount")) == "1"
          and "待确认事项" not in str(snapshot.get("acceptCard") or "")),
@@ -325,23 +344,61 @@ def main(argv):
     # 以前会把 None 当成期望文本去比对，必然失败——门禁自己造了一个永远红的假红灯。
     # 没有数据就如实跳过并打印 SKIP，既不假通过，也不假失败。
     skipped = []
-    radar_folder = next((f for f in folders if (f.get("engineering_radar") or {}).get("layers")), None)
-    gate_folder = next((f for f in folders if (f.get("quality_gate") or {}).get("checks")), None)
+    radar_folder = next((f for f in visible_folders if (f.get("engineering_radar") or {}).get("layers")), None)
+    gate_folder = next((f for f in visible_folders if (f.get("quality_gate") or {}).get("checks")), None)
     if not radar_folder:
         skipped.append("项目文件夹显示 19 层工程进度（该状态根还没有工程雷达数据）")
     if not gate_folder:
         skipped.append("项目文件夹显示独立质量门禁状态（该状态根还没有质量门禁数据）")
-    if folders:
-        checks.append(("项目卡摘要显示当前步骤",
-                       "当前步骤：" + str(folders[0].get("current_step") or "路线待拆解")))
-        checks.append(("项目卡摘要显示当前目标",
-                       "当前目标：" + str(folders[0].get("one_liner")
-                                       or folders[0].get("stage") or "目标待明确")))
     if step_check:
         checks.append(step_check)
 
     fails = 0
-    open_folds_wrapper = build_wrapper("panel-project-folds-open.html", payload,
+    # 当前项目已经由主卡承载，项目列表只展示其他项目。真实状态根可能只有
+    # 当前项目，因此项目卡能力必须用独立 fixture 证明，而不是依赖现场是否恰好
+    # 还注册了第二个项目。fixture 同时保留当前项目，锁住“当前项目不重复展示”。
+    project_fixture = {
+        "id": "kg-panel-fixture",
+        "name": "knowledge-graph-panel-fixture-20261123",
+        "display_name": "ThoughLoom",
+        "path": "/tmp/kg-panel-fixture",
+        "active": False,
+        "product": "ThoughLoom",
+        "one_liner": "把读者需要的事实与证据组织成可追溯的知识图谱。",
+        "current_step": "面板信息层级收敛",
+        "doing_items": [{"id": "W-9001", "title": "检查项目卡信息层级"}],
+        "todo_items": [{"id": "W-9002", "title": "补齐真实入口截图"}],
+        "counts": {"doing": 1, "todo": 1, "human": 1},
+        "roadmap": [{"step": "检查项目卡信息层级", "status": "doing", "progress": 60}],
+    }
+    folder_payload = dict(payload)
+    current_folder = {
+        "id": project.get("id") or project.get("name") or "current",
+        "name": project.get("name") or "当前项目",
+        "path": project.get("path"),
+        "active": True,
+        "product": (payload.get("mainline") or {}).get("product") or project.get("name"),
+        "one_liner": (payload.get("mainline") or {}).get("one_liner")
+                     or payload.get("need_action") or "",
+        "current_step": next((row.get("step") for row in (payload.get("roadmap") or [])
+                              if row.get("status") == "doing"), "路线待拆解"),
+        "doing_items": payload.get("doing_items") or [],
+        "todo_items": payload.get("todo_items") or [],
+        "counts": payload.get("counts") or {},
+        "roadmap": payload.get("roadmap") or [],
+    }
+    folder_payload["project_folders"] = {
+        "source": "render-check fixture",
+        "count": 2,
+        "folders": [current_folder, project_fixture],
+    }
+    fixture_wrapper = build_wrapper(
+        "panel-project-fixture.html", folder_payload,
+        ids=FIRST_SCREEN_IDS + PROJECT_FOLD_IDS)
+    fixture_snapshot, _, _ = render_snapshot(fixture_wrapper, "项目卡 fixture")
+    fixture_folded = project_folds(fixture_snapshot)
+
+    open_folds_wrapper = build_wrapper("panel-project-folds-open.html", folder_payload,
                                        ids=FIRST_SCREEN_IDS + PROJECT_FOLD_IDS)
     open_script = """
 <script>
@@ -361,24 +418,39 @@ setTimeout(function(){
     if not open_snapshot:
         print("  FAIL  项目卡展开区没有渲染出快照")
         fails += 1
-    folded = project_folds(snapshot)
+    folded = fixture_folded
     expanded = project_folds(open_snapshot)
     fold_checks = [
+        ("项目卡以面性折叠容器呈现",
+         len(folded) == 1),
         ("项目卡默认全部折叠", bool(folded) and all(not row["open"] for row in folded)),
+        ("折叠项目时项目级运行控制不可见",
+         fixture_snapshot.get("autonomyShellVisible") is False),
         ("项目卡展开后可读明细", bool(expanded) and all(row["open"] for row in expanded)),
+        ("当前项目自主运行入口在项目主容器内",
+         fixture_snapshot.get("autonomyInActiveShell") is True),
+        ("当前项目自主运行入口默认折叠",
+         fixture_snapshot.get("autonomyShellVisible") is False),
         ("项目卡展开区有目标编辑入口",
          bool(expanded) and all("编辑目标" in row["body"] for row in expanded)),
         ("项目摘要不铺开工程路径",
-         all(str(f.get("path") or "") not in row["summary"]
-             for f, row in zip(folders, folded))),
+         all(str(project_fixture.get("path") or "") not in row["summary"]
+             for row in folded)),
         ("项目摘要不铺开工作项标题",
          all(not any(str(x.get("title") or "") in row["summary"]
-                     for x in ((f.get("doing_items") or []) + (f.get("todo_items") or [])))
-             for f, row in zip(folders, folded))),
+                     for x in ((project_fixture.get("doing_items") or []) +
+                               (project_fixture.get("todo_items") or [])))
+             for row in folded)),
         ("项目摘要不铺开门禁与雷达明细",
          all(not any(mark in row["summary"] for mark in
                      ("质量门禁：", "19 层工程进度", "快照 ", "下一步：", "卡点："))
              for row in folded)),
+        ("当前项目不在其他项目列表里重复出现",
+         len(fixture_folded) == 1),
+        ("项目卡摘要显示当前步骤",
+         bool(folded) and "当前步骤：" + str(project_fixture.get("current_step")) in folded[0]["summary"]),
+        ("项目卡摘要显示当前目标",
+         bool(folded) and "当前目标：" + str(project_fixture.get("one_liner")) in folded[0]["summary"]),
     ]
     if radar_folder:
         radar = radar_folder["engineering_radar"]
@@ -401,10 +473,10 @@ setTimeout(function(){
     if gate_folder and gate_folder["quality_gate"].get("status"):
         fold_checks.append(("质量门禁在展开区可查",
                             any("质量门禁：" in row["body"] for row in expanded)))
-    if folders:
+    if folded:
         sample_work = next((x.get("title") or x.get("detail") for x in
-                            ((folders[0].get("doing_items") or []) +
-                             (folders[0].get("todo_items") or [])) if x), None)
+                            ((project_fixture.get("doing_items") or []) +
+                             (project_fixture.get("todo_items") or [])) if x), None)
         if sample_work:
             fold_checks.append(("工作项明细在展开区可查",
                                 sample_work in expanded[0]["body"] if expanded else False))
@@ -447,7 +519,7 @@ setTimeout(function(){
     # 系统判据默认折叠，但不能因为降噪把可观测性删掉。
     layer_checks = [
         ("首屏不重复解释入口",
-         not any(word in str(snapshot.get("__body__") or "")
+         not any(word in html
                  for word in ("万法归一", "兜底入口", "后台任务窗口",
                               "有东西需要我吗", "零散问题直接说，其余我来"))),
         ("面板输入框收进高级区", str(snapshot.get("intakeInAdvanced")) == "1"),

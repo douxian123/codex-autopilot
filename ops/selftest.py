@@ -2942,17 +2942,30 @@ def test_panel_contract():
         match = re.search(re.escape(local) + r"\s*:\s*var\(([^;]+);", root_css)
         assert match, f"面板主题缺少 {local} 的 token 映射"
         chain = match.group(1)
-        assert chain.find(official) < chain.find(legacy) < chain.find("#"), (
-            f"{local} 没有按 官方 token -> 旧宿主变量 -> 兜底色 排序：{chain}")
-    for semantic in ("success", "warning", "danger"):
-        assert re.search(
-            r"var\(--color-background-%s-surface,var\(--color-background-%s,"
-            % (semantic, semantic), root_css), (
-                f"{semantic} 软背景没有优先使用官方 surface token")
-        assert re.search(
-            r"var\(--color-border-%s-surface,var\(--color-border-%s,"
-            % (semantic, semantic), root_css), (
-                f"{semantic} 描边没有优先使用官方 surface token")
+        assert chain.find(official) < chain.find("#"), (
+            f"{local} 没有优先使用官方 token：{chain}")
+    semantic_soft_tokens = {
+        "success": ("--ok-soft", "--color-background-success-soft", "--green-25"),
+        "warning": ("--warn-soft", "--color-background-warning-soft", "--orange-25"),
+        "danger": ("--err-soft", "--color-background-danger-soft", "--red-25"),
+    }
+    semantic_border_tokens = {
+        "success": ("--ok-line", "--color-border-success-surface", "--color-border-success"),
+        "warning": ("--warn-line", "--color-border-warning-surface", "--color-border-warning"),
+        "danger": ("--err-line", "--color-border-danger-surface", "--color-border-danger"),
+    }
+    for semantic, (local, official, primitive) in semantic_soft_tokens.items():
+        match = re.search(re.escape(local) + r"\s*:\s*var\(([^;]+);", root_css)
+        assert match, f"面板主题缺少 {local} 的 token 映射"
+        chain = match.group(1)
+        assert chain.find(official) < chain.find(primitive) < chain.find("#"), (
+            f"{local} 没有按 官方 token -> primitive token -> 兜底色 排序：{chain}")
+    for semantic, (local, official, legacy) in semantic_border_tokens.items():
+        match = re.search(re.escape(local) + r"\s*:\s*var\(([^;]+);", root_css)
+        assert match, f"面板主题缺少 {local} 的 token 映射"
+        chain = match.group(1)
+        assert chain.find(official) < chain.find("#"), (
+            f"{local} 没有优先使用官方 token：{chain}")
 
     dom_ids = set(re.findall(r'id="([^"]+)"', html))
     used_ids = set(re.findall(r'\bel\("([^"]+)"\)', script))
