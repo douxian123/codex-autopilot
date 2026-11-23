@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-24 02:54:33　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-24 03:20:39　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -52,7 +52,6 @@
 
 ## 最近在推进
 
-- [在途] @ 07b17402d8 codex/disk-reap-into-repo 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
 - [在途] launchd 陈旧路径已收口：10 条 guard plist 从 .145 收回到 .140，freshness 门禁 0 条旧路径，product_eval 5/5；外部 ok8888 bridge 保持登记 external，不动用户服务
 - [在途] B1 本地主链公开 beta 闭环证据已汇总到专用状态根：.140 / product_eval 5/5 / launchd freshness 0 stale / 全局待路由清零
 - [在途] 机器侧可交付；旧会话面板可见性未闭环，L-0019 必须在新会话由人确认。
@@ -62,11 +61,10 @@
 - [在途] P-0215 冲突补回（远端 tick 删除后按唯一 ID 追加）：当前主干 ee180ad0 的 .146 发布候选复验完成；product_eval 5/5、阴性对照 8/8、首问闭环率 88.2%（15/17），全部专项门禁 exit 0；live 已恢复公开 .140，未发 tag/prerelease、未换代、未签收 L-0019。
 - [已落盘] @ 7f10530c0f codex/rollback-install-state-20261124 验证门禁通过，已落盘 main @ 7f10530c0f；改动 2 个文件：install.sh（+68/-14）、ops/selftest.py（+18/-0）｜2 files changed, 86 insertions(+), 14 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 18f2692f8e 18f2692f 回滚修复后最新主干复验：.146 隔离安装发布评估 5/5、阴性对照 8/8、原生面板 ok:true；live 仍 .140，tag/prerelease 与人工签收未发生
+- [已落盘] @ 5c57a44bcd codex/release-doc-truth-alignment-20261124 验证门禁通过，已落盘 main @ 5c57a44bcd；改动 3 个文件：docs/BETA_LOCAL_TRIAL.md（+13/-7）、docs/PREVIEW.md（+1/-1）、ops/selftest.py（+64/-0）｜3 files changed, 78 insertions(+), 8 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0178` [P1] codex/installer-source-provenance-20261122 落盘验收
-  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0179` [P1] codex/disk-gate-immediate-reap-20261122 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0180` [P1] codex/truthctl-runtime-precedence-20261122 门禁预跑（未落盘）
@@ -88,6 +86,8 @@
 - `A-0198` [P1] codex/mcp-stale-failclosed-20261124 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0201` [P1] codex/rollback-install-state-20261124 落盘验收
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0206` [P1] codex/release-doc-truth-alignment-20261124 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 
 ## 还差什么
@@ -257,11 +257,12 @@
 - `A-0197` [P1] codex/route-ownership-contract-20261123 落盘验收
 - `A-0198` [P1] codex/mcp-stale-failclosed-20261124 落盘验收
 - `A-0201` [P1] codex/rollback-install-state-20261124 落盘验收
+- `A-0206` [P1] codex/release-doc-truth-alignment-20261124 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：15 条
-- 累计落盘：116 条
+- 累计落盘：117 条
 - 未决问题：1 条
-- 已验收：141 条
+- 已验收：142 条
 

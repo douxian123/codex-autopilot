@@ -1,6 +1,6 @@
 # 项目状态（自动生成，勿手改）
 
-> 生成时间 2026-11-24 03:18:45　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
+> 生成时间 2026-11-24 03:20:39　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
 
 ## 一、产品主线
 
@@ -45,7 +45,6 @@
 
 ## 四、进展
 
-- `P-0211` [在途] B1 本地主链公开 beta 闭环证据已汇总到专用状态根：.140 / product_eval 5/5 / launchd freshness 0 stale / 全局待路由清零
 - `P-0212` [在途] 机器侧可交付；旧会话面板可见性未闭环，L-0019 必须在新会话由人确认。
 - `P-0213` [已落盘] @ `d845d0dc1d` codex/route-ownership-contract-20261123 验证门禁通过，已落盘 main @ d845d0dc1d；改动 3 个文件：ops/selftest.py（+1/-0）、ops/test-central-command-followup-contract.py（+22/-0）、plugin/skills/central-command/SKILL.md（+7/-0）｜3 files changed, 30 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0214` [已落盘] @ `81e1246be8` codex/mcp-stale-failclosed-20261124 验证门禁通过，已落盘 main @ 81e1246be8；改动 3 个文件：ops/central_mcp.py（+41/-0）、ops/selftest.py（+4/-0）、ops/test-mcp-stale-failclosed.py（+142/-0）｜3 files changed, 187 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
@@ -53,6 +52,7 @@
 - `P-0216` [在途] P-0215 冲突补回（远端 tick 删除后按唯一 ID 追加）：当前主干 ee180ad0 的 .146 发布候选复验完成；product_eval 5/5、阴性对照 8/8、首问闭环率 88.2%（15/17），全部专项门禁 exit 0；live 已恢复公开 .140，未发 tag/prerelease、未换代、未签收 L-0019。
 - `P-0217` [已落盘] @ `7f10530c0f` codex/rollback-install-state-20261124 验证门禁通过，已落盘 main @ 7f10530c0f；改动 2 个文件：install.sh（+68/-14）、ops/selftest.py（+18/-0）｜2 files changed, 86 insertions(+), 14 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0219` [已落盘] @ `18f2692f8e` 18f2692f 回滚修复后最新主干复验：.146 隔离安装发布评估 5/5、阴性对照 8/8、原生面板 ok:true；live 仍 .140，tag/prerelease 与人工签收未发生
+- `P-0220` [已落盘] @ `5c57a44bcd` codex/release-doc-truth-alignment-20261124 验证门禁通过，已落盘 main @ 5c57a44bcd；改动 3 个文件：docs/BETA_LOCAL_TRIAL.md（+13/-7）、docs/PREVIEW.md（+1/-1）、ops/selftest.py（+64/-0）｜3 files changed, 78 insertions(+), 8 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 
 ## 五、验收进度
 
@@ -74,7 +74,7 @@
 - `A-0189` [P1] Codex Autopilot 面板人工验收：任务完成感
   - 人看首屏默认截图，确认当前目标、总体进度、最近完成和当前步骤能支撑判断任务是否在推进
 
-**已机器验收（141）**
+**已机器验收（142）**
 - `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
@@ -216,6 +216,7 @@
 - `A-0197` [P1] codex/route-ownership-contract-20261123 落盘验收
 - `A-0198` [P1] codex/mcp-stale-failclosed-20261124 落盘验收
 - `A-0201` [P1] codex/rollback-install-state-20261124 落盘验收
+- `A-0206` [P1] codex/release-doc-truth-alignment-20261124 落盘验收
 
 ## 六、决策记录
 
