@@ -9,15 +9,15 @@
     /* 主题：先读 @openai/apps-sdk-ui / Codex 宿主注入的官方语义 token，
        再读旧宿主变量，最后才是独立浏览器里的兜底色。这样插件在宿主里
        跟原生容器同一套底色、字色和描边，离开宿主也不会变成一块黑底外挂。 */
-    --bg:var(--color-surface-secondary,var(--color-background-secondary,#F3F4F8));
+    --bg:var(--color-surface-secondary,var(--color-background-secondary,#F9F9F9));
     --surface:var(--color-surface,var(--color-background-primary,#FFFFFF));
-    --surface-2:var(--color-surface-secondary,var(--color-background-secondary,#F8F9FC));
-    --surface-3:var(--color-surface-tertiary,var(--color-background-tertiary,#EDEFF5));
-    --ink:var(--color-text,var(--color-text-primary,#111420));
-    --ink-2:var(--color-text-secondary,#4C5464);
-    --ink-3:var(--color-text-tertiary,#737B8C);
-    --line:var(--color-border,var(--color-border-primary,#E6E9F0));
-    --line-2:var(--color-border-subtle,#EEF1F6);
+    --surface-2:var(--color-surface-secondary,var(--color-background-secondary,#F9F9F9));
+    --surface-3:var(--color-surface-tertiary,var(--color-background-tertiary,#F3F3F3));
+    --ink:var(--color-text,var(--color-text-primary,#0D0D0D));
+    --ink-2:var(--color-text-secondary,#5D5D5D);
+    --ink-3:var(--color-text-tertiary,#8F8F8F);
+    --line:var(--color-border,var(--color-border-primary,#E5E5E5));
+    --line-2:var(--color-border-subtle,#F0F0F0);
 
     /* brand · OpenAI 绿 */
     --brand-50:#E9F6F2;
@@ -495,6 +495,156 @@
     .chip b{max-width:56vw}
     .toast{text-align:left;flex-basis:100%}
   }
+
+  /* ---- native surface pass ------------------------------------------------
+     This layer deliberately uses the Apps SDK rhythm as the visual contract:
+     4px spacing units, small outline radii, quiet surfaces and one primary
+     surface per information group. The data/rendering classes above remain
+     intact so the MCP contract and existing checks do not change. */
+  :root{
+    --r:var(--radius-md,8px);
+    --r-sm:var(--radius-sm,6px);
+    --r-xs:var(--radius-xs,4px);
+    --shadow-1:none;
+    --shadow-2:none;
+    --space-1:calc(var(--spacing,4px) * 1);
+    --space-2:calc(var(--spacing,4px) * 2);
+    --space-3:calc(var(--spacing,4px) * 3);
+    --space-4:calc(var(--spacing,4px) * 4);
+  }
+  body{background:var(--bg);font-size:13px;line-height:1.5}
+  .wrap{max-width:800px;padding:var(--space-4) var(--space-4) 40px}
+  .hdr{margin-bottom:var(--space-4);gap:var(--space-3)}
+  .hdr-title{font-size:16px;font-weight:600}
+  .hdr-sub{font-size:12px;margin-top:2px}
+  .hdr-act{gap:var(--space-1)}
+  .iconbtn{width:32px;height:32px;border:0;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--ink-2)}
+  .iconbtn:hover,.iconbtn:focus-visible{background:var(--surface-3);border-color:transparent}
+  body.adv .iconbtn.adv{background:var(--surface-3);border:0;color:var(--ink)}
+
+  /* The three questions are hierarchy labels, not three dashboard cards. */
+  .q{background:transparent;border:0;border-radius:0;padding:0;margin:0 0 22px;box-shadow:none}
+  .qhead{gap:0;margin:0 0 10px;min-height:20px}
+  .qhead .qn{display:none}
+  .qhead h2{font-size:15px;font-weight:600;line-height:1.35}
+  .qhead .qstate{font-size:12px;font-weight:400;color:var(--ink-3)}
+  .alert{border:1px solid var(--line);border-left:2px solid var(--lv);border-radius:var(--r);padding:12px 14px;margin:0;background:var(--surface);box-shadow:none}
+  .alert .al-ic{width:16px;height:16px;margin-top:2px}
+  .alert .al-ic svg{width:16px;height:16px}
+  .alert .al-tx{font-size:13px;font-weight:500;line-height:1.45}
+
+  /* One quiet surface for the live state. */
+  .hero{border:1px solid var(--line);border-left:2px solid var(--acc);border-radius:var(--r);padding:16px;background:var(--surface);margin:0;box-shadow:none}
+  .hero-top{gap:8px}
+  .pulse{width:8px;height:8px}
+  .hero-state{font-size:16px;font-weight:600;line-height:1.35}
+  .hero-time{font-size:11px}
+  .triple{grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-4);margin-top:16px;padding-top:12px;border-top:1px solid var(--line-2)}
+  .triple .cell{border:0;border-radius:0;background:transparent;padding:0;min-width:0}
+  .triple .cell.work{border:0;background:transparent}
+  .triple .cell .k{font-size:11px;font-weight:400;color:var(--ink-3)}
+  .triple .cell .v,.triple .cell.work .v{margin-top:4px;font-size:13px;font-weight:500;line-height:1.45;color:var(--ink)}
+  .hero-bar{height:2px;border-radius:var(--radius-full,9999px);margin-top:16px}
+  .execnow{margin-top:12px;border:0;border-radius:var(--r-xs);padding:8px 10px;background:var(--accsoft);color:var(--acc);font-size:12px}
+  .sysline{font-size:12px;line-height:1.5}
+  #q2>.sysline{margin-top:10px}
+  .stewards{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-2);gap:8px}
+  .steward-summary{font-size:11px}
+  .steward{width:24px;height:24px}
+  .steward .sdot{width:8px;height:8px}
+  .steward-detail{margin-top:8px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);font-size:12px}
+  .steward-detail-recent{margin-top:8px;padding-top:8px;border-top:1px solid var(--line-2)}
+  .steward-history{margin-top:8px;padding-top:7px;border-top:1px solid var(--line-2)}
+  details.fold,.engineering-detail,#globalRoutingFold{border:0;border-top:1px solid var(--line-2);border-radius:0;background:transparent;box-shadow:none}
+  details.fold>summary{padding:12px 0;font-size:12px;font-weight:500}
+  details.fold>summary:hover{background:transparent;color:var(--ink)}
+  .foldbody{padding:0 0 12px}
+  #q2 .card.fold{margin-top:8px}
+  #q2 .card.fold+ .card.fold{margin-top:0}
+
+  /* Result is a reading row, not another framed card. */
+  #q3 .northstar{display:flex;margin:0;padding:10px 0;border-top:1px solid var(--line-2);border-bottom:1px solid var(--line-2)}
+  #q3 .northstar .ns-k{font-size:12px}
+  #q3 .northstar .ns-v{font-size:13px;font-weight:600}
+  #q3 .northstar .ns-d{font-size:11px}
+  #q3 #recentCard{border:0;border-radius:0;background:transparent;padding:14px 0 0;margin:0;box-shadow:none}
+  #q3 #recentCard .chead{margin-bottom:8px}
+  #q3 #recentCard .chead h2{font-size:13px;font-weight:600}
+  #q3 #recentCard .count{background:transparent;padding:0;font-size:11px}
+  #q3 #recentCard .list li{padding:8px 0;border-bottom:1px solid var(--line-2);font-size:12px}
+
+  /* Global control: one quiet row, because the project cards own project data. */
+  .global-control{background:transparent;border:0;border-top:1px solid var(--line);border-radius:0;padding:12px 0;margin:0 0 22px;box-shadow:none}
+  .global-control .switchrow{padding:0;border:0}
+  .global-control .switchrow .t{font-size:13px;font-weight:500}
+  .global-control .switchrow .d,.global-control .projline{font-size:11.5px}
+  /* project ownership is already visible in the project surface below; keep
+     the binding text in the DOM for the status contract, but do not duplicate
+     project-scoped information in the global control row. */
+  .global-control .projline{display:none}
+  .sw{width:32px;height:19px;background:var(--line);border-radius:var(--radius-full,9999px)}
+  .sw::after{top:3px;left:3px;width:13px;height:13px;box-shadow:0 1px 2px rgba(0,0,0,.16)}
+  .sw.on{background:var(--brand)}
+  .sw.on::after{left:16px}
+
+  /* Projects are the only repeated surface on the default view. */
+  .project-section{background:transparent;border:0;border-radius:0;padding:0;margin:0 0 22px;box-shadow:none}
+  .project-section>.chead{margin:0 0 10px}
+  .project-section>.chead h2{font-size:15px;font-weight:600}
+  .project-section>.chead .count{background:transparent;padding:0;font-size:11px}
+  .folders{display:grid;gap:8px}
+  .folder{border:1px solid var(--line);border-radius:var(--r);background:var(--surface);box-shadow:none}
+  .folder.active{border-color:var(--line);background:var(--surface)}
+  .folder>summary{grid-template-columns:minmax(0,1fr) auto 10px;gap:12px;align-items:start;padding:14px 14px;min-height:44px}
+  .folder>summary:hover{background:var(--surface-2)}
+  .folder-title{font-size:13px;font-weight:600;line-height:1.4}
+  .folder-goal{margin-top:5px;font-size:12px;line-height:1.45;color:var(--ink-2)}
+  .folder-step{margin-top:6px;font-size:11.5px;font-weight:500;color:var(--ink-2)}
+  .folder-stats{gap:4px}
+  .fstat{font-size:10.5px;border:0;border-radius:0;padding:2px 0;background:transparent;color:var(--ink-3)}
+  .fstat+.fstat{margin-left:8px}
+  .fstat.warn{background:transparent;color:var(--warn)}
+  .fstat.live{background:transparent;color:var(--ink-3)}
+  .folder-progress{display:flex;align-items:center;gap:8px;margin:10px 0 0}
+  .folder-progress-bar{height:3px;flex:1;min-width:40px;border-radius:var(--radius-full,9999px);background:var(--surface-3);overflow:hidden}
+  .folder-progress-bar span{display:block;height:100%;border-radius:inherit;background:var(--brand-500)}
+  .folder.active .folder-progress-bar span{background:var(--brand-600)}
+  .folder-progress-value{font-size:11px;color:var(--ink-3);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .folder-body{padding:0 14px 14px;background:var(--surface)}
+  .folder-work{background:var(--surface-2);border-radius:var(--r-sm);padding:4px 10px;margin-top:8px}
+  .folder-work-row{padding:7px 0;font-size:11.5px}
+  .folder-goal-editor{margin-top:8px;padding:10px;background:var(--surface-2);border:0;border-radius:var(--r-sm)}
+  .folder-goal-editor textarea{background:var(--surface);border-radius:var(--r-xs)}
+  .folder-edit-goal{margin-top:8px}
+
+  /* The old brief/ring/map are data projections retained for compatibility;
+     project cards now carry the same user-facing progress without duplication. */
+  #projectOverview,#mapCard{display:none}
+  #autonomyCard{background:transparent;border:0;border-top:1px solid var(--line);border-radius:0;padding:12px 0;margin:0 0 22px;box-shadow:none}
+  #autonomyCard .autonomy-head{display:flex;align-items:center;gap:8px}
+  #autonomyCard .autonomy-mode{margin-left:auto}
+  #autonomyCard .autonomy-copy{max-width:640px}
+  #autonomyCard .autonomy-stats{font-size:11px}
+  #autonomyCard .autonomy-copy{font-size:12px}
+  #autonomyCard .autonomy-stats{margin-top:8px}
+  #autonomyCard .autonomy-actions{margin-top:10px}
+  #autonomyCard .autonomy-title{font-size:13px;font-weight:500}
+  #autonomyCard .autonomy-copy{color:var(--ink-3)}
+  #autonomyCard .autonomy-actions .btn{padding:6px 10px}
+
+  .card{border-color:var(--line);border-radius:var(--r);box-shadow:none}
+  .btn{border-radius:var(--r-sm);box-shadow:none;padding:7px 12px;font-size:12px}
+  .btn.primary{box-shadow:none}
+  .overview-detail{margin:0 0 18px}
+  .overview-detail>summary{padding:12px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:12px;font-weight:500}
+
+  @media(max-width:520px){
+    .wrap{padding:12px 12px 32px}
+    .triple{grid-template-columns:1fr;gap:10px}
+    .triple .cell{display:grid;grid-template-columns:92px minmax(0,1fr);gap:8px;align-items:baseline}
+    .triple .cell .v{margin-top:0}
+    .folder>summary{grid-template-columns:minmax(0,1fr) auto 10px}
+  }
 </style>
 </head>
 <body>
@@ -585,7 +735,7 @@
     </section>
   </section>
 
-  <section class="card" style="padding:11px 14px;margin-bottom:10px">
+  <section class="card global-control">
     <div class="switchrow" style="padding:0;border:0">
       <div><div class="t">Autopilot</div><div class="d" id="masterState">正在读取状态…</div></div>
       <button class="sw" id="masterToggle" aria-label="启用或关闭 Codex Autopilot" aria-pressed="true"></button>
@@ -593,8 +743,8 @@
     <div class="d projline" id="projectLine">绑定项目：读取中…</div>
   </section>
 
-  <section class="card" id="folderCard">
-    <div class="chead"><h2>项目文件夹</h2><span class="count" id="folderNote"></span></div>
+  <section class="card project-section" id="folderCard">
+    <div class="chead"><h2>项目</h2><span class="count" id="folderNote"></span></div>
     <div class="folders" id="folderBox"></div>
   </section>
 
@@ -1910,7 +2060,17 @@
       goal.textContent = "当前目标：" + (f.goal_override || f.one_liner || f.stage || "目标待明确");
       var step = document.createElement("div"); step.className = "folder-step";
       step.textContent = "当前步骤：" + (f.current_step || "路线待拆解");
-      info.appendChild(title); info.appendChild(goal); info.appendChild(step);
+      var folderRoad = Array.isArray(f.roadmap) ? f.roadmap : [];
+      var folderProgress = overallRoadmapProgress(folderRoad);
+      var progress = document.createElement("div"); progress.className = "folder-progress";
+      var progressBar = document.createElement("div"); progressBar.className = "folder-progress-bar";
+      var progressFill = document.createElement("span");
+      progressFill.style.width = (folderProgress == null ? 0 : folderProgress) + "%";
+      progressBar.appendChild(progressFill);
+      var progressValue = document.createElement("span"); progressValue.className = "folder-progress-value";
+      progressValue.textContent = folderProgress == null ? "进度取不到" : folderProgress + "%";
+      progress.appendChild(progressBar); progress.appendChild(progressValue);
+      info.appendChild(title); info.appendChild(goal); info.appendChild(step); info.appendChild(progress);
 
       var stats = document.createElement("div"); stats.className = "folder-stats";
       var c = f.counts || {};

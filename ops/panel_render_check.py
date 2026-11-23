@@ -313,7 +313,7 @@ def main(argv):
         # 三问②的显示优先级与 plugin/ui/panel.html setFocusAnswers 一致。
         ("首屏显示正在做什么", expected_doing_text(payload)),
         ("首屏显示原生直连结论", (payload.get("native") or {}).get("label")),
-        ("有「项目文件夹」区块", "项目文件夹"),
+        ("有「项目」区块", "项目"),
         ("有「工作项走到哪了」区块", "工作项走到哪了"),
         ("有「验收证据与 Codex 工作区」区块", "验收证据与 Codex 工作区"),
         ("项目卡以面性折叠容器呈现", len(folders) > 0 and len(project_folds(snapshot)) == len(folders)),
