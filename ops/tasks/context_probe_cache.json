@@ -6,5 +6,20 @@
  "codex/native-thread-bridge@ffc371d3621cb1f8280f17fbfeaf597de11b3714@0faac6985da0918859a1d13120c8e12306663d28": {
   "conflict_files": [],
   "unresolved_marker_files": []
+ },
+ "codex/disk-admission-fix-20261105@300ea3931412419b0f8515ffa5fc912c47f7d1b4@00a0b25b900ff5e4f06b8ab01c7f427d531d23ba": {
+  "conflict_files": [],
+  "unresolved_marker_files": []
+ },
+ "codex/native-thread-bridge@ffc371d3621cb1f8280f17fbfeaf597de11b3714@00a0b25b900ff5e4f06b8ab01c7f427d531d23ba": {
+  "conflict_files": [],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@6875a09c76fba364d96caa74e3581b512c90c64d@00a0b25b900ff5e4f06b8ab01c7f427d531d23ba": {
+  "conflict_files": [],
+  "unresolved_marker_files": [
+   "codex/converge-e87af5f335:docs/PRODUCT_MAINLINE.md",
+   "codex/converge-e87af5f335:docs/PROJECT_CONSTITUTION.md"
+  ]
  }
 }
