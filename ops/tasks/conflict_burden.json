@@ -1,11 +1,10 @@
 {
- "main": "6488e58183a1b7687d03cfc2317a40c7fe706f4a",
+ "main": "46405dfea09781f95f63b8fb2e14efc46c7525a7",
  "branches": [
   "codex/auto-close-identity-gate-20261024",
   "codex/autopilot-brand-panel",
   "codex/disk-admission-clean-20261027",
   "codex/disk-admission-preview29-20261027",
-  "codex/disk-reap-into-repo",
   "codex/reap-identical-tracked-20261027",
   "codex/slow-model-routing"
  ],
@@ -14,7 +13,6 @@
   "codex/autopilot-brand-panel": 9,
   "codex/disk-admission-clean-20261027": 3,
   "codex/disk-admission-preview29-20261027": 13,
-  "codex/disk-reap-into-repo": 12,
   "codex/reap-identical-tracked-20261027": 3,
   "codex/slow-model-routing": 4
  }
