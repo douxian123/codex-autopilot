@@ -1055,6 +1055,22 @@
   #mapCard .map-now-label{font-size:0!important}
   #mapCard .map-now-label::after{content:"当前步骤";font-size:11px;color:var(--ink-3)}
 
+  /* A real user action stays visible, but does not become a dashboard hero. */
+  #q1{background:transparent!important;border:0!important;border-radius:0!important;padding:0!important;margin:0 0 10px!important}
+  #q1 .qhead{display:none!important}
+  #q1 .alert{min-height:32px!important;box-sizing:border-box!important;margin:0!important;padding:7px 10px!important;border:0!important;border-radius:6px!important;background:var(--warn-soft)!important;box-shadow:none!important}
+  #q1 .alert .al-ic{display:none!important}
+  #q1 .alert .al-tx{font-size:12px!important;line-height:1.4!important;font-weight:600!important}
+  #q1 .alert .al-tx{font-weight:500!important;color:var(--ink-2)!important}
+  .global-control .sw.on{background:var(--brand)!important}
+  .global-control .sw.on::after{left:19px!important}
+  #projectOverview .overview-copy::before{content:"当前项目";display:block;margin-bottom:4px;color:var(--ink-3);font-size:10.5px;line-height:1.2}
+  #projectOverview .project-goal{max-width:58ch!important}
+  #globalRoutingFold{display:block!important;margin:0 0 10px!important;padding:0!important;border:0!important;background:transparent!important}
+  #globalRoutingFold summary{display:block!important;padding:5px 0!important;color:var(--ink-3)!important;font-size:10.5px!important}
+  #globalRoutingFold[hidden]{display:none!important}
+  body{overflow-x:hidden!important}
+
   /* The master switch is a control row, not a panel within the panel. */
   .global-control{border:0;border-radius:0;background:transparent;box-shadow:none}
   .global-control .switchrow{padding:0}
@@ -1899,6 +1915,11 @@
     if (!s.enabled) lede = "Autopilot 已关闭，Codex 保持原生状态。";
     setText("overviewLede", lede);
     var goal = (ml.goal_override || ml.auto_goal || ml.one_liner || "").trim();
+    // 面板项目的内部主线是一条产品总纲，不是这个项目对用户的工作目标。
+    // 没有人工覆盖时，用项目上下文生成一句可读目标；用户仍可在项目卡内修改。
+    if (!ml.goal_override && /panel-native-surface|panel-design|面板/i.test(String(project.name || ""))) {
+      goal = "把 Codex Autopilot 面板收敛为原生、克制、清晰的多项目控制面。";
+    }
     setText("overviewGoal", goal || "项目目标尚未明确");
     var done = road.filter(function(x){ return x.status === "done"; }).length;
     var doing = road.filter(function(x){ return x.status === "doing"; }).length;
@@ -2798,7 +2819,7 @@
     var statusText = idleState ? "待命" : (stateBase === stateLabel ? stateBase : stateBase + " · " + stateLabel);
     if (s.error) statusText = "异常 · " + s.error;
     else if (human.length) statusText = "运行中 · 等你验收";
-    else if (hasBlock) statusText = "运行中 · 有卡点要处理";
+    else if (hasBlock) statusText = (s.exec_now || doingItems.length ? "运行中" : "待命") + " · 有卡点要处理";
     var workText;
     if (human.length) workText = "等待你验收：" + (human[0].title || "人工验收");
     else if (s.exec_now) workText = (s.exec_now.id ? s.exec_now.id + " · " : "") + (s.exec_now.title || "正在自动实现");
