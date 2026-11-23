@@ -866,8 +866,9 @@ def _steward_health(payload):
                      "label": "全局健康：%s" % (project_health.get("headline")
                                                or "暂无异常")})
 
-    order = {"attention": 0, "unknown": 1, "off": 2, "ok": 3}
-    rows.sort(key=lambda r: order.get(r["state"], 9))
+    stable_order = {key: index for index, key in enumerate(
+        ("context", "route", "merge", "tune", "exec", "pm", "accept", "health"))}
+    rows.sort(key=lambda r: stable_order.get(r.get("key"), 99))
     counts = {}
     for r in rows:
         counts[r["state"]] = counts.get(r["state"], 0) + 1

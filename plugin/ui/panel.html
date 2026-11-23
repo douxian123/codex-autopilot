@@ -516,8 +516,8 @@
   }
   html,body{overflow-x:hidden}
   body{background:var(--bg);font-size:13px;line-height:1.5}
-  .wrap{display:flex;flex-direction:column;max-width:720px;margin:0 auto;padding:20px 20px 48px}
-  .hdr{order:1;display:flex;align-items:center;gap:12px;margin:0 0 18px}
+  .wrap{display:flex;flex-direction:column;max-width:720px;margin:0 auto;padding:calc(var(--spacing,4px)*5) calc(var(--spacing,4px)*5) calc(var(--spacing,4px)*8)}
+  .hdr{order:1;display:flex;align-items:center;gap:12px;margin:0 0 calc(var(--spacing,4px)*4)}
   .hdr-tx{flex:1 1 auto;min-width:0}
   .hdr-title{font-size:16px;line-height:1.3;font-weight:600;color:var(--ink)}
   .hdr-sub{display:none}
@@ -529,7 +529,7 @@
   body.adv .iconbtn.adv{background:var(--surface-3);border:0;color:var(--ink)}
 
   /* Global control is one quiet row, not a framed card. */
-  .global-control{order:2;margin:0 0 16px;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  .global-control{order:2;margin:0 0 calc(var(--spacing,4px)*3);padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
   .global-control .switchrow{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:40px;padding:0;border:0}
   .global-control .switchrow>div{min-width:0}
   .global-control .switchrow .t{font-size:13px;line-height:1.3;font-weight:600;color:var(--ink)}
@@ -545,11 +545,11 @@
   #q1{order:3;margin:0 0 10px;padding:0;background:transparent;border:0;border-radius:0}
   #q1:not(.has-need){display:none}
   #q1 .qhead{display:none}
-  #q1 .alert{display:flex;align-items:flex-start;min-height:32px;margin:0;padding:9px 12px;border:0;border-radius:var(--r-sm);background:var(--surface-2);box-shadow:none}
+  #q1 .alert{display:flex;align-items:flex-start;min-height:28px;margin:0;padding:6px 0;border:0;border-radius:0;background:transparent;box-shadow:none}
   #q1 .alert .al-ic{display:none}
-  #q1 .alert .al-tx{font-size:12px;line-height:1.45;font-weight:600;color:var(--ink)}
-  #q1 .alert.lv-warn{background:var(--warn-soft)}
-  #q1>#globalRoutingFold,#q1>#needEvidenceFold{display:block;margin:6px 0 0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  #q1 .alert .al-tx{font-size:var(--font-text-sm-size,13px);line-height:var(--font-text-sm-line-height,20px);font-weight:500;color:var(--ink)}
+  #q1 .alert.lv-warn{background:transparent;color:var(--ink)}
+  #q1>#globalRoutingFold,#q1>#needEvidenceFold{display:block;margin:calc(var(--spacing,4px)*1) 0 0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
   #q1>#globalRoutingFold[hidden],#q1>#needEvidenceFold[hidden]{display:none}
   #q1>#globalRoutingFold summary,#q1>#needEvidenceFold summary{display:none}
   #q1>#globalRoutingFold summary::after,#q1>#needEvidenceFold summary::after{display:none}
@@ -557,12 +557,12 @@
 
   /* The active project is the only primary filled surface. */
   .active-project-shell{order:4;display:block;margin:0;border:1px solid var(--line-2);border-radius:var(--r);background:var(--surface);box-shadow:none;overflow:hidden}
-  .active-project-shell>#projectOverview{padding:16px 16px 12px}
-  .active-project-shell>#q2{padding:0 16px 14px}
-  .active-project-shell>#mapCard{padding:13px 16px 14px;border-top:1px solid var(--line-2)}
-  .active-project-shell>#q3{padding:13px 16px 15px;border-top:1px solid var(--line-2)}
+  .active-project-shell>#projectOverview{padding:calc(var(--spacing,4px)*4) calc(var(--spacing,4px)*4) 0}
+  .active-project-shell>#q2{padding:calc(var(--spacing,4px)*3) calc(var(--spacing,4px)*4) 0}
+  .active-project-shell>#mapCard{padding:calc(var(--spacing,4px)*3) calc(var(--spacing,4px)*4) 0;border-top:0}
+  .active-project-shell>#q3{padding:calc(var(--spacing,4px)*3) calc(var(--spacing,4px)*4) calc(var(--spacing,4px)*4);border-top:0}
   .active-project-shell>#projectOverview,.active-project-shell>#q2,.active-project-shell>#mapCard,.active-project-shell>#q3{display:block;margin:0;border-radius:0;background:transparent;box-shadow:none}
-  .active-project-shell>.active-project-autonomy{display:block;margin:0;padding:0 16px 14px;border-top:1px solid var(--line-2)}
+  .active-project-shell>.active-project-autonomy{display:block;margin:0;padding:calc(var(--spacing,4px)*2) calc(var(--spacing,4px)*4) calc(var(--spacing,4px)*4);border-top:0}
   .active-project-shell>.active-project-autonomy>summary{display:flex;align-items:center;list-style:none;padding:9px 0;font-size:11px;color:var(--ink-3);cursor:pointer}
   .active-project-shell>.active-project-autonomy>summary::-webkit-details-marker{display:none}
   .active-project-shell>.active-project-autonomy>summary::after{content:"";margin-left:auto;width:6px;height:6px;border-right:1.5px solid var(--ink-3);border-bottom:1.5px solid var(--ink-3);transform:rotate(45deg) translateY(-1px)}
@@ -571,32 +571,33 @@
 
   #projectOverview .progress-ring,#projectOverview .attention,#projectOverview .brand-kicker,#projectOverview .lede{display:none}
   #projectOverview .overview-copy{display:block;min-width:0}
-  #projectOverview .overview-copy::before{content:"当前项目";display:block;margin-bottom:5px;color:var(--ink-3);font-size:10.5px;line-height:1.2}
-  #projectOverview .overview-copy h1{display:block;margin:0;font-size:17px;line-height:1.3;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
-  #projectOverview .project-goal{display:block;margin:8px 0 0;max-width:58ch;color:var(--ink-2);font-size:12.5px;line-height:1.45;font-weight:500;overflow-wrap:anywhere}
-  #projectOverview .overview-metrics{display:grid;grid-template-columns:1fr auto;align-items:end;gap:8px 12px;margin:14px 0 7px}
+  #projectOverview .overview-copy::before{content:"当前项目";display:block;margin-bottom:calc(var(--spacing,4px)*1);color:var(--color-text-tertiary,var(--ink-3));font-size:var(--font-text-xs-size,12px);line-height:var(--font-text-xs-line-height,18px)}
+  #projectOverview .overview-copy h1{display:block;margin:0;font-size:var(--font-text-lg-size,18px);line-height:var(--font-text-lg-line-height,29px);font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+  #projectOverview .project-goal{display:block;margin:calc(var(--spacing,4px)*2) 0 0;max-width:58ch;color:var(--ink-2);font-size:var(--font-text-sm-size,14px);line-height:var(--font-text-sm-line-height,20px);font-weight:400;overflow-wrap:anywhere}
+  #projectOverview .overview-metrics{display:grid;grid-template-columns:1fr auto;align-items:end;gap:calc(var(--spacing,4px)*2) calc(var(--spacing,4px)*3);margin:calc(var(--spacing,4px)*3) 0 calc(var(--spacing,4px)*1)}
   #projectOverview .overview-metrics::before{content:"总体进度";align-self:end;margin:0 0 3px;color:var(--ink-3);font-size:11px}
   #projectOverview .overview-metrics::after{content:""}
   #projectOverview .overview-metric{display:none}
   #projectOverview .overview-metric:first-child{display:block;justify-self:end}
-  #projectOverview .overview-metric:first-child strong{font-size:26px;line-height:1;font-weight:600;letter-spacing:0;color:var(--ink);font-variant-numeric:tabular-nums}
+  #projectOverview .overview-metric:first-child strong{font-size:var(--font-text-lg-size,18px);line-height:var(--font-text-lg-line-height,29px);font-weight:600;letter-spacing:var(--tracking-normal,0);color:var(--ink);font-variant-numeric:tabular-nums}
   #projectOverview .overview-metric:first-child span{display:none}
   #projectOverview .overview-progress{display:block;width:100%;height:3px;margin-top:2px;border-radius:999px;background:var(--surface-3);overflow:hidden}
   #projectOverview .overview-progress::before{content:"";display:block;width:var(--progress,0%);height:100%;border-radius:inherit;background:var(--brand-500)}
 
   #q2 .qhead,#q2 .hero-top{display:none}
   #q2 .hero{padding:0;margin:0;border:0;border-radius:0;background:transparent}
-  #q2 .triple{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin:0;padding:0;border:0}
+  #q2 .triple{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:calc(var(--spacing,4px)*4);margin:0;padding:0;border:0}
   #q2 .triple .cell{display:block;min-width:0;border:0;border-radius:0;background:transparent;padding:0}
-  #q2 .triple .cell .k{font-size:10.5px;font-weight:500;color:var(--ink-3)}
-  #q2 .triple .cell .v,#q2 .triple .cell.work .v{margin-top:4px;font-size:12px;line-height:1.4;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+  #q2 .triple .cell .k{font-size:var(--font-text-xs-size,12px);font-weight:400;color:var(--color-text-tertiary,var(--ink-3))}
+  #q2 .triple .cell .v,#q2 .triple .cell.work .v{margin-top:calc(var(--spacing,4px)*1);font-size:var(--font-text-sm-size,14px);line-height:var(--font-text-sm-line-height,20px);font-weight:500;color:var(--ink);overflow-wrap:anywhere}
   #q2 .hero-bar,#q2 .execnow,#q2>#sysLine,#q2>#autonomyLine,#q2>#systemEvidenceFold{display:none}
 
   /* Steward health is the click target; the dot is the quiet status signal. */
-  #q2 .stewards{display:flex;align-items:center;gap:6px;margin:13px 0 0;padding:10px 0 0;border-top:1px solid var(--line-2)}
+  #q2 .stewards{display:flex;align-items:center;gap:6px;margin:calc(var(--spacing,4px)*3) 0 0;padding:0;border-top:0}
   #q2 .steward-summary{display:none}
-  #q2 .steward-strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 12px}
-  #q2 .steward{width:auto;min-height:19px;padding:0;border:0;border-radius:var(--r-xs);background:transparent;display:inline-flex;align-items:center;justify-content:space-between;gap:6px;cursor:pointer;color:var(--ink-2);font:inherit;font-size:11px;line-height:1.25}
+  #q2 .steward-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:calc(var(--spacing,4px)*1) calc(var(--spacing,4px)*3)}
+  #q2 .steward:last-child{grid-column:2}
+  #q2 .steward{width:auto;min-height:20px;padding:0;border:0;border-radius:var(--r-xs);background:transparent;display:inline-flex;align-items:center;justify-content:space-between;gap:calc(var(--spacing,4px)*1);cursor:pointer;color:var(--ink-2);font:inherit;font-size:var(--font-text-xs-size,12px);line-height:var(--font-text-xs-line-height,18px)}
   #q2 .steward-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #q2 .steward:hover,#q2 .steward:focus-visible{background:var(--surface-3);color:var(--ink)}
   #q2 .steward .sdot{display:block;width:7px;height:7px;border-radius:50%;background:var(--ink-3);opacity:.5;transition:transform .15s}
@@ -615,17 +616,17 @@
   #q2 .steward-history summary{cursor:pointer;font-size:11px;color:var(--ink-3)}
 
   /* A compact roadmap shows one count line, one current step and an optional fold. */
-  #mapCard .map-head{display:flex;align-items:baseline;gap:8px;margin:0 0 7px}
+  #mapCard .map-head{display:flex;align-items:baseline;gap:calc(var(--spacing,4px)*2);margin:0 0 calc(var(--spacing,4px)*1)}
   #mapCard .map-head h2{font-size:0;color:transparent}
-  #mapCard .map-head h2::after{content:"工程项";font-size:11.5px;font-weight:600;color:var(--ink-2)}
-  #mapCard .map-meta{font-size:10.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+  #mapCard .map-head h2::after{content:"实施进度";font-size:var(--font-text-xs-size,12px);font-weight:500;color:var(--color-text-tertiary,var(--ink-3))}
+  #mapCard .map-meta{font-size:var(--font-text-xs-size,12px);color:var(--ink-3);font-variant-numeric:tabular-nums}
   #mapCard .map-summary{display:none}
-  #mapCard .map-now{display:flex;align-items:baseline;gap:7px;margin:0;font-size:12px;line-height:1.4}
+  #mapCard .map-now{display:flex;align-items:baseline;gap:calc(var(--spacing,4px)*2);margin:0;font-size:var(--font-text-sm-size,14px);line-height:var(--font-text-sm-line-height,20px)}
   #mapCard .map-now-label{font-size:0}
-  #mapCard .map-now-label::after{content:"当前步骤";font-size:11px;color:var(--ink-3)}
+  #mapCard .map-now-label::after{content:"当前";font-size:var(--font-text-xs-size,12px);color:var(--color-text-tertiary,var(--ink-3))}
   #mapCard .map-now-value{min-width:0;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
   #mapCard .map-detail{margin-top:4px}
-  #mapCard .map-detail>summary{display:flex;align-items:center;list-style:none;padding:5px 0;font-size:11px;color:var(--ink-3)}
+  #mapCard .map-detail>summary{display:none}
   #mapCard .map-detail>summary::-webkit-details-marker{display:none}
   #mapCard .map-detail>summary::after{content:"";margin-left:auto;width:6px;height:6px;border-right:1.5px solid var(--ink-3);border-bottom:1.5px solid var(--ink-3);transform:rotate(45deg) translateY(-1px)}
   #mapCard .map-detail[open]>summary::after{transform:rotate(225deg) translateY(-1px)}
@@ -637,15 +638,16 @@
   #mapCard .project-card-state{font-size:10.5px}
 
   #q3{background:transparent}
-  #q3 .qhead{display:flex;align-items:baseline;gap:8px;margin:0 0 6px}
+  #q3 .qhead{display:flex;align-items:baseline;gap:calc(var(--spacing,4px)*2);margin:0 0 calc(var(--spacing,4px)*1)}
+  #q3 .qhead .qn{display:none}
   #q3 .qhead h2{font-size:0;color:transparent}
-  #q3 .qhead h2::after{content:"最近完成";font-size:12px;font-weight:600;color:var(--ink-2)}
+  #q3 .qhead{display:none}
   #q3 .qhead .qstate{display:none}
   #q3 .northstar,#q3 #recentCard .chead{display:none}
   #q3 #recentCard{padding:0;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none}
   #q3 #recentCard .list li{display:block;max-width:100%;padding:4px 0;border:0;font-size:11.5px;line-height:1.4;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   #q3 #recentCard .list li:nth-child(n+4){display:none}
-  #q3 #recentCard .list:after{content:"查看更早记录";display:block;margin-top:5px;color:var(--ink-3);font-size:10.5px}
+  #q3 #recentCard .list:after{display:none}
 
   /* Other projects are flat filled surfaces, one compact summary each. */
   #folderCard{order:5;margin:16px 0 0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
@@ -676,7 +678,10 @@
 
   /* Configuration and evidence are discoverable below the default first screen. */
   #needEvidenceFold,#acceptCard,#routeOverview,.overview-detail,#advanced,#guide,.ctrl{order:9;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none}
-  #needEvidenceFold,#acceptCard,.overview-detail{margin-top:16px;border-top:1px solid var(--line-2)}
+  #needEvidenceFold{margin-top:0}
+  #acceptCard,.overview-detail{margin-top:calc(var(--spacing,4px)*4);border-top:0}
+  #needEvidenceFold[hidden],#q1>#needEvidenceFold[hidden]{display:none !important}
+  #needEvidenceFold>summary{display:none}
   #needEvidenceFold>summary,#acceptCard .chead,.overview-detail>summary{font-size:12px;color:var(--ink-2)}
   #acceptCard{display:none}
   body.has-accept #acceptCard{display:block}
@@ -695,12 +700,14 @@
   #advanced .foldbody{padding:0 0 14px}
   .card{border:1px solid var(--line-2);border-radius:var(--r);box-shadow:none}
   .btn{border-radius:var(--r-sm);box-shadow:none;padding:7px 12px;font-size:12px}
-  .overview-detail{margin-top:16px}
-  .foot{order:10;margin-top:16px;font-size:10.5px;color:var(--ink-3);text-align:center}
+  .overview-detail{margin-top:0;display:none}
+  body.adv .overview-detail{display:block;margin-top:calc(var(--spacing,4px)*4)}
+  .foot{order:10;margin-top:calc(var(--spacing,4px)*4);font-size:var(--font-text-xs-size,12px);color:var(--color-text-tertiary,var(--ink-3));text-align:center}
 
   @media(max-width:520px){
-    .wrap{padding:16px 14px 36px}
-    #q2 .triple{grid-template-columns:1fr;gap:10px}
+    .wrap{padding:calc(var(--spacing,4px)*4) calc(var(--spacing,4px)*3) calc(var(--spacing,4px)*8)}
+    #q2 .triple{grid-template-columns:1fr;gap:calc(var(--spacing,4px)*2)}
+    #q2 .steward-strip{grid-template-columns:repeat(2,minmax(0,1fr));gap:calc(var(--spacing,4px)*1) calc(var(--spacing,4px)*3)}
     #q2 .triple .cell{display:grid;grid-template-columns:80px minmax(0,1fr);gap:8px;align-items:baseline}
     #q2 .triple .cell .v{margin-top:0}
     #folderCard .folder>summary{grid-template-columns:minmax(0,1fr) 10px}
@@ -1271,8 +1278,9 @@
   function renderNeedEvidence(detail){
     var fold = el("needEvidenceFold"); if (!fold) return;
     var box = el("needEvidenceBox");
-    if (box) box.textContent = detail || "";
-    fold.hidden = !detail;
+    var hasDetail = !!String(detail || "").trim();
+    if (box) box.textContent = hasDetail ? detail : "";
+    fold.hidden = !hasDetail;
   }
 
   function ensureActiveProjectShell(){
