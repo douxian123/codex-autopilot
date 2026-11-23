@@ -351,6 +351,10 @@ def main():
         # 这条门禁锁住：陈旧进程必须跟随 install-state 找到当前版本，且必须判 broken。
         run([sys.executable, str(OPS / "test-plugin-live-ops.py")],
             cwd=str(OPS.parent), check=True)
+        # 陈旧进程 fatally broken 时，不能再让其它工具从旧 KG_REPO/KG_TRUNK 返回
+        # 与面板互相矛盾的项目态；只保留状态诊断和原生面板打开入口。
+        run([sys.executable, str(OPS / "test-mcp-stale-failclosed.py")],
+            cwd=str(OPS.parent), check=True)
         # 状态管家：harness 的上下文健康（压缩频率 / 峰值 input）本来只写进
         # daemon.log，用户看不到 —— 于是「配置健不健康」在面板上是个盲区。
         # 这条门禁锁住：结论来自既有体检记录（取最差的一条）、取不到时绝不
