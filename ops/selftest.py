@@ -185,6 +185,7 @@ def main():
             "test-panel-renderer-contract.py",
             "test-panel-intent-trigger.py",
             "test-panel-no-html-fallback.py",
+            "test-binding-recovery-action.py",
             "test-research-adoption.py",
             "test-specialized-acceptance-executors.py",
         )
