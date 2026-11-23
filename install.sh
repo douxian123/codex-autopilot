@@ -659,14 +659,14 @@ data = {"mcpServers": {"codex-autopilot": {
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(data, fh, ensure_ascii=False, indent=2)
     fh.write("\n")
-# 显式 --trunk 必须同时写进版本自带的 central.config.json。否则 product_eval
-# 判据 5 只能回退到旧的同级 -trunk 目录：发布提交明明已在 origin/main，
-# 现场评估却一直拿陈旧主干做祖先比较，出现只靠手改安装目录才转绿的假闭环。
+# 版本自带的 central.config.json 必须反映本次安装的 trunk 解析结果。
+# 只写「显式 --trunk」不够：新 HOME 没有默认 trunk 时，旧 release 复制过来的
+# 陈旧 trunk_dir 会留在配置里，product_eval 判据 5 拿它做祖先比较而永久误红。
 ops_config = Path(path).parent / "ops" / "central.config.json"
-if trunk and ops_config.is_file():
+if ops_config.is_file():
     with ops_config.open(encoding="utf-8") as fh:
         cfg = json.load(fh)
-    cfg["trunk_dir"] = trunk
+    cfg["trunk_dir"] = trunk or None
     fd, tmp = tempfile.mkstemp(prefix=".central-config-", dir=str(ops_config.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -688,6 +688,8 @@ if trunk:
     print(f"  落盘主干   = {trunk}")
     if ops_config.is_file():
         print(f"  发布评估主干配置 = {ops_config}")
+elif ops_config.is_file():
+    print("  落盘主干   = 未解析；已清空版本内陈旧 trunk_dir 配置")
 PYEOF
 if ! "$PY" -m py_compile "$STAGE"/ops/*.py; then
   echo "× 新版本 Python 预检失败，当前安装入口未更改。" >&2
