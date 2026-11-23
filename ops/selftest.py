@@ -1589,6 +1589,24 @@ def test_installer():
         assert any(p["name"] == "other-plugin" for p in restored["plugins"])
         assert sentinel.read_text(encoding="utf-8") == "keep\n"
         assert (release / "ops" / "central_mcp.py").is_file()
+        # 现场事故回归：旧版回滚只改 marketplace，install-state 仍指向新版本，
+        # current_ops() 与面板因此继续跑旧代码。回滚必须同时回写安装态。
+        rolled_state = _json.loads(
+            (home / "plugins" / "codex-autopilot" / "install-state.json")
+            .read_text(encoding="utf-8"))
+        assert rolled_state["source"] == restored_entry["source"]["path"], \
+            "回滚后 install-state 与 marketplace 入口不一致"
+        assert rolled_state["version"] == state["version"], \
+            "回滚后 install-state.version 丢失可追溯版本"
+        second_rollback = run(["bash", str(source_install), "--rollback"],
+                              env=env, check=False)
+        if second_rollback.returncode:
+            raise AssertionError(f"连续回滚失败:\n{second_rollback.stdout}\n{second_rollback.stderr}")
+        second_state = _json.loads(
+            (home / "plugins" / "codex-autopilot" / "install-state.json")
+            .read_text(encoding="utf-8"))
+        assert second_state["source"] == restored_entry["source"]["path"], \
+            "连续回滚把 install-state 改到了错误版本"
 
         # 2026-11-23 现场事故：把不存在的 <状态根>-trunk 写进 KG_TRUNK 和 release
         # 配置，安装看似成功，product_eval 的 consistent 判据永久失败。显式 --trunk
