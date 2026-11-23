@@ -1,6 +1,6 @@
 # 项目状态（自动生成，勿手改）
 
-> 生成时间 2026-11-24 03:47:29　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
+> 生成时间 2026-11-24 04:18:32　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
 
 ## 一、产品主线
 
@@ -45,7 +45,6 @@
 
 ## 四、进展
 
-- `P-0213` [已落盘] @ `d845d0dc1d` codex/route-ownership-contract-20261123 验证门禁通过，已落盘 main @ d845d0dc1d；改动 3 个文件：ops/selftest.py（+1/-0）、ops/test-central-command-followup-contract.py（+22/-0）、plugin/skills/central-command/SKILL.md（+7/-0）｜3 files changed, 30 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0214` [已落盘] @ `81e1246be8` codex/mcp-stale-failclosed-20261124 验证门禁通过，已落盘 main @ 81e1246be8；改动 3 个文件：ops/central_mcp.py（+41/-0）、ops/selftest.py（+4/-0）、ops/test-mcp-stale-failclosed.py（+142/-0）｜3 files changed, 187 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0215` [在途] @ `ee180ad01a` 当前主干 ee180ad0 的 .146 发布候选复验：全新隔离 clone + 显式 trunk 安装完成，product_eval 5/5、阴性对照 8/8，首问闭环率 88.2%（15/17），selftest/panel logic/panel render/stale release-dir 门禁均为 0；live 已恢复到公开 .140，未打 tag、未发 prerelease、未换代、未签收 L-0019。
 - `P-0216` [在途] P-0215 冲突补回（远端 tick 删除后按唯一 ID 追加）：当前主干 ee180ad0 的 .146 发布候选复验完成；product_eval 5/5、阴性对照 8/8、首问闭环率 88.2%（15/17），全部专项门禁 exit 0；live 已恢复公开 .140，未发 tag/prerelease、未换代、未签收 L-0019。
@@ -53,6 +52,7 @@
 - `P-0219` [已落盘] @ `18f2692f8e` 18f2692f 回滚修复后最新主干复验：.146 隔离安装发布评估 5/5、阴性对照 8/8、原生面板 ok:true；live 仍 .140，tag/prerelease 与人工签收未发生
 - `P-0220` [已落盘] @ `5c57a44bcd` codex/release-doc-truth-alignment-20261124 验证门禁通过，已落盘 main @ 5c57a44bcd；改动 3 个文件：docs/BETA_LOCAL_TRIAL.md（+13/-7）、docs/PREVIEW.md（+1/-1）、ops/selftest.py（+64/-0）｜3 files changed, 78 insertions(+), 8 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0221` [已落盘] @ `a29fbe25f5` codex/project-health-mainline-freshness-20261124 验证门禁通过，已落盘 main @ a29fbe25f5；改动 2 个文件：ops/project_health.py（+32/-4）、ops/test-project-health.py（+38/-9）｜2 files changed, 70 insertions(+), 13 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- `P-0223` [已落盘] @ `858e540cf4` codex/acceptance-id-collision-20261124 验证门禁通过，已落盘 main @ 858e540cf4；改动 2 个文件：ops/acceptance_criteria.py（+44/-7）、ops/test-acceptance-criteria.py（+47/-0）｜2 files changed, 91 insertions(+), 7 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 
 ## 五、验收进度
 
@@ -74,7 +74,7 @@
 - `A-0189` [P1] Codex Autopilot 面板人工验收：任务完成感
   - 人看首屏默认截图，确认当前目标、总体进度、最近完成和当前步骤能支撑判断任务是否在推进
 
-**已机器验收（143）**
+**已机器验收（144）**
 - `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
@@ -218,6 +218,7 @@
 - `A-0201` [P1] codex/rollback-install-state-20261124 落盘验收
 - `A-0206` [P1] codex/release-doc-truth-alignment-20261124 落盘验收
 - `A-0207` [P1] codex/project-health-mainline-freshness-20261124 落盘验收
+- `A-0208` [P1] codex/acceptance-id-collision-20261124 落盘验收
 
 ## 六、决策记录
 

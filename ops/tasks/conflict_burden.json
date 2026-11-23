@@ -1,23 +1,19 @@
 {
- "main": "17d5910cb70ba54e3eb2589d6d41d6c6dc6ab32f",
+ "main": "87e9dfea3aa8742e0087a961d5c868532e7d0931",
  "branches": [
   "codex/auto-close-identity-gate-20261024",
   "codex/autopilot-brand-panel",
   "codex/disk-admission-clean-20261027",
   "codex/disk-admission-preview29-20261027",
-  "codex/panel-design-restore-20261124",
   "codex/reap-identical-tracked-20261027",
-  "codex/slow-model-routing",
-  "codex/steward-history-detail-20261123"
+  "codex/slow-model-routing"
  ],
  "burden": {
   "codex/auto-close-identity-gate-20261024": 2,
   "codex/autopilot-brand-panel": 9,
   "codex/disk-admission-clean-20261027": 3,
   "codex/disk-admission-preview29-20261027": 13,
-  "codex/panel-design-restore-20261124": 1,
   "codex/reap-identical-tracked-20261027": 3,
-  "codex/slow-model-routing": 4,
-  "codex/steward-history-detail-20261123": 3
+  "codex/slow-model-routing": 4
  }
 }
