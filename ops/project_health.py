@@ -96,11 +96,28 @@ def _parse_ts(value):
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
+GENERATED_AT_PREFIX = "> 生成时间 "
+
+
+def _read_generated_at(path):
+    """从自动综合主线页读生成时间；人拍板的 mainline.json 不参与。"""
+    try:
+        raw = Path(path).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in raw.splitlines():
+        if line.startswith(GENERATED_AT_PREFIX):
+            stamp = line[len(GENERATED_AT_PREFIX):].split("　·　", 1)[0].strip()
+            return stamp or None
+    return None
+
+
 def truth_snapshot(repo):
     """读一遍项目真相，返回健康判定需要的计数与时间。只读。"""
     base = Path(repo).expanduser()
     truth = base / "ops" / "truth"
     mainline = _read_json(truth / "mainline.json")
+    generated_at = _read_generated_at(base / "docs" / "PRODUCT_MAINLINE.md")
     ledger_rows, ledger_present = _read_jsonl_source(truth / "ledger.jsonl")
     ledger = latest_ledger_by_id(ledger_rows)
     open_items = ([r for r in ledger.values() if r.get("status") in OPEN_STATUSES]
@@ -124,6 +141,7 @@ def truth_snapshot(repo):
         "path": str(base),
         "mainline_present": mainline is not None,
         "mainline_updated": (mainline or {}).get("updated"),
+        "mainline_generated_at": generated_at,
         "mainline_stage": (mainline or {}).get("stage"),
         "open_items": len(open_items) if ledger_present else None,
         "done_no_evidence": len(done_no_evidence) if ledger_present else None,
@@ -149,18 +167,28 @@ def _truth_layer(truth, now):
     reasons = []
     state = "ok"
 
-    updated = _parse_ts(truth.get("mainline_updated"))
+    # 面板里给人看的是自动综合主线；mainline.json 是人拍板的方向日期。
+    # 两者语义不同：方向一个月没变是正常的，刚综合出来的主线不该报过期。
+    generated = _parse_ts(truth.get("mainline_generated_at"))
+    if generated is not None:
+        updated = generated
+        freshness_label = "自动综合主线"
+        freshness_stamp = truth.get("mainline_generated_at")
+    else:
+        updated = _parse_ts(truth.get("mainline_updated"))
+        freshness_label = "产品方向"
+        freshness_stamp = truth.get("mainline_updated")
     if not truth.get("mainline_present"):
         return _layer("truth", "项目真相", "unknown", ["mainline.json 读不到"])
     if updated is None:
         state = "unknown"
-        reasons.append("产品主线更新时间读不到")
+        reasons.append("产品主线生成时间读不到")
     else:
         age = max(0, (now - updated).days)
         if age > MAINLINE_STALE_DAYS:
             state = "attention"
-            reasons.append("产品主线 %d 天没更新（%s）"
-                           % (age, truth.get("mainline_updated")))
+            reasons.append("%s %d 天没更新（%s）"
+                           % (freshness_label, age, freshness_stamp))
 
     if not truth.get("constraints_present", True):
         state = "unknown"
