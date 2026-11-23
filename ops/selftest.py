@@ -7067,6 +7067,96 @@ def test_superseded_branches_are_settled_not_landable():
     print("selftest ok: superseded clean 分支归到已裁决，不再冒充可落盘在途。")
 
 
+def test_convergence_adopts_unregistered_worktree():
+    """收敛分支存在但台账缺失时，必须认领真实 worktree 并补齐台账。"""
+    import contextlib
+    import importlib.util
+    import io
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    with tempfile.TemporaryDirectory(prefix="kgctl-converge-orphan-") as tmp:
+        root = Path(tmp)
+        (root / "ops" / "tasks").mkdir(parents=True)
+        (root / "ops" / "truth").mkdir(parents=True)
+        actual_wt = root / "elsewhere-converge-abc12345"
+        actual_wt.mkdir()
+        group = {
+            "id": "abc12345",
+            "branches": ["codex/src-a"],
+            "files": ["common.txt"],
+        }
+
+        class Result:
+            def __init__(self, returncode, stdout, stderr=""):
+                self.returncode = returncode
+                self.stdout = stdout
+                self.stderr = stderr
+
+        with mock.patch.dict(os.environ, {
+            "KG_REPO": str(root),
+            "KG_TRUNK": str(root / "trunk"),
+        }):
+            spec = importlib.util.spec_from_file_location(
+                "kgctl_converge_orphan_selftest", ops / "kgctl.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            proc_calls = []
+
+            def fake_proc_run(args, **kwargs):
+                cmd = [str(x) for x in args]
+                proc_calls.append(cmd)
+                if "fetch" in cmd:
+                    return Result(0, "", "")
+                if "grep" in cmd and "-l" in cmd:
+                    return Result(0, "", "")
+                if "rev-parse" in cmd and cmd[-1] == "HEAD":
+                    return Result(0, "headsha\n", "")
+                if "worktree" in cmd and "add" in cmd:
+                    raise AssertionError(f"已有 worktree 不应被重建：{cmd}")
+                return Result(0, "", "")
+
+            def fake_git(*args, check=False):
+                if args and args[0] == "rev-parse":
+                    return "sha"
+                return ""
+
+            written = []
+            with mock.patch.object(module, "scan", return_value=[]), \
+                 mock.patch.object(module, "conflict_groups", return_value=[group]), \
+                 mock.patch.object(module, "load_convergence", return_value={"groups": []}), \
+                 mock.patch.object(module, "_adopt_stable_ids", lambda *a, **k: None), \
+                 mock.patch.object(module, "_lock_take", lambda *a, **k: None), \
+                 mock.patch.object(module, "_lock_drop", lambda *a, **k: None), \
+                 mock.patch.object(
+                     module, "worktree_map",
+                     return_value={"codex/converge-abc12345": str(actual_wt)}), \
+                 mock.patch.object(module, "git", side_effect=fake_git), \
+                 mock.patch.object(module, "proc_run", side_effect=fake_proc_run), \
+                 mock.patch.object(module, "_abort_stale_merge", return_value=False), \
+                 mock.patch.object(module, "_branch_contained", return_value=True), \
+                 mock.patch.object(module, "_clean_orphan_convergences", return_value=[]), \
+                 mock.patch.object(
+                     module, "_write_convergence_record",
+                     side_effect=lambda record: written.append(dict(record))):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    module.cmd_converge(["--go"])
+
+            text = output.getvalue()
+            assert "认领既有 worktree" in text, text
+            assert "续跑未合入的源分支" in text, text
+            assert not any("worktree" in c and "add" in c for c in proc_calls), proc_calls
+            assert len(written) == 1, written
+            record = written[0]
+            assert record["worktree"] == str(actual_wt), record
+            assert record["status"] == "ready", record
+            assert record["unresolved_files"] == [], record
+
+    print("selftest ok: 未登记但有真实 worktree 的收敛分支会被认领并补齐台账，不再永久跳过。")
+
+
 def test_prune_keeps_open_resolve_hold():
     """Restart cleanup must not erase a hold for a gate_fail resolve task."""
     import importlib
@@ -8886,6 +8976,7 @@ if __name__ == "__main__":
     test_resolve_prepare_raises_controlled_error_not_sysexit()
     test_zero_file_branches_do_not_occupy_land_queue()
     test_superseded_branches_are_settled_not_landable()
+    test_convergence_adopts_unregistered_worktree()
     test_conflict_decision_hold_survives_existing_markers()
     test_prune_keeps_open_resolve_hold()
     test_reset_trunk_truth_conflict()

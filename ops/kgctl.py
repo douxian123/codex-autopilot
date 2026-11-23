@@ -2520,6 +2520,7 @@ def cmd_converge(args):
         return
     _lock_take("converge")
     made = []
+    wt_map = worktree_map()
     try:
         fetch = proc_run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
                                capture_output=True, text=True)
@@ -2527,23 +2528,37 @@ def cmd_converge(args):
         base_sha = git("rev-parse", base_ref)
         for g in groups:
             branch = _convergence_branch(g)
-            existing = records.get(g["id"]) or {}
+            existing = dict(records.get(g["id"]) or {})
             branch_exists = bool(git("rev-parse", "--verify", branch))
-            wt = REPO.parent / f"{REPO.name}-converge-{g['id']}"
-            resume = branch_exists and existing.get("branch") == branch and wt.exists()
-            if resume:
+            default_wt = REPO.parent / f"{REPO.name}-converge-{g['id']}"
+            registered_wt = existing.get("worktree")
+            actual_wt = wt_map.get(branch)
+            if branch_exists:
+                # 收敛 worktree 不一定建在默认路径：历史任务可能换过目录，台账也可能
+                # 被清掉。只认 Git 真实注册表或本组台账里的有效路径，避免把同名目录
+                # 当成别的分支现场。认领后补齐台账并续跑，不再永久跳过。
+                if actual_wt and Path(actual_wt).exists():
+                    wt = Path(actual_wt)
+                elif existing.get("branch") == branch and registered_wt and Path(registered_wt).exists():
+                    wt = Path(registered_wt)
+                else:
+                    print(f"  {branch} 已存在但未登记或 worktree 缺失，跳过")
+                    continue
+                if existing.get("branch") != branch or existing.get("worktree") != str(wt):
+                    print(f"  {branch} 认领既有 worktree {wt}（补齐台账）")
+                existing["branch"] = branch
+                existing["worktree"] = str(wt)
                 # 断点续跑：先清掉可能残留的半合并（已提交的 merge 在历史里，不会丢），
                 # 再只补合尚未进入 HEAD 的源分支；已合入的靠 is-ancestor 跳过。
                 aborted = _abort_stale_merge(wt)
-                print(f"  {branch} 已存在，续跑未合入的源分支"
+                print(f"  {branch} 续跑未合入的源分支"
                       + ("（清掉了残留半合并）" if aborted else ""))
-            elif branch_exists:
-                print(f"  {branch} 已存在但未登记或 worktree 缺失，跳过")
-                continue
-            elif wt.exists():
+            elif default_wt.exists():
+                wt = default_wt
                 print(f"  × {wt} 已存在但不是已登记分支；跳过 {branch}")
                 continue
             else:
+                wt = default_wt
                 add = proc_run(
                     ["git", "-C", str(REPO), "worktree", "add", "-b", branch, str(wt), base_ref],
                     capture_output=True, text=True)
