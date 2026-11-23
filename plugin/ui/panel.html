@@ -243,6 +243,97 @@
     .triple{grid-template-columns:1fr}
     .orientation{padding:13px}
   }
+
+  /* ---- final visual pass: quiet Codex surface --------------------------
+     The data contract stays intact, but the default surface is deliberately
+     smaller and calmer: one project overview, one progress signal, then
+     project cards. Details remain discoverable without competing with them. */
+  .wrap{max-width:680px;padding:18px 18px 32px;gap:0}
+  .hdr{margin:0 0 18px;padding:0 0 14px;border-bottom:1px solid var(--line-2)}
+  .hdr-title{font-size:15px;font-weight:600}
+  .hdr-sub{display:none}
+  .hdr-act{gap:4px}
+  .iconbtn{width:30px;height:30px;border-radius:7px;color:var(--ink-2)}
+  .iconbtn svg{width:16px;height:16px}
+
+  .global-control{border:0;border-radius:0;background:transparent;padding:0 0 18px;margin:0;border-bottom:1px solid var(--line-2)}
+  .global-control .switchrow{min-height:34px}
+  .global-control .switchrow .t{font-size:13px;font-weight:600}
+  .global-control .switchrow .d{font-size:11px;margin-top:2px;color:var(--ink-3)}
+  .global-control .sw{width:32px;height:19px}
+
+  #q1{order:3;margin:0;padding:11px 12px;background:var(--warn-soft);border-radius:7px}
+  #q1:not(.has-need){display:none}
+  #q1 .alert{padding:0;border:0;background:transparent}
+  #q1 .alert .al-tx{font-size:12px;font-weight:600}
+
+  #q2{order:4;margin:0;padding:20px 0 18px}
+  #q2 .qhead{margin:0 0 12px}
+  #q2 .qhead h2::after{content:"当前项目";font-size:15px;font-weight:600}
+  #q2 .hero-top{margin:0;justify-content:flex-start;height:0;position:relative}
+  #q2 .hero-time{position:absolute;right:0;top:-25px;font-size:10.5px;color:var(--ink-3)}
+  #q2 .triple{grid-template-columns:1.05fr 1.2fr 1fr;gap:16px;padding:0;margin:0}
+  #q2 .triple .cell{min-width:0}
+  #q2 .triple .cell .k{font-size:11px;color:var(--ink-3)}
+  #q2 .triple .cell .v,#q2 .triple .cell.work .v{margin-top:5px;font-size:13px;line-height:1.35;font-weight:500;overflow-wrap:anywhere}
+  #q2 .triple .cell:first-child .v{font-weight:600}
+  #q2>#sysLine,#q2>#stewardBar,#q2>#stewardDetail,#q2>#autonomyLine,#q2>#systemEvidenceFold,#q2>#globalRoutingFold{display:none}
+
+  #projectOverview{order:5;margin:0;padding:16px 0 18px;border:0;border-top:1px solid var(--line-2);border-bottom:1px solid var(--line-2);background:transparent}
+  #projectOverview .overview-copy{display:grid;grid-template-columns:1fr auto;align-items:end;gap:8px 16px}
+  #projectOverview .brand-kicker{display:none}
+  #projectOverview h1{display:block;grid-column:1/-1;margin:0;font-size:18px;line-height:1.3;font-weight:600;overflow-wrap:anywhere}
+  #projectOverview .lede{display:block;grid-column:1/-1;margin:0;color:var(--ink-2);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+  #projectOverview .attention{display:none}
+  #projectOverview .overview-metrics{grid-column:1/-1;display:block;margin:0}
+  #projectOverview .overview-metrics::before{content:"总体进度";display:block;margin:0 0 7px;font-size:11px;color:var(--ink-3)}
+  #projectOverview .overview-metrics::after{content:""}
+  #projectOverview .overview-metric{display:none}
+  #projectOverview .overview-metric:first-child{display:block}
+  #projectOverview .overview-metric:first-child strong{font-size:28px;line-height:1;font-weight:600}
+  #projectOverview .overview-progress{height:4px;margin-top:10px;border-radius:99px}
+
+  #mapCard{order:6;margin:0;padding:16px 0 18px;border:0;border-bottom:1px solid var(--line-2);background:transparent}
+  #mapCard .map-head{margin:0 0 8px}
+  #mapCard .map-head h2{font-size:13px;font-weight:600;color:var(--ink)}
+  #mapCard .map-meta{font-size:11px;color:var(--ink-3)}
+  #mapCard .map-summary{height:4px}
+  #mapCard .map-now{margin-top:9px;font-size:12px}
+  #mapCard .map-now-label{font-size:11px;color:var(--ink-3)}
+  #mapCard .map-detail{margin-top:7px}
+  #mapCard .map-detail>summary{padding:5px 0;font-size:11px;color:var(--ink-3)}
+
+  #q3{order:7;margin:0;padding:17px 0 16px}
+  #q3 .qhead{margin:0 0 7px}
+  #q3 .qhead h2::after{content:"最近完成";font-size:15px;font-weight:600}
+  #q3 .qstate{font-size:11px;color:var(--ink-3)}
+  #q3 #recentCard .list li{padding:6px 0;border-bottom:0;font-size:12px;line-height:1.4;color:var(--ink-2)}
+  #q3 #recentCard .list li+li{padding-top:2px}
+
+  #folderCard{order:8;margin:0;padding:16px 0 0}
+  #folderCard>.chead{padding:0 0 9px}
+  #folderCard>.chead h2{font-size:15px}
+  #folderCard>.chead .count{font-size:11px;color:var(--ink-3)}
+  #folderCard .folders{gap:6px}
+  #folderCard .folder{border:0;border-radius:7px;background:var(--surface-2)}
+  #folderCard .folder>summary{min-height:58px;padding:11px 12px;grid-template-columns:minmax(0,1fr) auto 10px}
+  #folderCard .folder-title{font-size:13px;font-weight:600;overflow-wrap:anywhere}
+  #folderCard .folder-goal,#folderCard .folder-step{display:none}
+  #folderCard .folder-stats{font-size:10.5px;color:var(--ink-3)}
+  #folderCard .folder-progress{margin-top:8px}
+  #folderCard .folder-progress-bar{height:3px}
+  #folderCard .folder-progress-value{font-size:10px}
+  #folderCard .folder-body{padding:0 12px 12px;background:var(--surface-2)}
+  #needEvidenceFold,#acceptCard,#routeOverview,.overview-detail{background:transparent;border:0;border-top:1px solid var(--line-2);border-radius:0;box-shadow:none}
+  #needEvidenceFold>summary,#acceptCard .chead,#routeOverview .orientation-head,.overview-detail>summary{font-size:12px;color:var(--ink-2)}
+
+  #needEvidenceFold,#acceptCard,#routeOverview,#advanced,.overview-detail,#guide,.ctrl{order:9}
+  .foot{order:10;margin-top:22px;font-size:10.5px;color:var(--ink-3)}
+  @media(max-width:520px){
+    .wrap{padding:14px 14px 28px}
+    #q2 .triple{grid-template-columns:1fr;gap:10px}
+    #q2 .triple .cell{display:grid;grid-template-columns:76px minmax(0,1fr);gap:8px;align-items:baseline}
+  }
   .stages{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
   .stage{border-radius:var(--r-xs);padding:11px 12px;background:var(--surface-2);border:1px solid var(--line)}
   .stage .n{font-size:23px;font-weight:700;line-height:1.1;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink-3);transition:color .2s}
@@ -769,6 +860,126 @@
     #q2 .triple .cell{display:grid;grid-template-columns:88px minmax(0,1fr);gap:8px;align-items:baseline}
     #q2 .triple .cell .v{margin-top:0}
     #projectOverview .overview-metrics::after{font-size:11px}
+  }
+
+  /* ---- final reference composition -------------------------------------
+     Keep the host surface quiet, but restore the product hierarchy that the
+     renderer contract requires: current project first, current state second,
+     recent outcomes third, and the multi-project index last. The older CSS
+     layers above are retained for compatibility with the existing DOM. */
+  .wrap{max-width:720px;margin:0 auto;padding:16px 16px 36px;gap:0}
+  .hdr{order:1;margin:0 0 12px;padding:0 0 12px;border-bottom:1px solid var(--line-2)}
+  .hdr-title{font-size:15px;font-weight:600}
+  .hdr-act{gap:2px}
+  .iconbtn{width:28px;height:28px;border-radius:6px}
+
+  .global-control{order:2;margin:0 0 16px;padding:0 0 12px;border:0;border-bottom:1px solid var(--line-2)}
+  .global-control .switchrow{min-height:32px}
+  .global-control .switchrow .t{font-size:12px;font-weight:600}
+  .global-control .switchrow .d{font-size:11px;margin-top:1px;color:var(--ink-3)}
+  .global-control .sw{width:30px;height:18px}
+
+  #q1{order:3;margin:0 0 14px;padding:0}
+  #q1 .alert{padding:9px 11px;border:0;border-radius:6px;background:var(--warn-soft)}
+  #q1 .alert .al-tx{font-size:12px}
+
+  /* The active project is the primary object on the page, not a hidden
+     metric row. It uses the same low-contrast filled surface as Codex rows. */
+  #projectOverview{order:4;display:block;margin:0 0 14px;padding:15px 16px 14px;border:0;border-radius:8px;background:var(--surface-2);box-shadow:none}
+  #projectOverview .overview-copy{display:block;min-width:0}
+  #projectOverview .brand-kicker{display:none}
+  #projectOverview .overview-copy h1{display:block;margin:0;font-size:17px;line-height:1.3;font-weight:600;overflow-wrap:anywhere}
+  #projectOverview .lede{display:block;margin:5px 0 13px;color:var(--ink-2);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+  #projectOverview .overview-metrics{display:flex;align-items:baseline;gap:9px;margin:0 0 8px}
+  #projectOverview .overview-metrics::before{content:"总体进度";font-size:11px;color:var(--ink-3);margin:0}
+  #projectOverview .overview-metric{display:none}
+  #projectOverview .overview-metric:first-child{display:block;margin:0}
+  #projectOverview .overview-metric:first-child strong{font-size:22px;line-height:1;font-weight:600;color:var(--ink)}
+  #projectOverview .overview-metric:first-child span{display:none}
+  #projectOverview .overview-metrics::after{content:""}
+  #projectOverview .overview-progress{height:4px;border-radius:999px;background:var(--surface-3);overflow:hidden}
+  #projectOverview .overview-progress span{background:var(--brand-500)}
+
+  #q2{order:5;margin:0 0 16px;padding:0}
+  #q2 .qhead{margin:0 0 9px}
+  #q2 .qhead h2{font-size:0;color:transparent}
+  #q2 .qhead h2::after{content:"当前进展";font-size:14px}
+  #q2 .triple{grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:0;padding:0}
+  #q2 .triple .cell .k{font-size:11px;color:var(--ink-3)}
+  #q2 .triple .cell .v,#q2 .triple .cell.work .v{margin-top:3px;font-size:12px;line-height:1.4;font-weight:500}
+  #q2>#sysLine,#q2>#stewardBar,#q2>#stewardDetail,#q2>#autonomyLine,#q2>#systemEvidenceFold,#q2>#globalRoutingFold{display:none}
+
+  #q3{order:6;margin:0 0 18px;padding:0;border-top:1px solid var(--line-2);border-bottom:1px solid var(--line-2)}
+  #q3 .qhead{margin:0;padding:12px 0 5px}
+  #q3 .qhead h2{font-size:0;color:transparent}
+  #q3 .qhead h2::after{content:"最近完成";font-size:14px;color:var(--ink)}
+  #q3 #recentCard{padding:0 0 8px}
+  #q3 #recentCard .list li{padding:6px 0;border:0;font-size:12px;line-height:1.4}
+
+  #folderCard{order:7;margin:0 0 20px;padding:0}
+  #folderCard>.chead{padding:0 0 9px}
+  #folderCard>.chead h2{font-size:14px;font-weight:600}
+  #folderCard .folders{gap:6px}
+  #folderCard .folder{border:0;border-radius:8px;background:var(--surface-2);box-shadow:none}
+  #folderCard .folder>summary{min-height:52px;padding:12px 13px;grid-template-columns:minmax(0,1fr) auto 10px;gap:10px}
+  #folderCard .folder-title{font-size:13px;font-weight:600;line-height:1.35}
+  #folderCard .folder-goal{display:block;margin-top:3px;font-size:11px;line-height:1.35;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #folderCard .folder-step{display:none}
+  #folderCard .folder-stats{font-size:10px;color:var(--ink-3)}
+  #folderCard .folder-progress{margin-top:8px}
+  #folderCard .folder-progress-bar{height:3px}
+  #folderCard .folder-progress-value{font-size:10px}
+  #folderCard .folder-body{padding:0 13px 13px;background:var(--surface-2)}
+
+  /* The live project section is the user's progress view; internal
+     implementation language must stay below the fold. */
+  #mapCard .map-head h2{font-size:0;color:transparent}
+  #mapCard .map-head h2::after{content:"工程进度";font-size:13px;color:var(--ink-2)}
+  #mapCard .map-now-label{font-size:0}
+  #mapCard .map-now-label::after{content:"当前步骤";font-size:12px;color:var(--ink-2)}
+  #mapCard .map-detail-label{font-size:0}
+  #mapCard .map-detail-label::after{content:"查看全部步骤";font-size:12px;color:var(--ink-2)}
+
+  /* The master switch is a control row, not a panel within the panel. */
+  .global-control{border:0;border-radius:0;background:transparent;box-shadow:none}
+  .global-control .switchrow{padding:0}
+  .global-control{height:auto;min-height:0;padding:0 0 10px;margin-bottom:14px}
+  .global-control .switchrow{min-height:30px;height:30px}
+  .global-control .switchrow>div{min-width:0}
+  .global-control .switchrow .t{line-height:1.2}
+  .global-control .switchrow .d{line-height:1.2}
+
+  #projectOverview{padding:13px 14px 12px;margin-bottom:12px}
+  #projectOverview .overview-copy{display:block;height:auto}
+  #projectOverview .overview-copy h1{margin:0}
+  #projectOverview .lede{margin:4px 0 10px}
+  #projectOverview .overview-metrics{height:24px;margin:0 0 7px;line-height:1;align-items:center}
+  #projectOverview .overview-progress{margin:0}
+
+  #q2{margin-bottom:14px}
+  #q2 .qhead{display:none}
+  #q2 .hero{padding:0;margin:0}
+  #q2 .hero-top{display:none}
+  #q2 .triple{margin:0}
+  #q2 .triple .cell .v,#q2 .triple .cell.work .v{font-size:12px}
+  #q2 .stewards{display:flex;margin:12px 0 0;padding:8px 0 0;border-top:1px solid var(--line-2);gap:6px}
+  #q2 .steward-summary{display:none}
+  #q2 .steward-strip{gap:2px}
+  #q2 .steward{width:22px;height:22px}
+  #q2 .steward .sdot{width:7px;height:7px}
+  #q2 .steward-detail{margin-top:7px;padding:9px 10px;border:0;border-radius:6px;background:var(--surface-2);font-size:11px}
+
+  #q3{margin-bottom:16px}
+  #q3 .qhead{padding:10px 0 4px}
+  #q3 #recentCard .list li{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  #needEvidenceFold,#acceptCard,#routeOverview,#advanced,.overview-detail,#guide,.ctrl{order:8}
+  .foot{order:9;margin-top:14px}
+  @media(max-width:520px){
+    .wrap{padding:14px 14px 30px}
+    #q2 .triple{grid-template-columns:1fr;gap:8px}
+    #q2 .triple .cell{display:grid;grid-template-columns:76px minmax(0,1fr);gap:8px;align-items:baseline}
+    #q2 .triple .cell .v{margin-top:0}
   }
 </style>
 </head>
@@ -2832,6 +3043,7 @@
         return "验收：交付检查已完成";
       }
       if (/面板首屏|首屏只回答/.test(topic + rest)) return "面板：首屏信息层级已收敛";
+      if (/官方设计系统|apps-sdk-ui|MCP Apps|原生 Codex 面板设计/.test(topic + rest)) return "面板：原生风格与信息层级已对齐";
       if (/防丢失|真相镜像/.test(topic + rest)) return "状态：已同步并可追溯";
       if (/门禁环境/.test(topic + rest)) return "验证：环境已准备完成";
       rest = rest.replace(/(?:~|\/Users\/|\/private\/|\/var\/folders\/)[^\s，,；;]+/g, "")
