@@ -1,0 +1,523 @@
+{
+  "browser": "Chrome/158.0.8127.36",
+  "panel_sha256": "ebac7a45c8c203116d09d9820d5e4b3c6fba5fffa750c75cf077a013fb0539d5",
+  "checks": [
+    {
+      "name": "no-overflow",
+      "viewport": "host_panel",
+      "state": "default",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-clipping",
+      "viewport": "host_panel",
+      "state": "default",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "accessible-names",
+      "viewport": "host_panel",
+      "state": "default",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "focus-visible",
+      "viewport": "host_panel",
+      "state": "default",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-overflow",
+      "viewport": "host_panel",
+      "state": "loading",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "正在判断下一步",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-clipping",
+      "viewport": "host_panel",
+      "state": "loading",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "正在判断下一步",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "accessible-names",
+      "viewport": "host_panel",
+      "state": "loading",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "正在判断下一步",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "focus-visible",
+      "viewport": "host_panel",
+      "state": "loading",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "正在判断下一步",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-overflow",
+      "viewport": "host_panel",
+      "state": "empty",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "暂无待处理",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-clipping",
+      "viewport": "host_panel",
+      "state": "empty",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "暂无待处理",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "accessible-names",
+      "viewport": "host_panel",
+      "state": "empty",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "暂无待处理",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "focus-visible",
+      "viewport": "host_panel",
+      "state": "empty",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "暂无待处理",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-overflow",
+      "viewport": "host_panel",
+      "state": "error",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "状态读取失败",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-clipping",
+      "viewport": "host_panel",
+      "state": "error",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "状态读取失败",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "accessible-names",
+      "viewport": "host_panel",
+      "state": "error",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "状态读取失败",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "focus-visible",
+      "viewport": "host_panel",
+      "state": "error",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "状态读取失败",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-overflow",
+      "viewport": "host_panel",
+      "state": "success",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "已落盘",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-clipping",
+      "viewport": "host_panel",
+      "state": "success",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "已落盘",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "accessible-names",
+      "viewport": "host_panel",
+      "state": "success",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "已落盘",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "focus-visible",
+      "viewport": "host_panel",
+      "state": "success",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "已落盘",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-overflow",
+      "viewport": "host_panel",
+      "state": "focus",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-clipping",
+      "viewport": "host_panel",
+      "state": "focus",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "accessible-names",
+      "viewport": "host_panel",
+      "state": "focus",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "focus-visible",
+      "viewport": "host_panel",
+      "state": "focus",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-overflow",
+      "viewport": "minimum_viewport",
+      "state": "default",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-clipping",
+      "viewport": "minimum_viewport",
+      "state": "default",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "accessible-names",
+      "viewport": "minimum_viewport",
+      "state": "default",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "focus-visible",
+      "viewport": "minimum_viewport",
+      "state": "default",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-overflow",
+      "viewport": "minimum_viewport",
+      "state": "loading",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "正在判断下一步",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-clipping",
+      "viewport": "minimum_viewport",
+      "state": "loading",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "正在判断下一步",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "accessible-names",
+      "viewport": "minimum_viewport",
+      "state": "loading",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "正在判断下一步",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "focus-visible",
+      "viewport": "minimum_viewport",
+      "state": "loading",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "正在判断下一步",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-overflow",
+      "viewport": "minimum_viewport",
+      "state": "empty",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "暂无待处理",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-clipping",
+      "viewport": "minimum_viewport",
+      "state": "empty",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "暂无待处理",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "accessible-names",
+      "viewport": "minimum_viewport",
+      "state": "empty",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "暂无待处理",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "focus-visible",
+      "viewport": "minimum_viewport",
+      "state": "empty",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "暂无待处理",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-overflow",
+      "viewport": "minimum_viewport",
+      "state": "error",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "状态读取失败",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-clipping",
+      "viewport": "minimum_viewport",
+      "state": "error",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "状态读取失败",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "accessible-names",
+      "viewport": "minimum_viewport",
+      "state": "error",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "状态读取失败",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "focus-visible",
+      "viewport": "minimum_viewport",
+      "state": "error",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "状态读取失败",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-overflow",
+      "viewport": "minimum_viewport",
+      "state": "success",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "已落盘",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-clipping",
+      "viewport": "minimum_viewport",
+      "state": "success",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "已落盘",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "accessible-names",
+      "viewport": "minimum_viewport",
+      "state": "success",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "已落盘",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "focus-visible",
+      "viewport": "minimum_viewport",
+      "state": "success",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "已落盘",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-overflow",
+      "viewport": "minimum_viewport",
+      "state": "focus",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "no-clipping",
+      "viewport": "minimum_viewport",
+      "state": "focus",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "accessible-names",
+      "viewport": "minimum_viewport",
+      "state": "focus",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    },
+    {
+      "name": "focus-visible",
+      "viewport": "minimum_viewport",
+      "state": "focus",
+      "status": "pass",
+      "details": [],
+      "text_length": 161,
+      "state_label": "自动运行中",
+      "source": "chrome-cdp-rendered-panel"
+    }
+  ],
+  "schema_version": "1",
+  "generated_at": "2026-11-23T22:24:44+0800",
+  "source": "chrome-cdp",
+  "contract_sha256": "9c4820b2f7334bf6033cd3c501f150a5cee7f510366e1e478698ab6913d7bbee",
+  "screenshots": [
+    {
+      "path": "experience-screenshots/host_panel-default.png",
+      "sha256": "532157154aa62e3978063b4fa4bfd87448b71fbf2d9b2c9e5acbf4a9838d05dd",
+      "bytes": 35883
+    },
+    {
+      "path": "experience-screenshots/host_panel-focus.png",
+      "sha256": "5eb580047971a0a631023eb3b3334ff64b26742d4e8a115748c74742da6b3631",
+      "bytes": 35860
+    },
+    {
+      "path": "experience-screenshots/minimum_viewport-default.png",
+      "sha256": "d0bcf8d791f31fcd89f13f7e678bbe5b153832fc3930df79c969101da7d2de17",
+      "bytes": 32043
+    },
+    {
+      "path": "experience-screenshots/minimum_viewport-focus.png",
+      "sha256": "8cb2f82c0de395b09bc2bbe28936f3c12d213e5aac5c21a7b6f3cf601c1b889f",
+      "bytes": 32042
+    }
+  ],
+  "summary": {
+    "ok": true,
+    "status": "pass",
+    "reason": "真实浏览器证据完整",
+    "expected": 48,
+    "passed": 48,
+    "missing": [],
+    "failures": [],
+    "panel_sha256": "ebac7a45c8c203116d09d9820d5e4b3c6fba5fffa750c75cf077a013fb0539d5",
+    "fresh": true
+  }
+}
