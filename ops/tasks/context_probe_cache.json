@@ -21,5 +21,12 @@
    "codex/converge-e87af5f335:docs/PRODUCT_MAINLINE.md",
    "codex/converge-e87af5f335:docs/PROJECT_CONSTITUTION.md"
   ]
+ },
+ "codex/converge-e87af5f335@6875a09c76fba364d96caa74e3581b512c90c64d@0fd73871db36a95fd4631ec09df2fa774c0487a5": {
+  "conflict_files": [],
+  "unresolved_marker_files": [
+   "codex/converge-e87af5f335:docs/PRODUCT_MAINLINE.md",
+   "codex/converge-e87af5f335:docs/PROJECT_CONSTITUTION.md"
+  ]
  }
 }

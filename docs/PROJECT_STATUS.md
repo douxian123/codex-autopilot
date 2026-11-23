@@ -1,6 +1,6 @@
 # 项目状态（自动生成，勿手改）
 
-> 生成时间 2026-11-24 05:07:50　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
+> 生成时间 2026-11-24 05:09:06　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
 
 ## 一、产品主线
 
@@ -45,7 +45,6 @@
 
 ## 四、进展
 
-- `P-0215` [在途] @ `ee180ad01a` 当前主干 ee180ad0 的 .146 发布候选复验：全新隔离 clone + 显式 trunk 安装完成，product_eval 5/5、阴性对照 8/8，首问闭环率 88.2%（15/17），selftest/panel logic/panel render/stale release-dir 门禁均为 0；live 已恢复到公开 .140，未打 tag、未发 prerelease、未换代、未签收 L-0019。
 - `P-0216` [在途] P-0215 冲突补回（远端 tick 删除后按唯一 ID 追加）：当前主干 ee180ad0 的 .146 发布候选复验完成；product_eval 5/5、阴性对照 8/8、首问闭环率 88.2%（15/17），全部专项门禁 exit 0；live 已恢复公开 .140，未发 tag/prerelease、未换代、未签收 L-0019。
 - `P-0217` [已落盘] @ `7f10530c0f` codex/rollback-install-state-20261124 验证门禁通过，已落盘 main @ 7f10530c0f；改动 2 个文件：install.sh（+68/-14）、ops/selftest.py（+18/-0）｜2 files changed, 86 insertions(+), 14 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0219` [已落盘] @ `18f2692f8e` 18f2692f 回滚修复后最新主干复验：.146 隔离安装发布评估 5/5、阴性对照 8/8、原生面板 ok:true；live 仍 .140，tag/prerelease 与人工签收未发生
@@ -53,6 +52,7 @@
 - `P-0221` [已落盘] @ `a29fbe25f5` codex/project-health-mainline-freshness-20261124 验证门禁通过，已落盘 main @ a29fbe25f5；改动 2 个文件：ops/project_health.py（+32/-4）、ops/test-project-health.py（+38/-9）｜2 files changed, 70 insertions(+), 13 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0223` [已落盘] @ `858e540cf4` codex/acceptance-id-collision-20261124 验证门禁通过，已落盘 main @ 858e540cf4；改动 2 个文件：ops/acceptance_criteria.py（+44/-7）、ops/test-acceptance-criteria.py（+47/-0）｜2 files changed, 91 insertions(+), 7 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0224` [已落盘] @ `d1f160ab0c` codex/experience-evidence-focus-measure-20261124 验证门禁通过，已落盘 main @ d1f160ab0c；改动 1 个文件：ops/experience_evidence.py（+18/-9）｜1 file changed, 18 insertions(+), 9 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- `P-0225` [在途] @ `ffc371d362` codex/native-thread-bridge 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
 
 ## 五、验收进度
 
