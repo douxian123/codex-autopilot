@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-23 22:55:30　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-23 23:08:41　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -66,8 +66,6 @@
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0174` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
-  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0175` [P1] codex/context-projection-stale-wt-20261122 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0176` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
@@ -90,6 +88,8 @@
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0185` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0186` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 
 ## 还差什么
 
@@ -101,6 +101,12 @@
   - 1) 在正常 macOS 终端安装并打开 Companion 2) 制造或等待一项人工验收/需要拍板事项 3) 确认菜单栏出现警示图标和 macOS 通知 4) 打开 Codex 面板确认写清具体动作 5) 清掉事项后确认不再重复提醒
 - `A-0044` [P0] preview.11 真实桌面宿主原生派活与 Companion 进程就绪（机器自证，人工验收仍待确认）
   - 1) 打开菜单栏 Companion 2) 看到自动挡图标 3) 点开看到总开关/当前任务/派活入口 4) ⌥⌘D 回到 Codex 完整面板
+- `A-0190` [P1] Codex Autopilot 面板人工验收：注意力顺序
+  - 人看首屏默认截图，确认当前项目、进度、责任状态、实施进度的阅读顺序符合预期
+- `A-0191` [P1] Codex Autopilot 面板人工验收：信息密度
+  - 人看首屏默认截图，确认信息不过密、不过空，无无名圆点、无橙色提醒块、无重复折叠入口
+- `A-0192` [P1] Codex Autopilot 面板人工验收：任务完成感
+  - 人看首屏默认截图，确认当前目标、总体进度、最近完成和当前步骤能支撑判断任务是否在推进
 
 ## 已机器验收
 
@@ -241,11 +247,12 @@
 - `A-0046` [P1] Companion 作为 UIElement 菜单栏应用在系统注册且驾驶舱可打开（机器自证）
 - `A-0184` [P1] codex/resolve-land-clean-worktree-gate-20261122 落盘验收
 - `A-0185` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
+- `A-0186` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
 
 ## 进度概览
 
 - 累计关闭问题：15 条
 - 累计落盘：112 条
 - 未决问题：0 条
-- 已验收：136 条
+- 已验收：138 条
 
