@@ -3959,7 +3959,7 @@ def call_tool(name, args):
         # 否则用户没法在「关着」的时候判断到底是不是权限/环境的问题。
         result = codex_native.probe(repair=bool(args.get("repair")))
         codex_native.record_probe(result)
-        return result
+        return result, 0
     if name == "capture_request":
         guard = control_state.mutation_guard()
         if guard:
