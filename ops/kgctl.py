@@ -2145,7 +2145,16 @@ def cmd_gate(args):
         print(f"门禁工作树（临时）：{wt}")
     try:
         _link_side_dirs(wt)
-        ok, results, out = _run_verify_gates(wt)
+        # `land` 验的是 main..HEAD 的合并结果；旧 gate 不传基准，等于
+        # `git diff HEAD HEAD`，UI/体验改动被当成空集，人工体验证据门禁被跳过。
+        # 这里改用同一条主线基准，确保 gate 绿灯和 land 门禁是同一口径。
+        main_ref = f"refs/remotes/origin/{MAIN}"
+        if not git("rev-parse", "--verify", main_ref):
+            main_ref = MAIN
+        base = git("merge-base", main_ref, branch)
+        if not base:
+            sys.exit(f"× 找不到 {main_ref} 与 {branch} 的共同祖先，拒绝无基准门禁")
+        ok, results, out = _run_verify_gates(wt, base)
         for r in results:
             print(f"  [{r.get('name')}] $ {r.get('cmd')} (cwd={r.get('cwd')}) -> exit "
                   f"{0 if r.get('ok') else 1}")
