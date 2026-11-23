@@ -1,6 +1,6 @@
 # 项目状态（自动生成，勿手改）
 
-> 生成时间 2026-11-24 05:12:38　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
+> 生成时间 2026-11-24 05:24:57　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
 
 ## 一、产品主线
 
@@ -52,7 +52,7 @@
 - `P-0221` [已落盘] @ `a29fbe25f5` codex/project-health-mainline-freshness-20261124 验证门禁通过，已落盘 main @ a29fbe25f5；改动 2 个文件：ops/project_health.py（+32/-4）、ops/test-project-health.py（+38/-9）｜2 files changed, 70 insertions(+), 13 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0223` [已落盘] @ `858e540cf4` codex/acceptance-id-collision-20261124 验证门禁通过，已落盘 main @ 858e540cf4；改动 2 个文件：ops/acceptance_criteria.py（+44/-7）、ops/test-acceptance-criteria.py（+47/-0）｜2 files changed, 91 insertions(+), 7 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0224` [已落盘] @ `d1f160ab0c` codex/experience-evidence-focus-measure-20261124 验证门禁通过，已落盘 main @ d1f160ab0c；改动 1 个文件：ops/experience_evidence.py（+18/-9）｜1 file changed, 18 insertions(+), 9 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- `P-0225` [在途] @ `ffc371d362` codex/native-thread-bridge 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
+- `P-0225` [已归档] @ `ffc371d362` codex/native-thread-bridge 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
 
 ## 五、验收进度
 
@@ -244,10 +244,11 @@
 - **视觉/设计方案提示词**：做视觉/设计前先当产品经理+产品设计师，尊重用户、保护注意力：先截图看现状再改，改完再截图对比，只允许正向改动，不能更丑、更乱、更难读。
   - 为什么：视觉改动最容易越改越丑；把设计要求写进 harness 才能让每次改动都守住注意力秩序
 - **主动注意提醒**：出现人工验收、需要拍板或异常时，主面板显示明确待处理状态，菜单栏切换警示图标并通过 macOS 通知中心提醒；同一批待办只提醒一次。
+- **自动挡合并队列与真相投影**：已归档（superseded）的分支不再出现在落盘队列或一屏在途项，队列会单列已裁决/已归档数量；真相快照把这类进展显示为「已归档」而不是「在途」。
+  - 为什么：修复队列把已归档但无冲突的历史分支反复当成可落盘在途的假信号。
 
 ## 八、判断逻辑（同一个判断，人只做一次）
 
-- `J-0012` [arch] 常驻自追踪必须幂等：真相内容没变时不重写生成视图和生成时间。
 - `J-0013` [architecture] 管家是责任视图而非人类岗位表；运行时按 execute/control/evaluate 分工，状态管家的路线效用职责只做只读检测与授权后的复核闭环，不声称全局最优。
 - `J-0014` [arch] 路线与效用健康不是新增管家或自动纠偏器，而是 evaluate 层的只读责任视图；最优是可证伪闭环，目标是目标可核对、偏离可发现、纠偏有边界、纠偏后复测。
 - `J-0016` [process] CLI 写命令的帮助探测不得用 unsupported flag 试探；未知参数可能被子命令当成标题或正文并写入账本，先读总帮助或源码，确认支持后再调用。
@@ -259,3 +260,4 @@
 - `J-0018` [workflow] 源码合并不等于现场生效：换代必须回读四重现场证据
 - `J-0020` [process] 诊断「部分 Codex 对话持续报 upstream_stream_cut」时，先按精确错误对象匹配 emitter，再用 proxy.log 的 ROUTE 行按 thread_id 核对实际模型线路；同一时刻其他线程正常不能排除单线程绑定坏线路。
 - `J-0023` [process] 验收问题必须先证明当前源码和当前 main 的基线，再区分本轮回归、门禁字面量漂移和主线既有红灯；冲击性措辞只作为缺陷线索，不作为已修复或已闭环的证据。
+- `J-0024` [product] 真实用户走查的完成判定必须按题同时看终态、首值、内容相关性、移动端可见性和刷新后状态；done 帧出现但只有一张无证据残句，或 30 秒后出现大量跑题来源，都不能算符合预期。
