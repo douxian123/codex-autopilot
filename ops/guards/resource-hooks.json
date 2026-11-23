@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env python3 /Users/danta/.codex/hooks/resource-admission.py",
+            "command": "/usr/bin/env python3 __CODEX_HOOK_HOME__/hooks/resource-admission.py",
             "timeout": 3,
             "statusMessage": "Checking verification capacity"
           }
@@ -19,7 +19,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env python3 /Users/danta/.codex/hooks/resource-admission.py",
+            "command": "/usr/bin/env python3 __CODEX_HOOK_HOME__/hooks/resource-admission.py",
             "timeout": 3
           }
         ]
@@ -31,7 +31,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/usr/bin/env python3 /Users/danta/.codex/hooks/resource-admission.py",
+            "command": "/usr/bin/env python3 __CODEX_HOOK_HOME__/hooks/resource-admission.py",
             "timeout": 3
           }
         ]

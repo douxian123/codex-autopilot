@@ -14,8 +14,6 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_HOOK = ROOT / "ops" / "guards" / "resource-admission.py"
 SOURCE_FRAGMENT = ROOT / "ops" / "guards" / "resource-hooks.json"
-HOOKS_JSON = Path.home() / ".codex" / "hooks.json"
-TARGET_HOOK = Path.home() / ".codex" / "hooks" / "resource-admission.py"
 EVENTS = ("PreToolUse", "PostToolUse", "PostToolUseFailure")
 
 
@@ -27,8 +25,13 @@ def _is_our_entry(entry: Any) -> bool:
     )
 
 
-def _installed_groups() -> dict[str, list[dict[str, Any]]]:
-    fragment = json.loads(SOURCE_FRAGMENT.read_text(encoding="utf-8"))
+def _installed_groups(home: Path | None = None) -> dict[str, list[dict[str, Any]]]:
+    raw = SOURCE_FRAGMENT.read_text(encoding="utf-8")
+    # 模板里的 HOME 必须在安装时展开到 ~/.codex；展开成 ~/ 会让 hook 指向
+    # ~/hooks/resource-admission.py，而文件实际在 ~/.codex/hooks/ 下。
+    codex_home = (home or Path.home()) / ".codex"
+    raw = raw.replace("__CODEX_HOOK_HOME__", str(codex_home))
+    fragment = json.loads(raw)
     hooks = fragment.get("hooks")
     if not isinstance(hooks, dict):
         raise SystemExit("resource hook fragment is missing hooks")
@@ -41,9 +44,9 @@ def _installed_groups() -> dict[str, list[dict[str, Any]]]:
     return result
 
 
-def _load_config() -> dict[str, Any]:
+def _load_config(path: Path) -> dict[str, Any]:
     try:
-        config = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
+        config = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         config = {"hooks": {}}
     except json.JSONDecodeError as exc:
@@ -59,8 +62,12 @@ def _load_config() -> dict[str, Any]:
 def main() -> int:
     if not SOURCE_HOOK.is_file() or not SOURCE_FRAGMENT.is_file():
         raise SystemExit("resource-admission source files are missing")
-    source_groups = _installed_groups()
-    config = _load_config()
+    home = Path.home()
+    codex_home = home / ".codex"
+    hooks_json = codex_home / "hooks.json"
+    target_hook = codex_home / "hooks" / "resource-admission.py"
+    source_groups = _installed_groups(home)
+    config = _load_config(hooks_json)
     hooks = config["hooks"]
 
     for event in EVENTS:
@@ -69,22 +76,22 @@ def main() -> int:
             raise SystemExit(f"hooks.json {event} field is not an array")
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    if HOOKS_JSON.exists():
-        shutil.copy2(HOOKS_JSON, HOOKS_JSON.with_name(f"hooks.json.bak-{stamp}-resource-admission"))
+    if hooks_json.exists():
+        shutil.copy2(hooks_json, hooks_json.with_name(f"hooks.json.bak-{stamp}-resource-admission"))
 
     for event in EVENTS:
         groups = hooks[event]
         groups[:] = [entry for entry in groups if not _is_our_entry(entry)]
         groups.extend(source_groups[event])
 
-    TARGET_HOOK.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(SOURCE_HOOK, TARGET_HOOK)
-    TARGET_HOOK.chmod(0o755)
+    target_hook.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(SOURCE_HOOK, target_hook)
+    target_hook.chmod(0o755)
 
-    temp = HOOKS_JSON.with_name(f".{HOOKS_JSON.name}.{os.getpid()}.tmp")
+    temp = hooks_json.with_name(f".{hooks_json.name}.{os.getpid()}.tmp")
     temp.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(temp, HOOKS_JSON)
-    print(f"installed resource admission hooks -> {TARGET_HOOK}")
+    os.replace(temp, hooks_json)
+    print(f"installed resource admission hooks -> {target_hook}")
     return 0
 
 

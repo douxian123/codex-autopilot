@@ -25,6 +25,13 @@ description: Codex Autopilot 的入门引导。用户第一次装好、问“这
    ./install.sh --refresh-plugin --verify /path/to/your-project
    ```
    这里两个路径都要替换成真实绝对路径；`/path/to/your-project` 必须存在。
+   默认安装只装插件主链：不首次安装常驻守护、不改已装的 launchd / hooks、不迁移本地密钥、不切 provider。需要本机能力时按项显式开启：
+   ```bash
+   ./install.sh --enable-local-guards      # 只维护已存在的本机 launchd / hooks
+   ./install.sh --install-daemon           # 唯一允许首次安装常驻守护的开关
+   ./install.sh --migrate-local-secrets    # 唯一允许迁移 HyAPI 本地密钥的开关
+   ```
+   B1 覆盖本地主链，不承诺原生派活或跨设备远端连接。详见 `docs/BETA_LOCAL_TRIAL.md`。
 2. 重启 Codex 桌面端 / CLI，在 Plugins → Personal 里确认「Codex Autopilot」已安装。
 3. 回到任意项目的对话，直接说话。例如：
    > 左边导航排版坏了，顺便这个按钮点着没反应，另外首页有点慢。

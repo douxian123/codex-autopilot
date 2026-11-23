@@ -24,6 +24,8 @@
 #   ./install.sh --no-companion       # 不编译/安装 macOS 菜单栏 Companion
 #   ./install.sh --refresh-plugin     # 装完后用 codex CLI 刷新已安装插件（否则桌面端可能仍用旧缓存）
 #   ./install.sh --install-daemon     # 显式首次安装/重装 launchd 常驻守护（默认不动常驻）
+#   ./install.sh --enable-local-guards # 显式允许改已装的本机 launchd / hooks（默认不碰）
+#   ./install.sh --migrate-local-secrets # 显式迁移 HyAPI 本地密钥到 ~/.codex-proxy/secrets.env
 #   ./install.sh --verify             # 装完立刻跑一遍验收（落地物/菜单栏应用/原生自检/总闸）
 set -euo pipefail
 
@@ -35,6 +37,8 @@ ROLLBACK=0
 LIST_RELEASES=0
 COMPANION=1
 INSTALL_DAEMON=0
+ENABLE_LOCAL_GUARDS=0
+MIGRATE_LOCAL_SECRETS=0
 PROJECT=""
 TRUNK=""
 TRUNK_SET=0
@@ -46,11 +50,13 @@ while [ $# -gt 0 ]; do
     --no-seed) NO_SEED=1; shift ;;
     --no-companion) COMPANION=0; shift ;;
     --install-daemon) INSTALL_DAEMON=1; shift ;;
+    --enable-local-guards) ENABLE_LOCAL_GUARDS=1; shift ;;
+    --migrate-local-secrets) MIGRATE_LOCAL_SECRETS=1; shift ;;
     --rollback) ROLLBACK=1; shift ;;
     --list-releases) LIST_RELEASES=1; shift ;;
     --state-root) PROJECT="${2:?--state-root 需要一个目录}"; shift 2 ;;
     --trunk) TRUNK="${2:?--trunk 需要一个目录}"; TRUNK_SET=1; shift 2 ;;
-    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
     *) PROJECT="$1"; shift ;;
   esac
 done
@@ -58,7 +64,9 @@ done
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGIN_DIR="$REPO/plugin"
 SOURCE_COMMIT=""
+SOURCE_REPO_IS_GIT=0
 if git -C "$REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  SOURCE_REPO_IS_GIT=1
   dirty="$(git -C "$REPO" status --porcelain --untracked-files=normal)"
   if [ -n "$dirty" ] && [ "${CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE:-0}" != "1" ]; then
     echo "× 源码工作区有未提交改动，拒绝发布不可变版本。" >&2
@@ -100,6 +108,210 @@ if [ -f "$EXISTING_MCP" ]; then
   PREV_PY="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1]))["mcpServers"]["codex-autopilot"]["command"])' "$EXISTING_MCP" 2>/dev/null || true)"
   if [ -n "$PREV_PY" ] && [ -x "$PREV_PY" ]; then
     PY="$PREV_PY"
+  fi
+fi
+
+# 本机集成属于显式 opt-in：公开 beta 默认不写 launchd、不改 hooks.json、
+# 不迁移 provider 密钥。下面这段只由 --enable-local-guards、
+# --install-daemon、--migrate-local-secrets 触发；默认安装只装插件主链。
+
+# 本地密钥迁移单独授权：即使启用了本机 guards，也只有显式传
+# --migrate-local-secrets 时才会碰 ~/.codex-proxy/secrets.env。
+migrate_local_secrets() {
+  [ "$MIGRATE_LOCAL_SECRETS" -eq 1 ] || return 0
+  if [ -f "$DEST/ops/guards/hyapi_secrets.py" ]; then
+    echo
+    echo "迁移 HyAPI 本地密钥（只写 ~/.codex-proxy/secrets.env，不回显）…"
+    if ! "$PY" "$DEST/ops/guards/hyapi_secrets.py" --migrate; then
+      echo "× 本地密钥迁移失败；不继续改指 launchd。" >&2
+      echo "  避免 plist 指向新脚本但任务因缺密钥立刻 SystemExit。" >&2
+      exit 1
+    fi
+  fi
+}
+
+install_local_integrations() {
+  local enable_all="${1:-0}"
+  local daemon_label="${KG_DAEMON_LABEL:-com.codex-autopilot.daemon}"
+  local daemon_plist="$HOME/Library/LaunchAgents/${daemon_label}.plist"
+  local daemon_exists=0
+  [ -f "$daemon_plist" ] && daemon_exists=1
+
+  # 5.5) 守护改指/首次安装。只有显式授权才碰 plist 和 launchd。
+  #
+  #   --install-daemon：允许首次安装，也允许改指已装守护。
+  #   --enable-local-guards：只维护已经存在的守护，绝不擅自新增常驻。
+  if [ "${NO_DAEMON_REPOINT:-0}" != "1" ] && \
+     { [ "$INSTALL_DAEMON" -eq 1 ] || { [ "$enable_all" -eq 1 ] && [ "$daemon_exists" -eq 1 ]; }; }; then
+    PLIST="$daemon_plist"
+    DAEMON_PLIST_EXISTS="$daemon_exists"
+    if [ "$INSTALL_DAEMON" -eq 1 ] || [ "$DAEMON_PLIST_EXISTS" -eq 1 ]; then
+      echo
+      if [ "$DAEMON_PLIST_EXISTS" -eq 1 ]; then
+        echo "守护改指新版本（否则 live 会继续跑上一版代码）…"
+      else
+        echo "按显式 --install-daemon 首次安装常驻守护…"
+      fi
+      set +e
+      KG_REPO="$PROJECT" KG_TRUNK="$TRUNK" "$PY" "$DEST/ops/central_daemon.py" --install \
+        >>"$HOME/.codex-autopilot/install-daemon.log" 2>&1
+      daemon_rc=$?
+      set -e
+      if [ "$daemon_rc" -eq 0 ]; then
+        if [ "$DAEMON_PLIST_EXISTS" -eq 1 ]; then
+          echo "守护已切到 ${VERSION} 并重启。"
+        else
+          echo "守护已首次安装为 ${VERSION} 并启动。"
+        fi
+      else
+        echo "× 守护改指失败（rc=${daemon_rc}），日志："
+        echo "  $HOME/.codex-autopilot/install-daemon.log"
+        echo "  手动重试：KG_REPO=\"$PROJECT\" KG_TRUNK=\"$TRUNK\" python3 \"$DEST/ops/central_daemon.py\" --install"
+      fi
+    else
+      echo
+      echo "本机没有守护 plist；按约定不替你启用常驻。"
+      echo "需要常驻时用：./install.sh --install-daemon（会写 plist 并回读 launchd 判活）。"
+    fi
+  fi
+
+  [ "$enable_all" -eq 1 ] || return 0
+
+  # 5.6) 刷新「launchd 直接执行的入口脚本」（只在本机 guards 显式开启时）。
+  ENTRY="$HOME/.codex-autopilot/ops/disk_reap.py"
+  if [ -d "$HOME/.codex-autopilot/ops" ]; then
+    cat >"$ENTRY.tmp-$$" <<'ENTRYEOF'
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""launchd 入口：只做转发，绝不在这里实现任何逻辑。
+
+这个文件由 install.sh 在显式启用本机 guards 时重写。它处在一个
+「没有版本、也没人升级」的位置：launchd 直接执行它，而它既不在不可变版本
+目录里，也不跟随 marketplace 指针。历史上它因此停在首次手工拷贝的版本上。
+真正的实现在 `releases/<version>/ops/disk_reap.py`，那份会跟着发版一起更新。
+"""
+from __future__ import annotations
+
+import json
+import runpy
+import sys
+from pathlib import Path
+
+
+def current_ops() -> Path | None:
+    """当前安装版本里的 ops/，与 disk_reap._resolve_ops 同一套判断顺序。"""
+    home = Path.home()
+
+    def usable(raw: str | None) -> Path | None:
+        if not raw:
+            return None
+        cand = Path(raw).expanduser()
+        if not cand.is_absolute():
+            cand = home / raw.lstrip("./")
+        ops = cand / "ops"
+        return ops if (ops / "disk_reap.py").exists() else None
+
+    state = home / "plugins/codex-autopilot/install-state.json"
+    try:
+        found = usable(str(json.loads(state.read_text(encoding="utf-8")).get("source") or ""))
+        if found:
+            return found
+    except Exception:
+        pass
+    mkt = home / ".agents/plugins/marketplace.json"
+    try:
+        for plugin in (json.loads(mkt.read_text(encoding="utf-8")).get("plugins") or []):
+            if isinstance(plugin, dict) and plugin.get("name") == "codex-autopilot":
+                src = plugin.get("source")
+                found = usable(src.get("path") if isinstance(src, dict) else src)
+                if found:
+                    return found
+    except Exception:
+        pass
+    return None
+
+
+def main() -> int:
+    ops = current_ops()
+    if ops is None:
+        sys.stderr.write(
+            "× 找不到当前安装版本里的 ops/disk_reap.py；"
+            "先跑一次 ./install.sh 再启用这个定时任务。\n")
+        return 1
+    target = ops / "disk_reap.py"
+    sys.argv = [str(target), *sys.argv[1:]]
+    runpy.run_path(str(target), run_name="__main__")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+ENTRYEOF
+    chmod +x "$ENTRY.tmp-$$"
+    mv "$ENTRY.tmp-$$" "$ENTRY"
+    echo "已刷新定时回收入口（薄转发到 ${DEST}/ops/disk_reap.py）"
+  fi
+
+  # 5.7) launchd 定时任务改指。凭据迁移已拆到独立授权函数，不在这里做。
+  if [ -f "$DEST/ops/guards/repoint_launchd.py" ]; then
+    echo
+    echo "定时任务改指当前版本（watchdog / 快照 / hooks / 3000 巡检 / 日志轮转）…"
+    set +e
+    "$PY" "$DEST/ops/guards/repoint_launchd.py" --install
+    repoint_rc=$?
+    set -e
+    if [ "$repoint_rc" -ne 0 ]; then
+      echo "× 定时任务改指未全部完成（rc=${repoint_rc}）。"
+      echo "  只读复核：$PY $DEST/ops/guards/repoint_launchd.py --check"
+    fi
+  fi
+
+  # 5.8) 主动刷新资源准入 hook。
+  if [ -f "$DEST/ops/guards/install-resource-hooks.py" ]; then
+    echo
+    echo "刷新资源准入 hook（限制 tsc / Vite / Playwright 等重验证并发）…"
+    if ! "$PY" "$DEST/ops/guards/install-resource-hooks.py"; then
+      echo "× 资源准入 hook 安装失败。" >&2
+      echo "  版本目录已保留；修复 Python/hooks.json 权限后重跑：" >&2
+      echo "  $PY $DEST/ops/guards/install-resource-hooks.py" >&2
+      exit 1
+    fi
+  fi
+}
+
+# 已经装过同一版本时，用户仍应能用同一个不可变版本打开本机能力；
+# 否则为了开一个 opt-in 开关就得造一个新版本号，反而是负担。
+if [ "$ENABLE_LOCAL_GUARDS" -eq 1 ] || [ "$INSTALL_DAEMON" -eq 1 ] || \
+   [ "$MIGRATE_LOCAL_SECRETS" -eq 1 ]; then
+  LOCAL_VERSION="$("$PY" - "$PLUGIN_DIR/.codex-plugin/plugin.json" <<'PYEOF'
+import json, sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])
+PYEOF
+)"
+  case "$LOCAL_VERSION" in
+    *[!A-Za-z0-9._+-]*|"") echo "× 插件版本号不合法：$LOCAL_VERSION" >&2; exit 1 ;;
+  esac
+  LOCAL_DEST="$RELEASE_ROOT/$LOCAL_VERSION"
+  if [ -d "$LOCAL_DEST" ]; then
+    DEST="$LOCAL_DEST"
+    VERSION="$LOCAL_VERSION"
+    read -r PROJECT TRUNK < <("$PY" - "$DEST/.mcp.json" <<'PYEOF'
+import json, sys
+try:
+    env = json.load(open(sys.argv[1], encoding="utf-8"))["mcpServers"]["codex-autopilot"]["env"]
+    print(str(env.get("KG_REPO") or ""), str(env.get("KG_TRUNK") or ""))
+except Exception:
+    print(" ", " ")
+PYEOF
+)
+    PROJECT="${PROJECT:- }"
+    TRUNK="${TRUNK:- }"
+    [ "$PROJECT" = " " ] && PROJECT=""
+    [ "$TRUNK" = " " ] && TRUNK=""
+    migrate_local_secrets
+    install_local_integrations "$ENABLE_LOCAL_GUARDS"
+    echo "本机集成已按显式开关处理；未改动不可变版本目录。"
+    exit 0
   fi
 fi
 
@@ -225,12 +437,12 @@ fi
 # 但绝不能把不存在的路径写进 KG_TRUNK / release 的 central.config.json：
 # 2026-11-23 现场实测，<状态根>-trunk 不存在，却写进配置后 product_eval 的
 # consistent 判据永久失败，用户只看到「装上了一版跑不起来」。
-TRUNK="$("$PY" - "$REPO" "$PROJECT" "$TRUNK" "$TRUNK_SET" <<'PYEOF'
+TRUNK="$("$PY" - "$REPO" "$PROJECT" "$TRUNK" "$TRUNK_SET" "$SOURCE_REPO_IS_GIT" "$SOURCE_COMMIT" <<'PYEOF'
 import os
 import subprocess
 import sys
 
-repo, project, trunk, explicit = sys.argv[1:5]
+repo, project, trunk, explicit, source_is_git, source_commit = sys.argv[1:7]
 explicit = explicit == "1"
 
 
@@ -266,20 +478,29 @@ trunk = os.path.abspath(trunk)
 if os.path.realpath(trunk) == os.path.realpath(project):
     die("--trunk 不能等于 --state-root：" + project)
 
-rc, common = git(repo, "rev-parse", "--git-common-dir")
-if rc != 0 or not common:
-    die("取不到插件源码仓库身份：" + repo)
-common = resolve(common, repo)
-
 rc, inside = git(trunk, "rev-parse", "--is-inside-work-tree")
 if rc != 0 or inside != "true":
     die("落盘主干不是 git worktree：" + trunk)
 rc, top = git(trunk, "rev-parse", "--show-toplevel")
 if rc != 0 or not top or resolve(top, trunk) != os.path.realpath(trunk):
     die("落盘主干必须是仓库根，不是子目录：" + trunk)
-rc, trunk_common = git(trunk, "rev-parse", "--git-common-dir")
-if rc != 0 or not trunk_common or resolve(trunk_common, trunk) != common:
-    die("落盘主干属于另一个仓库：" + trunk)
+
+if source_is_git == "1":
+    rc, common = git(repo, "rev-parse", "--git-common-dir")
+    if rc != 0 or not common:
+        die("取不到插件源码仓库身份：" + repo)
+    common = resolve(common, repo)
+    rc, trunk_common = git(trunk, "rev-parse", "--git-common-dir")
+    if rc != 0 or not trunk_common or resolve(trunk_common, trunk) != common:
+        die("落盘主干属于另一个仓库：" + trunk)
+else:
+    # 带真实来源元数据的 release 换代：目录本身不是 git worktree，
+    # 用来源提交是不是主干祖先来证明同源，避免把正常换代误判成跨仓库。
+    if not source_commit:
+        die("取不到插件源码仓库身份：" + repo)
+    rc, _ = git(trunk, "merge-base", "--is-ancestor", source_commit, "HEAD")
+    if rc != 0:
+        die("落盘主干不包含来源提交：" + source_commit[:12] + " -> " + trunk)
 
 print(trunk)
 PYEOF
@@ -654,198 +875,15 @@ if [ "$COMPANION" -eq 1 ]; then
   fi
 fi
 
-# 5.5) 守护改指新版本：这一步不做，装完新版本 live 还在跑旧代码。
-#
-#   版本目录是不可变的，launchd plist 里写死的是**某一次安装时的绝对路径**。
-#   只切 marketplace 指针不会改 plist，于是升级之后守护仍按旧路径拉起旧脚本，
-#   而 KeepAlive=True 会一直把它拉回来 —— 这就是「跑着跑着就得清一轮」的
-#   机械根因：新代码已落盘、进程却从没加载过它。
-#
-#   所以：只要这台机器上已经装了守护，就在装完后用新版本重写 plist 并重启它。
-#   没装守护时默认什么都不做（不替用户擅自常驻）；只有显式 --install-daemon
-#   才是首次安装路径。以前这里只看 plist 是否存在，于是 plist 被清掉后安装
-#   永远成功、守护永远不在，开关却仍显示开——正是最痛的静默失效。
-if [ "${NO_DAEMON_REPOINT:-0}" != "1" ]; then
-  PLIST="$HOME/Library/LaunchAgents/com.codex-autopilot.daemon.plist"
-  DAEMON_PLIST_EXISTS=0
-  [ -f "$PLIST" ] && DAEMON_PLIST_EXISTS=1
-  if [ "$INSTALL_DAEMON" -eq 1 ] || [ "$DAEMON_PLIST_EXISTS" -eq 1 ]; then
-    echo
-    if [ "$DAEMON_PLIST_EXISTS" -eq 1 ]; then
-      echo "守护改指新版本（否则 live 会继续跑上一版代码）…"
-    else
-      echo "按显式 --install-daemon 首次安装常驻守护…"
-    fi
-    set +e
-    KG_REPO="$PROJECT" KG_TRUNK="$TRUNK" "$PY" "$DEST/ops/central_daemon.py" --install \
-      >>"$HOME/.codex-autopilot/install-daemon.log" 2>&1
-    daemon_rc=$?
-    set -e
-    if [ "$daemon_rc" -eq 0 ]; then
-      if [ "$DAEMON_PLIST_EXISTS" -eq 1 ]; then
-        echo "守护已切到 ${VERSION} 并重启。"
-      else
-        echo "守护已首次安装为 ${VERSION} 并启动。"
-      fi
-    else
-      echo "× 守护改指失败（rc=${daemon_rc}），日志："
-      echo "  $HOME/.codex-autopilot/install-daemon.log"
-      echo "  手动重试：KG_REPO=\"$PROJECT\" KG_TRUNK=\"$TRUNK\" python3 \"$DEST/ops/central_daemon.py\" --install"
-    fi
-  else
-    echo
-    echo "本机没有守护 plist；按约定不替你启用常驻。"
-    echo "需要常驻时用：./install.sh --install-daemon（会写 plist 并回读 launchd 判活）。"
-  fi
-fi
-
-# 5.6) 刷新「launchd 直接执行的入口脚本」。
-#
-#   为什么单独一步：`com.danta.codex-disk-reap` 这个 launchd 任务每小时直接执行
-#   `~/.codex-autopilot/ops/disk_reap.py` —— 这个文件不在任何不可变版本目录里，
-#   上面的 cp 全都写不到它。于是它永远停在「第一次手工拷进来」的那一版：
-#
-#     - 版本目录里的 disk_reap.py 已经会跟随 install-state 找当前实现（修过一次）；
-#     - 但这个入口文件本身是旧的，它的 main() 里连新加的那几步都没有。
-#
-#   2026-10-27 实测到的后果：孤儿残留回收写进 releases/<version>/ops 之后，
-#   守护进程那条路已经生效（日志里能看到它真的回收了），但每小时这条独立路径
-#   仍然只报「worktree / kg tmp」两项，新加的那一项根本不执行。
-#
-#   修法不是「再拷一份实现」（那样下次又烂），而是把入口变成薄转发：它只负责
-#   找到当前安装版本，然后把 argv 原样交过去。实现永远只有一份，在版本目录里。
-ENTRY="$HOME/.codex-autopilot/ops/disk_reap.py"
-if [ -d "$HOME/.codex-autopilot/ops" ]; then
-  cat >"$ENTRY.tmp-$$" <<'ENTRYEOF'
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""launchd 入口：只做转发，绝不在这里实现任何逻辑。
-
-这个文件由 install.sh 在每次安装时重写。它之所以必须是薄转发，是因为它处在
-一个「没有版本、也没人升级」的位置：launchd 直接执行它，而它既不在不可变版本
-目录里，也不跟随 marketplace 指针。历史上它因此停在首次手工拷贝的版本上，
-在版本目录已经修好、守护进程已经生效之后，这条每小时独立回收路径还在跑旧逻辑。
-
-真正的实现在 `releases/<version>/ops/disk_reap.py`，那份会跟着发版一起更新。
-"""
-from __future__ import annotations
-
-import json
-import os
-import runpy
-import sys
-from pathlib import Path
-
-
-def current_ops() -> Path | None:
-    """当前安装版本里的 ops/，与 disk_reap._resolve_ops 同一套判断顺序。"""
-    home = Path.home()
-
-    def usable(raw: str | None) -> Path | None:
-        if not raw:
-            return None
-        cand = Path(raw).expanduser()
-        if not cand.is_absolute():
-            cand = home / raw.lstrip("./")
-        ops = cand / "ops"
-        return ops if (ops / "disk_reap.py").exists() else None
-
-    state = home / "plugins/codex-autopilot/install-state.json"
-    try:
-        found = usable(str(json.loads(state.read_text(encoding="utf-8")).get("source") or ""))
-        if found:
-            return found
-    except Exception:
-        pass
-    mkt = home / ".agents/plugins/marketplace.json"
-    try:
-        for plugin in (json.loads(mkt.read_text(encoding="utf-8")).get("plugins") or []):
-            if isinstance(plugin, dict) and plugin.get("name") == "codex-autopilot":
-                src = plugin.get("source")
-                found = usable(src.get("path") if isinstance(src, dict) else src)
-                if found:
-                    return found
-    except Exception:
-        pass
-    return None
-
-
-def main() -> int:
-    ops = current_ops()
-    if ops is None:
-        # 找不到当前版本时不能静默成功：那会让「回收一直在跑」变成谎话。
-        sys.stderr.write(
-            "× 找不到当前安装版本里的 ops/disk_reap.py；"
-            "先跑一次 ./install.sh 再启用这个定时任务。\n")
-        return 1
-    target = ops / "disk_reap.py"
-    sys.argv = [str(target), *sys.argv[1:]]
-    runpy.run_path(str(target), run_name="__main__")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-ENTRYEOF
-  chmod +x "$ENTRY.tmp-$$"
-  mv "$ENTRY.tmp-$$" "$ENTRY"
-  echo "已刷新定时回收入口（薄转发到 ${DEST}/ops/disk_reap.py）"
-fi
-
-# 5.7) 把本机所有「自动挡自己的」launchd 定时任务改指到这一版。
-#
-#   5.6 只救了 disk-reap 一条。2026-10-27 审计发现同类病灶还有 5 条：
-#
-#     com.danta.autopilot-watchdog      ~/.codex-guard/autopilot-watchdog.sh
-#     com.danta.codex-guard             ~/.codex-guard/snapshot.sh
-#     com.danta.codex-hooks-guard       ~/.codex/hooks/hooks-guard.sh
-#     com.danta.kg-serve-guard          ~/.kg-guard/serve-3000-guard.sh
-#     local.danta.codex-proxy-logrotate ~/.codex-proxy/log-rotate.sh
-#
-#   全部手工维护、全部不在任何仓、全部不会被 install 刷新。它们的源文件现在
-#   随版本目录一起发布（ops/guards/），改指由 ops/guards/repoint_launchd.py
-#   按 registry.json 统一执行：幂等、改前备份、逐条打印、只碰自己登记的 label。
-#
-#   HyAPI 三条任务的密钥不能进版本库：先把旧脚本里的 token 补进本地
-#   ~/.codex-proxy/secrets.env（0600、只补缺失、不回显），再让 repoint 改指。
-#   顺序反了会得到「路径新鲜但任务立刻 SystemExit」的假绿。
-if [ -f "$DEST/ops/guards/hyapi_secrets.py" ]; then
+migrate_local_secrets
+install_local_integrations "$ENABLE_LOCAL_GUARDS"
+if [ "$ENABLE_LOCAL_GUARDS" -eq 0 ] && [ "$INSTALL_DAEMON" -eq 0 ] && \
+   [ "$MIGRATE_LOCAL_SECRETS" -eq 0 ]; then
   echo
-  echo "迁移 HyAPI 本地密钥（只写 ~/.codex-proxy/secrets.env，不回显）…"
-  if ! "$PY" "$DEST/ops/guards/hyapi_secrets.py" --migrate; then
-    echo "× 本地密钥迁移失败；不继续改指 launchd。" >&2
-    echo "  避免 plist 指向新脚本但任务因缺密钥立刻退出。" >&2
-    exit 1
-  fi
+  echo "本机集成按默认策略跳过：未改 launchd、hooks.json、本地密钥或 provider。"
+  echo "只启用已装版本的本机集成：./install.sh --enable-local-guards"
+  echo "首次安装常驻守护：./install.sh --install-daemon"
 fi
-
-if [ -f "$DEST/ops/guards/repoint_launchd.py" ]; then
-  echo
-  echo "定时任务改指当前版本（watchdog / 快照 / hooks / 3000 巡检 / 日志轮转）…"
-  set +e
-  "$PY" "$DEST/ops/guards/repoint_launchd.py" --install
-  repoint_rc=$?
-  set -e
-  if [ "$repoint_rc" -ne 0 ]; then
-    echo "× 定时任务改指未全部完成（rc=${repoint_rc}）。"
-    echo "  只读复核：$PY $DEST/ops/guards/repoint_launchd.py --check"
-  fi
-fi
-
-# 5.8) 主动刷新资源准入 hook。
-#   只靠每 15 分钟一次的 hooks-guard 兜底，会让新版本装好后的前十五分钟继续裸跑；
-#   hooks 安装失败必须明确报错，不能把「版本已装、限流没装」当成成功。
-if [ -f "$DEST/ops/guards/install-resource-hooks.py" ]; then
-  echo
-  echo "刷新资源准入 hook（限制 tsc / Vite / Playwright 等重验证并发）…"
-  if ! "$PY" "$DEST/ops/guards/install-resource-hooks.py"; then
-    echo "× 资源准入 hook 安装失败。" >&2
-    echo "  版本目录已保留；修复 Python/hooks.json 权限后重跑：" >&2
-    echo "  $PY $DEST/ops/guards/install-resource-hooks.py" >&2
-    exit 1
-  fi
-fi
-
 
 # 6) 可选：用官方 CLI 刷新已安装插件，避免桌面端继续用旧缓存。
 #    Codex 会把插件快照到 ~/.codex/plugins/cache/personal/<name>/<version>/；

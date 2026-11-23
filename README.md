@@ -91,6 +91,17 @@ Codex Autopilot 就是把这四类收进一本账，让 Codex 自己推进。
 2. 把插件登记进 `~/.agents/plugins/marketplace.json`（原文件备份为 `.bak-codex-autopilot`）。
 3. 在目标项目里补上缺失的账本文件（`ops/tasks/`、`ops/truth/`、`docs/`）。**已存在的一律不动**，不覆盖你已有的台账。
 
+默认不会首次安装 launchd 常驻、不维护本机 guards / hooks、不迁移本地密钥、不切换 provider。
+确实需要本机能力时按项显式开启：
+
+```bash
+./install.sh --enable-local-guards      # 只维护已存在的本机 launchd / hooks，不首次安装常驻
+./install.sh --install-daemon           # 唯一允许首次安装常驻守护的开关
+./install.sh --migrate-local-secrets    # 唯一允许迁移 HyAPI 本地密钥的开关
+```
+
+详见 [B1 本地试用说明](docs/BETA_LOCAL_TRIAL.md)。
+
 装完插件的 `.mcp.json` 里只有两句关键信息：运行时代码走插件自己的 `./ops/central_mcp.py`，状态根 `KG_REPO` 指向你的项目。于是插件是通用、可升级的一份，项目只负责存账——升级插件重跑一次 `install.sh`，项目里的旧文件不会拖累它。插件一次绑定一个项目，换项目重跑一次。
 
 > 注意：Codex 的 personal marketplace 以 `$HOME` 为根，插件实体必须在 `~/plugins/<name>/`，清单在 `~/.agents/plugins/marketplace.json`，这是两个目录，别写混。
@@ -113,7 +124,7 @@ python3 ~/.codex-autopilot/portable_migrate.py remap --to "$HOME" --go   # 目�
 
 两点要知道：
 
-- 包里含 `~/.codex/auth.json`（登录凭据），走的是**明文 HTTP**，只在可信 WiFi 上跑，传完立刻 `Ctrl-C`。链接里的随机令牌就是本次口令，没带令牌的请求一律 404。
+- 默认包不含 `~/.codex/auth.json`（登录凭据）；需要整包迁移登录态时显式传 `--include-auth`。这类包仍走**明文 HTTP**，只在可信 WiFi 上跑，传完立刻 `Ctrl-C`。链接里的随机令牌就是本次口令，没带令牌的请求一律 404。
 - `remap` 负责把写死的绝对路径从源机 `$HOME` 改到目标机 `$HOME`（本机实测命中 430+ 文件、4600+ 处）。源机与目标机用户名相同就跳过它。工具本体随包自带，落地后就能跑 `remap`。
 
 ## 怎么用
