@@ -50,5 +50,13 @@
  "codex/native-thread-bridge@ffc371d3621cb1f8280f17fbfeaf597de11b3714@8ffca30556269d43d5f96f3a6812b8237320a07b": {
   "conflict_files": [],
   "unresolved_marker_files": []
+ },
+ "codex/disk-admission-fix-20261105@300ea3931412419b0f8515ffa5fc912c47f7d1b4@9f2eae80b8ad94501ed6e51f2bd20c3342274356": {
+  "conflict_files": [],
+  "unresolved_marker_files": []
+ },
+ "codex/native-thread-bridge@ffc371d3621cb1f8280f17fbfeaf597de11b3714@9f2eae80b8ad94501ed6e51f2bd20c3342274356": {
+  "conflict_files": [],
+  "unresolved_marker_files": []
  }
 }
