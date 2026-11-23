@@ -747,6 +747,7 @@
     <div class="chead"><h2>项目</h2><span class="count" id="folderNote"></span></div>
     <div class="folders" id="folderBox"></div>
   </section>
+  <div id="autonomyParking" hidden></div>
 
   <section class="project-overview" id="projectOverview" aria-label="项目总览">
     <div class="progress-ring" id="overallRing" style="--progress:0%">
@@ -2037,6 +2038,9 @@
 
   function renderFolders(folders, s){
     var box = el("folderBox"); if (!box) return;
+    var autonomy = el("autonomyCard");
+    var parking = el("autonomyParking");
+    if (autonomy && parking && autonomy.parentNode !== parking) parking.appendChild(autonomy);
     box.innerHTML = "";
     var list = (folders && folders.folders) || [];
     var note = el("folderNote");
@@ -2201,6 +2205,9 @@
         });
       }
       body.appendChild(work); card.appendChild(body); box.appendChild(card);
+      // 自主运行是项目级授权，不是全局设置。将现有控制节点移动到当前项目
+      // 的展开区，保留原有 id 和事件绑定，避免为同一份状态复制第二套真相。
+      if (autonomy && f.active) body.appendChild(autonomy);
     });
   }
 

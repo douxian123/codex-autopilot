@@ -76,6 +76,14 @@ setTimeout(function(){
       body: body ? body.textContent.replace(/\\s+/g, " ").trim() : ""
     };
   }));
+  var autonomy = d ? d.getElementById("autonomyCard") : null;
+  var activeFolder = d ? d.querySelector("#folderBox details.folder.active") : null;
+  out["autonomyParent"] = autonomy && autonomy.parentElement
+    ? (autonomy.parentElement.id || autonomy.parentElement.className || "") : "";
+  var owner = autonomy && autonomy.closest ? autonomy.closest("details.folder") : null;
+  out["autonomyInActiveProject"] = !!(autonomy && owner && owner.classList.contains("active") &&
+    owner.querySelector(".folder-body #autonomyCard") === autonomy);
+  out["autonomyVisible"] = !!(owner && owner.open);
   out["acceptCardCount"] = d ? d.querySelectorAll("#acceptCard").length : 0;
   __IDS__.forEach(function(id){
     var domId = (id === "pmBriefingFoldOpen") ? "pmBriefingFold"
@@ -365,7 +373,10 @@ setTimeout(function(){
     expanded = project_folds(open_snapshot)
     fold_checks = [
         ("项目卡默认全部折叠", bool(folded) and all(not row["open"] for row in folded)),
+        ("折叠项目时项目级运行控制不可见", snapshot.get("autonomyVisible") is False),
         ("项目卡展开后可读明细", bool(expanded) and all(row["open"] for row in expanded)),
+        ("当前项目展开区承载项目级运行控制",
+         open_snapshot.get("autonomyInActiveProject") is True),
         ("项目卡展开区有目标编辑入口",
          bool(expanded) and all("编辑目标" in row["body"] for row in expanded)),
         ("项目摘要不铺开工程路径",
