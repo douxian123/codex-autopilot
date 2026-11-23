@@ -1306,5 +1306,13 @@
  "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@fd56068b71b31010b7de9068053f7f959e0c994f": {
   "files": 4,
   "lines": 5372
+ },
+ "codex/panel-design-restore-20261124@7efda6501fa1c3b515e008fd52f0b1ce832cdedb@b350df7726c5b38424fe2f5e48d7ebd4e284c91f": {
+  "files": 13,
+  "lines": 934
+ },
+ "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@b350df7726c5b38424fe2f5e48d7ebd4e284c91f": {
+  "files": 4,
+  "lines": 5372
  }
 }

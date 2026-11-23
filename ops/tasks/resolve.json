@@ -1,6 +1,29 @@
 {
  "tasks": [
   {
+   "slug": "panel-design-restore-20261124",
+   "branch": "codex/panel-design-restore-20261124",
+   "resolve_branch": "codex/resolve-panel-design-restore-20261124",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-resolve-panel-design-restore-20261124",
+   "base_main": "b350df7726c5b38424fe2f5e48d7ebd4e284c91f",
+   "source_head": "7efda6501fa1c3b515e008fd52f0b1ce832cdedb",
+   "source_commits": [
+    "7b7c3e0c7e58c79f8e3ae770ca09272de34fbddf",
+    "84bb134b6bce6ab09f580777ac04341817123dae",
+    "7efda6501fa1c3b515e008fd52f0b1ce832cdedb"
+   ],
+   "created": "2026-11-24 03:21:30",
+   "updated": "2026-11-24 03:21:30",
+   "conflict_files": [
+    "ops/truth/product_state.json"
+   ],
+   "unresolved_files": [
+    "ops/truth/product_state.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
    "slug": "land-clean-worktree-gate-20261122",
    "branch": "codex/land-clean-worktree-gate-20261122",
    "resolve_branch": "codex/resolve-land-clean-worktree-gate-20261122",
@@ -88,5 +111,5 @@
    "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
   }
  ],
- "updated": "2026-11-22 17:01:32"
+ "updated": "2026-11-24 03:21:32"
 }
