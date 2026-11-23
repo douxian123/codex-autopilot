@@ -934,6 +934,33 @@
   #projectOverview{background:var(--surface-2);border:0;border-radius:8px;margin-bottom:0;padding-bottom:10px}
   #mapCard{background:var(--surface-2);border-radius:0 0 8px 8px;padding-top:10px}
 
+  /* Final first-screen composition: the active project is the primary object. */
+  #projectOverview{order:4!important;margin:0!important;padding:16px!important;background:var(--surface-2)!important;border:0!important;border-radius:8px 8px 0 0!important;box-shadow:none!important}
+  #projectOverview .overview-copy{display:block!important}
+  #projectOverview .overview-copy h1{display:block!important;margin:0!important;font-size:18px!important;line-height:1.3!important;font-weight:600!important}
+  #projectOverview .lede{display:block!important;margin:5px 0 0!important;font-size:12px!important;color:var(--ink-2)!important}
+  #projectOverview .project-goal{display:block!important;margin:9px 0 0!important;color:var(--ink)!important;font-size:13px!important;line-height:1.45!important;font-weight:500!important}
+  #projectOverview .overview-metrics{display:flex!important;align-items:baseline!important;gap:9px!important;margin:14px 0 7px!important}
+  #projectOverview .overview-metrics::before{content:"总体进度"!important;font-size:11px!important;color:var(--ink-3)!important}
+  #projectOverview .overview-metric{display:none!important}
+  #projectOverview .overview-metric:first-child{display:block!important}
+  #projectOverview .overview-metric:first-child strong{font-size:24px!important;font-weight:600!important}
+  #projectOverview .overview-metric:first-child span{display:none!important}
+  #projectOverview .overview-progress{height:4px!important;margin:0!important;background:var(--surface-3)!important;border-radius:999px!important}
+  #projectOverview .overview-progress::before{background:var(--brand-500)!important}
+  #q2{order:5!important;margin:0!important;padding:0 16px 16px!important;background:var(--surface-2)!important;border-radius:0 0 8px 8px!important}
+  #q2 .qhead{display:none!important}
+  #q2 .triple{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:18px!important;margin:0!important;padding:0!important}
+  #q2 .triple .cell{border:0!important;background:transparent!important;padding:0!important}
+  #q2 .triple .cell .k{font-size:11px!important;color:var(--ink-3)!important}
+  #q2 .triple .cell .v,#q2 .triple .cell.work .v{margin-top:4px!important;font-size:13px!important;line-height:1.35!important;font-weight:600!important;color:var(--ink)!important}
+  #q2 .stewards{margin:14px 0 0!important;padding:10px 0 0!important;border-top:1px solid var(--line-2)!important}
+  #mapCard{order:6!important;margin:12px 0 0!important;padding:14px 16px 15px!important;background:var(--surface-2)!important;border:0!important;border-radius:8px!important}
+  #q3{order:7!important;margin:12px 0 0!important;padding:14px 16px!important;background:var(--surface-2)!important;border:0!important;border-radius:8px!important}
+  #q3 .qhead{padding:0!important;margin:0 0 8px!important}
+  #q3 #recentCard{padding:0!important}
+  #folderCard{order:8!important;margin:12px 0 0!important;padding:14px 0 0!important;border-top:1px solid var(--line-2)!important}
+
   #folderCard>.chead h2{font-size:13px;color:var(--ink-2)}
   #projectOverview{background:var(--surface-2);border:0;border-radius:8px}
 
@@ -945,6 +972,88 @@
   #mapCard .map-now-label::after{content:"当前步骤";font-size:12px;color:var(--ink-2)}
   #mapCard .map-detail-label{font-size:0}
   #mapCard .map-detail-label::after{content:"查看全部步骤";font-size:12px;color:var(--ink-2)}
+
+  /* Current project is one object. The DOM relocation below keeps its goal,
+     live state, roadmap and completed work inside one quiet surface. */
+  .active-project-shell{order:4;display:block;margin:12px 0 0;background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:var(--shadow-1)}
+  .active-project-shell>#projectOverview,.active-project-shell>#q2,.active-project-shell>#mapCard,.active-project-shell>#q3{margin:0!important;border-radius:0!important;border:0!important;box-shadow:none!important;background:transparent!important}
+  .active-project-shell>#projectOverview{padding:16px 16px 13px!important}
+  .active-project-shell>#q2{padding:0 16px 15px!important}
+  .active-project-shell>#mapCard{padding:14px 16px 15px!important;border-top:1px solid var(--line-2)!important}
+  .active-project-shell>#q3{padding:14px 16px 15px!important;border-top:1px solid var(--line-2)!important}
+  .active-project-shell #q2 .stewards{border-top:0!important;margin-top:13px!important;padding-top:0!important}
+  .active-project-shell #q3 #recentCard{background:transparent!important}
+  .active-project-shell #q3 .qhead{margin-bottom:7px!important}
+  .active-project-shell #q3 .qhead h2::after{content:"最近完成"!important}
+  .active-project-shell #q3 #recentCard .list li{padding:5px 0!important}
+  .active-project-shell #q3 #recentCard .list li:nth-child(n+4){display:none}
+  .active-project-shell #q3 #recentCard .list:after{content:"查看更早记录";display:block;margin-top:7px;color:var(--ink-3);font-size:11px}
+  .active-project-shell #q3 #recentCard .chead{display:none!important}
+  .global-control{order:3!important}
+  #folderCard{order:5!important}
+
+  /* Final compact Codex surface: one quiet project object, no dashboard
+     treatment and no repeated progress visualization. */
+  .wrap{max-width:720px!important;padding:16px 16px 28px!important}
+  .hdr{margin-bottom:12px!important;padding-bottom:10px;border-bottom:1px solid var(--line-2)}
+  .hdr-title{font-size:16px!important;font-weight:600!important}
+  .hdr-sub{font-size:11.5px!important}
+  .global-control{margin:0 0 12px!important;padding:0!important;min-height:0!important}
+  .global-control .switchrow{min-height:34px!important;height:34px!important}
+  .global-control .switchrow .t{font-size:13px!important;font-weight:600!important}
+  .global-control .switchrow .d{font-size:11px!important;color:var(--ink-3)!important}
+  .global-control .projline{display:none!important}
+
+  .active-project-shell{margin:0!important;border:0!important;border-radius:8px!important;background:var(--surface-2)!important;box-shadow:none!important}
+  .active-project-shell>#projectOverview{padding:15px 16px 11px!important}
+  #projectOverview .overview-copy h1{font-size:17px!important;font-weight:600!important}
+  #projectOverview .lede{display:none!important}
+  #projectOverview .project-goal{margin-top:8px!important;font-size:12.5px!important;line-height:1.42!important;font-weight:500!important}
+  #projectOverview .overview-metrics{margin:13px 0 6px!important}
+  #projectOverview .overview-metrics::before{font-size:11px!important}
+  #projectOverview .overview-metric:first-child strong{font-size:22px!important}
+  #projectOverview .overview-progress{height:3px!important}
+
+  .active-project-shell>#q2{padding:0 16px 13px!important}
+  #q2 .triple{gap:12px!important}
+  #q2 .triple .cell .k{font-size:10.5px!important}
+  #q2 .triple .cell .v,#q2 .triple .cell.work .v{margin-top:3px!important;font-size:12px!important;line-height:1.35!important;font-weight:600!important}
+  #q2 .stewards{margin-top:11px!important}
+  #q2 .steward{width:20px!important;height:20px!important}
+  #q2 .steward .sdot{width:7px!important;height:7px!important}
+
+  .active-project-shell>#mapCard{padding:11px 16px 12px!important;border-top:1px solid var(--line-2)!important}
+  #mapCard .map-head{margin-bottom:7px!important}
+  #mapCard .map-head h2::after{content:"工程项"!important;font-size:11.5px!important}
+  #mapCard .map-meta{font-size:11px!important}
+  #mapCard .map-summary{display:none!important}
+  #mapCard .map-now{margin-top:7px!important;font-size:12px!important}
+  #mapCard .map-detail{margin-top:4px!important}
+  #mapCard .map-detail>summary{padding:5px 0!important;font-size:11px!important}
+
+  .active-project-shell>#q3{padding:11px 16px 13px!important;border-top:1px solid var(--line-2)!important}
+  #q3 .qhead{margin:0 0 5px!important}
+  #q3 .qhead h2::after{font-size:12px!important}
+  #q3 .qstate{font-size:10.5px!important}
+  #q3 #recentCard .list li{font-size:11.5px!important;line-height:1.35!important;padding:3px 0!important;color:var(--ink-2)!important}
+  #q3 #recentCard .list:after{margin-top:5px!important;font-size:10.5px!important}
+
+  #folderCard{margin:14px 0 0!important;padding:0!important;border:0!important;background:transparent!important}
+  #folderCard>.chead{padding:0 0 7px!important}
+  #folderCard>.chead h2{font-size:12px!important;font-weight:600!important;color:var(--ink-2)!important}
+  #folderCard .folder{border-radius:8px!important;background:var(--surface-2)!important}
+  #folderCard .folder>summary{min-height:48px!important;padding:10px 12px!important}
+  #folderCard .folder-title{font-size:12.5px!important;font-weight:600!important}
+  #folderCard .folder-goal{font-size:10.5px!important;margin-top:2px!important}
+  #folderCard .folder-progress{margin-top:6px!important}
+  #folderCard .folder-progress-bar{height:3px!important}
+  #folderCard .folder-progress-value{font-size:10px!important}
+
+  /* The main percentage already answers overall progress. The roadmap row
+     supplies count and current step; a second bar would only repeat it. */
+  #mapCard .map-summary{display:none!important}
+  #mapCard .map-now-label{font-size:0!important}
+  #mapCard .map-now-label::after{content:"当前步骤";font-size:11px;color:var(--ink-3)}
 
   /* The master switch is a control row, not a panel within the panel. */
   .global-control{border:0;border-radius:0;background:transparent;box-shadow:none}
@@ -1109,6 +1218,7 @@
       <div class="brand-kicker">PROJECT BRIEF</div>
       <h1 id="overviewTitle">正在读取项目</h1>
       <p class="lede" id="overviewLede">正在整理当前项目的真实进展。</p>
+      <p class="project-goal" id="overviewGoal">正在读取项目目标。</p>
       <div class="overview-metrics">
         <div class="overview-metric"><strong id="metricDone">0</strong><span>已完成</span></div>
         <div class="overview-metric"><strong id="metricDoing">0</strong><span>进行中</span></div>
@@ -1548,7 +1658,27 @@
     fold.hidden = !detail;
   }
 
+  function ensureActiveProjectShell(){
+    if (el("activeProjectShell")) return;
+    var overview = el("projectOverview");
+    var current = el("q2");
+    var map = el("mapCard");
+    var recent = el("q3");
+    var folder = el("folderCard");
+    if (!overview || !current || !map || !recent || !folder) return;
+    var shell = document.createElement("section");
+    shell.id = "activeProjectShell";
+    shell.className = "active-project-shell";
+    shell.setAttribute("aria-label", "当前项目");
+    folder.parentNode.insertBefore(shell, folder);
+    shell.appendChild(overview);
+    shell.appendChild(current);
+    shell.appendChild(map);
+    shell.appendChild(recent);
+  }
+
   function render(s){
+    ensureActiveProjectShell();
     var wasAdv = document.body.classList.contains("adv");
     document.body.className = "s-" + (s.state || "idle")
       + (wasAdv ? " adv" : "")
@@ -1768,6 +1898,8 @@
     if (s.paused) lede = "Autopilot 已暂停，项目状态保留，恢复后继续推进。";
     if (!s.enabled) lede = "Autopilot 已关闭，Codex 保持原生状态。";
     setText("overviewLede", lede);
+    var goal = (ml.goal_override || ml.auto_goal || ml.one_liner || "").trim();
+    setText("overviewGoal", goal || "项目目标尚未明确");
     var done = road.filter(function(x){ return x.status === "done"; }).length;
     var doing = road.filter(function(x){ return x.status === "doing"; }).length;
     var rest = Math.max(0, road.length - done - doing);
@@ -1782,13 +1914,14 @@
 
   function userProjectName(name){
     var s = String(name || "当前项目").trim();
-    s = s.replace(/^codex-autopilot-panel-native-surface-\d{8}$/i, "Codex Autopilot");
-    s = s.replace(/^codex-autopilot-native-autopilot$/i, "Codex Autopilot");
-    s = s.replace(/^Codex 自动挡$/i, "Codex Autopilot");
+    // 只清理临时 worktree 后缀，不把真实项目名改成产品品牌。
+    s = s.replace(/-\d{8}$/, "");
+    s = s.replace(/-\d{8}-\d{6}$/, "");
     return s || "当前项目";
   }
 
   function projectListName(name, index){
+    if (/^Codex 自动挡$/i.test(String(name || "").trim())) return "另一个项目";
     var shown = userProjectName(name);
     if (shown !== "Codex Autopilot") return shown;
     return /native-autopilot$/i.test(String(name || "")) ? "Autopilot Core" : "另一个项目";
