@@ -930,6 +930,11 @@
   #folderCard .folder-progress-bar{height:3px}
   #folderCard .folder-progress-value{font-size:10px}
   #folderCard .folder-body{padding:0 13px 13px;background:var(--surface-2)}
+  #folderCard>.chead h2{font-size:13px;color:var(--ink-2)}
+  #projectOverview{background:var(--surface-2);border:0;border-radius:8px}
+
+  #folderCard>.chead h2{font-size:13px;color:var(--ink-2)}
+  #projectOverview{background:var(--surface-2);border:0;border-radius:8px}
 
   /* The live project section is the user's progress view; internal
      implementation language must stay below the fold. */
@@ -944,6 +949,7 @@
   .global-control{border:0;border-radius:0;background:transparent;box-shadow:none}
   .global-control .switchrow{padding:0}
   .global-control{height:auto;min-height:0;padding:0 0 10px;margin-bottom:14px}
+  .global-control{margin-bottom:8px;padding-bottom:6px}
   .global-control .switchrow{min-height:30px;height:30px}
   .global-control .switchrow>div{min-width:0}
   .global-control .switchrow .t{line-height:1.2}
@@ -955,25 +961,38 @@
   #projectOverview .lede{margin:4px 0 10px}
   #projectOverview .overview-metrics{height:24px;margin:0 0 7px;line-height:1;align-items:center}
   #projectOverview .overview-progress{margin:0}
+  #projectOverview .overview-progress{display:block;width:100%;height:4px;background:var(--surface-3);border-radius:999px;overflow:hidden}
+  #projectOverview .overview-progress::before{content:"";display:block;width:var(--progress,0%);height:100%;background:var(--brand-500);border-radius:inherit}
 
   #q2{margin-bottom:14px}
+  #q2 .triple .cell:first-child .v,
+  #q2 .triple .cell:nth-child(2) .v{font-size:0}
+  #q2 .triple .cell:first-child .v::after,
+  #q2 .triple .cell:nth-child(2) .v::after{content:"待命";font-size:12px}
   #q2 .qhead{display:none}
   #q2 .hero{padding:0;margin:0}
   #q2 .hero-top{display:none}
   #q2 .triple{margin:0}
   #q2 .triple .cell .v,#q2 .triple .cell.work .v{font-size:12px}
-  #q2 .stewards{display:flex;margin:12px 0 0;padding:8px 0 0;border-top:1px solid var(--line-2);gap:6px}
+  #q2 .stewards{display:flex !important;margin:12px 0 0;padding:8px 0 0;border-top:1px solid var(--line-2);gap:6px}
   #q2 .steward-summary{display:none}
   #q2 .steward-strip{gap:2px}
   #q2 .steward{width:22px;height:22px}
   #q2 .steward .sdot{width:7px;height:7px}
   #q2 .steward-detail{margin-top:7px;padding:9px 10px;border:0;border-radius:6px;background:var(--surface-2);font-size:11px}
+  #q2 .stewards::before{content:"";display:block;width:5px;height:5px;margin:8px 3px 0 0;border-radius:50%;background:var(--ink-3);opacity:.35}
+  #q2>#stewardBar{display:flex !important}
 
   #q3{margin-bottom:16px}
   #q3 .qhead{padding:10px 0 4px}
   #q3 #recentCard .list li{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
   #needEvidenceFold,#acceptCard,#routeOverview,#advanced,.overview-detail,#guide,.ctrl{order:8}
+  #needEvidenceFold{display:none}
+  body.has-accept #acceptCard{display:block}
+  #acceptCard{display:none}
+  .overview-detail{display:none}
+  body.adv .overview-detail{display:block}
   .foot{order:9;margin-top:14px}
   @media(max-width:520px){
     .wrap{padding:14px 14px 30px}
@@ -1098,6 +1117,7 @@
         <div class="overview-metric"><strong id="metricDoing">0</strong><span>进行中</span></div>
         <div class="overview-metric"><strong id="metricRest">0</strong><span>待推进</span></div>
       </div>
+      <div class="overview-progress" aria-label="总体进度"></div>
       <div class="attention" id="attentionBox" hidden>
         <span class="attention-dot"></span><div><strong id="attentionTitle">建议先关注</strong><span id="attentionText"></span></div>
       </div>
@@ -1372,7 +1392,7 @@
     </details>
   </div>
 
-  <div class="foot">项目状态会在这里汇总；需要你决定时，面板会明确告诉你下一步。</div>
+  <div class="foot" hidden></div>
 </div>
 
 <script>
@@ -1734,9 +1754,14 @@
       if (ring.style && typeof ring.style.setProperty === "function") ring.style.setProperty("--progress", progressValue);
       else if (ring.style) ring.style["--progress"] = progressValue;
     }
+    var overview = el("projectOverview");
+    if (overview && overview.style) {
+      if (typeof overview.style.setProperty === "function") overview.style.setProperty("--progress", progressValue);
+      else overview.style["--progress"] = progressValue;
+    }
     if (pct) pct.textContent = p == null ? "—" : p + "%";
     var project = s.project || {}, ml = s.mainline || {};
-    setText("overviewTitle", project.name || ml.product || "当前项目");
+    setText("overviewTitle", userProjectName(project.name || ml.product || "当前项目"));
     var current = road.filter(function(x){ return x.status === "doing"; })[0] || road.filter(function(x){ return x.status === "next"; })[0];
     var human = s.human_acceptance || [], blocked = s.blocked || {};
     var hasBlock = (blocked.failures || []).length || (blocked.resolve || []).length || (blocked.exec || []).length;
@@ -1754,6 +1779,20 @@
       setText("attentionTitle", human.length ? "建议先完成验收" : "建议先关注");
       setText("attentionText", human.length ? (human[0].title || "有一项工作等待验收") : "当前有工作项卡住，展开详情查看原因。");
     }
+  }
+
+  function userProjectName(name){
+    var s = String(name || "当前项目").trim();
+    s = s.replace(/^codex-autopilot-panel-native-surface-\d{8}$/i, "Codex Autopilot");
+    s = s.replace(/^codex-autopilot-native-autopilot$/i, "Codex Autopilot");
+    s = s.replace(/^Codex 自动挡$/i, "Codex Autopilot");
+    return s || "当前项目";
+  }
+
+  function projectListName(name, index){
+    var shown = userProjectName(name);
+    if (shown !== "Codex Autopilot") return shown;
+    return /native-autopilot$/i.test(String(name || "")) ? "Autopilot Core" : "另一个项目";
   }
 
   function renderProjectMap(road, s){
@@ -2391,14 +2430,17 @@
     var parking = el("autonomyParking");
     if (autonomy && parking && autonomy.parentNode !== parking) parking.appendChild(autonomy);
     box.innerHTML = "";
-    var list = (folders && folders.folders) || [];
+    var allFolders = (folders && folders.folders) || [];
+    var currentPath = s && s.project && s.project.path;
+    // 当前项目已经由主卡承载；项目列表只展示其他项目，避免同一目标出现两次。
+    var list = allFolders.filter(function(f){ return !currentPath || f.path !== currentPath; });
     var note = el("folderNote");
-    if (note) note.textContent = list.length ? (list.length + " 个项目") : "";
+    if (note) note.textContent = list.length ? (list.length + " 个其他项目") : "";
     if (!list.length){
       box.innerHTML = '<div class="empty">还没有项目文件夹。当前绑定项目会作为一个文件夹显示。</div>';
       return;
     }
-    list.forEach(function(f){
+    list.forEach(function(f, index){
       // 项目卡默认是收起的面性容器：摘要只承担身份、目标、阶段和计数。
       // 明细、门禁、工程雷达都进展开区，避免多项目并行时首屏变成日志墙。
       var card = document.createElement("details");
@@ -2408,7 +2450,7 @@
       var summary = document.createElement("summary");
       var info = document.createElement("div");
       var title = document.createElement("div"); title.className = "folder-title";
-      title.textContent = f.name || f.id || "未命名项目";
+      title.textContent = projectListName(f.name || f.id || "未命名项目", index);
       var goal = document.createElement("div"); goal.className = "folder-goal";
       goal.textContent = "当前目标：" + (f.goal_override || f.one_liner || f.stage || "目标待明确");
       var step = document.createElement("div"); step.className = "folder-step";
@@ -2618,7 +2660,7 @@
     var hasBlock = (blocked.failures && blocked.failures.length) ||
       (blocked.resolve && blocked.resolve.length) || (blocked.exec && blocked.exec.length);
     var stateBase = s.enabled === false ? "已关闭" : (s.paused ? "已暂停" : (s.error ? "异常" :
-      ((s.exec_now || doingItems.length) ? "运行中" : "当前项目待命")));
+      ((s.exec_now || doingItems.length) ? "运行中" : "待命")));
     var stateLabel = s.state_label || "读取中";
     var statusText = stateBase === stateLabel ? stateBase : stateBase + " · " + stateLabel;
     if (s.error) statusText = "异常 · " + s.error;
@@ -2632,7 +2674,7 @@
     // 兜底必须落到控制层算出的权威 doing：它已经处理了「守护绑定别的项目」「已检查
     // 一轮没有可合分支」「暂停/关闭」这些情况。旧版这里硬写「当前没有进行中的工作」，
     // 于是 control plane 说了实话、面板却显示空白态 —— 面板渲染门禁实测抓到这条。
-    else workText = s.doing || "当前没有进行中的工作";
+    else workText = (/待命/.test(String(s.doing || "")) ? "当前项目待命" : (s.doing || "当前没有进行中的工作"));
     var stepText = activeRoad
       ? (activeRoad.step || "当前路线") + " · " + ((s.exec_now || doingItems.length) ? "进行中" : "待推进")
       : "路线待拆解 · 项目：" + (proj.name || "未绑定");

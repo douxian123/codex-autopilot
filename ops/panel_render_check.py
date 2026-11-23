@@ -277,6 +277,8 @@ def main(argv):
             return []
 
     folders = ((payload.get("project_folders") or {}).get("folders") or [])
+    visible_folders = [f for f in folders
+                       if not project.get("path") or f.get("path") != project.get("path")]
 
     def visible(text):
         if not text:
@@ -326,8 +328,10 @@ def main(argv):
         # 避免把“默认不可见”误判成“功能被删除”。
         ("高级区保留「工作项走到哪了」区块",
          "routeOverview" in html or "工作项走到哪了" in html),
-        ("有「验收证据与 Codex 工作区」区块", "验收证据与 Codex 工作区"),
-        ("项目卡以面性折叠容器呈现", len(folders) > 0 and len(project_folds(snapshot)) == len(folders)),
+        ("高级区保留「验收证据与 Codex 工作区」区块",
+         "验收证据与 Codex 工作区" in html),
+        ("项目卡以面性折叠容器呈现",
+         len(visible_folders) > 0 and len(project_folds(snapshot)) == len(visible_folders)),
         ("只有一张验收卡，不再重复空待确认卡",
          str(snapshot.get("acceptCardCount")) == "1"
          and "待确认事项" not in str(snapshot.get("acceptCard") or "")),
@@ -336,18 +340,18 @@ def main(argv):
     # 以前会把 None 当成期望文本去比对，必然失败——门禁自己造了一个永远红的假红灯。
     # 没有数据就如实跳过并打印 SKIP，既不假通过，也不假失败。
     skipped = []
-    radar_folder = next((f for f in folders if (f.get("engineering_radar") or {}).get("layers")), None)
-    gate_folder = next((f for f in folders if (f.get("quality_gate") or {}).get("checks")), None)
+    radar_folder = next((f for f in visible_folders if (f.get("engineering_radar") or {}).get("layers")), None)
+    gate_folder = next((f for f in visible_folders if (f.get("quality_gate") or {}).get("checks")), None)
     if not radar_folder:
         skipped.append("项目文件夹显示 19 层工程进度（该状态根还没有工程雷达数据）")
     if not gate_folder:
         skipped.append("项目文件夹显示独立质量门禁状态（该状态根还没有质量门禁数据）")
-    if folders:
+    if visible_folders:
         checks.append(("项目卡摘要显示当前步骤",
-                       "当前步骤：" + str(folders[0].get("current_step") or "路线待拆解")))
+                       "当前步骤：" + str(visible_folders[0].get("current_step") or "路线待拆解")))
         checks.append(("项目卡摘要显示当前目标",
-                       "当前目标：" + str(folders[0].get("one_liner")
-                                       or folders[0].get("stage") or "目标待明确")))
+                       "当前目标：" + str(visible_folders[0].get("one_liner")
+                                       or visible_folders[0].get("stage") or "目标待明确")))
     if step_check:
         checks.append(step_check)
 

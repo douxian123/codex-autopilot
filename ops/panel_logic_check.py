@@ -576,8 +576,9 @@ def main(argv):
         fails += has("路线图普通空态显示等待下一条需求",
                      idle_out["hierarchyWork"], "等待下一条需求")
         folders = ((payload.get("project_folders") or {}).get("folders") or [])
-        if folders:
-            folder = folders[0]
+        visible_folders = [f for f in folders if not project.get("path") or f.get("path") != project.get("path")]
+        if visible_folders:
+            folder = visible_folders[0]
             folder_items = (folder.get("doing_items") or folder.get("todo_items") or [])
             goal = folder.get("goal_override") or folder.get("one_liner") \
                 or folder.get("stage") or "目标待明确"
@@ -591,7 +592,13 @@ def main(argv):
             else:
                 print(f"  FAIL  项目卡默认折叠（实际 open={out.get('folderOpen')!r}）")
                 fails += 1
-            fails += has("项目卡摘要显示项目名", out["folderSummaryText"], folder.get("name"))
+            raw_folder_name = folder.get("name") or folder.get("id") or "未命名项目"
+            expected_folder_name = ("Autopilot Core" if raw_folder_name == "codex-autopilot-native-autopilot"
+                                    else ("另一个项目" if raw_folder_name in {
+                                        "codex-autopilot-panel-native-surface-20261123",
+                                        "Codex 自动挡",
+                                    } else raw_folder_name))
+            fails += has("项目卡摘要显示项目名", out["folderSummaryText"], expected_folder_name)
             fails += has("项目卡摘要显示当前目标", out["folderSummaryText"], "当前目标：", goal)
             fails += has("项目卡摘要显示当前步骤", out["folderSummaryText"],
                          "当前步骤：", folder.get("current_step"))
