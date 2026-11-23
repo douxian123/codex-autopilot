@@ -90,18 +90,52 @@ def read_rows(path: Path) -> list:
 
 
 def latest_by_id(path: Path) -> dict:
+    """按候选身份取最新行；同一旧 ID 的不同原话必须拆开，不能互相顶掉。"""
     latest = {}
+    order = []
     for row in read_rows(path):
-        rid = row.get("id")
-        if rid:
-            latest[rid] = row
-    return latest
+        key = str(row.get("candidate_key") or "").strip()
+        if not key:
+            key = "%s:%s" % (row.get("id") or "", row.get("source_hash") or "")
+        if key in latest:
+            latest[key] = row
+            continue
+        order.append(key)
+        latest[key] = row
+
+    used = set()
+    out = {}
+    for key in order:
+        row = dict(latest[key])
+        base = str(row.get("id") or "").strip()
+        suffix = str(row.get("source_hash") or "").strip()[:6]
+        candidate = base
+        if base in used:
+            candidate = "%s-%s" % (base, suffix or "dup")
+            n = 2
+            while candidate in used:
+                candidate = "%s-%s-%d" % (base, suffix or "dup", n)
+                n += 1
+        row["id"] = candidate
+        row["candidate_key"] = key
+        used.add(candidate)
+        out[candidate] = row
+    return out
+
+
+def _find_candidate(cards: dict, cid: str):
+    """按面板可见 id 精确找卡；也允许直接传原话 hash 做兼容调用。"""
+    row = cards.get(cid)
+    if row:
+        return row
+    exact = [r for r in cards.values() if str(r.get("source_hash") or "") == cid]
+    return exact[0] if len(exact) == 1 else None
 
 
 def _next_id(rows: list) -> str:
     nums = []
     for rid in {r.get("id") for r in rows}:
-        m = re.match(r"^AC-(\d+)$", str(rid))
+        m = re.match(r"^AC-(\d+)", str(rid))
         if m:
             nums.append(int(m.group(1)))
     return "AC-%04d" % ((max(nums) + 1) if nums else 1)
@@ -180,6 +214,7 @@ def propose() -> dict:
         title = suggested_title(text)
         row = {
             "id": _next_id(rows), "ts": _now(),
+            "candidate_key": "AC-NEW:%s" % h,
             "type": "acceptance_criteria_candidate", "status": "proposed",
             "text": text, "title": title,
             "needs_human": needs_human,
@@ -206,7 +241,8 @@ def promote(cid: str, confirm: bool = False, needs_human=None,
         return {"status": "error",
                 "reason": "验收标准必须由人明确确认：请带 confirm=true（面板上点「确认成验收项」）。"}
     path = candidates_path()
-    row = latest_by_id(path).get(cid)
+    cards = latest_by_id(path)
+    row = _find_candidate(cards, cid)
     if not row:
         return {"status": "error", "reason": f"没有这张候选卡：{cid}"}
     if row.get("status") != "proposed":
@@ -244,7 +280,8 @@ def promote(cid: str, confirm: bool = False, needs_human=None,
 
 def dismiss(cid: str, reason: str = "") -> dict:
     path = candidates_path()
-    row = latest_by_id(path).get(cid)
+    cards = latest_by_id(path)
+    row = _find_candidate(cards, cid)
     if not row:
         return {"status": "error", "reason": f"没有这张候选卡：{cid}"}
     if row.get("status") != "proposed":
