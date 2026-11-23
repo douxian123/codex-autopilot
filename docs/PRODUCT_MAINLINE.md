@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-23 19:46:28　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-23 22:55:30　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -53,7 +53,6 @@
 
 ## 最近在推进
 
-- [在途] 受控换代 0.6.0-preview.124 完成：修复在用户现场生效
 - [在途] 受控换代 0.6.0-preview.125：现场生效门禁随版发布
 - [已落盘] @ 2f1a0398bd 网络恢复后单次核验并推送：curl -sS -o /dev/null -w "%{http_code}\n" --connect-timeout 5 --max-time 10 https://github.com -> 200, CURL_EXIT=0；git fetch origin main -> FETCH_EXIT=0, LOCAL=2f1a0398bd2875cbf4bc21c243b62a09b93e1451, ORIGIN_MAIN=60aa31beb80fb010777ba562ae7cf92d1fd3babd, ANCESTOR_EXIT=0；git push origin codex/release-124-truthctl-runtime-20261122:main -> 60aa31be..2f1a0398, PUSH_EXIT=0；git ls-remote origin refs/heads/main -> 2f1a0398bd2875cbf4bc21c243b62a09b93e1451 refs/heads/main, LS_REMOTE_EXIT=0。本机现场：install-state 0.6.0-preview.125, source_commit=2f1a0398bd2875cbf4bc21c243b62a09b93e1451；daemon PID 70368；runtime-install-contract status ok, unknown=[], failures=[]。
 - [已落盘] @ 780021fb69 codex/release-124-truthctl-runtime-20261122 验证门禁通过，已落盘 main @ 780021fb69；改动 11 个文件：docs/PRE_ACCEPTANCE_STANDARD.md（+27/-6）、docs/PRODUCT_CONTRACT.md（+1/-1）、ops/acceptance_dictionary.py（+46/-9）、ops/central_mcp.py（+19/-0）、ops/dynamic_acceptance_scope.py（+21/-8），另有 6 个文件｜11 files changed, 276 insertions(+), 40 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
@@ -63,6 +62,7 @@
 - [已落盘] @ a66902bcb0 codex/resolve-land-clean-worktree-gate-20261122 验证门禁通过，已落盘 main @ a66902bcb0；改动 1 个文件：CONTEXT.md（+8/-0）｜1 file changed, 8 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [在途] @ 300ea39314 codex/disk-admission-fix-20261105 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
 - [在途] @ 07b17402d8 codex/disk-reap-into-repo 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
+- [在途] launchd 陈旧路径已收口：10 条 guard plist 从 .145 收回到 .140，freshness 门禁 0 条旧路径，product_eval 5/5；外部 ok8888 bridge 保持登记 external，不动用户服务
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
@@ -93,8 +93,7 @@
 
 ## 还差什么
 
-**gate（1 待处理）**
-- `L-0007` 【launchd 陈旧项·非 Stop 复发链】freshness 门禁真机实测 4 条 stale：ai.danta.codex-proxy-watchdog
+- 台账里没有未决问题
 
 ## 需要你验收
 
@@ -245,8 +244,8 @@
 
 ## 进度概览
 
-- 累计关闭问题：14 条
+- 累计关闭问题：15 条
 - 累计落盘：112 条
-- 未决问题：1 条
-- 已验收：137 条
+- 未决问题：0 条
+- 已验收：136 条
 
