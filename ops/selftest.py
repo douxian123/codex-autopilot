@@ -182,6 +182,7 @@ def main():
             "test-cost-discipline.py",
             "test-experience-contract.py",
             "test-experience-contract-gate.py",
+            "test-gate-experience-base.py",
             "test-panel-renderer-contract.py",
             "test-panel-intent-trigger.py",
             "test-panel-no-html-fallback.py",
