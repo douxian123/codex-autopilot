@@ -188,6 +188,7 @@ def main():
             "test-binding-recovery-action.py",
             "test-research-adoption.py",
             "test-specialized-acceptance-executors.py",
+            "test-central-command-followup-contract.py",
         )
         for guard in standalone_guards:
             print(f"  run  {guard}", flush=True)
