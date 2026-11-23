@@ -457,24 +457,33 @@ def main(argv):
             value = re.sub(r"^[A-Z]+-\d+\s+已收口：\s*", "", value)
             value = re.sub(r"^已收口：\s*", "", value)
             if value.endswith("已合入"):
-                return "代码已合入"
+                return "已完成并合入"
             topic_box = re.match(r"^【([^】]+)】", value)
             topic = topic_box.group(1) if topic_box else ""
             rest = value[topic_box.end():] if topic_box else value
             short_topic = topic.split("·")[-1] if topic else ""
             combined = topic + rest
             if "面板首屏" in combined or "首屏只回答" in combined:
-                return "面板首屏：改为只看三问"
+                return "面板：首屏信息层级已收敛"
+            if re.search(r"验收门禁|验收检查|production|security/|deployment/|launchd|guard|executor|文件随版本发布完整性", combined):
+                return "验收：交付检查已完成"
             if "防丢失" in combined or "真相镜像" in combined:
-                return "防丢失：落盘状态已和主干同步"
+                return "状态：已同步并可追溯"
             if "门禁环境" in combined:
-                return "门禁环境：可直接验证发布目录"
+                return "验证：环境已准备完成"
             rest = re.sub(
                 r"(?:~|/Users/|/private/|/var/folders/)[^\s，,；;]+", "", rest)
             rest = re.sub(r"kgctl\s+land", "落盘", rest, flags=re.I)
             rest = re.sub(r"progress\.json\s*/\s*acceptance\.json",
                           "状态台账", rest, flags=re.I)
             rest = re.sub(r"\bmain\b", "主干", rest, flags=re.I)
+            rest = re.sub(
+                r"\b(?:launchd|guard|executor|security/[a-z-]+|deployment/[a-z-]+)\b",
+                "验证项", rest, flags=re.I)
+            rest = re.sub(
+                r"(?:补齐|闭环|专项)?(?:动态产品)?验收门禁(?:专项)?(?:执行器)?",
+                "验收检查", rest)
+            rest = rest.replace("文件随版本发布完整性", "发布文件完整性")
             rest = re.sub(r"\s+", " ", rest).strip(" :：")
             if short_topic and rest:
                 return short_topic + "：" + rest

@@ -322,7 +322,10 @@ def main(argv):
         ("首屏显示正在做什么", expected_doing_text(payload)),
         ("首屏显示原生直连结论", (payload.get("native") or {}).get("label")),
         ("有「项目」区块", "项目"),
-        ("有「工作项走到哪了」区块", "工作项走到哪了"),
+        # 路线详情属于高级视图，不再占用默认首屏；这里验证入口仍保留，
+        # 避免把“默认不可见”误判成“功能被删除”。
+        ("高级区保留「工作项走到哪了」区块",
+         "routeOverview" in html or "工作项走到哪了" in html),
         ("有「验收证据与 Codex 工作区」区块", "验收证据与 Codex 工作区"),
         ("项目卡以面性折叠容器呈现", len(folders) > 0 and len(project_folds(snapshot)) == len(folders)),
         ("只有一张验收卡，不再重复空待确认卡",
