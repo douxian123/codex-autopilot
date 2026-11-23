@@ -4,7 +4,7 @@
 - 执行分支：`codex/resolve-panel-design-restore-20261124`
 - 工作树：`/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-resolve-panel-design-restore-20261124`
 - 基于：`1c795184609d`（origin/main）
-- 状态：`needs_agent`
+- 状态：`gate_fail`
 
 ## 要解的冲突文件（保留的 marker）
 - `docs/PRODUCT_MAINLINE.md`
