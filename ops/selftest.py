@@ -1617,6 +1617,13 @@ def test_installer():
         shutil.copytree(OPS.parent, source_no_default_trunk,
                         ignore=shutil.ignore_patterns(".git", ".build"))
         _make_state_root(source_no_default_trunk)
+        # 新环境没有默认 trunk 时，不能从旧 release 继承一个必然误判的 trunk_dir。
+        stale_trunk = Path(tmp) / "stale-trunk"
+        stale_cfg = source_no_default_trunk / "ops" / "central.config.json"
+        stale_data = _json.loads(stale_cfg.read_text(encoding="utf-8"))
+        stale_data["trunk_dir"] = str(stale_trunk)
+        stale_cfg.write_text(_json.dumps(stale_data, ensure_ascii=False, indent=2) + "\n",
+                             encoding="utf-8")
         run(["git", "init", "-q", "-b", "main", str(source_no_default_trunk)])
         run(["git", "-C", str(source_no_default_trunk), "config", "user.email",
              "selftest@example.invalid"])
@@ -1642,7 +1649,8 @@ def test_installer():
         default_cfg = _json.loads(
             (default_release / "ops" / "central.config.json").read_text(encoding="utf-8"))
         assert not default_cfg.get("trunk_dir"), (
-            "默认 trunk 不存在却写进了 release 配置：%r" % default_cfg.get("trunk_dir"))
+            "默认 trunk 不存在却从旧 release 继承了 trunk_dir：%r"
+            % default_cfg.get("trunk_dir"))
         default_mcp = _json.loads(
             (default_release / ".mcp.json").read_text(encoding="utf-8"))
         default_server = default_mcp["mcpServers"]["codex-autopilot"]
