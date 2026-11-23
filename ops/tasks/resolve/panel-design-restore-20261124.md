@@ -3,11 +3,11 @@
 - 源分支：`codex/panel-design-restore-20261124`
 - 执行分支：`codex/resolve-panel-design-restore-20261124`
 - 工作树：`/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-resolve-panel-design-restore-20261124`
-- 基于：`b350df7726c5`（origin/main）
+- 基于：`1c795184609d`（origin/main）
 - 状态：`needs_agent`
 
 ## 要解的冲突文件（保留的 marker）
-- `ops/truth/product_state.json`
+- `docs/PRODUCT_MAINLINE.md`
 
 ## 怎么做
 1. 进 `/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-resolve-panel-design-restore-20261124`，逐个打开上面列出的文件，把 `<<<<<<<` / `=======` / `>>>>>>>` 改成正确的最终代码——想清楚两边意图，不是机械二选一。
