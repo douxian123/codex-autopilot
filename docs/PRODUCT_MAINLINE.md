@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-24 05:46:08　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-24 06:24:48　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -53,9 +53,6 @@
 
 ## 最近在推进
 
-- [已落盘] @ 81e1246be8 codex/mcp-stale-failclosed-20261124 验证门禁通过，已落盘 main @ 81e1246be8；改动 3 个文件：ops/central_mcp.py（+41/-0）、ops/selftest.py（+4/-0）、ops/test-mcp-stale-failclosed.py（+142/-0）｜3 files changed, 187 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [在途] @ ee180ad01a 当前主干 ee180ad0 的 .146 发布候选复验：全新隔离 clone + 显式 trunk 安装完成，product_eval 5/5、阴性对照 8/8，首问闭环率 88.2%（15/17），selftest/panel logic/panel render/stale release-dir 门禁均为 0；live 已恢复到公开 .140，未打 tag、未发 prerelease、未换代、未签收 L-0019。
-- [在途] P-0215 冲突补回（远端 tick 删除后按唯一 ID 追加）：当前主干 ee180ad0 的 .146 发布候选复验完成；product_eval 5/5、阴性对照 8/8、首问闭环率 88.2%（15/17），全部专项门禁 exit 0；live 已恢复公开 .140，未发 tag/prerelease、未换代、未签收 L-0019。
 - [已落盘] @ 7f10530c0f codex/rollback-install-state-20261124 验证门禁通过，已落盘 main @ 7f10530c0f；改动 2 个文件：install.sh（+68/-14）、ops/selftest.py（+18/-0）｜2 files changed, 86 insertions(+), 14 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 18f2692f8e 18f2692f 回滚修复后最新主干复验：.146 隔离安装发布评估 5/5、阴性对照 8/8、原生面板 ok:true；live 仍 .140，tag/prerelease 与人工签收未发生
 - [已落盘] @ 5c57a44bcd codex/release-doc-truth-alignment-20261124 验证门禁通过，已落盘 main @ 5c57a44bcd；改动 3 个文件：docs/BETA_LOCAL_TRIAL.md（+13/-7）、docs/PREVIEW.md（+1/-1）、ops/selftest.py（+64/-0）｜3 files changed, 78 insertions(+), 8 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
@@ -63,13 +60,12 @@
 - [已落盘] @ 858e540cf4 codex/acceptance-id-collision-20261124 验证门禁通过，已落盘 main @ 858e540cf4；改动 2 个文件：ops/acceptance_criteria.py（+44/-7）、ops/test-acceptance-criteria.py（+47/-0）｜2 files changed, 91 insertions(+), 7 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ d1f160ab0c codex/experience-evidence-focus-measure-20261124 验证门禁通过，已落盘 main @ d1f160ab0c；改动 1 个文件：ops/experience_evidence.py（+18/-9）｜1 file changed, 18 insertions(+), 9 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已归档] @ ffc371d362 codex/native-thread-bridge 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
+- [已落盘] @ ec578e53d7 codex/fix-superseded-queue-20261124 验证门禁通过，已落盘 main @ ec578e53d7；改动 3 个文件：ops/kgctl.py（+18/-10）、ops/selftest.py（+68/-0）、ops/truthctl.py（+4/-2）｜3 files changed, 90 insertions(+), 12 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ 6f6d60ca21 codex/fix-converge-orphan-adopt-20261124 验证门禁通过，已落盘 main @ 6f6d60ca21；改动 2 个文件：ops/kgctl.py（+24/-9）、ops/selftest.py（+91/-0）｜2 files changed, 115 insertions(+), 9 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [在途] 06:22 闭环审计：假在途与孤儿收敛修复已落 origin/main @ fe8a5d09；682f47bfd5 已能被 converge 认领；PRD/B1 文档已同步三口径，live 仍 .140 等待发布换代/人工签收。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0182` [P1] codex/release-124-truthctl-runtime-20261122 落盘验收
-  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
-- `A-0183` [P1] 动态验收专项执行器远端合入门禁验收
-  - 证据：cwd=/Users/danta/.newmax/workspace/ca-truthctl-runtime-precedence-20261122-trunk-trunk; python3 ops/test-truth-sync-ignored-views.py -> EXIT=0; python3 ops/test-specialized-acceptance-execut…
 - `A-0184` [P1] codex/resolve-land-clean-worktree-gate-20261122 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0185` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
@@ -89,6 +85,10 @@
 - `A-0208` [P1] codex/acceptance-id-collision-20261124 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0209` [P1] codex/experience-evidence-focus-measure-20261124 落盘验收
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0210` [P1] codex/fix-superseded-queue-20261124 落盘验收
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0212` [P1] codex/fix-converge-orphan-adopt-20261124 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 
 ## 还差什么
@@ -262,11 +262,13 @@
 - `A-0207` [P1] codex/project-health-mainline-freshness-20261124 落盘验收
 - `A-0208` [P1] codex/acceptance-id-collision-20261124 落盘验收
 - `A-0209` [P1] codex/experience-evidence-focus-measure-20261124 落盘验收
+- `A-0210` [P1] codex/fix-superseded-queue-20261124 落盘验收
+- `A-0212` [P1] codex/fix-converge-orphan-adopt-20261124 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：15 条
-- 累计落盘：120 条
+- 累计落盘：122 条
 - 未决问题：1 条
-- 已验收：145 条
+- 已验收：147 条
 
