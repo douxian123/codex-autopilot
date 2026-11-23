@@ -1,6 +1,32 @@
 {
  "tasks": [
   {
+   "slug": "land-clean-worktree-gate-20261122",
+   "branch": "codex/land-clean-worktree-gate-20261122",
+   "resolve_branch": "codex/resolve-land-clean-worktree-gate-20261122",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-native-autopilot-resolve-land-clean-worktree-gate-20261122",
+   "base_main": "cb5832eff34886df2a516037858fc0e7966ad564",
+   "source_head": "3fba3da49c6cc70a68a6a6d56559b0cf16f431d9",
+   "source_commits": [
+    "9a5ad1425bfbf6d63a6a858caf92f02e2b92645d",
+    "3fba3da49c6cc70a68a6a6d56559b0cf16f431d9"
+   ],
+   "created": "2026-11-22 13:38:23",
+   "updated": "2026-11-24 00:09:20",
+   "conflict_files": [
+    "ops/kgctl.py",
+    "ops/test-land-dirty-trunk-clean-worktree.py"
+   ],
+   "unresolved_files": [
+    "ops/kgctl.py",
+    "ops/test-land-dirty-trunk-clean-worktree.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "abandoned",
+   "gate_output": "→ codex/resolve-land-clean-worktree-gate-20261122: 7 提交、落后 0、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n  !配置的落盘主干不可安全切换（/Users/danta/Documents/Codex/codex-autopilot-native-autopilot-trunk），已改用一次性干净主干：/Users/danta/Documents/Codex/codex-autopilot-native-autopilot-land-clean-1795337546\n  main 本地引用 cb5832ef -> 607c7aa2（同步 origin）\n  已把 52 个真相层文件从切换前状态写回（路由/台账不丢）\n  JSONL 台账 ops/truth/progress.jsonl 已与 HEAD 并集对齐（防旧状态根覆盖）\n  跳过 1 个备份/临时副本（留在磁盘，不进版本库）：ops/tasks/conflict_burden.json.bak-codex-20261025-042835\n  真相层 19 个文件已提交（chore(truth): sync state before landing）\n  PM 产品决策门 ok\n  真相层同步遇到非真相文件冲突，已放弃：ops/kgctl.py\n× 合并失败，已丢弃：",
+   "reason": "source_head 3fba3da4 已在 origin/main 祖先链；resolve worktree 已缺失且 A-0184/P-0207 记录主体已落盘，停止 gate_fail 残留"
+  },
+  {
    "slug": "panel-native-surface-20261123",
    "branch": "codex/panel-native-surface-20261123",
    "resolve_branch": "codex/resolve-panel-native-surface-20261123",
@@ -18,7 +44,7 @@
     "c80ed2c86abc52a2219d60f4edfcb9342140f4bc"
    ],
    "created": "2026-11-23 12:39:22",
-   "updated": "2026-11-23 12:39:22",
+   "updated": "2026-11-24 00:09:03",
    "conflict_files": [
     "docs/PROJECT_STATUS.md",
     "ops/tasks/conflict_burden.json"
@@ -28,7 +54,8 @@
     "ops/tasks/conflict_burden.json"
    ],
    "auto_resolved_jsonl": [],
-   "status": "needs_agent"
+   "status": "abandoned",
+   "reason": "source_head c80ed2c8 已在 origin/main 祖先链；resolve 工作树只剩生成态文档冲突，主体内容已落盘，停止陈旧任务"
   },
   {
    "slug": "release-124-truthctl-runtime-20261122",
@@ -77,31 +104,6 @@
    ],
    "auto_resolved_jsonl": [],
    "status": "needs_agent"
-  },
-  {
-   "slug": "land-clean-worktree-gate-20261122",
-   "branch": "codex/land-clean-worktree-gate-20261122",
-   "resolve_branch": "codex/resolve-land-clean-worktree-gate-20261122",
-   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-native-autopilot-resolve-land-clean-worktree-gate-20261122",
-   "base_main": "cb5832eff34886df2a516037858fc0e7966ad564",
-   "source_head": "3fba3da49c6cc70a68a6a6d56559b0cf16f431d9",
-   "source_commits": [
-    "9a5ad1425bfbf6d63a6a858caf92f02e2b92645d",
-    "3fba3da49c6cc70a68a6a6d56559b0cf16f431d9"
-   ],
-   "created": "2026-11-22 13:38:23",
-   "updated": "2026-11-22 16:52:30",
-   "conflict_files": [
-    "ops/kgctl.py",
-    "ops/test-land-dirty-trunk-clean-worktree.py"
-   ],
-   "unresolved_files": [
-    "ops/kgctl.py",
-    "ops/test-land-dirty-trunk-clean-worktree.py"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "gate_fail",
-   "gate_output": "→ codex/resolve-land-clean-worktree-gate-20261122: 7 提交、落后 0、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n  !配置的落盘主干不可安全切换（/Users/danta/Documents/Codex/codex-autopilot-native-autopilot-trunk），已改用一次性干净主干：/Users/danta/Documents/Codex/codex-autopilot-native-autopilot-land-clean-1795337546\n  main 本地引用 cb5832ef -> 607c7aa2（同步 origin）\n  已把 52 个真相层文件从切换前状态写回（路由/台账不丢）\n  JSONL 台账 ops/truth/progress.jsonl 已与 HEAD 并集对齐（防旧状态根覆盖）\n  跳过 1 个备份/临时副本（留在磁盘，不进版本库）：ops/tasks/conflict_burden.json.bak-codex-20261025-042835\n  真相层 19 个文件已提交（chore(truth): sync state before landing）\n  PM 产品决策门 ok\n  真相层同步遇到非真相文件冲突，已放弃：ops/kgctl.py\n× 合并失败，已丢弃："
   },
   {
    "slug": "panel-project-route-ia",
@@ -166,5 +168,5 @@
    "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
   }
  ],
- "updated": "2026-11-23 12:39:23"
+ "updated": "2026-11-24 00:09:20"
 }
