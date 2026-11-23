@@ -1577,6 +1577,65 @@ def test_installer():
         assert sentinel.read_text(encoding="utf-8") == "keep\n"
         assert (release / "ops" / "central_mcp.py").is_file()
 
+        # 2026-11-23 现场事故：把不存在的 <状态根>-trunk 写进 KG_TRUNK 和 release
+        # 配置，安装看似成功，product_eval 的 consistent 判据永久失败。显式 --trunk
+        # 必须 fail closed，不能把坏路径包装成「已安装」。
+        home_bad = Path(tmp) / "home-bad-trunk"
+        home_bad.mkdir()
+        bad_env = os.environ.copy()
+        bad_env.update({
+            "HOME": str(home_bad),
+            "CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE": "1",
+        })
+        missing_trunk = Path(tmp) / "definitely-missing-trunk"
+        bad = run(["bash", str(source_install), "--trunk", str(missing_trunk),
+                   "--no-seed", "--no-marketplace", "--no-companion", str(source)],
+                  env=bad_env, check=False)
+        bad_combined = bad.stdout + bad.stderr
+        assert bad.returncode != 0, f"不存在的 --trunk 被误接受:\n{bad_combined}"
+        assert "落盘主干" in bad_combined, bad_combined
+        assert not (home_bad / "plugins" / "codex-autopilot" / "releases"
+                    / installed_version).exists(), "坏 trunk 仍留下了不可变版本目录"
+
+        # 默认路径不存在时，安装可以完成，但绝不能把不存在的路径写进配置。
+        # 不能用上面的 source 夹具：它旁边已有合法 source-trunk，那种情况下
+        # 写进配置是正确行为。这里另建一个没有同级 trunk 的源码仓库。
+        source_no_default_trunk = Path(tmp) / "source-no-default-trunk"
+        shutil.copytree(OPS.parent, source_no_default_trunk,
+                        ignore=shutil.ignore_patterns(".git", ".build"))
+        _make_state_root(source_no_default_trunk)
+        run(["git", "init", "-q", "-b", "main", str(source_no_default_trunk)])
+        run(["git", "-C", str(source_no_default_trunk), "config", "user.email",
+             "selftest@example.invalid"])
+        run(["git", "-C", str(source_no_default_trunk), "config", "user.name",
+             "Autopilot Selftest"])
+        run(["git", "-C", str(source_no_default_trunk), "add", "."])
+        run(["git", "-C", str(source_no_default_trunk), "commit", "-qm", "fixture"])
+        assert not (Path(tmp) / "source-no-default-trunk-trunk").exists()
+        home_default = Path(tmp) / "home-default-trunk"
+        home_default.mkdir()
+        default_env = os.environ.copy()
+        default_env.update({
+            "HOME": str(home_default),
+            "CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE": "1",
+        })
+        default_install = run(["bash", str(source_install),
+                               "--no-seed", "--no-marketplace", "--no-companion",
+                               str(source_no_default_trunk)], env=default_env, check=False)
+        assert default_install.returncode == 0, (
+            f"默认 trunk 缺失时安装失败:\n{default_install.stdout}\n{default_install.stderr}")
+        default_release = (home_default / "plugins" / "codex-autopilot" / "releases"
+                           / installed_version)
+        default_cfg = _json.loads(
+            (default_release / "ops" / "central.config.json").read_text(encoding="utf-8"))
+        assert not default_cfg.get("trunk_dir"), (
+            "默认 trunk 不存在却写进了 release 配置：%r" % default_cfg.get("trunk_dir"))
+        default_mcp = _json.loads(
+            (default_release / ".mcp.json").read_text(encoding="utf-8"))
+        default_server = default_mcp["mcpServers"]["codex-autopilot"]
+        assert "KG_TRUNK" not in default_server.get("env", {}), (
+            "默认 trunk 不存在却写进了 .mcp.json：%r" % default_server.get("env"))
+
     print("selftest ok: 安装器使用不可变版本目录、拒绝覆盖同版本、"
           "同版本目录恢复重装仍保留上一版回滚指针。")
 
@@ -3306,8 +3365,9 @@ def test_native_repair_probe():
 
     with mock.patch.object(central_mcp.codex_native, "probe", return_value={"connected": True}) as probe_mock, \
          mock.patch.object(central_mcp.codex_native, "record_probe"):
-        result = central_mcp.call_tool("codex_native_probe", {"repair": True})
+        result, code = central_mcp.call_tool("codex_native_probe", {"repair": True})
         assert result == {"connected": True}, result
+        assert code == 0, code
         probe_mock.assert_called_once_with(repair=True)
 
     print("selftest ok: 原生自检 repair 只在显式触发时启动 daemon，失败或 socket 未出现都不谎报可派活。")

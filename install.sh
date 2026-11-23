@@ -37,6 +37,7 @@ COMPANION=1
 INSTALL_DAEMON=0
 PROJECT=""
 TRUNK=""
+TRUNK_SET=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-marketplace) NO_MARKET=1; shift ;;
@@ -48,7 +49,7 @@ while [ $# -gt 0 ]; do
     --rollback) ROLLBACK=1; shift ;;
     --list-releases) LIST_RELEASES=1; shift ;;
     --state-root) PROJECT="${2:?--state-root 需要一个目录}"; shift 2 ;;
-    --trunk) TRUNK="${2:?--trunk 需要一个目录}"; shift 2 ;;
+    --trunk) TRUNK="${2:?--trunk 需要一个目录}"; TRUNK_SET=1; shift 2 ;;
     -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
     *) PROJECT="$1"; shift ;;
   esac
@@ -221,18 +222,68 @@ if [ "$GIT_TOP_REAL" != "$PROJECT_REAL" ]; then
 fi
 # 落盘主干 = 一个独立的 worktree；缺省用同级的 <项目名>-trunk（kgctl 首次落盘时自建）。
 # 它绝不能等于状态根本身：那样 land 的 merge/reset 会直接改写 ops/tasks、ops/truth 账本。
-if [ -z "$TRUNK" ]; then
-  TRUNK="$PROJECT-trunk"
-fi
-if [ -d "$TRUNK" ]; then
-  TRUNK="$(cd "$TRUNK" && pwd)"
-fi
-if [ "$TRUNK" = "$PROJECT" ]; then
-  echo "× --trunk 不能等于 --state-root（${PROJECT}）。" >&2
-  echo "  落盘主干必须是独立 worktree；指到账本目录会在 merge/reset 时直接改写它。" >&2
-  echo "  留空即用默认的 ${PROJECT}-trunk。" >&2
-  exit 1
-fi
+# 但绝不能把不存在的路径写进 KG_TRUNK / release 的 central.config.json：
+# 2026-11-23 现场实测，<状态根>-trunk 不存在，却写进配置后 product_eval 的
+# consistent 判据永久失败，用户只看到「装上了一版跑不起来」。
+TRUNK="$("$PY" - "$REPO" "$PROJECT" "$TRUNK" "$TRUNK_SET" <<'PYEOF'
+import os
+import subprocess
+import sys
+
+repo, project, trunk, explicit = sys.argv[1:5]
+explicit = explicit == "1"
+
+
+def die(message):
+    print("× " + message, file=sys.stderr)
+    print("  落盘主干必须是真实存在、属于插件源码同一仓库的独立 git worktree。", file=sys.stderr)
+    print("  可用 --trunk <已有 worktree> 显式指定；留空则使用同级的 "
+          + project + "-trunk。", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def git(git_dir, *args):
+    proc = subprocess.run(["git", "-C", git_dir, *args],
+                          capture_output=True, text=True)
+    return proc.returncode, (proc.stdout or "").strip()
+
+
+def resolve(path, base):
+    return os.path.realpath(path if os.path.isabs(path) else os.path.join(base, path))
+
+
+if not trunk:
+    trunk = project + "-trunk"
+if not os.path.isdir(trunk):
+    if explicit:
+        die("--trunk 指向的目录不存在：" + trunk)
+    # 默认 trunk 允许尚未创建：kgctl 首次落盘会自建 worktree。此时不要写死
+    # 一个不存在的路径，否则 product_eval 会拿它做祖先比较而误红。
+    print("")
+    raise SystemExit(0)
+
+trunk = os.path.abspath(trunk)
+if os.path.realpath(trunk) == os.path.realpath(project):
+    die("--trunk 不能等于 --state-root：" + project)
+
+rc, common = git(repo, "rev-parse", "--git-common-dir")
+if rc != 0 or not common:
+    die("取不到插件源码仓库身份：" + repo)
+common = resolve(common, repo)
+
+rc, inside = git(trunk, "rev-parse", "--is-inside-work-tree")
+if rc != 0 or inside != "true":
+    die("落盘主干不是 git worktree：" + trunk)
+rc, top = git(trunk, "rev-parse", "--show-toplevel")
+if rc != 0 or not top or resolve(top, trunk) != os.path.realpath(trunk):
+    die("落盘主干必须是仓库根，不是子目录：" + trunk)
+rc, trunk_common = git(trunk, "rev-parse", "--git-common-dir")
+if rc != 0 or not trunk_common or resolve(trunk_common, trunk) != common:
+    die("落盘主干属于另一个仓库：" + trunk)
+
+print(trunk)
+PYEOF
+)" || exit 1
 
 # 1) 初始化目标项目的状态层：只补缺失文件，绝不覆盖已有账本。
 if [ "$NO_SEED" -eq 0 ]; then

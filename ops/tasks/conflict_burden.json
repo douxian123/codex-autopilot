@@ -1,6 +1,12 @@
 {
  "main": "5aa07c36b8c04e5a0e42ede526b6945eece0b57e",
  "branches": [
+  "codex/final-ledger-restore-20261120",
+  "codex/guard-release-version-20261119",
+  "codex/prd-closure-package-20261121",
+  "codex/project-autonomy-main-port-20261121",
+  "codex/project-autonomy-mode-20261121",
+  "codex/release-124-truthctl-runtime-20261122",
   "codex/auto-close-identity-gate-20261024",
   "codex/autopilot-brand-panel",
   "codex/disk-admission-clean-20261027",
@@ -9,6 +15,12 @@
   "codex/slow-model-routing"
  ],
  "burden": {
+  "codex/final-ledger-restore-20261120": 1,
+  "codex/guard-release-version-20261119": 1,
+  "codex/prd-closure-package-20261121": 2,
+  "codex/project-autonomy-main-port-20261121": 11,
+  "codex/project-autonomy-mode-20261121": 5,
+  "codex/release-124-truthctl-runtime-20261122": 3,
   "codex/auto-close-identity-gate-20261024": 2,
   "codex/autopilot-brand-panel": 4,
   "codex/disk-admission-clean-20261027": 3,
