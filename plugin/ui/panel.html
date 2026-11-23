@@ -1364,7 +1364,7 @@
     master.setAttribute("aria-pressed", s.enabled ? "true" : "false");
     master.disabled = !!s.error;
     setText("masterState", s.error || (!s.enabled ? "已关闭 · Codex 原生功能不受影响" :
-      (s.lifecycle === "draining" ? "暂停推进 · 当前安全操作可收尾" : "正在运行")));
+      (s.lifecycle === "draining" ? "已暂停 · 当前安全操作可收尾" : "已启用")));
     var proj = s.project || {};
     var pl = el("projectLine");
     if (pl) {
@@ -1386,6 +1386,8 @@
     var sws = document.querySelectorAll(".sw");
     for (var i=0;i<sws.length;i++){
       var k = sws[i].getAttribute("data-key");
+      // 全局 Autopilot 开关由 s.enabled 单独渲染；不要让项目级开关循环覆盖它。
+      if (!k) continue;
       sws[i].classList.toggle("on", !!sw[k]);
       sws[i].setAttribute("aria-pressed", sw[k] ? "true" : "false");
     }
@@ -2404,8 +2406,10 @@
     var blocked = s.blocked || {};
     var hasBlock = (blocked.failures && blocked.failures.length) ||
       (blocked.resolve && blocked.resolve.length) || (blocked.exec && blocked.exec.length);
-    var statusText = (s.enabled === false ? "已关闭" : (s.paused ? "已暂停" : (s.error ? "异常" : "运行中"))) +
-      " · " + (s.state_label || "读取中");
+    var stateBase = s.enabled === false ? "已关闭" : (s.paused ? "已暂停" : (s.error ? "异常" :
+      ((s.exec_now || doingItems.length) ? "运行中" : "当前项目待命")));
+    var stateLabel = s.state_label || "读取中";
+    var statusText = stateBase === stateLabel ? stateBase : stateBase + " · " + stateLabel;
     if (s.error) statusText = "异常 · " + s.error;
     else if (human.length) statusText = "运行中 · 等你验收";
     else if (hasBlock) statusText = "运行中 · 有卡点要处理";
@@ -2419,7 +2423,7 @@
     // 于是 control plane 说了实话、面板却显示空白态 —— 面板渲染门禁实测抓到这条。
     else workText = s.doing || "当前没有进行中的工作";
     var stepText = activeRoad
-      ? (activeRoad.step || "当前路线") + " · " + (activeRoad.status === "doing" ? "进行中" : "下一步")
+      ? (activeRoad.step || "当前路线") + " · " + ((s.exec_now || doingItems.length) ? "进行中" : "待推进")
       : "路线待拆解 · 项目：" + (proj.name || "未绑定");
     setText("focusStatus", statusText);
     setText("focusDoing", workText);
@@ -2821,7 +2825,10 @@
       var rest = topicBox ? s.slice(topicBox[0].length) : s;
       var shortTopic = topic.split("·").pop() || topic;
       // 最近完成只回答用户得到的结果，不把执行器、路径和环境名搬到首屏。
+      if (/闭环所有预期功能|按职责契约|端到端验收/.test(topic + rest)) return "交付：全链路验收已完成";
       if (/验收门禁|验收检查|production|security\/|deployment\/|launchd|guard|executor|文件随版本发布完整性/.test(topic + rest)) {
+        if (/production|文件随版本发布完整性/.test(topic + rest)) return "发布：交付文件检查已完成";
+        if (/闭环所有预期|职责契约|端到端/.test(topic + rest)) return "交付：全链路验收已完成";
         return "验收：交付检查已完成";
       }
       if (/面板首屏|首屏只回答/.test(topic + rest)) return "面板：首屏信息层级已收敛";
@@ -2841,9 +2848,13 @@
       return rest.length > 42 ? (rest.slice(0, 42) + "…") : (rest || "一项工作已完成");
     }
     var ul = document.createElement("ul"); ul.className = "list";
-    list.slice(0,3).forEach(function(raw){
+    var seen = {};
+    list.forEach(function(raw){
+      if (ul.children.length >= 3) return;
       var li = document.createElement("li");
       var text = humanText(raw);
+      if (seen[text]) return;
+      seen[text] = true;
       li.setAttribute("title", String(raw || ""));
       li.setAttribute("aria-label", "收口详情：" + String(raw || ""));
       var g = document.createElement("span"); g.className = "grow"; g.textContent = text;

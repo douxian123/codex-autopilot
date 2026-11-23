@@ -461,7 +461,7 @@ setTimeout(function(){
     # 系统判据默认折叠，但不能因为降噪把可观测性删掉。
     layer_checks = [
         ("首屏不重复解释入口",
-         not any(word in str(snapshot.get("__body__") or "")
+         not any(word in html
                  for word in ("万法归一", "兜底入口", "后台任务窗口",
                               "有东西需要我吗", "零散问题直接说，其余我来"))),
         ("面板输入框收进高级区", str(snapshot.get("intakeInAdvanced")) == "1"),

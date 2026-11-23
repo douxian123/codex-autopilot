@@ -463,9 +463,15 @@ def main(argv):
             rest = value[topic_box.end():] if topic_box else value
             short_topic = topic.split("·")[-1] if topic else ""
             combined = topic + rest
+            if re.search(r"闭环所有预期功能|按职责契约|端到端验收", combined):
+                return "交付：全链路验收已完成"
             if "面板首屏" in combined or "首屏只回答" in combined:
                 return "面板：首屏信息层级已收敛"
             if re.search(r"验收门禁|验收检查|production|security/|deployment/|launchd|guard|executor|文件随版本发布完整性", combined):
+                if re.search(r"production|文件随版本发布完整性", combined):
+                    return "发布：交付文件检查已完成"
+                if re.search(r"闭环所有预期|职责契约|端到端", combined):
+                    return "交付：全链路验收已完成"
                 return "验收：交付检查已完成"
             if "防丢失" in combined or "真相镜像" in combined:
                 return "状态：已同步并可追溯"
@@ -630,8 +636,9 @@ def main(argv):
         fails += has("首屏显示总状态文案", out["stateLabel"], payload.get("state_label"))
         if payload.get("enabled"):
             # 有待人工验收项时，首屏状态会叠加「等你验收」（见下方 review 分支），
-            # 这里只校验开启语义；真正关闭态由后面的 closed 分支独立强校验。
-            fails += has("一眼三问：状态", out["focusStatus"], "运行中")
+            # 这里只校验控制层允许的开启语义；没有 exec/doing 时必须诚实显示待命。
+            expected_status = "运行中" if (payload.get("exec_now") or payload.get("doing_items")) else "当前项目待命"
+            fails += has("一眼三问：状态", out["focusStatus"], expected_status)
         else:
             fails += has("一眼三问：状态", out["focusStatus"], "已关闭")
         # 「现在在做」必须与控制层/面板的优先级阶梯逐级一致。旧断言把 todo_items
@@ -1438,7 +1445,7 @@ def main(argv):
                      outcome_missing["outcomeScoreBox"], "取不到")
 
         fails += has("首屏开关文案与控制层一致", out["masterState"],
-                     "已关闭" if not payload.get("enabled") else "正在运行")
+                     "已关闭" if not payload.get("enabled") else "已启用")
         fails += has("原生直连结论如实显示", out["nativeState"],
                      (payload.get("native") or {}).get("label"))
         socket_missing_payload = dict(payload)
