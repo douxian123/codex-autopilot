@@ -1,15 +1,15 @@
 # Codex Autopilot B1 本地主链试用说明
 
-版本：`0.6.0-preview.139`
+版本：`0.6.0-preview.140`
 
 ## 从哪里拿这个 beta
 
 公开 beta 的发布入口是 GitHub 的
-[`v0.6.0-preview.139` prerelease](https://github.com/douxian123/codex-autopilot/releases/tag/v0.6.0-preview.139)。
+[`v0.6.0-preview.140` prerelease](https://github.com/douxian123/codex-autopilot/releases/tag/v0.6.0-preview.140)。
 它是源码 tag，不要求装未知二进制；从 tag 检出后运行仓库自带的安装脚本即可：
 
 ```bash
-git clone --branch v0.6.0-preview.139 --depth 1 https://github.com/douxian123/codex-autopilot.git
+git clone --branch v0.6.0-preview.140 --depth 1 https://github.com/douxian123/codex-autopilot.git
 cd codex-autopilot
 ./install.sh --refresh-plugin /absolute/path/to/your-project
 ```
@@ -66,7 +66,9 @@ cat ~/plugins/codex-autopilot/install-state.json
 codex plugin list --json
 ```
 
-两者应指向 `0.6.0-preview.139`。`install-state.json` 还应带有本次源码 commit。旧版本目录保留，不覆盖历史版本。
+两者应指向 `0.6.0-preview.140`。`install-state.json` 还应带有本次源码 commit。旧版本目录保留，不覆盖历史版本。
+
+如果面板显示“Codex 还在跑升级前的旧 MCP 进程”，这是宿主尚未重启已加载的 MCP 进程；请完全退出并重新打开 Codex，再重新打开面板。此时重跑 `install.sh` 不会替换已经在跑的进程；只有重启后仍显示绑定失效，才需要重跑安装。
 
 ## 回滚
 

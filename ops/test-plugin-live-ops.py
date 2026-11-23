@@ -148,6 +148,8 @@ def main():
               got["current"])
         check("本目录健在时 stale_code_problem 为 None（不许无病呻吟）",
               got["stale"] is None, got["stale"])
+        check("健康时 binding_health 的 stale 标记为空",
+              got["health"].get("stale") is None, got["health"])
 
         print("2) 本目录已被删除 → 必须跟随 install-state 找到当前版本")
         stale_ops = home / "cache" / "codex-autopilot" / "0.6.0-preview.82" / "ops"
@@ -169,6 +171,8 @@ def main():
               bool(got["stale"]) and "已被删除" in got["stale"], got["stale"])
         check("陈旧进程的绑定体检必须是 broken，不许假绿灯",
               got["health"].get("status") == "broken", got["health"].get("status"))
+        check("binding_health 必须把 stale 标记带给面板分流恢复动作",
+              bool(got["health"].get("stale")), got["health"])
         check("broken 的原因里带上修复指引（重启 Codex）",
               any("重启 Codex" in p for p in got["health"].get("problems") or []),
               got["health"].get("problems"))

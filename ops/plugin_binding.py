@@ -198,14 +198,14 @@ def binding_health() -> dict:
             # 陈旧进程的 `.mcp.json` 跟着版本目录一起没了，但这**不是**「传统布局」；
             # 直接判 skip 就是拿假绿灯盖住「整条 MCP 已经哑了」。
             return {"status": "broken", "repo": repo_raw, "trunk": trunk_raw,
-                    "problems": problems, "warnings": []}
+                    "problems": problems, "warnings": [], "stale": stale}
         return {"status": "skip", "repo": None, "trunk": None,
-                "problems": [], "warnings": []}
+                "problems": [], "warnings": [], "stale": stale}
 
     if not repo_raw:
         return {"status": "broken", "repo": None, "trunk": trunk_raw, "problems": [
             "插件没有绑定任何项目：.mcp.json 里缺 KG_REPO。"
-            "重跑 ./install.sh <你的项目目录> 即可。"], "warnings": []}
+            "重跑 ./install.sh <你的项目目录> 即可。"], "warnings": [], "stale": stale}
 
     repo = Path(repo_raw).expanduser()
     if not repo.is_dir():
@@ -246,6 +246,7 @@ def binding_health() -> dict:
         "problems": problems,
         "warnings": warnings,
         "versions": consistency.get("versions"),
+        "stale": stale,
     }
 
 
@@ -380,3 +381,38 @@ def binding_line(health: dict) -> str:
         return "安装绑定   传统布局（ops/ 在项目里，无 .mcp.json）"
     first = (health.get("problems") or ["原因未知"])[0]
     return f"安装绑定   × 失效：{first}"
+
+
+def binding_recovery_action(health: dict) -> dict:
+    """把 broken binding 分成两种恢复路径，避免把用户带去错误的动作。
+
+    2026-11-23 现场实测：Codex 升级后，当前会话仍有 6 个 MCP 进程跑在已被删除的
+    `.134/.136` 目录里。原因行已经准确写了「重启 Codex」，但面板的 need_action
+    却统一提示「重跑 install.sh」，用户照做也不会替换那些已经在跑的进程。
+
+    这里按故障类型给指令：陈旧进程必须重启/重新加载宿主；真正的绑定丢失才指向
+    install.sh。只读，不改任何状态。
+    """
+    if health.get("stale"):
+        versions = health.get("versions") or {}
+        installed = (versions.get("install_state") or versions.get("marketplace")
+                     or "当前已安装版本")
+        return {
+            "kind": "stale_running_code",
+            "doing": "没有在动任何项目：Codex 还在跑升级前的旧 MCP 进程",
+            "recent": "安装已经更新，但当前会话仍由旧进程服务；需求不会被可靠落账",
+            "need_action": (
+                f"完全退出并重新打开 Codex，让 MCP 用 {installed} 重新启动；"
+                "先不要继续提需求"),
+            "need_action_detail": (
+                "这是 Codex 升级后旧 MCP 进程仍在跑的问题；重跑 install.sh "
+                "不会替换已经启动的进程。重启后再看状态面板是否显示安装绑定 OK，"
+                "若仍失效再重跑 ./install.sh <真实 git 仓库根目录>。"),
+        }
+    return {
+        "kind": "binding_invalid",
+        "doing": "没有在动任何项目：当前绑定的状态根不是一个可用的项目账本",
+        "recent": "需求不会被可靠落账；这不是「没有待办」，是自动挡没接上项目",
+        "need_action": "重跑 ./install.sh <真实 git 仓库根目录>；先不要继续提需求",
+        "need_action_detail": "安装绑定失效的详细路径与修复步骤见工程详情；不会自动改绑定。",
+    }
