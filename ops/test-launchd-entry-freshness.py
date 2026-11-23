@@ -249,16 +249,46 @@ def main():
         for sib in entry.get("siblings") or []:
             check(f"registry 里的 {sib} 真实存在于本仓", (OPS.parent / sib).exists())
 
-    # 6) install.sh 必须真的把 guards 目录打进版本、并调用统一改指
+    # 6) install.sh 必须把 guards 打进版本；统一改指和密钥迁移都只在显式
+    #    opt-in 分支执行。公开 beta 的默认安装不能碰 launchd / hooks / 密钥。
     install_sh = (OPS.parent / "install.sh").read_text(encoding="utf-8")
     check("install.sh 会打包 ops/guards", 'cp -R "$REPO/ops/guards" "$STAGE/ops/"' in install_sh)
     check("install.sh 会统一改指定时任务",
           'repoint_launchd.py" --install' in install_sh)
+    check("install.sh 有本机集成显式开关",
+          all(token in install_sh for token in (
+              "ENABLE_LOCAL_GUARDS=0", "MIGRATE_LOCAL_SECRETS=0",
+              "--enable-local-guards", "--migrate-local-secrets")),
+          "本机集成必须逐项 opt-in")
+    check("install.sh 本机集成在 opt-in 分支调用",
+          'install_local_integrations "$ENABLE_LOCAL_GUARDS"' in install_sh
+          and "migrate_local_secrets\ninstall_local_integrations" in install_sh,
+          "默认路径不能触发本机集成")
+    install_lines = install_sh.splitlines()
+    ordered_calls = [
+        idx for idx, line in enumerate(install_lines)
+        if line.strip() == "migrate_local_secrets"
+        and idx + 1 < len(install_lines)
+        and install_lines[idx + 1].strip() == 'install_local_integrations "$ENABLE_LOCAL_GUARDS"'
+    ]
+    check("install.sh 恰好两条「先迁移密钥、后改本机集成」调用",
+          len(ordered_calls) == 2,
+          f"ordered_calls={ordered_calls}")
     migrate_at = install_sh.find("hyapi_secrets.py\" --migrate")
     repoint_at = install_sh.find("repoint_launchd.py\" --install")
     check("install.sh 先迁移本地密钥、后改指 launchd",
           migrate_at >= 0 and repoint_at > migrate_at,
           f"migrate_at={migrate_at}, repoint_at={repoint_at}")
+    opt_in_at = install_sh.find(
+        'if [ "$ENABLE_LOCAL_GUARDS" -eq 1 ] || [ "$INSTALL_DAEMON" -eq 1 ] ||')
+    check("install.sh 的同版本 opt-in 分支处理完直接退出",
+          opt_in_at >= 0 and
+          '    install_local_integrations "$ENABLE_LOCAL_GUARDS"\n'
+          '    echo "本机集成已按显式开关处理；未改动不可变版本目录。"\n'
+          '    exit 0\n'
+          '  fi\n'
+          'fi\n' in install_sh[opt_in_at:],
+          f"opt_in_at={opt_in_at}")
 
     if failures:
         print("\n失败项：")
