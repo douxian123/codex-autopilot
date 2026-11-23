@@ -1,6 +1,36 @@
 {
  "tasks": [
   {
+   "slug": "panel-native-surface-20261123",
+   "branch": "codex/panel-native-surface-20261123",
+   "resolve_branch": "codex/resolve-panel-native-surface-20261123",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-panel-native-surface-20261123-resolve-panel-native-surface-20261123",
+   "base_main": "131b2068c2fe7ebf29126d8082b58cb4a0870e0f",
+   "source_head": "c80ed2c86abc52a2219d60f4edfcb9342140f4bc",
+   "source_commits": [
+    "2810ec05b2b9487235c87ebd6ae72138b18b7ecb",
+    "74953b0e9f9d12bff143202b665215999e0368d8",
+    "0903f02f19084cf9103203425bdc5c483653800e",
+    "5b49515f600f5c38a54603e4084f968923096dc0",
+    "027280ce8b943bd614dfa372fee7b3580c06f81e",
+    "efc107d6c744b10cf698bf62a4953794cd4d5738",
+    "362882b17d94000832d84e1d3cc8e9f4f864c793",
+    "c80ed2c86abc52a2219d60f4edfcb9342140f4bc"
+   ],
+   "created": "2026-11-23 12:39:22",
+   "updated": "2026-11-23 12:39:22",
+   "conflict_files": [
+    "docs/PROJECT_STATUS.md",
+    "ops/tasks/conflict_burden.json"
+   ],
+   "unresolved_files": [
+    "docs/PROJECT_STATUS.md",
+    "ops/tasks/conflict_burden.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
    "slug": "release-124-truthctl-runtime-20261122",
    "branch": "codex/release-124-truthctl-runtime-20261122",
    "resolve_branch": "codex/resolve-release-124-truthctl-runtime-20261122",
@@ -136,5 +166,5 @@
    "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
   }
  ],
- "updated": "2026-11-22 17:53:20"
+ "updated": "2026-11-23 12:39:23"
 }

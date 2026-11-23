@@ -74,5 +74,13 @@
  "codex/release-124-truthctl-runtime-20261122@39e745af6b9fc4102f82b1f384336b79b3279e89@4409528b216ba838f539bef261c06b99f0c3798d": {
   "files": 6,
   "lines": 263
+ },
+ "codex/panel-native-surface-20261123@c80ed2c86abc52a2219d60f4edfcb9342140f4bc@131b2068c2fe7ebf29126d8082b58cb4a0870e0f": {
+  "files": 5,
+  "lines": 762
+ },
+ "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@131b2068c2fe7ebf29126d8082b58cb4a0870e0f": {
+  "files": 4,
+  "lines": 5372
  }
 }
