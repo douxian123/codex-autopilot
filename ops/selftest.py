@@ -2261,6 +2261,69 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
     print(f"selftest ok: 发布包包含 PM 简报、验收标准候选与截图通道，版本 {version}。")
 
 
+def test_public_beta_docs_match_release_tags():
+    """公开 beta 文档只能指向真实发布的 tag，不能把源码候选写成可安装版本。
+
+    2026-11-24 现场：公开远端只有 v0.6.0-preview.140，仓库文档却写了
+    v0.6.0-preview.146 prerelease 和 clone 命令。源码候选已经合入主干不等于
+    普通用户能下载；这类文档错误会让新用户第一步就失败。
+    """
+    import re
+
+    root = OPS.parent
+    beta = root / "docs" / "BETA_LOCAL_TRIAL.md"
+    assert beta.is_file(), "公开 beta 说明不存在"
+    beta_text = beta.read_text(encoding="utf-8")
+
+    declared = re.search(r"公开 beta：`([^`]+)`", beta_text)
+    assert declared, "BETA_LOCAL_TRIAL.md 没有声明当前公开 beta 版本"
+    published = declared.group(1)
+
+    clone = re.search(r"git clone --branch v([^\s]+)", beta_text)
+    assert clone, "公开 beta 说明缺少 clone 命令"
+    assert clone.group(1) == published, (
+        f"公开 beta 版本 {published} 与 clone tag {clone.group(1)} 不一致")
+
+    links = re.findall(r"releases/tag/v([0-9A-Za-z.\-]+)", beta_text)
+    assert links, "公开 beta 说明缺少 prerelease 链接"
+    assert all(tag == published for tag in links), (
+        f"公开 beta 链接混入了非当前版本：{links}，公开版本={published}")
+
+    source_version = _installed_version()
+    if source_version != published:
+        assert source_version in beta_text, "源码候选版本没有在公开文档里说明"
+        assert any(note in beta_text for note in (
+            "尚未打公开 tag", "没有公开 prerelease", "未发布")), (
+            f"源码版本 {source_version} 未明确标为未公开候选")
+        assert f"git clone --branch v{source_version}" not in beta_text, (
+            "未发布候选被写成用户安装入口")
+        assert f"releases/tag/v{source_version}" not in beta_text, (
+            "未发布候选被写成公开 prerelease 链接")
+
+    # 源码 checkout 有 Git 元数据时，公开版本必须在仓库里真有 tag；
+    # 安装后的不可变 release 目录没有 .git，只做文档一致性检查。
+    shown_root = run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                     check=False)
+    if shown_root.returncode == 0 and Path(
+            shown_root.stdout.strip()).resolve() == root.resolve():
+        tags = run(["git", "-C", str(root), "tag", "--list",
+                    f"v{published}"]).stdout.splitlines()
+        assert f"v{published}" in tags, (
+            f"公开 beta {published} 在仓库里没有对应 tag")
+
+    preview = root / "docs" / "PREVIEW.md"
+    if preview.is_file():
+        preview_text = preview.read_text(encoding="utf-8")
+        preview_version = re.search(r"版本：`([^`]+)`", preview_text)
+        if preview_version and preview_version.group(1) != published:
+            assert any(note in preview_text for note in (
+                "源码发布候选", "不是公开 prerelease", "尚未打公开 tag")), (
+                "PREVIEW.md 的非公开版本没有标明候选状态")
+
+    print(f"selftest ok: 公开 beta 入口 {published} 指向真实发布版本，"
+          f"源码 {source_version} 不会被误写成公开下载。")
+
+
 def test_preview_check_contract():
     """预览验收脚本是用户唯一的一键验收入口，必须真检查、真报错。
 
@@ -8778,6 +8841,7 @@ if __name__ == "__main__":
     test_companion_contract()
     test_panel_contract()
     test_release_contract_includes_pm_briefing_and_acceptance_screenshots()
+    test_public_beta_docs_match_release_tags()
     test_preview_check_contract()
     test_installed_copy_binding()
     test_binding_preflight_rejects_empty_shell()
