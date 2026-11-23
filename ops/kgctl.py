@@ -1918,10 +1918,11 @@ def cmd_suggest(args):
 # ---------------------------------------------------------------- 分诊
 
 def scan(light=False, check_markers=True):
-    # 已裁决的源分支不再算「待裁决冲突」。resolve.json 里 landed/abandoned 的、
-    # progress.jsonl 里 superseded 的，git 层还可能显示 ahead+conflict（它们本来就是
-    # 没合进 main 的历史分支），只按 ahead/conflict 判定就会把它们反复捞回 C 组：
-    # 队列数字虚高，守护进程每轮还重拆同一条已收口的分支。单列一档 SETTLED。
+    # 已裁决的源分支不再算「待裁决冲突」或「可落盘泳道」。resolve.json 里
+    # landed/abandoned 的、progress.jsonl 里 superseded 的，git 层还可能显示
+    # ahead+conflict 或 ahead+clean（它们本来就是没合进 main 的历史分支），只按
+    # ahead/conflict 判定就会把它们反复捞回 C 组或 land 队列：队列数字虚高，
+    # 守护进程每轮还重拆同一条已收口的分支。单列一档 SETTLED。
     settled = set()
     if not light:
         settled = _decided_resolve_branches() | already_superseded()
@@ -1955,7 +1956,7 @@ def scan(light=False, check_markers=True):
             conf = conflict_files(b)
             markers = unresolved_marker_files(b) if check_markers and not conf else []
             kind = "CONFLICT" if conf else ("UNRESOLVED" if markers else "CLEAN")
-            if kind == "CONFLICT" and b in settled:
+            if b in settled:
                 kind = "SETTLED"
         return dict(branch=b, ahead=ahead, behind=behind,
                     age=round((time.time() - ts) / 86400, 1) if ts else -1,
@@ -2093,14 +2094,15 @@ def cmd_queue(args):
         print(f"      最后提交 {age_txt}")
     if not clean:
         print("  队列为空")
+    settled = sum(1 for r in rows if r["kind"] == "SETTLED")
+    unresolved = sum(1 for r in rows if r["kind"] == "UNRESOLVED")
     print(f"\n其余 {len(rows)-len(clean)} 个："
           f"{sum(1 for r in rows if r['kind']=='MERGED')} 个已合并待回收、"
-          f"{sum(1 for r in rows if r['kind']=='CONFLICT')} 个有冲突需裁决。")
+          f"{sum(1 for r in rows if r['kind']=='CONFLICT')} 个有冲突需裁决、"
+          f"{settled} 个已裁决/已归档、"
+          f"{unresolved} 个残留冲突标记。")
     if empty:
         print(f"另有 {len(empty)} 个 0 文件空分支，等待 supersede 归档，不进入 land 队列。")
-    unresolved = sum(1 for r in rows if r["kind"] == "UNRESOLVED")
-    if unresolved:
-        print(f"另有 {unresolved} 个分支残留冲突标记，已从队列排除。")
 
 
 def cmd_gate(args):
@@ -5822,7 +5824,13 @@ def cmd_status(args):
     print(f"  ├ 可入队落盘   {sum(1 for r in rows if row_is_landable(r))}")
     print(f"  ├ 0文件待归档  {sum(1 for r in rows if row_is_empty_candidate(r))}")
     print(f"  ├ 有冲突需裁决 {sum(1 for r in rows if r['kind']=='CONFLICT')}")
-    print(f"  └ 残留冲突标记 {sum(1 for r in rows if r['kind']=='UNRESOLVED')}")
+    unresolved_count = sum(1 for r in rows if r["kind"] == "UNRESOLVED")
+    settled_count = sum(1 for r in rows if r["kind"] == "SETTLED")
+    if settled_count:
+        print(f"  ├ 残留冲突标记 {unresolved_count}")
+        print(f"  └ 已裁决/已归档 {settled_count}（不再计入在途）")
+    else:
+        print(f"  └ 残留冲突标记 {unresolved_count}")
     groups = conflict_groups(rows)
     print(f"冲突收拢族     {len(groups)} 个（可把冲突分支收成 convergence 任务）")
     conflicts = [r for r in rows if r["kind"] == "CONFLICT"]

@@ -4057,6 +4057,16 @@ def test_verify_and_truth():
         if "判断逻辑" not in snap2.stdout or "J-0001" not in snap2.stdout:
             raise AssertionError(f"snapshot 没有渲染判断逻辑:\n{snap2.stdout}")
 
+        # 已归档进展不能显示成在途：superseded 是终态，只是没产生空合并提交。
+        archived = truthctl(repo, "add", "progress", "重复分支已归档",
+                            extra_env={"KG_TRUTH_STATUS": "superseded",
+                                       "KG_TRUTH_SUMMARY": "内容已全在 main"})
+        if archived.returncode != 0:
+            raise AssertionError(f"progress add 失败:\n{archived.stdout}\n{archived.stderr}")
+        snap3 = truthctl(repo, "snapshot", "--print")
+        if "[已归档]" not in snap3.stdout:
+            raise AssertionError(f"snapshot 把 superseded 仍显示在途:\n{snap3.stdout}")
+
         # 问题闭环：新增一条 ledger -> close 标 done 并写进展 -> open 能重开。
         add = truthctl(repo, "add", "ledger", "按钮点着没反应",
                        extra_env={"KG_TRUTH_KIND": "bug", "KG_TRUTH_DETAIL": "首页按钮无响应"})
@@ -7000,6 +7010,63 @@ def test_zero_file_branches_do_not_occupy_land_queue():
     print("selftest ok: 0 文件空壳不占 land 队列，supersede 不再为它们跑 git cherry。")
 
 
+def test_superseded_branches_are_settled_not_landable():
+    """已 superseded 的 clean 分支必须归到已裁决，不能继续占 land 队列。"""
+    import contextlib
+    import importlib.util
+    import io
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    with tempfile.TemporaryDirectory(prefix="kgctl-superseded-") as tmp:
+        root = Path(tmp)
+        (root / "ops" / "truth").mkdir(parents=True)
+        (root / "ops" / "tasks").mkdir(parents=True)
+        (root / "ops" / "truth" / "progress.jsonl").write_text("", encoding="utf-8")
+        with mock.patch.dict(os.environ, {
+            "KG_REPO": str(root),
+            "KG_TRUNK": str(root / "state-trunk"),
+        }):
+            spec = importlib.util.spec_from_file_location(
+                "kgctl_superseded_selftest", ops / "kgctl.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            now = int(_time.time())
+            index = {
+                "codex/archived-clean": {
+                    "ahead": 3, "behind": 900, "ts": now, "subject": "superseded clean",
+                },
+                "codex/live-clean": {
+                    "ahead": 1, "behind": 2, "ts": now, "subject": "real change",
+                },
+            }
+            with mock.patch.object(module, "branch_index", return_value=index), \
+                 mock.patch.object(module, "changed_files", return_value=["app.ts"]), \
+                 mock.patch.object(module, "conflict_files", return_value=[]), \
+                 mock.patch.object(module, "unresolved_marker_files", return_value=[]), \
+                 mock.patch.object(module, "_decided_resolve_branches", return_value=set()), \
+                 mock.patch.object(
+                     module, "already_superseded",
+                     return_value={"codex/archived-clean"}):
+                rows = module.scan()
+
+            by_branch = {r["branch"]: r for r in rows}
+            assert by_branch["codex/archived-clean"]["kind"] == "SETTLED", by_branch
+            assert by_branch["codex/live-clean"]["kind"] == "CLEAN", by_branch
+
+            output = io.StringIO()
+            with mock.patch.object(module, "scan", return_value=rows), \
+                 contextlib.redirect_stdout(output):
+                module.cmd_queue([])
+            queue_text = output.getvalue()
+            assert "kgctl land codex/live-clean" in queue_text, queue_text
+            assert "kgctl land codex/archived-clean" not in queue_text, queue_text
+            assert "1 个已裁决/已归档" in queue_text, queue_text
+
+    print("selftest ok: superseded clean 分支归到已裁决，不再冒充可落盘在途。")
+
+
 def test_prune_keeps_open_resolve_hold():
     """Restart cleanup must not erase a hold for a gate_fail resolve task."""
     import importlib
@@ -8818,6 +8885,7 @@ if __name__ == "__main__":
     test_resolve_land_reports_exit_code_without_killing_caller()
     test_resolve_prepare_raises_controlled_error_not_sysexit()
     test_zero_file_branches_do_not_occupy_land_queue()
+    test_superseded_branches_are_settled_not_landable()
     test_conflict_decision_hold_survives_existing_markers()
     test_prune_keeps_open_resolve_hold()
     test_reset_trunk_truth_conflict()

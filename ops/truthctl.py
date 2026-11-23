@@ -1623,7 +1623,8 @@ def cmd_synthesize(args):
     L += ['## 最近在推进', '']
     if prg[-10:]:
         for r in prg[-10:]:
-            mark = '已落盘' if r.get('landed') else '在途'
+            mark = ('已归档' if r.get('status') == 'superseded'
+                    else '已落盘' if r.get('landed') else '在途')
             c = ' @ %s' % r['commit'][:10] if r.get('commit') else ''
             L.append('- [%s]%s %s' % (mark, c, r.get('summary') or r.get('title', '')))
     else:
@@ -1808,7 +1809,8 @@ def cmd_snapshot(args):
 
     L += ['## 四、进展', '']
     for r in prg[-8:]:
-        mark = '已落盘' if r.get('landed') else '在途'
+        mark = ('已归档' if r.get('status') == 'superseded'
+                else '已落盘' if r.get('landed') else '在途')
         c = f" @ `{r['commit'][:10]}`" if r.get('commit') else ''
         L.append(f"- `{r['id']}` [{mark}]{c} {r.get('summary') or r.get('title','')}")
     L.append('')
