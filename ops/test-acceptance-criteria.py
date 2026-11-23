@@ -10,6 +10,7 @@
   3. 提名阶段不写验收台账；重复原话和 dismiss 过的原话不再弹；
   4. 没有 confirm 不能 promote；确认后才生成 A-id 验收项，且不写假证据；
   5. PM 简报能只读聚合候选，保持 unknown/0 语义不混。
+  6. 历史台账里同一旧 AC-id 被不同原话复用时，不能互相顶掉，也不能误确认/误撤销。
 
 退出码 = 未通过项数。
 """
@@ -65,6 +66,52 @@ INBOX = [
 
 
 def main():
+    with tempfile.TemporaryDirectory(prefix="autopilot-acceptance-id-collision-") as tmp_dup:
+        dup_repo = Path(tmp_dup) / "repo"
+        (dup_repo / "ops" / "truth").mkdir(parents=True)
+        dup_path = dup_repo / "ops" / "truth" / "acceptance_criteria_candidates.jsonl"
+        legacy_rows = [
+            {
+                "id": "AC-0001", "ts": "2026-11-19 09:32:29",
+                "type": "acceptance_criteria_candidate", "status": "proposed",
+                "text": "旧候选：必须能看到验收截图", "title": "验收：旧候选",
+                "needs_human": True, "steps": "原话：必须能看到验收截图",
+                "machine_gate_suggested": False, "signals": ["验收"],
+                "files": [], "source_ts": "2026-11-10 01:30:21",
+                "source_lane": "visual", "source": "intake",
+                "source_hash": "aaaaaaaaaaaaaaaa",
+            },
+            {
+                "id": "AC-0001", "ts": "2026-11-22 10:20:58",
+                "type": "acceptance_criteria_candidate", "status": "proposed",
+                "text": "新候选：这项落地前必须真跑门禁", "title": "验收：新候选",
+                "needs_human": False, "steps": "原话：必须真跑门禁",
+                "machine_gate_suggested": True, "signals": ["门禁"],
+                "files": [], "source_ts": "2026-11-22 10:20:58",
+                "source_lane": "gate", "source": "intake",
+                "source_hash": "bbbbbbbbbbbbbbbb",
+            },
+        ]
+        dup_path.write_text(
+            "\n".join(json.dumps(r, ensure_ascii=False) for r in legacy_rows) + "\n",
+            encoding="utf-8")
+        dup = load("acceptance_criteria_dup_t", "acceptance_criteria.py",
+                   {"KG_REPO": str(dup_repo)})
+        pending_dup = dup.pending()
+        check("重复旧 ID 的不同原话都保留", len(pending_dup) == 2, pending_dup)
+        dup_ids = [r.get("id") for r in pending_dup]
+        check("重复旧 ID 拆成唯一面板 ID",
+              len(set(dup_ids)) == 2 and "AC-0001" in dup_ids
+              and any(str(i).startswith("AC-0001-") for i in dup_ids), dup_ids)
+        target = next(r for r in pending_dup if r.get("source_hash") == "bbbbbbbbbbbbbbbb")
+        dismissed_dup = dup.dismiss(target["id"], "这条不是验收标准")
+        check("按拆开的 ID 精确 dismiss",
+              dismissed_dup.get("status") == "dismissed", dismissed_dup)
+        left_dup = dup.pending()
+        check("dismiss 不误伤同旧 ID 的另一条",
+              len(left_dup) == 1 and left_dup[0].get("source_hash") == "aaaaaaaaaaaaaaaa",
+              left_dup)
+
     with tempfile.TemporaryDirectory(prefix="autopilot-acceptance-criteria-") as tmp:
         repo = Path(tmp) / "repo"
         (repo / "ops" / "tasks").mkdir(parents=True)
