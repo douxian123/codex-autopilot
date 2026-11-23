@@ -1,4 +1,4 @@
-#!/opt/homebrew/Cellar/python@3.14/3.14.3_1/Frameworks/Python.framework/Versions/3.14/bin/python3.14
+#!/usr/bin/env python3
 """磁盘/进程自动止血（每小时一次，独立于自动挡是否暂停）。
 
 为什么单独做：2026-10-22 磁盘从 8.8G 被吃到 108Mi，导致所有 provider 一起断流
@@ -93,7 +93,8 @@ def _resolve_ops() -> Path:
 
 
 OPS = _resolve_ops()
-LOG = Path("/Users/danta/.codex-autopilot/disk-reap.log")
+LOG = Path(os.environ.get(
+    "KG_DISK_REAP_LOG", str(Path.home() / ".codex-autopilot" / "disk-reap.log")))
 DRY = "--dry-run" in sys.argv
 
 # 只清 kg 自动挡/门禁自己生成的前缀，绝不碰用户的 /private/tmp。

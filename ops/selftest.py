@@ -185,6 +185,7 @@ def main():
             "test-panel-renderer-contract.py",
             "test-panel-intent-trigger.py",
             "test-panel-no-html-fallback.py",
+            "test-binding-recovery-action.py",
             "test-research-adoption.py",
             "test-specialized-acceptance-executors.py",
         )
@@ -1438,7 +1439,12 @@ def test_installer():
     _install_src = install.read_text(encoding="utf-8")
     assert "--install" in _install_src and "NO_DAEMON_REPOINT" in _install_src, \
         "install.sh 缺少「装完把守护改指新版本」这一步"
-    assert "daemon.plist" in _install_src, "install.sh 没有检查本机是否已装守护"
+    assert ("local daemon_label=\"${KG_DAEMON_LABEL:-com.codex-autopilot.daemon}\""
+            in _install_src), "install.sh 缺少可覆盖的守护 label"
+    assert ('local daemon_plist="$HOME/Library/LaunchAgents/${daemon_label}.plist"'
+            in _install_src), "install.sh 没有检查本机是否已装守护"
+    assert '[ -f "$daemon_plist" ] && daemon_exists=1' in _install_src, \
+        "install.sh 没有根据 plist 是否存在判断守护是否已装"
     assert "--install-daemon" in _install_src, \
         "install.sh 缺少显式首次安装守护入口"
     assert "按约定不替你启用常驻" in _install_src, \
@@ -1447,6 +1453,12 @@ def test_installer():
         "install.sh 缺少「安装时主动刷新资源准入 hook」这一步"
     assert "资源准入 hook 安装失败" in _install_src, \
         "资源准入 hook 安装失败时没有明确中止安装"
+    assert "migrate_local_secrets\ninstall_local_integrations" in _install_src, \
+        "本地密钥迁移必须先于 launchd / hooks 改指，否则新脚本会因缺密钥失败"
+    assert "本机集成按默认策略跳过" in _install_src, \
+        "install.sh 缺少默认零本机副作用的明确提示"
+    assert "--enable-local-guards" in _install_src and "--migrate-local-secrets" in _install_src, \
+        "install.sh 缺少本机 guards / 密钥迁移的独立 opt-in 开关"
     installed_version = _installed_version()
     release_path = f"./plugins/codex-autopilot/releases/{installed_version}"
     with tempfile.TemporaryDirectory(prefix="autopilot-install-test-") as tmp:
@@ -1500,8 +1512,8 @@ def test_installer():
         upgraded = run(command, env=env, check=False)
         if upgraded.returncode:
             raise AssertionError(f"版本化安装失败:\n{upgraded.stdout}\n{upgraded.stderr}")
-        assert "本机没有守护 plist；按约定不替你启用常驻。" in upgraded.stdout, \
-            f"没有 plist 时安装没说清默认不启用常驻:\n{upgraded.stdout}"
+        assert "本机集成按默认策略跳过" in upgraded.stdout, \
+            f"默认安装没说清本机集成已跳过:\n{upgraded.stdout}"
         data = _json.loads(market.read_text(encoding="utf-8"))
         entry = next(p for p in data["plugins"] if p["name"] == "codex-autopilot")
         other = next(p for p in data["plugins"] if p["name"] == "other-plugin")
@@ -1527,17 +1539,13 @@ def test_installer():
                          "docs/ARCHITECTURE_STEWARDS.md",
                          "docs/PROJECT_GLOBAL_RULES.md"):
             assert (release / required).is_file(), f"发布版本缺少 {required}"
-        resource_hook = home / ".codex" / "hooks" / "resource-admission.py"
-        assert resource_hook.is_file(), "安装后没有落地资源准入 hook"
-        installed_hooks = _json.loads(
-            (home / ".codex" / "hooks.json").read_text(encoding="utf-8"))
-        for event in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
-            groups = installed_hooks["hooks"][event]
-            assert any(
-                "resource-admission.py" in hook["command"]
-                for group in groups
-                for hook in group.get("hooks", [])
-            ), f"{event} 没有挂上资源准入 hook"
+        # 公开 beta 默认只装插件主链：不写 hook、不写 launchd、不碰密钥。
+        assert not (home / ".codex" / "hooks" / "resource-admission.py").exists(), \
+            "默认安装擅自落地了资源准入 hook"
+        assert not (home / ".codex" / "hooks.json").exists(), \
+            "默认安装擅自写了 hooks.json"
+        assert not (home / "Library" / "LaunchAgents").exists(), \
+            "默认安装擅自写了 launchd plist"
         # Companion 源码必须随版本目录一起装：以后能从这个目录重建菜单栏应用。
         assert (release / "companion" / "build.sh").is_file()
         assert (release / "companion" / "Info.plist").is_file()
@@ -1576,6 +1584,65 @@ def test_installer():
         assert any(p["name"] == "other-plugin" for p in restored["plugins"])
         assert sentinel.read_text(encoding="utf-8") == "keep\n"
         assert (release / "ops" / "central_mcp.py").is_file()
+
+        # 2026-11-23 现场事故：把不存在的 <状态根>-trunk 写进 KG_TRUNK 和 release
+        # 配置，安装看似成功，product_eval 的 consistent 判据永久失败。显式 --trunk
+        # 必须 fail closed，不能把坏路径包装成「已安装」。
+        home_bad = Path(tmp) / "home-bad-trunk"
+        home_bad.mkdir()
+        bad_env = os.environ.copy()
+        bad_env.update({
+            "HOME": str(home_bad),
+            "CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE": "1",
+        })
+        missing_trunk = Path(tmp) / "definitely-missing-trunk"
+        bad = run(["bash", str(source_install), "--trunk", str(missing_trunk),
+                   "--no-seed", "--no-marketplace", "--no-companion", str(source)],
+                  env=bad_env, check=False)
+        bad_combined = bad.stdout + bad.stderr
+        assert bad.returncode != 0, f"不存在的 --trunk 被误接受:\n{bad_combined}"
+        assert "落盘主干" in bad_combined, bad_combined
+        assert not (home_bad / "plugins" / "codex-autopilot" / "releases"
+                    / installed_version).exists(), "坏 trunk 仍留下了不可变版本目录"
+
+        # 默认路径不存在时，安装可以完成，但绝不能把不存在的路径写进配置。
+        # 不能用上面的 source 夹具：它旁边已有合法 source-trunk，那种情况下
+        # 写进配置是正确行为。这里另建一个没有同级 trunk 的源码仓库。
+        source_no_default_trunk = Path(tmp) / "source-no-default-trunk"
+        shutil.copytree(OPS.parent, source_no_default_trunk,
+                        ignore=shutil.ignore_patterns(".git", ".build"))
+        _make_state_root(source_no_default_trunk)
+        run(["git", "init", "-q", "-b", "main", str(source_no_default_trunk)])
+        run(["git", "-C", str(source_no_default_trunk), "config", "user.email",
+             "selftest@example.invalid"])
+        run(["git", "-C", str(source_no_default_trunk), "config", "user.name",
+             "Autopilot Selftest"])
+        run(["git", "-C", str(source_no_default_trunk), "add", "."])
+        run(["git", "-C", str(source_no_default_trunk), "commit", "-qm", "fixture"])
+        assert not (Path(tmp) / "source-no-default-trunk-trunk").exists()
+        home_default = Path(tmp) / "home-default-trunk"
+        home_default.mkdir()
+        default_env = os.environ.copy()
+        default_env.update({
+            "HOME": str(home_default),
+            "CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE": "1",
+        })
+        default_install = run(["bash", str(source_install),
+                               "--no-seed", "--no-marketplace", "--no-companion",
+                               str(source_no_default_trunk)], env=default_env, check=False)
+        assert default_install.returncode == 0, (
+            f"默认 trunk 缺失时安装失败:\n{default_install.stdout}\n{default_install.stderr}")
+        default_release = (home_default / "plugins" / "codex-autopilot" / "releases"
+                           / installed_version)
+        default_cfg = _json.loads(
+            (default_release / "ops" / "central.config.json").read_text(encoding="utf-8"))
+        assert not default_cfg.get("trunk_dir"), (
+            "默认 trunk 不存在却写进了 release 配置：%r" % default_cfg.get("trunk_dir"))
+        default_mcp = _json.loads(
+            (default_release / ".mcp.json").read_text(encoding="utf-8"))
+        default_server = default_mcp["mcpServers"]["codex-autopilot"]
+        assert "KG_TRUNK" not in default_server.get("env", {}), (
+            "默认 trunk 不存在却写进了 .mcp.json：%r" % default_server.get("env"))
 
     print("selftest ok: 安装器使用不可变版本目录、拒绝覆盖同版本、"
           "同版本目录恢复重装仍保留上一版回滚指针。")
@@ -1798,12 +1865,25 @@ def test_installed_copy_binding():
       2) MCP 握手 —— initialize/tools/list 能不能应答。
     """
     import json as _json
+    import shutil
 
-    install = OPS.parent / "install.sh"
     installed_version = _installed_version()
     with tempfile.TemporaryDirectory(prefix="autopilot-installed-bind-") as tmp:
         home = Path(tmp) / "home"
         home.mkdir(parents=True)
+        # preview.137 起，显式 --trunk 必须属于安装源仓库。这里不能用当前
+        # 源码工作区直接装：它的 git common-dir 不属于这个临时项目。先复制
+        # 一份干净安装源，再从它建独立 worktree，忠实模拟真实发版布局。
+        source = Path(tmp) / "source"
+        shutil.copytree(OPS.parent, source,
+                        ignore=shutil.ignore_patterns(".git", ".build"))
+        _make_state_root(source)
+        source_install = source / "install.sh"
+        run(["git", "init", "-q", "-b", "main", str(source)])
+        run(["git", "-C", str(source), "config", "user.email", "selftest@example.invalid"])
+        run(["git", "-C", str(source), "config", "user.name", "Autopilot Selftest"])
+        run(["git", "-C", str(source), "add", "."])
+        run(["git", "-C", str(source), "commit", "-qm", "fixture"])
         project = Path(tmp) / "project"
         # 状态根判据是 ops/tasks + ops/truth 两个目录都在；目标项目本身是个 git 仓库。
         (project / "ops" / "tasks").mkdir(parents=True)
@@ -1815,8 +1895,8 @@ def test_installed_copy_binding():
              "add", "."], check=False)
         run(["git", "-C", str(project), "-c", "user.email=t@t", "-c", "user.name=t",
              "commit", "-qm", "init"], check=False)
-        trunk = Path(tmp) / "project-trunk"
-        run(["git", "-C", str(project), "worktree", "add", "-q", "--detach",
+        trunk = Path(tmp) / "source-trunk"
+        run(["git", "-C", str(source), "worktree", "add", "-q", "--detach",
              str(trunk), "main"])
 
         env = os.environ.copy()
@@ -1824,7 +1904,7 @@ def test_installed_copy_binding():
         env["CODEX_AUTOPILOT_ALLOW_DIRTY_SOURCE"] = "1"
         for key in ("KG_REPO", "KG_TRUNK", "KG_DAEMON_HOME"):
             env.pop(key, None)
-        result = run(["bash", str(install), "--trunk", str(trunk), "--no-seed",
+        result = run(["bash", str(source_install), "--trunk", str(trunk), "--no-seed",
                       "--no-marketplace", "--no-companion", str(project)],
                      env=env, check=False)
         assert result.returncode == 0, f"安装失败:\n{result.stdout}\n{result.stderr}"
@@ -2600,7 +2680,7 @@ def test_installer_first_install_daemon_is_explicit():
         default = run(base + [str(source)], env=default_env, check=False)
         assert default.returncode == 0, \
             f"默认安装失败:\n{default.stdout}\n{default.stderr}"
-        assert "按约定不替你启用常驻" in default.stdout, default.stdout
+        assert "本机集成按默认策略跳过" in default.stdout, default.stdout
         assert not (home_default / "Library" / "LaunchAgents" / plist_name).exists(), \
             "默认安装擅自写了守护 plist"
 
@@ -3306,8 +3386,9 @@ def test_native_repair_probe():
 
     with mock.patch.object(central_mcp.codex_native, "probe", return_value={"connected": True}) as probe_mock, \
          mock.patch.object(central_mcp.codex_native, "record_probe"):
-        result = central_mcp.call_tool("codex_native_probe", {"repair": True})
+        result, code = central_mcp.call_tool("codex_native_probe", {"repair": True})
         assert result == {"connected": True}, result
+        assert code == 0, code
         probe_mock.assert_called_once_with(repair=True)
 
     print("selftest ok: 原生自检 repair 只在显式触发时启动 daemon，失败或 socket 未出现都不谎报可派活。")
@@ -8442,14 +8523,16 @@ def test_portable_serve_requires_token():
     """跨机移植的 serve 必须把包锁在一次性令牌后面。
 
     为什么锁这条：`serve` 起的是明文 HTTP、绑 0.0.0.0，而包里有
-    `~/.codex/auth.json`（登录凭据）和 `.codex/config.toml`（各 provider 配置）。
-    裸路径的话，同一个 WiFi 下任何人扫到 8899 端口，GET 一次就把整包拿走 ——
-    用户问的正是「同一个 WiFi 怎么传」，所以这就是他要用的那条路径上的洞。
+    `.codex/config.toml`（各 provider 配置）；登录凭据默认排除，只有显式
+    `--include-auth` 才包含。裸路径的话，同一个 WiFi 下任何人扫到 8899 端口，
+    GET 一次就把整包拿走 —— 用户问的正是「同一个 WiFi 怎么传」，所以这就是
+    他要用的那条路径上的洞。
 
     这里在临时目录造场景，只对源码与 handler 判据断言，不起真服务、不碰真 HOME。
     """
     import importlib.util
     import inspect
+    import tempfile
 
     ops = Path(__file__).resolve().parent
     pm = ops / "portable_migrate.py"
@@ -8474,7 +8557,30 @@ def test_portable_serve_requires_token():
     # 反面：只要源码里出现「裸名即放行」的旧写法，这条就得报出来。
     assert 'not in ("", f"/{SERVE_NAME}")' not in src, (
         "旧的裸路径放行写法还在，等于令牌形同虚设")
-    print("selftest ok: 跨机移植 serve 走一次性令牌，缺/错令牌一律 404。")
+
+    # 凭据默认不能进包：B1 的默认安全边界是「不传 auth.json」。显式
+    # --include-auth 是另一条授权路径，必须仍能打包，否则跨机登录态迁移被误删。
+    assert "--include-auth" in src, "移植工具缺少显式包含凭据的开关"
+    with tempfile.TemporaryDirectory(prefix="portable-auth-boundary-") as raw:
+        fake_home = Path(raw)
+        (fake_home / ".codex").mkdir()
+        (fake_home / ".codex" / "auth.json").write_text("secret-fixture\n", encoding="utf-8")
+        (fake_home / ".codex" / "config.toml").write_text("[model]\n", encoding="utf-8")
+        original_home = mod.HOME
+        try:
+            mod.HOME = fake_home
+            plain = mod._entries(type("Args", (), {
+                "tier": "standard", "include_auth": False,
+            })())
+            with_auth = mod._entries(type("Args", (), {
+                "tier": "standard", "include_auth": True,
+            })())
+        finally:
+            mod.HOME = original_home
+    assert ".codex/auth.json" not in plain, "默认移植包不该包含登录凭据"
+    assert ".codex/config.toml" in plain, "默认移植包仍应包含 provider 配置"
+    assert ".codex/auth.json" in with_auth, "--include-auth 应显式包含登录凭据"
+    print("selftest ok: 跨机移植默认排除登录凭据，serve 走一次性令牌，缺/错令牌一律 404。")
 
 
 def test_human_verdict_close_gate():

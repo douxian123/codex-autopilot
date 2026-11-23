@@ -74,6 +74,25 @@ def main() -> None:
     check("资源准入 hook 独立存在", GUARD.is_file())
     check("hooks 片段存在", HOOKS.is_file())
     hook_config = json.loads(HOOKS.read_text(encoding="utf-8"))
+    check("hooks 片段不写死用户 HOME",
+          "__CODEX_HOOK_HOME__" in HOOKS.read_text(encoding="utf-8")
+          and "/Users/" not in HOOKS.read_text(encoding="utf-8"))
+    installer_spec = importlib.util.spec_from_file_location(
+        "resource_hook_installer_under_test",
+        ROOT / "ops" / "guards" / "install-resource-hooks.py",
+    )
+    installer = importlib.util.module_from_spec(installer_spec)
+    installer_spec.loader.exec_module(installer)
+    with tempfile.TemporaryDirectory(prefix="resource-hook-template-") as raw:
+        fake_home = Path(raw)
+        installed = installer._installed_groups(fake_home)
+        expected = str(fake_home / ".codex" / "hooks" / "resource-admission.py")
+        check("安装时把 HOME 展开到 ~/.codex/hooks",
+              all(expected in hook["command"]
+                  for groups in installed.values()
+                  for group in groups
+                  for hook in group.get("hooks", [])),
+              expected)
     for event in ("PreToolUse", "PostToolUse", "PostToolUseFailure"):
         groups = hook_config["hooks"][event]
         check(f"{event} matcher 覆盖 exec_command",

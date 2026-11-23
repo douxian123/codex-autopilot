@@ -30,7 +30,7 @@ HOME = Path.home()
 
 SPEC: list[tuple[str, str, str]] = [
     (".codex/config.toml", "core", "Codex 主配置（模型/provider/hooks）"),
-    (".codex/auth.json", "core", "登录凭据"),
+    (".codex/auth.json", "secret", "登录凭据（仅 --include-auth 才打包）"),
     (".agents/marketplace.json", "core", "个人插件市场清单"),
     (".agents/plugins", "core", "市场注册信息"),
     (".agents/skills", "core", "用户级 skills"),
@@ -119,7 +119,10 @@ def selected(tier: str):
 
 
 def _entries(args) -> list[str]:
-    return [rel for rel, _t, _d in selected(args.tier) if (HOME / rel).exists()]
+    entries = [rel for rel, _t, _d in selected(args.tier) if (HOME / rel).exists()]
+    if getattr(args, "include_auth", False) and (HOME / ".codex/auth.json").exists():
+        entries.append(".codex/auth.json")
+    return entries
 
 
 def _excluded_size() -> tuple[int, list[tuple[str, int]]]:
@@ -140,6 +143,8 @@ def cmd_plan(args) -> int:
     print(f"{'处理':<8}{'大小':>10}  路径")
     print("-" * 78)
     keep_tiers = {t for _p, t, _d in selected(args.tier)}
+    if getattr(args, "include_auth", False):
+        keep_tiers.add("secret")
     total_keep = total_skip = 0
     for rel, tier, desc in SPEC:
         p = HOME / rel
@@ -154,6 +159,9 @@ def cmd_plan(args) -> int:
             if tier == "regen":
                 total_skip += size
         print(f"{mark:<8}{_human(size):>10}  {rel}   -- {desc}")
+    if not getattr(args, "include_auth", False) and (HOME / ".codex/auth.json").exists():
+        print(f"{'跳过':<8}{_du(HOME / '.codex/auth.json'):>10}  .codex/auth.json"
+              "   -- 登录凭据默认不传；显式 --include-auth 才打包")
 
     drop_total, drop_rows = _excluded_size()
     # 只有落在「要传」条目里的排除项才算真省下的量。
@@ -319,10 +327,11 @@ def cmd_serve(args) -> int:
 
     # 路径里带一次性随机令牌。
     #
-    # 为什么必须带：这个 HTTP 服务绑在 0.0.0.0，而包里含 ~/.codex/auth.json
-    # （登录凭据）和 .codex/config.toml（各 provider 配置）。裸路径的话，同一个
-    # WiFi 下任何扫到 8899 端口的人 GET 一次就把整包拿走。令牌是本次运行的口令，
-    # Ctrl-C 即失效；没带令牌的请求一律 404，连「这个端口在服务什么」都不透露。
+    # 为什么必须带：这个 HTTP 服务绑在 0.0.0.0，包里默认含 .codex/config.toml
+    # （各 provider 配置）；显式 --include-auth 时还会含登录凭据。裸路径的话，
+    # 同一个 WiFi 下任何扫到 8899 端口的人 GET 一次就把整包拿走。令牌是本次
+    # 运行的口令，Ctrl-C 即失效；没带令牌的请求一律 404，连「这个端口在服务
+    # 什么」都不透露。
     token = secrets.token_urlsafe(18)
     path = f"/{token}/{SERVE_NAME}"
 
@@ -350,9 +359,14 @@ def cmd_serve(args) -> int:
     with socketserver.ThreadingTCPServer(("0.0.0.0", port), Handler) as srv:
         url = f"http://{ip}:{port}{path}"
         print(f"已在 {ip}:{port} 就绪，提供 {len(entries)} 项。Ctrl-C 结束。\n")
-        print("注意：这一包含 ~/.codex/auth.json（登录凭据）等敏感文件，且走的是")
-        print("  明文 HTTP。链接里的随机令牌就是本次口令，Ctrl-C 后立即失效；")
-        print("  只在可信 WiFi 上跑，传完就 Ctrl-C，别让它常驻。\n")
+        if getattr(args, "include_auth", False):
+            print("注意：这一包显式包含 ~/.codex/auth.json（登录凭据），且走的是")
+            print("  明文 HTTP。链接里的随机令牌就是本次口令，Ctrl-C 后立即失效；")
+            print("  只在可信 WiFi 上跑，传完就 Ctrl-C，别让它常驻。\n")
+        else:
+            print("注意：默认包不含 ~/.codex/auth.json（登录凭据）；仍含 provider 配置，")
+            print("  走明文 HTTP。需整包迁移登录态时显式传 --include-auth，并只在可信")
+            print("  WiFi 上使用；链接令牌 Ctrl-C 后立即失效。\n")
         print("目标机上执行：")
         print(f'  curl -fL {url} | tar -xzf - -C "$HOME"')
         print()
@@ -543,13 +557,19 @@ def main(argv=None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("plan", help="只算账，不落任何东西")
+    p.add_argument("--include-auth", action="store_true",
+                   help="把 ~/.codex/auth.json 纳入传输（默认排除）")
     p.set_defaults(func=cmd_plan)
 
     p = sub.add_parser("pack", help="打包（-o - 为流式 stdout）")
+    p.add_argument("--include-auth", action="store_true",
+                   help="把 ~/.codex/auth.json 纳入传输（默认排除）")
     p.add_argument("-o", "--output", default="-")
     p.set_defaults(func=cmd_pack)
 
     p = sub.add_parser("serve", help="起临时 HTTP 供目标机拉取")
+    p.add_argument("--include-auth", action="store_true",
+                   help="把 ~/.codex/auth.json 纳入传输（默认排除）")
     p.add_argument("--port", type=int, default=8899)
     p.add_argument("--bind", default="")
     p.set_defaults(func=cmd_serve)

@@ -12,17 +12,18 @@
 # 「先找自己所在目录，找不到再退回旧位置」——两段位置都能跑。
 #
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG=/Users/danta/.codex-autopilot/watchdog.log
-LABEL=com.codex-autopilot.daemon
-PLIST=/Users/danta/Library/LaunchAgents/com.codex-autopilot.daemon.plist
+LOG="${CODEX_AUTOPILOT_WATCHDOG_LOG:-$HOME/.codex-autopilot/watchdog.log}"
+LABEL="${KG_DAEMON_LABEL:-com.codex-autopilot.daemon}"
+PLIST="${CODEX_AUTOPILOT_DAEMON_PLIST:-$HOME/Library/LaunchAgents/${LABEL}.plist}"
 UID_=$(id -u)
+mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 
 # 每次心跳先回收 Chrome/豆包 遗留的签名临时克隆（每个约 1.4GB，用完不删）。
 # 2026-10-23 实测一天堆了 15GB，把可用空间从 7.6GB 压到 3.5GB，
 # 触发守护的 4GB 派活下限，表现就是「机器跑不动」。
 # 只删这些临时目录，不碰任何项目文件/分支/worktree；进程在用或太新的一律跳过。
 REAP_CLONE="$SELF_DIR/reap-codesign-clone.py"
-[ -f "$REAP_CLONE" ] || REAP_CLONE="/Users/danta/.codex-guard/reap-codesign-clone.py"
+[ -f "$REAP_CLONE" ] || REAP_CLONE="$HOME/.codex-guard/reap-codesign-clone.py"
 if [ -f "$REAP_CLONE" ]; then
   python3 "$REAP_CLONE" >> "$LOG" 2>&1
 else

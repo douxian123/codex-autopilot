@@ -58,7 +58,8 @@ RUNNING_OPS = Path(__file__).resolve().parent
 REPO = RUNNING_OPS.parent
 
 from plugin_binding import (apply_plugin_env, binding_health, binding_line,  # noqa: E402
-                            current_ops, stale_code_problem)
+                            binding_recovery_action, current_ops,
+                            stale_code_problem)
 from request_context import RequestContextError, resolve_project  # noqa: E402
 
 
@@ -3217,6 +3218,7 @@ def _status_payload(fast=True):
     health = binding_health()
     if health.get("status") == "broken":
         line = binding_line(health)
+        recovery = binding_recovery_action(health)
         payload = {
             "ok": False,
             "generated_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
@@ -3227,11 +3229,11 @@ def _status_payload(fast=True):
             "error": line,
             "state": "binding_broken",
             "state_label": "安装绑定失效，自动挡不可用",
-            "doing": "没有在动任何项目：当前绑定的状态根不是一个可用的项目账本",
+            "doing": recovery["doing"],
             "why": line,
-            "recent": "需求不会被可靠落账；这不是「没有待办」，是自动挡没接上项目",
-            "need_action": "重跑 ./install.sh <真实 git 仓库根目录>；先不要继续提需求",
-            "need_action_detail": "安装绑定失效的详细路径与修复步骤见工程详情；不会自动改绑定。",
+            "recent": recovery["recent"],
+            "need_action": recovery["need_action"],
+            "need_action_detail": recovery["need_action_detail"],
             "project": {
                 "path": health.get("repo"),
                 "name": Path(health.get("repo")).name if health.get("repo") else None,
@@ -3959,7 +3961,7 @@ def call_tool(name, args):
         # 否则用户没法在「关着」的时候判断到底是不是权限/环境的问题。
         result = codex_native.probe(repair=bool(args.get("repair")))
         codex_native.record_probe(result)
-        return result
+        return result, 0
     if name == "capture_request":
         guard = control_state.mutation_guard()
         if guard:
