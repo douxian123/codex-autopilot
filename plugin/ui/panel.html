@@ -1091,6 +1091,12 @@
   #projectOverview .overview-progress{margin:0}
   #projectOverview .overview-progress{display:block;width:100%;height:4px;background:var(--surface-3);border-radius:999px;overflow:hidden}
   #projectOverview .overview-progress::before{content:"";display:block;width:var(--progress,0%);height:100%;background:var(--brand-500);border-radius:inherit}
+  #projectOverview .overview-metrics{display:grid!important;grid-template-columns:1fr auto!important;align-items:end!important;height:auto!important;margin:14px 0 7px!important}
+  #projectOverview .overview-metrics::before{content:"总体进度"!important;align-self:end!important;margin:0 0 3px!important;color:var(--ink-3)!important;font-size:11px!important}
+  #projectOverview .overview-metric:first-child{justify-self:end!important}
+  #projectOverview .overview-metric:first-child strong{font-size:25px!important;line-height:1!important;letter-spacing:0!important}
+  #projectOverview .overview-progress{height:3px!important;margin-top:2px!important}
+  #mapCard .map-meta{font-size:10.5px!important;color:var(--ink-3)!important}
 
   #q2{margin-bottom:14px}
   #q2 .qhead{display:none}
@@ -1958,10 +1964,9 @@
   }
 
   function projectListName(name, index){
-    if (/^Codex 自动挡$/i.test(String(name || "").trim())) return "另一个项目";
     var shown = userProjectName(name);
-    if (shown !== "Codex Autopilot") return shown;
-    return /native-autopilot$/i.test(String(name || "")) ? "Autopilot Core" : "另一个项目";
+    if (/^codex-autopilot-native-autopilot$/i.test(shown)) return "Autopilot Core";
+    return shown || ("项目 " + String((index || 0) + 1));
   }
 
   function renderProjectMap(road, s){

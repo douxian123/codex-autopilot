@@ -593,11 +593,9 @@ def main(argv):
                 print(f"  FAIL  项目卡默认折叠（实际 open={out.get('folderOpen')!r}）")
                 fails += 1
             raw_folder_name = folder.get("name") or folder.get("id") or "未命名项目"
+            # 项目名是用户的识别锚点，不能为了“好听”把真实项目折叠成“另一个项目”。
             expected_folder_name = ("Autopilot Core" if raw_folder_name == "codex-autopilot-native-autopilot"
-                                    else ("另一个项目" if raw_folder_name in {
-                                        "codex-autopilot-panel-native-surface-20261123",
-                                        "Codex 自动挡",
-                                    } else raw_folder_name))
+                                    else raw_folder_name)
             fails += has("项目卡摘要显示项目名", out["folderSummaryText"], expected_folder_name)
             fails += has("项目卡摘要显示当前目标", out["folderSummaryText"], "当前目标：", goal)
             fails += has("项目卡摘要显示当前步骤", out["folderSummaryText"],
