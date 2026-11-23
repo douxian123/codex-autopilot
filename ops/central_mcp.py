@@ -3863,8 +3863,49 @@ def _settings_update(set_values):
     return {"values": values, "__text__": "设置已更新：" + desc}, 0
 
 
+STALE_BINDING_DIAGNOSTIC_TOOLS = {"autopilot_status", "render_autopilot_panel"}
+
+
+def _stale_binding_guard(name):
+    """陈旧 MCP 进程不许再返回任何项目态，避免状态自相矛盾。
+
+    2026-11-24 现场实测：旧版本缓存目录被升级删掉后，`autopilot_status` 已经会
+    fail-closed 报 binding_broken，但其它工具仍从旧进程残留的 KG_REPO/KG_TRUNK
+    读旧账本：`project_autonomy_status` 报旧项目、`resolve_list` 报 4 条陈旧 resolve，
+    而显式 KG_REPO 的 CLI 已经为空。用户看到的是两套互相打架的真相。
+
+    这里把「正在跑的代码已被删除」变成所有普通工具的统一 fail-closed；只保留
+    状态诊断与打开面板两个出口，让人能看到故障原因和恢复动作。
+    非 stale 的绑定失效仍走原来的按工具 guard，不在这里扩大拦截面。
+    """
+    health = binding_health()
+    if not health.get("stale"):
+        return None
+    recovery = binding_recovery_action(health)
+    line = binding_line(health)
+    return {
+        "ok": False,
+        "code": "AUTOPILOT_BINDING_BROKEN",
+        "state": "binding_broken",
+        "state_label": "安装绑定失效，自动挡不可用",
+        "tool": name,
+        "doing": recovery["doing"],
+        "why": line,
+        "error": line,
+        "recent": recovery["recent"],
+        "need_action": recovery["need_action"],
+        "need_action_detail": recovery["need_action_detail"],
+        "__text__": (
+            "没有执行 %s：%s。%s" % (name, line, recovery["need_action"])),
+    }, 2
+
+
 def call_tool(name, args):
     args = args or {}
+    if name not in STALE_BINDING_DIAGNOSTIC_TOOLS:
+        stale_guard = _stale_binding_guard(name)
+        if stale_guard:
+            return stale_guard
     read_only_tools = {
         "project_status", "next_actions", "product_state", "distill_review",
         "suggest_branch", "resolve_list", "resolve_plan", "generate_context",
