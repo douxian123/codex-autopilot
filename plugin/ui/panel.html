@@ -9,14 +9,14 @@
     /* 主题：先读 @openai/apps-sdk-ui / Codex 宿主注入的官方语义 token，
        再读旧宿主变量，最后才是独立浏览器里的兜底色。这样插件在宿主里
        跟原生容器同一套底色、字色和描边，离开宿主也不会变成一块黑底外挂。 */
-    --bg:var(--color-surface-secondary,var(--color-background-secondary,#F9F9F9));
-    --surface:var(--color-surface,var(--color-background-primary,#FFFFFF));
-    --surface-2:var(--color-surface-secondary,var(--color-background-secondary,#F9F9F9));
-    --surface-3:var(--color-surface-tertiary,var(--color-background-tertiary,#F3F3F3));
-    --ink:var(--color-text,var(--color-text-primary,#0D0D0D));
+    --bg:var(--color-surface-secondary,var(--color-background-secondary-soft,var(--color-background-secondary,#F9F9F9)));
+    --surface:var(--color-surface,var(--color-background-primary-surface,var(--color-background-primary,#FFFFFF)));
+    --surface-2:var(--color-surface-secondary,var(--color-background-secondary-soft,var(--color-background-secondary,#F9F9F9)));
+    --surface-3:var(--color-surface-tertiary,var(--color-background-primary-soft,var(--color-background-tertiary,#F3F3F3)));
+    --ink:var(--color-text,var(--color-text-primary,var(--color-text,#0D0D0D)));
     --ink-2:var(--color-text-secondary,#5D5D5D);
     --ink-3:var(--color-text-tertiary,#8F8F8F);
-    --line:var(--color-border,var(--color-border-primary,#E5E5E5));
+    --line:var(--color-border,var(--color-border-primary-outline,var(--color-border-primary,#E5E5E5)));
     --line-2:var(--color-border-subtle,#F0F0F0);
 
     /* brand · OpenAI 绿 */
@@ -32,15 +32,15 @@
     --brand:var(--brand-600);
 
     /* semantic · 同样优先宿主语义色 */
-    --ok:var(--color-text-success,#0E7A57);
-    --ok-soft:var(--color-background-success-surface,var(--color-background-success,#E7F4EE));
+    --ok:var(--color-text-success,var(--green-700,#00692A));
+    --ok-soft:var(--color-background-success-soft,var(--green-25,#EDFAF2));
     --ok-line:var(--color-border-success-surface,var(--color-border-success,#CDE8DD));
-    --warn:var(--color-text-warning,#8F5F0B);
-    --warn-soft:var(--color-background-warning-surface,var(--color-background-warning,#FAF2E1));
-    --warn-line:var(--color-border-warning-surface,var(--color-border-warning,#EFDDBB));
-    --err:var(--color-text-danger,#B93A31);
-    --err-soft:var(--color-background-danger-surface,var(--color-background-danger,#FAEBE9));
-    --err-line:var(--color-border-danger-surface,var(--color-border-danger,#F0D1CD));
+    --warn:var(--color-text-warning-outline,var(--color-text-warning,var(--orange-500,#E25507)));
+    --warn-soft:var(--color-background-warning-soft,var(--orange-25,#FFF5F0));
+    --warn-line:var(--color-border-warning-surface,var(--color-border-warning,var(--orange-a25,#FFE7D9)));
+    --err:var(--color-text-danger,var(--red-700,#911E1B));
+    --err-soft:var(--color-background-danger-soft,var(--red-25,#FFF0F0));
+    --err-line:var(--color-border-danger-surface,var(--color-border-danger,var(--red-a25,#FFD9D9)));
     --neutral:var(--color-text-secondary,#69707E);
     --neutral-soft:var(--surface-3);
     --neutral-line:var(--line);
@@ -595,9 +595,10 @@
   /* Steward health is the click target; the dot is the quiet status signal. */
   #q2 .stewards{display:flex;align-items:center;gap:6px;margin:13px 0 0;padding:10px 0 0;border-top:1px solid var(--line-2)}
   #q2 .steward-summary{display:none}
-  #q2 .steward-strip{display:flex;align-items:center;gap:2px}
-  #q2 .steward{width:22px;height:22px;padding:0;border:0;border-radius:50%;background:transparent;display:grid;place-items:center;cursor:pointer}
-  #q2 .steward:hover,#q2 .steward:focus-visible{background:var(--surface-3)}
+  #q2 .steward-strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 12px}
+  #q2 .steward{width:auto;min-height:19px;padding:0;border:0;border-radius:var(--r-xs);background:transparent;display:inline-flex;align-items:center;justify-content:space-between;gap:6px;cursor:pointer;color:var(--ink-2);font:inherit;font-size:11px;line-height:1.25}
+  #q2 .steward-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #q2 .steward:hover,#q2 .steward:focus-visible{background:var(--surface-3);color:var(--ink)}
   #q2 .steward .sdot{display:block;width:7px;height:7px;border-radius:50%;background:var(--ink-3);opacity:.5;transition:transform .15s}
   #q2 .steward:hover .sdot,#q2 .steward:focus-visible .sdot{transform:scale(1.15)}
   #q2 .steward.s-ok .sdot{background:var(--ok);opacity:.9}
@@ -606,7 +607,7 @@
   #q2 .steward.s-unknown .sdot{background:var(--ink-3);opacity:.35}
   #q2 .steward-detail{margin-top:8px;padding:9px 10px;border:0;border-radius:var(--r-sm);background:var(--surface-2);font-size:11.5px;color:var(--ink-2)}
   #q2 .steward-detail-status{line-height:1.5}
-  #q2 .steward-detail-recent{margin-top:9px;padding-top:8px;border-top:1px solid var(--line-2)}
+  #q2 .steward-detail-recent{margin-top:9px}
   #q2 .steward-detail-recent strong{display:block;margin-bottom:4px;font-size:11.5px;font-weight:600;color:var(--ink)}
   #q2 .steward-detail-recent ul,#q2 .steward-history ul{margin:0;padding-left:16px}
   #q2 .steward-detail-recent li,#q2 .steward-history li{margin:2px 0;overflow-wrap:anywhere}
@@ -1756,6 +1757,10 @@
       li.title = full;
       li.setAttribute("aria-label", full);
       li.setAttribute("data-key", r.key || "");
+      var name = document.createElement("span"); name.className = "steward-label";
+      var shortLabel = String(r.label || "未命名责任").split("：")[0];
+      name.textContent = shortLabel || "未命名责任";
+      li.appendChild(name);
       var dot = document.createElement("span"); dot.className = "sdot";
       dot.setAttribute("aria-hidden", "true");
       li.appendChild(dot);

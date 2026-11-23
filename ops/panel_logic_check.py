@@ -998,8 +998,9 @@ def main(argv):
                        "tune": "状态", "exec": "实现", "pm": "项目",
                        "accept": "验收", "health": "全局健康"}
         steward_html = str(out.get("stewardHtml") or "")
-        if "steward-strip" in steward_html and "steward" in steward_html:
-            print("  PASS  管家健康条以颜色点上屏")
+        if ("steward-strip" in steward_html and "steward" in steward_html
+                and "steward-label" in steward_html and "sdot" in steward_html):
+            print("  PASS  管家健康条以名称加状态点上屏")
         else:
             fails += 1
             print("  FAIL  管家健康条没有以颜色点上屏")
@@ -1013,7 +1014,7 @@ def main(argv):
         status_text = status_match.group(1) if status_match else ""
         if ("最近完成" in detail_text and "管家" not in status_text
                 and "steward-detail-head" not in detail_html):
-            print("  PASS  点击颜色点只展开结果详情，不重复显示内部名称")
+            print("  PASS  点击管家入口只展开结果详情，不重复显示内部名称")
         else:
             fails += 1
             print("  FAIL  颜色点详情仍重复显示内部名称或未展开最近完成")
