@@ -551,7 +551,7 @@
   #q1 .alert.lv-warn{background:var(--warn-soft)}
   #q1>#globalRoutingFold,#q1>#needEvidenceFold{display:block;margin:6px 0 0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
   #q1>#globalRoutingFold[hidden],#q1>#needEvidenceFold[hidden]{display:none}
-  #q1>#globalRoutingFold summary,#q1>#needEvidenceFold summary{display:block;padding:0;font-size:11px;font-weight:500;color:var(--ink-3)}
+  #q1>#globalRoutingFold summary,#q1>#needEvidenceFold summary{display:none}
   #q1>#globalRoutingFold summary::after,#q1>#needEvidenceFold summary::after{display:none}
   #q1>#globalRoutingFold .foldbody,#q1>#needEvidenceFold .foldbody{padding:8px 0 0}
 
@@ -671,6 +671,7 @@
   #folderCard .folder-goal-editor[hidden]{display:none}
   #folderCard .folder-work{margin-top:8px;padding:4px 10px;border-radius:var(--r-sm);background:var(--surface)}
   #folderCard .folder-goal-editor{margin-top:8px;padding:10px;border:0;border-radius:var(--r-sm);background:var(--surface)}
+  #folderCard:not(:has(details.folder)){display:none}
 
   /* Configuration and evidence are discoverable below the default first screen. */
   #needEvidenceFold,#acceptCard,#routeOverview,.overview-detail,#advanced,#guide,.ctrl{order:9;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none}
@@ -2240,9 +2241,11 @@
       return true;
     });
     var note = el("folderNote");
+    var folderCard = el("folderCard");
+    if (folderCard) folderCard.hidden = !list.length;
     if (note) note.textContent = list.length ? (list.length + " 个其他项目") : "";
     if (!list.length){
-      box.innerHTML = '<div class="empty">当前只运行这一项目；加入其他项目后会显示在这里。</div>';
+      box.innerHTML = "";
       return;
     }
     list.forEach(function(f, index){
