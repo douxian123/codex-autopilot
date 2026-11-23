@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-23 10:16:58　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-23 19:46:28　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -66,8 +66,6 @@
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0173` [P1] codex/codesign-clone-reap-resilience-20261122 落盘验收
-  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0174` [P1] codex/context-projection-stale-wt-20261122 门禁预跑（未落盘）
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0175` [P1] codex/context-projection-stale-wt-20261122 落盘验收
@@ -89,6 +87,8 @@
 - `A-0183` [P1] 动态验收专项执行器远端合入门禁验收
   - 证据：cwd=/Users/danta/.newmax/workspace/ca-truthctl-runtime-precedence-20261122-trunk-trunk; python3 ops/test-truth-sync-ignored-views.py -> EXIT=0; python3 ops/test-specialized-acceptance-execut…
 - `A-0184` [P1] codex/resolve-land-clean-worktree-gate-20261122 落盘验收
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0185` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 
 ## 还差什么
@@ -241,11 +241,12 @@
 - `A-0045` [P1] 真实入口端到端机器闭环：Companion 派需求->归类->台账->面板逻辑检查->收口
 - `A-0046` [P1] Companion 作为 UIElement 菜单栏应用在系统注册且驾驶舱可打开（机器自证）
 - `A-0184` [P1] codex/resolve-land-clean-worktree-gate-20261122 落盘验收
+- `A-0185` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
 
 ## 进度概览
 
 - 累计关闭问题：14 条
 - 累计落盘：112 条
 - 未决问题：1 条
-- 已验收：136 条
+- 已验收：137 条
 
