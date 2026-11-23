@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-24 01:01:28　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-24 02:17:00　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -52,8 +52,6 @@
 
 ## 最近在推进
 
-- [已落盘] @ c31ee080b3 动态验收专项执行器已进入 origin/main；专项和最小充分范围门禁通过；现场安装版本暂未换代，未宣称用户现场已生效
-- [在途] 机器侧已修并换代到 live .128：setup/MCP 触发文案已落盘，trigger/gate/panel 渲染门禁与 MCP 实调全 PASS；宿主面板视觉与真实打开需用户新开会话确认
 - [已落盘] @ a66902bcb0 codex/resolve-land-clean-worktree-gate-20261122 验证门禁通过，已落盘 main @ a66902bcb0；改动 1 个文件：CONTEXT.md（+8/-0）｜1 file changed, 8 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [在途] @ 300ea39314 codex/disk-admission-fix-20261105 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
 - [在途] @ 07b17402d8 codex/disk-reap-into-repo 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
@@ -62,6 +60,8 @@
 - [在途] 机器侧可交付；旧会话面板可见性未闭环，L-0019 必须在新会话由人确认。
 - [已落盘] @ d845d0dc1d codex/route-ownership-contract-20261123 验证门禁通过，已落盘 main @ d845d0dc1d；改动 3 个文件：ops/selftest.py（+1/-0）、ops/test-central-command-followup-contract.py（+22/-0）、plugin/skills/central-command/SKILL.md（+7/-0）｜3 files changed, 30 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 81e1246be8 codex/mcp-stale-failclosed-20261124 验证门禁通过，已落盘 main @ 81e1246be8；改动 3 个文件：ops/central_mcp.py（+41/-0）、ops/selftest.py（+4/-0）、ops/test-mcp-stale-failclosed.py（+142/-0）｜3 files changed, 187 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [在途] @ ee180ad01a 当前主干 ee180ad0 的 .146 发布候选复验：全新隔离 clone + 显式 trunk 安装完成，product_eval 5/5、阴性对照 8/8，首问闭环率 88.2%（15/17），selftest/panel logic/panel render/stale release-dir 门禁均为 0；live 已恢复到公开 .140，未打 tag、未发 prerelease、未换代、未签收 L-0019。
+- [在途] P-0215 冲突补回（远端 tick 删除后按唯一 ID 追加）：当前主干 ee180ad0 的 .146 发布候选复验完成；product_eval 5/5、阴性对照 8/8、首问闭环率 88.2%（15/17），全部专项门禁 exit 0；live 已恢复公开 .140，未发 tag/prerelease、未换代、未签收 L-0019。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
