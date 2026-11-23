@@ -289,9 +289,22 @@ def _state_payload(state):
     }
 
 
-def _driver_js(state):
-    """Return JS that injects a real state and measures the rendered panel."""
+def _driver_js(state, inject=True):
+    """Return JS that injects a real state and measures the rendered panel.
+
+    Focus checks must measure after the real Tab key without re-injecting the
+    state, otherwise re-rendering can move focus and create a false red.
+    """
     payload = json.dumps(_state_payload(state), ensure_ascii=False)
+    injection = ""
+    if inject:
+        injection = """
+  window.dispatchEvent(new MessageEvent("message", {
+    source: window.parent,
+    data: {jsonrpc:"2.0", method:"ui/notifications/tool-result",
+           params:{structuredContent:payload}}
+  }));
+"""
     return r"""
 (function(){
   var payload = %s;
@@ -377,11 +390,7 @@ def _driver_js(state):
     if (active !== target) bad.push("focus moved to " + (active && active.tagName));
     return bad;
   }
-  window.dispatchEvent(new MessageEvent("message", {
-    source: window.parent,
-    data: {jsonrpc:"2.0", method:"ui/notifications/tool-result",
-           params:{structuredContent:payload}}
-  }));
+%s
   return new Promise(function(resolve){
     setTimeout(function(){
       resolve({
@@ -397,7 +406,7 @@ def _driver_js(state):
     }, 180);
   });
 })()
-""" % payload
+""" % (payload, injection)
 
 
 class CDP(object):
@@ -526,7 +535,7 @@ def run_browser_checks(panel=PANEL, chrome=None, include_screenshots=True):
                         "windowsVirtualKeyCode": 9, "nativeVirtualKeyCode": 9,
                     })
                     time.sleep(0.08)
-                    focus_measurement = cdp.evaluate(_driver_js(state))
+                    focus_measurement = cdp.evaluate(_driver_js(state, inject=False))
                     if isinstance(focus_measurement, dict):
                         measurement = focus_measurement
                 for check_name, key in (
