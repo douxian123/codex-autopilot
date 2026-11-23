@@ -328,6 +328,7 @@ console.log(JSON.stringify({
   stateLabel: read("stateLabel"),
   subtitle: read("subtitle"),
   q1State: read("q1State"),
+  q1Class: document.getElementById("q1").className,
   masterState: read("masterState"),
   focusStatus: read("focusStatus"),
   focusDoing: read("focusDoing"),
@@ -518,7 +519,7 @@ def main(argv):
         routing = payload.get("global_routing") or {}
         if routing.get("status") == "ok" and routing.get("count"):
             fails += has("全局待路由提醒显示条数", out["globalRoutingSummary"],
-                         "全局待路由 " + str(routing["count"]) + " 条待复核")
+                         "查看 " + str(routing["count"]) + " 条待复核需求")
             fails += has("全局待路由说明只追加不改原文", out["globalRoutingBox"],
                          "不改原始记录", "预演不写任何账本")
             calls = out.get("routingAssignCalls") or []
@@ -576,9 +577,26 @@ def main(argv):
         fails += has("路线图普通空态显示等待下一条需求",
                      idle_out["hierarchyWork"], "等待下一条需求")
         folders = ((payload.get("project_folders") or {}).get("folders") or [])
-        visible_folders = [f for f in folders if not project.get("path") or f.get("path") != project.get("path")]
+        other_fixture = {
+            "id": "kg-panel-fixture",
+            "name": "knowledge-graph-panel-fixture-20261123",
+            "display_name": "ThoughLoom",
+            "path": "/tmp/kg-panel-fixture",
+            "active": False,
+            "one_liner": "把读者需要的事实与证据组织成可追溯的知识图谱。",
+            "current_step": "面板信息层级收敛",
+            "doing_items": [{"id": "W-9001", "title": "检查项目卡信息层级"}],
+            "todo_items": [{"id": "W-9002", "title": "补齐真实入口截图"}],
+            "counts": {"doing": 1, "todo": 1, "human": 1},
+            "roadmap": [{"step": "检查项目卡信息层级", "status": "doing", "progress": 60}],
+        }
+        folder_payload = dict(payload)
+        folder_payload["project_folders"] = {"folders": [other_fixture]}
+        folder_out = run_once(folder_payload)
+        visible_folders = [other_fixture]
         if visible_folders:
             folder = visible_folders[0]
+            out = folder_out
             folder_items = (folder.get("doing_items") or folder.get("todo_items") or [])
             goal = folder.get("goal_override") or folder.get("one_liner") \
                 or folder.get("stage") or "目标待明确"
@@ -593,16 +611,32 @@ def main(argv):
                 print(f"  FAIL  项目卡默认折叠（实际 open={out.get('folderOpen')!r}）")
                 fails += 1
             raw_folder_name = folder.get("name") or folder.get("id") or "未命名项目"
-            # 项目名是用户的识别锚点，不能为了“好听”把真实项目折叠成“另一个项目”。
-            expected_folder_name = ("Autopilot Core" if raw_folder_name == "codex-autopilot-native-autopilot"
-                                    else raw_folder_name)
+            # 展示名优先使用注册表里的产品名，而不是内部 worktree 名。
+            expected_folder_name = (folder.get("display_name") or folder.get("title")
+                                    or folder.get("product") or raw_folder_name)
+            expected_folder_name = str(expected_folder_name)
+            if expected_folder_name == "codex-autopilot-native-autopilot":
+                expected_folder_name = "Autopilot Core"
+            elif expected_folder_name == "Codex 自动挡":
+                expected_folder_name = "Codex Autopilot"
             fails += has("项目卡摘要显示项目名", out["folderSummaryText"], expected_folder_name)
+            if "codex-autopilot-native-autopilot" in str(out["folderSummaryText"]) \
+                    and expected_folder_name != "codex-autopilot-native-autopilot":
+                fails += 1
+                print("  FAIL  项目卡摘要泄漏内部 worktree 名")
+            else:
+                print("  PASS  项目卡摘要不泄漏内部 worktree 名")
             fails += has("项目卡摘要显示当前目标", out["folderSummaryText"], "当前目标：", goal)
             fails += has("项目卡摘要显示当前步骤", out["folderSummaryText"],
                          "当前步骤：", folder.get("current_step"))
             fails += lacks("项目卡摘要不铺开工程路径", out["folderSummaryText"], folder.get("path"))
             fails += lacks("项目卡正文不铺开工程路径", out["folderBodyText"], folder.get("path"))
             fails += has("项目卡路径保留在 title", out["folderSerialized"], folder.get("path"))
+            if expected_folder_name == str(project.get("name") or ""):
+                fails += 1
+                print("  FAIL  当前项目在其他项目列表里重复出现")
+            else:
+                print("  PASS  当前项目不在其他项目列表里重复出现")
             fails += has("项目卡展开区有目标编辑入口", out["folderBodyText"], "编辑目标")
             goal_calls = out.get("projectGoalCalls") or []
             if goal_calls and goal_calls[0].get("confirm") is True \
@@ -693,7 +727,7 @@ def main(argv):
         review["human_acceptance"] = [{"id": "A-9001", "title": "真实桌面验收"}]
         review_out = run_once(review)
         fails += has("人工验收升级为明确状态", review_out["stateLabel"], "需要你验收")
-        fails += has("人工验收在提示条里明确出现", review_out["needText"], "需要你验收")
+        fails += has("人工验收在提示条里明确出现", review_out["needText"], "等你验收")
         fails += has("有验收时第一问摘要明确要你验收", review_out["q1State"], "要你验收")
         decision = dict(payload)
         decision.update({
@@ -761,7 +795,25 @@ def main(argv):
             "acceptance_criteria": {"status": "ok", "count": 0, "items": []},
         })
         clean_out = run_once(clean)
+        clean["global_routing"] = {"status": "ok", "count": 0}
+        clean_out = run_once(clean)
         fails += has("无需处理时第一问摘要写不用你", clean_out["q1State"], "不用你")
+        blocked_only = dict(clean)
+        blocked_only.update({
+            "state": "blocked",
+            "state_label": "有卡点",
+            "need_action": "后台有 3 个可自动处理的卡点",
+            "blocked": {"failures": [{"target": "branch-a"}], "resolve": [], "exec": [], "port": []},
+            "counts": {"doing": 1, "todo": 2, "review": 0, "stuck": 3},
+        })
+        blocked_only_out = run_once(blocked_only)
+        fails += has("普通卡点不把第一问升级成人工动作",
+                     blocked_only_out["q1State"], "不用你")
+        if "has-need" in str(blocked_only_out.get("q1Class") or ""):
+            fails += 1
+            print("  FAIL  普通卡点仍点亮第一问")
+        else:
+            print("  PASS  普通卡点不点亮第一问")
         say = dict(clean)
         say["need_action"] = "有新需求还不知道归到哪个项目，需要你说一句"
         say_out = run_once(say)

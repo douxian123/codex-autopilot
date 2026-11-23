@@ -365,11 +365,10 @@ def _driver_js(state):
   }
   function measureFocus(){
     var bad = [];
-    var controls = Array.prototype.slice.call(document.querySelectorAll("button,a[href],input,summary,[role=button]"))
-      .filter(visible);
-    if (!controls.length) return ["no visible focusable control"];
-    var target = controls[0];
-    target.focus();
+    var target = document.activeElement;
+    if (!target || target === document.body || !visible(target)) {
+      return ["keyboard focus not applied"];
+    }
     var cs = getComputedStyle(target);
     var outlined = (cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) > 0) ||
       cs.boxShadow !== "none" || cs.borderWidth !== "0px";
@@ -515,6 +514,21 @@ def run_browser_checks(panel=PANEL, chrome=None, include_screenshots=True):
                 if measurement.get("state_label") != expected_label:
                     raise EvidenceError("state was not applied for %s/%s: %r" %
                                         (viewport["name"], state, measurement.get("state_label")))
+                if state in ("default", "focus"):
+                    # :focus-visible 是浏览器根据真实键盘交互决定的，不能用 JS
+                    # focus() 冒充。用 CDP 的 Input.dispatchKeyEvent 真正按 Tab。
+                    cdp.call("Input.dispatchKeyEvent", {
+                        "type": "keyDown", "key": "Tab", "code": "Tab",
+                        "windowsVirtualKeyCode": 9, "nativeVirtualKeyCode": 9,
+                    })
+                    cdp.call("Input.dispatchKeyEvent", {
+                        "type": "keyUp", "key": "Tab", "code": "Tab",
+                        "windowsVirtualKeyCode": 9, "nativeVirtualKeyCode": 9,
+                    })
+                    time.sleep(0.08)
+                    focus_measurement = cdp.evaluate(_driver_js(state))
+                    if isinstance(focus_measurement, dict):
+                        measurement = focus_measurement
                 for check_name, key in (
                     ("no-overflow", "no_overflow"),
                     ("no-clipping", "no_clipping"),
