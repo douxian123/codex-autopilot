@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-23",
+ "updated": "2026-10-16",
  "modules": [
   {
    "area": "唯一入口",
@@ -77,18 +77,6 @@
    "why": "",
    "files": [],
    "updated": "2026-10-16"
-  },
-  {
-   "area": "安装器与发布一致性",
-   "behavior": "安装器在写入 KG_TRUNK 与 release central.config.json 前 fail closed 校验落盘主干：显式 --trunk 必须存在、是仓库根且与插件源码同仓；默认 trunk 缺失时不再写坏路径。发布评估 5/5，preview.138 已完成换代安装并重启守护。",
-   "why": "修复现场 3/5 评估中的 runnable 与 consistent 红项，并确保普通用户安装后不会静默绑定不存在的落盘主干。",
-   "files": [
-    "install.sh",
-    "ops/central_mcp.py",
-    "ops/selftest.py",
-    "plugin/.codex-plugin/plugin.json"
-   ],
-   "updated": "2026-11-23"
   }
  ]
 }
