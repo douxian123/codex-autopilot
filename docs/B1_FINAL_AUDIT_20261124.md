@@ -114,3 +114,49 @@ API key 不包含这些功能；这些属于 B2。
 按用户已选的 B1 口径，**工程链、公开入口、本机主链、多管家责任视图和使用说明已经闭环**。
 把 B2、人工签收和完整公开 Beta 四层标准也算进同一句“全部完成”是不诚实的；它们仍按
 上面的未闭合项独立记账。
+
+## 8. 2026-11-24 最终机器侧复核
+
+本节是随后一轮对“当前可闭环工作全部闭环”的最新复核，不改写第 1 节的 B1 口径。
+
+主干已推送：
+
+```text
+35fedb84 chore(truth): sync generated conflict burden after 29d9bc64
+29d9bc64 chore(truth): sync machine-side closure 20261124
+cf3e99f7 chore(truth): sync J-0027 P-0246 panel-design truth
+a6898edb chore(truth): record landing codex/final-progress-closure-20261124
+```
+
+最新门禁原文：
+
+```text
+python3 ops/selftest.py -> exit 0
+experience-evidence: PASS (48/48, fresh=True, screenshots=4)
+EXPERIENCE_EXIT=0
+结果：全部通过
+PANEL_LOGIC_EXIT=0
+结果：全部通过
+PANEL_RENDER_EXIT=0
+project-constitution: PASS
+PROJECT_CONSTITUTION_EXIT=0
+```
+
+验收台账按每个 ID 的最新状态归一化：
+
+```text
+RAW_ROWS=247 LATEST_IDS=198
+STATUS_COUNTS=verified 167 / todo 8 / wip 0 / blocked 0 / void 23
+NONHUMAN_OPEN=0
+```
+
+8 条 `todo` 全部是 `needs_human=true`：`A-0022`、`A-0044`、`A-0187` 至 `A-0192`。
+机器型未闭环为 0。`kgctl next` 中的 `L-0019` / `L-0020` / `L-0021` 和
+`resolve --list` 中的 `panel-design-restore-20261124` 均停在人工体验签收 / 产品标准
+ / 发布边界，不属于可自动代签项。`queue --gates` 合并队列为空，0 个残留冲突标记。
+
+自动挡状态仍如实显示 `connected=false / can_dispatch=false /
+blocked_by=remote-control-chatgpt-pairing`，运行态源码落后于主干源码时不自动换代。
+
+**最终判断**：按当前可机器闭环的工作，工程门禁、真相台账、体验机器证据和公开 beta
+入口全部闭环；剩余均是人工验收、产品/发布决策或需要 ChatGPT pairing 的 B2 能力。

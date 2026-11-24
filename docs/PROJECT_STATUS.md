@@ -1,6 +1,6 @@
 # 项目状态（自动生成，勿手改）
 
-> 生成时间 2026-11-24 16:56:49　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
+> 生成时间 2026-11-24 17:09:42　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
 
 ## 一、产品主线
 
@@ -48,7 +48,6 @@
 
 ## 四、进展
 
-- `P-0238` [已落盘] @ `097280a1ba` codex/public-beta-docs-closure-20261124 验证门禁通过，已落盘 main @ 097280a1ba；改动 3 个文件：docs/BETA_LOCAL_TRIAL.md（+10/-2）、ops/selftest.py（+9/-0）、plugin/skills/setup/SKILL.md（+1/-0）｜3 files changed, 20 insertions(+), 2 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0233
 - `P-0239` [已落盘] @ `27ad73736e` codex/experience-gate-target-runner-20261124 验证门禁通过，已落盘 main @ 27ad73736e；改动 2 个文件：ops/kgctl.py（+70/-12）、ops/test-verify-gates-use-target-tree.py（+24/-0）｜2 files changed, 94 insertions(+), 12 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0240` [已落盘] @ `c65f319618` codex/acceptance-id-worktrees-20261124 验证门禁通过，已落盘 main @ c65f319618；改动 2 个文件：ops/test_truthctl_cross_worktree_ids.py（+53/-0）、ops/truthctl.py（+81/-4）｜2 files changed, 134 insertions(+), 4 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0240
 - `P-0243` [已落盘] @ `8b2b9e06c7` codex/b1-final-closure-20261124 验证门禁通过，已落盘 main @ 8b2b9e06c7；改动 6 个文件：docs/PRODUCT_MAINLINE.md（+48/-27）、docs/PROJECT_CONSTITUTION.md（+4/-2）、docs/PROJECT_STATUS.md（+33/-12）、ops/truth/acceptance.jsonl（+1/-0）、ops/truth/decisions.jsonl（+1/-0），另有 1 个文件｜6 files changed, 88 insertions(+), 41 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
@@ -56,6 +55,7 @@
 - `P-0245` [已落盘] @ `5ae6bae260` codex/final-progress-closure-20261124 验证门禁通过，已落盘 main @ 5ae6bae260；改动 3 个文件：docs/B1_FINAL_AUDIT_20261124.md（+116/-0）、ops/test-truth-dedupe.py（+19/-0）、ops/truthctl.py（+14/-4）｜3 files changed, 149 insertions(+), 4 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0246` [已完成] panel-design-restore-20261124 的 focus-visible 旧 runner 假红已复核：目标树机器证据全绿，落盘只卡人工体验签收；不再重跑同一失败 land。
 - `P-0247` [已完成] 把 18 条被后续 verified/landed/superseded 或目标树机器证据覆盖的旧 todo 验收转 void；把 steward-history-detail 的 needs_agent 旧行追加 abandoned 终态；人工验收 A-0022/A-0044/A-0187..A-0192、L-0019/L-0020/L-0021 不动。
+- `P-0249` [已完成] 最终审计确认当前可机器闭环项已全部闭环：origin/main 35fedb84；全量 selftest exit 0；experience-evidence PASS 48/48 fresh=True screenshots=4；panel-logic、panel-render、project-constitution 均 exit 0；验收按 id 最新态 verified=167/todo=8/wip=0/blocked=0/void=23，8 条 todo 全为 needs_human=true，机器型未闭环=0；剩余为人工验收、产品/发布决策与 ChatGPT pairing B2。
 
 ## 五、验收进度
 
