@@ -105,10 +105,10 @@
   },
   {
    "area": "验收结论口径",
-   "behavior": "走查问题未经当前产物真实浏览器全量复跑前，产品不宣称全部问题已修复、符合预期或全产品闭环生效。",
-   "why": "最新真机复放只完成单条 case-02 的根因修复与后端门禁，30 条任务和未决台账尚未全量复验。",
+   "behavior": "当前问题台账仍有 L-0427、L-0430、L-0431、L-0432、L-0440、L-0543、L-0546、L-0547、L-0555 处于 open；因此不能宣称全产品闭环生效。",
+   "why": "以 ops/truthctl.py ls ledger 的实时输出为准，修正上一条基于记忆的台账状态说法。",
    "files": [
-    "docs/acceptance/USER_WALKTHROUGH_CLOSURE_MATRIX_20261123.md"
+    "ops/truth/ledger.jsonl"
    ],
    "updated": "2026-11-25"
   }
