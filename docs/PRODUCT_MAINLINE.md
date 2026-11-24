@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-24 17:09:42　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-24 19:39:42　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -40,6 +40,7 @@
 - **视觉/设计方案提示词**：做视觉/设计前先当产品经理+产品设计师，尊重用户、保护注意力：先截图看现状再改，改完再截图对比，只允许正向改动，不能更丑、更乱、更难读。
 - **主动注意提醒**：出现人工验收、需要拍板或异常时，主面板显示明确待处理状态，菜单栏切换警示图标并通过 macOS 通知中心提醒；同一批待办只提醒一次。
 - **自动挡合并队列与真相投影**：已归档（superseded）的分支不再出现在落盘队列或一屏在途项，队列会单列已裁决/已归档数量；真相快照把这类进展显示为「已归档」而不是「在途」。
+- **绑定漂移**：插件绑定旧脏 worktree、当前会话在同仓库干净状态根时，binding_health 报漂移；capture_request、intake_request、route_preview 在写入前返回 AUTOPILOT_BINDING_DRIFT，并提示重跑 install.sh <当前状态根> 后重开 Codex；干净多 worktree 和安装自检不误报。
 
 ## 决策脉络
 
@@ -54,8 +55,6 @@
 
 ## 最近在推进
 
-- [已落盘] @ b061c53b60 codex/fix-resolve-stale-adopt-guard-20261124 验证门禁通过，已落盘 main @ b061c53b60；改动 2 个文件：ops/kgctl.py（+31/-0）、ops/selftest.py（+62/-5）｜2 files changed, 93 insertions(+), 5 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0203、A-0204
-- [已落盘] @ 097280a1ba codex/public-beta-docs-closure-20261124 验证门禁通过，已落盘 main @ 097280a1ba；改动 3 个文件：docs/BETA_LOCAL_TRIAL.md（+10/-2）、ops/selftest.py（+9/-0）、plugin/skills/setup/SKILL.md（+1/-0）｜3 files changed, 20 insertions(+), 2 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0233
 - [已落盘] @ 27ad73736e codex/experience-gate-target-runner-20261124 验证门禁通过，已落盘 main @ 27ad73736e；改动 2 个文件：ops/kgctl.py（+70/-12）、ops/test-verify-gates-use-target-tree.py（+24/-0）｜2 files changed, 94 insertions(+), 12 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ c65f319618 codex/acceptance-id-worktrees-20261124 验证门禁通过，已落盘 main @ c65f319618；改动 2 个文件：ops/test_truthctl_cross_worktree_ids.py（+53/-0）、ops/truthctl.py（+81/-4）｜2 files changed, 134 insertions(+), 4 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0240
 - [已落盘] @ 8b2b9e06c7 codex/b1-final-closure-20261124 验证门禁通过，已落盘 main @ 8b2b9e06c7；改动 6 个文件：docs/PRODUCT_MAINLINE.md（+48/-27）、docs/PROJECT_CONSTITUTION.md（+4/-2）、docs/PROJECT_STATUS.md（+33/-12）、ops/truth/acceptance.jsonl（+1/-0）、ops/truth/decisions.jsonl（+1/-0），另有 1 个文件｜6 files changed, 88 insertions(+), 41 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
@@ -64,11 +63,11 @@
 - [已完成] panel-design-restore-20261124 的 focus-visible 旧 runner 假红已复核：目标树机器证据全绿，落盘只卡人工体验签收；不再重跑同一失败 land。
 - [已完成] 把 18 条被后续 verified/landed/superseded 或目标树机器证据覆盖的旧 todo 验收转 void；把 steward-history-detail 的 needs_agent 旧行追加 abandoned 终态；人工验收 A-0022/A-0044/A-0187..A-0192、L-0019/L-0020/L-0021 不动。
 - [已完成] 最终审计确认当前可机器闭环项已全部闭环：origin/main 35fedb84；全量 selftest exit 0；experience-evidence PASS 48/48 fresh=True screenshots=4；panel-logic、panel-render、project-constitution 均 exit 0；验收按 id 最新态 verified=167/todo=8/wip=0/blocked=0/void=23，8 条 todo 全为 needs_human=true，机器型未闭环=0；剩余为人工验收、产品/发布决策与 ChatGPT pairing B2。
+- [已完成] 修复插件绑定漂移：旧脏 worktree 绑定被 binding_health 识别，capture_request/intake_request/route_preview 在写入前 fail-closed 并返回 AUTOPILOT_BINDING_DRIFT 恢复动作；安装器自检 opt-out 不误拦脏 source + 干净 trunk 夹具；面板坏绑定夹具清掉外层 KG_REPO。门禁：python3 -u ops/selftest.py exit 0；python3 ops/panel_logic_check.py exit 0；python3 ops/panel_render_check.py --no-shot exit 0；python3 ops/test-project-constitution.py exit 0；python3 ops/experience_evidence.py exit 0 (PASS 48/48 fresh=True screenshots=4)。
+- [已完成] 绑定漂移已改为 fail-closed：旧脏绑定被识别，投稿/路由预演先拦截并给出重绑定+重开 Codex 的恢复动作；安装与坏绑定夹具不误报。记录为 P-0250、A-0246。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0203` [P1] codex/fix-resolve-stale-adopt-guard-20261124 门禁预跑（未落盘）
-  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0204` [P1] codex/fix-resolve-stale-adopt-guard-20261124 门禁预跑（未落盘）
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0232` [P1] codex/fix-resolve-stale-adopt-guard-20261124 落盘验收
@@ -91,6 +90,8 @@
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0245` [P1] codex/final-progress-closure-20261124 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0246` [P1] 绑定漂移 fail-closed 机器验收
+  - 证据：python3 -u ops/selftest.py -> exit 0
 
 ## 还差什么
 
@@ -288,11 +289,12 @@
 - `A-0243` [P1] codex/b1-final-closure-20261124 门禁预跑（未落盘）
 - `A-0244` [P1] codex/b1-final-closure-20261124 落盘验收
 - `A-0245` [P1] codex/final-progress-closure-20261124 落盘验收
+- `A-0246` [P1] 绑定漂移 fail-closed 机器验收
 
 ## 进度概览
 
-- 累计关闭问题：15 条
+- 累计关闭问题：16 条
 - 累计落盘：132 条
 - 未决问题：2 条
-- 已验收：167 条
+- 已验收：168 条
 

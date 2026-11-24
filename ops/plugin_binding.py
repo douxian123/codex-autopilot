@@ -164,6 +164,96 @@ def _git(*args, cwd=None) -> str:
     return out.stdout.strip() if out.returncode == 0 else ""
 
 
+def _looks_like_state_root(path: Path) -> bool:
+    return ((path / "ops" / "tasks").is_dir()
+            and (path / "ops" / "truth").is_dir())
+
+
+def _common_dir(path: Path) -> str:
+    return _git("rev-parse", "--path-format=absolute", "--git-common-dir",
+                cwd=str(path))
+
+
+def worktree_binding_drift(repo=None) -> dict | None:
+    """绑定根脏、同一仓库另一个状态根干净时，返回明确漂移证据。
+
+    2026-11-24 现场：插件 `.mcp.json` 绑在旧脏 worktree，当前审计报告写在新
+    干净 worktree。两者共享 git common dir，旧的 `project_router` 会把它们归并
+    成同一个项目，于是输入被写进旧账本，而面板仍显示“绑定正常”。
+
+    这里只在「绑定根有未提交改动、同仓库存在另一个干净状态根」时报错：
+    正常的多 worktree 工作流（绑定根干净）不受影响，也不会替用户自动改绑定。
+    """
+    raw = str(repo or binding_env().get("KG_REPO") or "").strip()
+    if not raw:
+        return None
+    try:
+        bound = Path(raw).expanduser().resolve()
+    except (OSError, ValueError):
+        return None
+    if not bound.is_dir() or not _looks_like_state_root(bound):
+        return None
+    dirty = _git("status", "--porcelain", cwd=str(bound))
+    if not dirty:
+        return None
+    bound_ident = _common_dir(bound)
+    if not bound_ident:
+        return None
+    listing = _git("worktree", "list", "--porcelain", cwd=str(bound))
+    for line in listing.splitlines():
+        if not line.startswith("worktree "):
+            continue
+        candidate = Path(line[len("worktree "):].strip()).expanduser()
+        try:
+            candidate = candidate.resolve()
+        except (OSError, ValueError):
+            continue
+        if candidate == bound or not _looks_like_state_root(candidate):
+            continue
+        if _common_dir(candidate) != bound_ident:
+            continue
+        if _git("status", "--porcelain", cwd=str(candidate)):
+            continue
+        return {
+            "bound_repo": str(bound),
+            "alternate_repo": str(candidate),
+            "dirty_entries": len(dirty.splitlines()),
+        }
+    return None
+
+
+def worktree_drift_for_cwd(cwd) -> dict | None:
+    """调用方给了 cwd、且它指向同仓库另一个状态根时的漂移证据。"""
+    raw = str(cwd or "").strip()
+    bound_raw = str(binding_env().get("KG_REPO") or "").strip()
+    if not raw or not bound_raw:
+        return None
+    try:
+        base = Path(raw).expanduser().resolve()
+        bound = Path(bound_raw).expanduser().resolve()
+    except (OSError, ValueError):
+        return None
+    current = None
+    for cand in (base, *base.parents):
+        if _looks_like_state_root(cand):
+            current = cand
+            break
+    if current is None or current == bound:
+        return None
+    if not bound.is_dir() or not _looks_like_state_root(bound):
+        return None
+    if _common_dir(bound) != _common_dir(current):
+        return None
+    dirty = _git("status", "--porcelain", cwd=str(bound))
+    if not dirty:
+        return None
+    return {
+        "bound_repo": str(bound),
+        "current_repo": str(current),
+        "dirty_entries": len(dirty.splitlines()),
+    }
+
+
 def binding_health() -> dict:
     """体检当前绑定到底指没指到一个真项目（只读，不修任何东西）。
 
@@ -182,9 +272,54 @@ def binding_health() -> dict:
       - 全部通过                               -> status=ok
     """
     env = binding_env()
-    repo_raw = env.get("KG_REPO") or os.environ.get("KG_REPO")
+    bound_repo_raw = env.get("KG_REPO")
+    current_repo_raw = os.environ.get("KG_REPO")
+    # 2026-11-24 实测：插件 .mcp.json 还绑在旧项目，手敲 CLI 却显式指定新项目时，
+    # 旧实现永远取 .mcp.json，于是 status/doctor 报「绑定正常」，实际写的是旧账本。
+    # 两者都存在且不同时必须显式报漂移；显式变量优先只用于非绑定字段。
+    repo_raw = bound_repo_raw or current_repo_raw
     trunk_raw = env.get("KG_TRUNK") or os.environ.get("KG_TRUNK")
     problems: list[str] = []
+    project_drift = None
+    if bound_repo_raw and current_repo_raw:
+        try:
+            bound_resolved = str(Path(bound_repo_raw).expanduser().resolve())
+            current_resolved = str(Path(current_repo_raw).expanduser().resolve())
+        except (OSError, ValueError):
+            bound_resolved = str(bound_repo_raw)
+            current_resolved = str(current_repo_raw)
+        if bound_resolved != current_resolved:
+            project_drift = {
+                "bound_repo": bound_resolved,
+                "current_repo": current_resolved,
+            }
+            problems.append(
+                f"插件仍绑定 {bound_resolved}，但当前操作的是 {current_resolved}；"
+                "现在提需求会写进旧项目的账本。"
+                "请重跑 ./install.sh <当前项目根目录> 重新绑定。")
+    else:
+        # MCP 进程没有显式 KG_REPO（它拿到的就是 .mcp.json 那份），但绑定根可能
+        # 已是同仓库里的旧脏 worktree。这里只读扫同仓库的其它状态根：绑定根脏、
+        # 另一个状态根干净时才判漂移，正常多 worktree 工作流不受影响。
+        # 安装器的绑定自检会故意用「脏 source + 干净 trunk」夹具验证发布来源；
+        # 那不是用户投稿会话，不能拿自动漂移把安装本身挡住。opt-out 只作用于
+        # 当前自检进程，不写进 .mcp.json，也不影响 MCP 投稿守卫。
+        if os.environ.get("CODEX_AUTOPILOT_SKIP_WORKTREE_DRIFT") == "1":
+            auto_drift = None
+        else:
+            auto_drift = worktree_binding_drift(repo_raw)
+        if auto_drift:
+            project_drift = {
+                "bound_repo": auto_drift["bound_repo"],
+                "current_repo": auto_drift["alternate_repo"],
+                "dirty_entries": auto_drift["dirty_entries"],
+            }
+            problems.append(
+                f"插件仍绑定旧脏状态根 {auto_drift['bound_repo']}"
+                f"（{auto_drift['dirty_entries']} 个未提交项），"
+                f"同一仓库的干净状态根是 {auto_drift['alternate_repo']}；"
+                "继续提需求可能写进旧账本。"
+                "请重跑 ./install.sh <干净状态根> 重新绑定后重开 Codex。")
 
     # 「装的版本」和「跑的版本」是两件事：Codex 升级插件时替换版本目录，却不重启
     # 已经在跑的 MCP 进程。那些进程的 OPS_DIR 会指向已删除的目录，每次调用 kgctl
@@ -247,6 +382,9 @@ def binding_health() -> dict:
         "warnings": warnings,
         "versions": consistency.get("versions"),
         "stale": stale,
+        "drift": project_drift,
+        "bound_repo": bound_repo_raw,
+        "current_repo": current_repo_raw,
     }
 
 
@@ -384,14 +522,17 @@ def binding_line(health: dict) -> str:
 
 
 def binding_recovery_action(health: dict) -> dict:
-    """把 broken binding 分成两种恢复路径，避免把用户带去错误的动作。
+    """把 broken binding 分成三种恢复路径，避免把用户带去错误的动作。
 
     2026-11-23 现场实测：Codex 升级后，当前会话仍有 6 个 MCP 进程跑在已被删除的
     `.134/.136` 目录里。原因行已经准确写了「重启 Codex」，但面板的 need_action
     却统一提示「重跑 install.sh」，用户照做也不会替换那些已经在跑的进程。
 
-    这里按故障类型给指令：陈旧进程必须重启/重新加载宿主；真正的绑定丢失才指向
-    install.sh。只读，不改任何状态。
+    2026-11-24 又实测一种：插件 `.mcp.json` 绑在旧状态根，用户显式 `KG_REPO`
+    指向新根时，旧代码只报「绑定正常」，于是当前窗口的需求仍被写进旧账本。
+
+    这里按故障类型给指令：陈旧进程必须重启/重新加载宿主；绑定漂移要先重新
+    绑定并重载 MCP；真正的绑定丢失才指向 install.sh。只读，不改任何状态。
     """
     if health.get("stale"):
         versions = health.get("versions") or {}
@@ -409,10 +550,55 @@ def binding_recovery_action(health: dict) -> dict:
                 "不会替换已经启动的进程。重启后再看状态面板是否显示安装绑定 OK，"
                 "若仍失效再重跑 ./install.sh <真实 git 仓库根目录>。"),
         }
+    drift = health.get("drift")
+    if drift:
+        bound = str(drift.get("bound_repo") or "旧项目")
+        current = str(drift.get("current_repo") or drift.get("alternate_repo")
+                       or "当前项目")
+        return {
+            "kind": "binding_drift",
+            "doing": f"没有在动当前项目：插件仍在替 {bound} 接需求",
+            "recent": (f"当前窗口指向 {current}，但自动挡仍绑定 {bound}；"
+                       "继续提需求会写进旧账本"),
+            "need_action": (
+                f"重跑 ./install.sh {current} 重新绑定，"
+                "然后完全退出并重新打开 Codex，再回到这个窗口"),
+            "need_action_detail": (
+                "只设 KG_REPO 环境变量不会改插件 .mcp.json，也不会让已经启动的 "
+                "MCP 进程换绑定。重新绑定后必须重新打开 Codex；"
+                "本工具不会自动改绑定、重启宿主或切 provider。"),
+        }
     return {
         "kind": "binding_invalid",
         "doing": "没有在动任何项目：当前绑定的状态根不是一个可用的项目账本",
         "recent": "需求不会被可靠落账；这不是「没有待办」，是自动挡没接上项目",
         "need_action": "重跑 ./install.sh <真实 git 仓库根目录>；先不要继续提需求",
         "need_action_detail": "安装绑定失效的详细路径与修复步骤见工程详情；不会自动改绑定。",
+    }
+
+
+def binding_drift_guard(tool: str, cwd) -> dict | None:
+    """带 cwd 的投稿若指向干净状态根、而插件仍绑旧脏根，先 fail-closed。"""
+    drift = worktree_drift_for_cwd(cwd)
+    if not drift:
+        return None
+    recovery = binding_recovery_action({"status": "broken", "drift": drift})
+    line = binding_line({"status": "broken", "problems": [
+        f"插件仍绑定旧脏状态根 {drift['bound_repo']}，"
+        f"当前会话在 {drift['current_repo']}；继续提需求会写进旧账本。"]})
+    return {
+        "ok": False,
+        "code": "AUTOPILOT_BINDING_DRIFT",
+        "state": "binding_drift",
+        "state_label": "插件绑定漂移，需求不会写进当前项目",
+        "tool": tool,
+        "doing": recovery["doing"],
+        "why": line,
+        "error": line,
+        "recent": recovery["recent"],
+        "need_action": recovery["need_action"],
+        "need_action_detail": recovery["need_action_detail"],
+        "drift": drift,
+        "__text__": (
+            "没有执行 %s：%s。%s" % (tool, line, recovery["need_action"])),
     }

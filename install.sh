@@ -751,11 +751,18 @@ done
 # 绑定自检：从即将发布的这份副本按 .mcp.json 解析状态根，必须证明真的落账。
 # 这个检查放在移动版本目录之前，失败只删除 staging，不影响现有安装。
 if ! "$PY" - "$STAGE/ops/plugin_binding.py" <<'PYEOF'
-import importlib.util, sys
+import importlib.util, os, sys
 from pathlib import Path
 spec = importlib.util.spec_from_file_location("binding_check", sys.argv[1])
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
+# 这里验证的是刚写好的 .mcp.json 绑定，不是调用 install.sh 的 shell 里
+# 可能残留的 KG_REPO/KG_TRUNK。继承它们会把安装自检误判成项目漂移。
+os.environ.pop("KG_REPO", None)
+os.environ.pop("KG_TRUNK", None)
+# 安装夹具可能故意带未提交项来验证来源；这里只校验刚写好的 .mcp.json 绑定，
+# 不做「当前会话 cwd 指向另一个干净状态根」的用户侧漂移检测。
+os.environ["CODEX_AUTOPILOT_SKIP_WORKTREE_DRIFT"] = "1"
 h = mod.binding_health()
 if h.get("status") == "broken":
     print("× 安装绑定自检失败：", file=sys.stderr)

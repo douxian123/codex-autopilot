@@ -160,3 +160,45 @@ blocked_by=remote-control-chatgpt-pairing`，运行态源码落后于主干源�
 
 **最终判断**：按当前可机器闭环的工作，工程门禁、真相台账、体验机器证据和公开 beta
 入口全部闭环；剩余均是人工验收、产品/发布决策或需要 ChatGPT pairing 的 B2 能力。
+
+## 9. 2026-11-24 绑定漂移补审
+
+随后现场又发现一类会静默写错账本的问题：插件 `.mcp.json` 仍绑定旧脏 worktree，
+当前会话 `cwd` 已是同一仓库里的另一个干净状态根。旧路由按 git common dir
+把两者归成同一个项目，于是 `intake_request` / `capture_request` 会把用户需求写进
+旧账本，而面板仍显示绑定正常。
+
+这次修复把绑定漂移当成真实产品 bug：体检识别旧脏绑定和干净状态根，所有投稿与
+路由预演在写入前 fail-closed，返回 `AUTOPILOT_BINDING_DRIFT` 和明确的
+“重跑 `./install.sh <当前状态根>` 后重开 Codex”恢复动作；正常干净的多 worktree
+工作流不误报。回归测试 `ops/test-binding-drift.py` 用真实 git worktree 锁住
+识别、拦截、恢复指令和不误报四条边界，并已接入 `ops/selftest.py`。
+
+安装器绑定自检使用进程内 `CODEX_AUTOPILOT_SKIP_WORKTREE_DRIFT=1` 跳过自动漂移检测，
+因为它故意在「脏 source + 干净 trunk」夹具上验证发布来源；该开关不写入
+`.mcp.json`，也不改变 MCP 投稿入口的 fail-closed 行为。
+
+本机 live 绑定没有被这次源码修复自动改写：`.140` 安装态的 `.mcp.json` 仍指向
+`/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123`，
+daemon 也未重启。要在本窗口真正使用新逻辑，需要用户拍板执行重新绑定并完全重开
+Codex；在那之前，现场状态只能表述为“源码侧修复已闭环，live runtime 仍绑定旧根”。
+
+本轮最终门禁原文：
+
+```text
+python3 -m py_compile ops/plugin_binding.py ops/central_mcp.py -> exit 0
+python3 ops/test-binding-drift.py -> exit 0
+  binding drift ok: 旧脏绑定被识别并 fail-closed，干净绑定不受影响。
+python3 ops/test-binding-recovery-action.py -> exit 0
+python3 ops/test-plugin-live-ops.py -> exit 0
+python3 -u ops/selftest.py -> exit 0
+python3 ops/panel_logic_check.py -> exit 0
+python3 ops/panel_render_check.py --no-shot -> exit 0
+python3 ops/test-project-constitution.py -> exit 0
+python3 ops/experience_evidence.py -> exit 0
+  experience-evidence: PASS (48/48, fresh=True, screenshots=4)
+```
+
+真相回写：进展 `P-0250`、产品状态 `[绑定漂移]`、机器验收 `A-0246`、问题 `L-0022`，
+以及关闭 `L-0022` 时追加的进展 `P-0251`。这些记录只声明源码侧、安装自检和机器门禁
+闭环，不声明本机 live runtime 已经切换到新绑定。

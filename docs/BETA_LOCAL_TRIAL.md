@@ -84,6 +84,14 @@ codex plugin list --json
 
 如果任一工具或面板显示 `AUTOPILOT_BINDING_BROKEN`、`binding_broken`、“Codex 还在跑升级前的旧 MCP 进程”或“正在运行的插件代码目录已被删除”，先按旧会话处理：完全退出并重新打开 Codex，再重新打开面板。`.146` 候选已加入旧进程 fail-closed，只保留 `autopilot_status` 和 `render_autopilot_panel` 返回诊断与恢复动作，因此不再把旧项目的 `resolve_list`、自治队列或产品状态冒充当前真相。公开 `.140` 用户也应按这个顺序重启后再验。重跑 `install.sh` 不会替换已经在跑的进程；只有重启后仍显示绑定失效，才需要重跑安装。
 
+如果显示 `AUTOPILOT_BINDING_DRIFT`、`binding_drift`、“插件仍绑定旧脏状态根”或“继续提需求会写进旧账本”，说明插件 `.mcp.json` 还绑着旧 worktree，而当前会话已经在同一个仓库的另一个状态根里。此时 `intake_request` / `capture_request` 会先拦下写入，不会再把你的需求记进旧项目账本。按工具返回的路径执行：
+
+```bash
+./install.sh <工具提示的当前状态根>
+```
+
+然后完全退出并重新打开 Codex，再打开面板复核。只设 `KG_REPO` 环境变量不会改插件 `.mcp.json`，也不会让已经启动的 MCP 进程换绑定；这一步必须重新绑定并重开宿主。自动挡不会替你改 live 绑定、重启 daemon 或切 provider。
+
 ## 回滚
 
 ```bash

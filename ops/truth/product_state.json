@@ -88,6 +88,20 @@
     "ops/selftest.py"
    ],
    "updated": "2026-11-24"
+  },
+  {
+   "area": "绑定漂移",
+   "behavior": "插件绑定旧脏 worktree、当前会话在同仓库干净状态根时，binding_health 报漂移；capture_request、intake_request、route_preview 在写入前返回 AUTOPILOT_BINDING_DRIFT，并提示重跑 install.sh <当前状态根> 后重开 Codex；干净多 worktree 和安装自检不误报。",
+   "why": "2026-11-24 现场发现插件 .mcp.json 绑定旧脏 worktree 时，当前干净状态根的需求会被写进旧账本，面板却显示正常。",
+   "files": [
+    "ops/plugin_binding.py",
+    "ops/central_mcp.py",
+    "install.sh",
+    "ops/selftest.py",
+    "ops/test-binding-drift.py",
+    "docs/BETA_LOCAL_TRIAL.md"
+   ],
+   "updated": "2026-11-24"
   }
  ]
 }
