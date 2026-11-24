@@ -122,6 +122,30 @@ def main():
               f"(results={results2})")
         check("退回后的门禁真的执行了", "FALLBACK_CFG" in out2, f"(out={out2[-200:]!r})")
 
+        # 体验门禁也必须来自「正在被验证的那棵树」。已安装的 kgctl 可能比目标分支
+        # 旧；若仍从 runner 自己的 ops 导入 experience_contract，分支里修好的焦点
+        # 证据不会参与 land，出现「分支自检 48/48 PASS、land 假红」的版本错位。
+        runner_tree = seed(root, "runner-tree", "echo TARGET_TREE_GATE_RAN")
+        (runner_tree / "ops" / "experience_contract.py").write_text(
+            "def changes_require_live_experience(changed_files):\n"
+            "    return False\n\n"
+            "def land_gate(contract_path, verify_evidence=False, root=None):\n"
+            "    return {'ok': True, 'status': 'required', "
+            "'reason': 'TARGET_TREE_EXPERIENCE_MODULE', "
+            "'machine_checks': [], 'human_checks': []}\n",
+            encoding="utf-8")
+        contract_dir = runner_tree / "docs" / "experience"
+        contract_dir.mkdir(parents=True)
+        (contract_dir / "experience-contract.json").write_text("{}", encoding="utf-8")
+        ok3, results3, out3 = kg._run_verify_gates(runner_tree)
+        names3 = [r.get("name") for r in results3]
+        check("体验门禁来自 trunk 自己的 ops 模块",
+              "TARGET_TREE_EXPERIENCE_MODULE" in out3,
+              f"(names={names3}, out={out3[-300:]!r})")
+        check("trunk 自己的普通门禁仍被执行", "TARGET_TREE_GATE_RAN" in out3,
+              f"(names={names3}, out={out3[-300:]!r})")
+        check("体验门禁使用目标树模块后整体通过", ok3 is True, f"(ok={ok3})")
+
     if failures:
         print(f"\nverify gates use target tree unit: FAIL ({len(failures)})")
         return 1
