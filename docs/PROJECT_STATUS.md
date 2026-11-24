@@ -1,6 +1,6 @@
 # 项目状态（自动生成，勿手改）
 
-> 生成时间 2026-11-24 14:39:42　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
+> 生成时间 2026-11-24 16:37:10　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
 
 ## 一、产品主线
 
@@ -48,14 +48,14 @@
 
 ## 四、进展
 
-- `P-0235` [已落盘] @ `f79fca2c9f` codex/truth-gate-false-green-correction-20261124 验证门禁通过，已落盘 main @ f79fca2c9f；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- `P-0236` [已落盘] @ `d0f8bbf80c` codex/port-identity-guard-20261124 验证门禁通过，已落盘 main @ d0f8bbf80c；改动 4 个文件：ops/central_daemon.py（+77/-9）、ops/selftest.py（+1/-0）、ops/test-ledger-identity-collision.py（+163/-0）、ops/truthctl.py（+62/-2）｜4 files changed, 303 insertions(+), 11 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0229、A-0230
 - `P-0237` [已落盘] @ `b061c53b60` codex/fix-resolve-stale-adopt-guard-20261124 验证门禁通过，已落盘 main @ b061c53b60；改动 2 个文件：ops/kgctl.py（+31/-0）、ops/selftest.py（+62/-5）｜2 files changed, 93 insertions(+), 5 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0203、A-0204
 - `P-0238` [已落盘] @ `097280a1ba` codex/public-beta-docs-closure-20261124 验证门禁通过，已落盘 main @ 097280a1ba；改动 3 个文件：docs/BETA_LOCAL_TRIAL.md（+10/-2）、ops/selftest.py（+9/-0）、plugin/skills/setup/SKILL.md（+1/-0）｜3 files changed, 20 insertions(+), 2 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0233
 - `P-0239` [已落盘] @ `27ad73736e` codex/experience-gate-target-runner-20261124 验证门禁通过，已落盘 main @ 27ad73736e；改动 2 个文件：ops/kgctl.py（+70/-12）、ops/test-verify-gates-use-target-tree.py（+24/-0）｜2 files changed, 94 insertions(+), 12 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0240` [已落盘] @ `c65f319618` codex/acceptance-id-worktrees-20261124 验证门禁通过，已落盘 main @ c65f319618；改动 2 个文件：ops/test_truthctl_cross_worktree_ids.py（+53/-0）、ops/truthctl.py（+81/-4）｜2 files changed, 134 insertions(+), 4 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0240
 - `P-0243` [已落盘] @ `8b2b9e06c7` codex/b1-final-closure-20261124 验证门禁通过，已落盘 main @ 8b2b9e06c7；改动 6 个文件：docs/PRODUCT_MAINLINE.md（+48/-27）、docs/PROJECT_CONSTITUTION.md（+4/-2）、docs/PROJECT_STATUS.md（+33/-12）、ops/truth/acceptance.jsonl（+1/-0）、ops/truth/decisions.jsonl（+1/-0），另有 1 个文件｜6 files changed, 88 insertions(+), 41 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0244` [已完成] 最终审计确认：B1 全量 PRD 契约包、七管家责任视图、公开 .140 入口、本机面板主链与使用说明已形成可复核闭环；过期 P-0242 已追加停用，人工签收、native 派活与跨设备仍按未闭合项保留。证据见 docs/B1_FINAL_AUDIT_20261124.md 与 A-0243/A-0244。
+- `P-0245` [已落盘] @ `5ae6bae260` codex/final-progress-closure-20261124 验证门禁通过，已落盘 main @ 5ae6bae260；改动 3 个文件：docs/B1_FINAL_AUDIT_20261124.md（+116/-0）、ops/test-truth-dedupe.py（+19/-0）、ops/truthctl.py（+14/-4）｜3 files changed, 149 insertions(+), 4 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- `P-0246` [已完成] panel-design-restore-20261124 的 focus-visible 旧 runner 假红已复核：目标树机器证据全绿，落盘只卡人工体验签收；不再重跑同一失败 land。
 
 ## 五、验收进度
 
@@ -77,7 +77,7 @@
 - `A-0189` [P1] Codex Autopilot 面板人工验收：任务完成感
   - 人看首屏默认截图，确认当前目标、总体进度、最近完成和当前步骤能支撑判断任务是否在推进
 
-**已机器验收（166）**
+**已机器验收（167）**
 - `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
@@ -244,6 +244,7 @@
 - `A-0241` [P1] codex/acceptance-id-worktrees-20261124 落盘验收
 - `A-0243` [P1] codex/b1-final-closure-20261124 门禁预跑（未落盘）
 - `A-0244` [P1] codex/b1-final-closure-20261124 落盘验收
+- `A-0245` [P1] codex/final-progress-closure-20261124 落盘验收
 
 ## 六、决策记录
 
@@ -274,7 +275,6 @@
 
 ## 八、判断逻辑（同一个判断，人只做一次）
 
-- `J-0019` [workflow] 源码合并不等于现场生效：换代必须回读 install-state、release 元数据、daemon plist 和 live PID 四重一致；取不到写 unknown，不写 0 或正常。
 - `J-0001` [product-architecture] 自动挡架构按“谁能改变事实”分平面，不按愿望数量加管家；全局健康只读，PM 不自动追问，验收截图不替人收口。
 - `J-0002` [process] 原生直连派活的最后一道闸是官方 remote-control 的 ChatGPT 登录/配对，不是 socket 路径或协议；不能用 API key 冒充 ChatGPT 身份，也不应把独立 app-server 会话包装成桌面宿主实时窗口。
 - `J-0003` [product] 机器闭环和人工验收不能混为一谈
@@ -286,3 +286,4 @@
 - `J-0021` [design] 原生窄面板压缩时，项目卡（含整体进度和一句汇报简语）、施工地图、项目文件夹、管家健康是信息承载底线；后台候选与历史冲突不能用橙色报错语义表达。
 - `J-0025` [process] 公开 beta 的用户可见文档只有在对应 tag/prerelease 或公开文档站更新后才算交付；源码 main 落盘只能证明工程闭环，不能写成公开用户现场已经看到。
 - `J-0026` [process] 落盘门禁必须从正在验证的目标树加载门禁模块，不能从当前已安装 runner 的 ops 目录加载；否则目标树已修好的证据会被旧 runner 否定，形成机器假红。
+- `J-0027` [process] 当旧 runner 与当前目标树证据冲突时，以目标树可复现的机器证据为准；机器全绿但人工体验未签收时停在人工闸口，不代签也不重复跑同一失败命令。

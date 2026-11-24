@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-24 14:39:43　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-24 16:37:10　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -54,8 +54,6 @@
 
 ## 最近在推进
 
-- [已落盘] @ b042de9f85 codex/fix-stale-resolve-abandon-20261124 验证门禁通过，已落盘 main @ b042de9f85；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [已落盘] @ b94f43ec04 codex/fix-gate-experience-base-20261124 验证门禁通过，已落盘 main @ b94f43ec04；改动 3 个文件：ops/kgctl.py（+10/-1）、ops/selftest.py（+1/-0）、ops/test-gate-experience-base.py（+124/-0）｜3 files changed, 135 insertions(+), 1 deletion(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ f79fca2c9f codex/truth-gate-false-green-correction-20261124 验证门禁通过，已落盘 main @ f79fca2c9f；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ d0f8bbf80c codex/port-identity-guard-20261124 验证门禁通过，已落盘 main @ d0f8bbf80c；改动 4 个文件：ops/central_daemon.py（+77/-9）、ops/selftest.py（+1/-0）、ops/test-ledger-identity-collision.py（+163/-0）、ops/truthctl.py（+62/-2）｜4 files changed, 303 insertions(+), 11 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0229、A-0230
 - [已落盘] @ b061c53b60 codex/fix-resolve-stale-adopt-guard-20261124 验证门禁通过，已落盘 main @ b061c53b60；改动 2 个文件：ops/kgctl.py（+31/-0）、ops/selftest.py（+62/-5）｜2 files changed, 93 insertions(+), 5 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0203、A-0204
@@ -64,11 +62,11 @@
 - [已落盘] @ c65f319618 codex/acceptance-id-worktrees-20261124 验证门禁通过，已落盘 main @ c65f319618；改动 2 个文件：ops/test_truthctl_cross_worktree_ids.py（+53/-0）、ops/truthctl.py（+81/-4）｜2 files changed, 134 insertions(+), 4 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0240
 - [已落盘] @ 8b2b9e06c7 codex/b1-final-closure-20261124 验证门禁通过，已落盘 main @ 8b2b9e06c7；改动 6 个文件：docs/PRODUCT_MAINLINE.md（+48/-27）、docs/PROJECT_CONSTITUTION.md（+4/-2）、docs/PROJECT_STATUS.md（+33/-12）、ops/truth/acceptance.jsonl（+1/-0）、ops/truth/decisions.jsonl（+1/-0），另有 1 个文件｜6 files changed, 88 insertions(+), 41 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已完成] 最终审计确认：B1 全量 PRD 契约包、七管家责任视图、公开 .140 入口、本机面板主链与使用说明已形成可复核闭环；过期 P-0242 已追加停用，人工签收、native 派活与跨设备仍按未闭合项保留。证据见 docs/B1_FINAL_AUDIT_20261124.md 与 A-0243/A-0244。
+- [已落盘] @ 5ae6bae260 codex/final-progress-closure-20261124 验证门禁通过，已落盘 main @ 5ae6bae260；改动 3 个文件：docs/B1_FINAL_AUDIT_20261124.md（+116/-0）、ops/test-truth-dedupe.py（+19/-0）、ops/truthctl.py（+14/-4）｜3 files changed, 149 insertions(+), 4 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已完成] panel-design-restore-20261124 的 focus-visible 旧 runner 假红已复核：目标树机器证据全绿，落盘只卡人工体验签收；不再重跑同一失败 land。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0231` [P1] codex/port-identity-guard-20261124 落盘验收
-  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0203` [P1] codex/fix-resolve-stale-adopt-guard-20261124 门禁预跑（未落盘）
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0204` [P1] codex/fix-resolve-stale-adopt-guard-20261124 门禁预跑（未落盘）
@@ -90,6 +88,8 @@
 - `A-0243` [P1] codex/b1-final-closure-20261124 门禁预跑（未落盘）
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0244` [P1] codex/b1-final-closure-20261124 落盘验收
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0245` [P1] codex/final-progress-closure-20261124 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 
 ## 还差什么
@@ -287,11 +287,12 @@
 - `A-0241` [P1] codex/acceptance-id-worktrees-20261124 落盘验收
 - `A-0243` [P1] codex/b1-final-closure-20261124 门禁预跑（未落盘）
 - `A-0244` [P1] codex/b1-final-closure-20261124 落盘验收
+- `A-0245` [P1] codex/final-progress-closure-20261124 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：15 条
-- 累计落盘：131 条
+- 累计落盘：132 条
 - 未决问题：2 条
-- 已验收：166 条
+- 已验收：167 条
 

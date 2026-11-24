@@ -1,9 +1,9 @@
 # 项目宪法（自动投影，勿手改）
 
-> 生成时间 2026-11-24 14:39:43　·　由 `python3 ops/truthctl.py constitution` 从约束/候选/判断台账投影
+> 生成时间 2026-11-24 16:37:10　·　由 `python3 ops/truthctl.py constitution` 从约束/候选/判断台账投影
 > 只有人确认过的约束才生效；候选与驳回项保留原话供追溯，不自动参与执行。
 
-生效 4 · 待确认 12 · 已确认待落账 0 · 已驳回 0 · 判断逻辑 22
+生效 4 · 待确认 12 · 已确认待落账 0 · 已驳回 0 · 判断逻辑 23
 
 ## 一、生效约束
 
@@ -95,6 +95,8 @@
   - 为什么：本轮把多管家加载确认说明合进源码 main 后，公开 tag 和安装态仍是 .140；三口径必须分开，避免用工程绿灯替代用户现场生效。
 - **J-0026** [process] 落盘门禁必须从正在验证的目标树加载门禁模块，不能从当前已安装 runner 的 ops 目录加载；否则目标树已修好的证据会被旧 runner 否定，形成机器假红。
   - 为什么：2026-11-24 panel-design-restore 的 land gate 用已安装 .140 的旧 experience_evidence.py，重复报 focus-visible: refresh:no visible focus ring；同一棵目标树自己的 runner 连跑 5 次 0 fails，正式 gate 改用目标树模块后机器项全绿，只剩人工体验签收。
+- **J-0027** [process] 当旧 runner 与当前目标树证据冲突时，以目标树可复现的机器证据为准；机器全绿但人工体验未签收时停在人工闸口，不代签也不重复跑同一失败命令。
+  - 为什么：panel-design-restore-20261124: 目标树 experience_evidence PASS 48/48 fresh=True screenshots=4、panel_render_check --no-shot 全 PASS，直接 land_gate 的 machine_reason=None；只剩 A-0187..A-0192、A-0022、A-0044 人工体验项未由人确认。
 
 ## 六、未接线与缺口
 
