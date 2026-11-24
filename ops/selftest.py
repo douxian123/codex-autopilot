@@ -5438,9 +5438,38 @@ def test_parallel_exec_slots():
             # 这个用例只验并发槽位。外部残留的自检进程可能刚好带同名
             # worktree，不能让它把本 fixture 的派发静默挡掉。
             central_daemon._live_exec_slugs = lambda: frozenset()
+            # 同一条门禁在 land 的完整链里跑时，临时目录和真实 git worktree add
+            # 会比单独跑更拥挤；这里曾偶发一条 L-0008 拿到 worktree_fail，而
+            # 独立复跑又全绿。产品准入仍由 _worktree_admission fail-closed，
+            # 这个用例只钉并发槽位，所以只对「准入已通过但 git add 失败」做
+            # 有界重试，并清掉 fixture 里空的残留目录/同名分支。
+            real_add_admitted = central_daemon._add_worktree_admitted
+
+            def _add_with_retry(repo, worktree, branch, base=None):
+                last = None
+                for attempt in range(3):
+                    result = real_add_admitted(repo, worktree, branch, base=base)
+                    if result.get("ok"):
+                        return result
+                    # 有明确准入理由时是真的被闸住，不能重试成假绿。
+                    if (result.get("admission") or {}).get("reason"):
+                        return result
+                    last = result
+                    central_daemon._git(repo, "worktree", "prune")
+                    try:
+                        wt_path = Path(worktree)
+                        if wt_path.exists() and not any(wt_path.iterdir()):
+                            wt_path.rmdir()
+                    except OSError:
+                        pass
+                    central_daemon._git(repo, "branch", "-D", branch)
+                    _time.sleep(0.05 * (attempt + 1))
+                return last
+
+            central_daemon._add_worktree_admitted = _add_with_retry
             try:
                 started, workers = central_daemon.dispatch_exec(False, blocked, workers)
-                assert started == [], started
+                assert started == [], (started, blocked, workers)
                 assert not workers.get("exec_jobs"), workers
                 state = _json.loads((home / "state.json").read_text(encoding="utf-8"))
                 assert state["exec_disk_held"] is True, state
@@ -5492,6 +5521,7 @@ def test_parallel_exec_slots():
 
             finally:
                 central_daemon._live_exec_slugs = real_live_slugs
+                central_daemon._add_worktree_admitted = real_add_admitted
                 release.touch()
                 for job in workers.get("exec_jobs", {}).values():
                     proc = job.get("proc")
