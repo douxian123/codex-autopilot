@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-24",
+ "updated": "2026-11-25",
  "modules": [
   {
    "area": "唯一入口",
@@ -102,6 +102,15 @@
     "docs/BETA_LOCAL_TRIAL.md"
    ],
    "updated": "2026-11-24"
+  },
+  {
+   "area": "验收结论口径",
+   "behavior": "走查问题未经当前产物真实浏览器全量复跑前，产品不宣称全部问题已修复、符合预期或全产品闭环生效。",
+   "why": "最新真机复放只完成单条 case-02 的根因修复与后端门禁，30 条任务和未决台账尚未全量复验。",
+   "files": [
+    "docs/acceptance/USER_WALKTHROUGH_CLOSURE_MATRIX_20261123.md"
+   ],
+   "updated": "2026-11-25"
   }
  ]
 }
