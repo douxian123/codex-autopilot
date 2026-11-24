@@ -1,58 +1,6 @@
 {
  "tasks": [
   {
-   "slug": "steward-history-detail-20261123",
-   "branch": "codex/steward-history-detail-20261123",
-   "resolve_branch": "codex/resolve-steward-history-detail-20261123",
-   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-resolve-steward-history-detail-20261123",
-   "base_main": "fe8a5d09fc3c0ae3467f5e14488b690c045e38fb",
-   "source_head": "4077e18c89bedba4ecb660993e9dfb546f946f9e",
-   "source_commits": [
-    "4077e18c89bedba4ecb660993e9dfb546f946f9e"
-   ],
-   "created": "2026-11-24 06:35:34",
-   "updated": "2026-11-24 06:51:26",
-   "conflict_files": [
-    "docs/PRODUCT_MAINLINE.md",
-    "docs/PROJECT_CONSTITUTION.md"
-   ],
-   "unresolved_files": [
-    "docs/PRODUCT_MAINLINE.md",
-    "docs/PROJECT_CONSTITUTION.md"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "abandoned",
-   "reason": "旧 lineage 重复残留；4077e18c 的真相内容已由 3138a232/c591f7e1 进入 origin/main，禁止合回旧生成文档冲突"
-  },
-  {
-   "slug": "panel-design-restore-20261124",
-   "branch": "codex/panel-design-restore-20261124",
-   "resolve_branch": "codex/resolve-panel-design-restore-20261124",
-   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-resolve-panel-design-restore-20261124",
-   "base_main": "1c795184609df518366607aaa6e50deb1297e893",
-   "source_head": "86b2cdeec044ac9c9cff0ac36d8e21e463541d88",
-   "source_commits": [
-    "7b7c3e0c7e58c79f8e3ae770ca09272de34fbddf",
-    "84bb134b6bce6ab09f580777ac04341817123dae",
-    "7efda6501fa1c3b515e008fd52f0b1ce832cdedb",
-    "11d7603672427d7e1c72b4677658d95fe390cf1e",
-    "de21a3b077094c05935e7c16e82d41a90fadf08b",
-    "86b2cdeec044ac9c9cff0ac36d8e21e463541d88"
-   ],
-   "created": "2026-11-24 03:45:14",
-   "updated": "2026-11-24 04:59:45",
-   "conflict_files": [
-    "docs/PRODUCT_MAINLINE.md"
-   ],
-   "unresolved_files": [
-    "docs/PRODUCT_MAINLINE.md"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "gate_fail",
-   "adopted": true,
-   "gate_output": "→ codex/resolve-panel-design-restore-20261124: 6 提交、落后 77、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n  !配置的落盘主干不可安全切换（/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-trunk），已改用一次性干净主干：/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-land-clean-1795467575\n  已把 56 个真相层文件从切换前状态写回（路由/台账不丢）\n  真相层 3 个文件已提交（chore(truth): sync state before landing）\n  PM 产品决策门 ok\n  merge ok（main 未动）\n  验证门禁 × 失败 → 丢弃，main 不动\n[experience-contract] evidence_fail：人工证据：人工验收项未由人确认: attention-order；人工验收项未由人确认: information-density；人工验收项未由人确认: task-completion\n  main 仍是 be6c62d6fb，源分支 codex/resolve-panel-design-restore-20261124 未受影响"
-  },
-  {
    "slug": "land-clean-worktree-gate-20261122",
    "branch": "codex/land-clean-worktree-gate-20261122",
    "resolve_branch": "codex/resolve-land-clean-worktree-gate-20261122",
@@ -140,5 +88,5 @@
    "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
   }
  ],
- "updated": "2026-11-24 06:51:26"
+ "updated": "2026-11-22 17:01:32"
 }
