@@ -321,6 +321,11 @@ def _next_id(t: str) -> str:
     旧实现是 len(rows)+1：同 id 的状态覆盖行会让行数虚高、编号跳号，并发时两个
     进程还会算出同一个号（L-0056）。跨 worktree 时，各自台账的最大编号也可能
     相同，因此再叠一层按项目共享的高水位。
+
+    2026-11-24 实测补强：共享高水位可能被子进程环境隔离或测试临时根覆盖，
+    单靠它仍会让分支先登记的人工验收在合回主干时被另一分支的门禁记录同号覆盖。
+    因此分配前还要扫描同一 git 仓库所有未 pruning 的 worktree 台账，把已经
+    出现过的 id 全算作已占用。
     """
     with _truth_id_lock() as state_dir:
         sequence_path = state_dir / 'truth-id-sequences.json'
@@ -334,8 +339,8 @@ def _next_id(t: str) -> str:
             reserved = int(state.get(t, 0))
         except (TypeError, ValueError):
             reserved = 0
-        taken = _taken_ids(t)
-        n = max(_max_num(t), reserved) + 1
+        taken = _taken_ids_across_worktrees(t)
+        n = max(_max_num(t), _max_num_from_ids(t, taken), reserved) + 1
         while f'{PREFIX[t]}-{n:04d}' in taken:
             n += 1
         state[t] = n
@@ -350,7 +355,11 @@ def _next_id(t: str) -> str:
 def _append_new(t: str, **fields) -> dict:
     """在临界区里分配 id 并追加一条新记录。所有「新条目」都走这里。"""
     with _truth_lock():
-        rec = {'id': _next_id(t), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'), 'type': t}
+        rid = _next_id(t)
+        if rid in _taken_ids_across_worktrees(t):
+            sys.exit('× 拒绝新增重复 %s id %s（台账/工作树已有同号，不能静默覆盖）'
+                     % (t, rid))
+        rec = {'id': rid, 'ts': time.strftime('%Y-%m-%d %H:%M:%S'), 'type': t}
         rec.update(fields)
         _append(rec)
         return rec
@@ -358,6 +367,74 @@ def _append_new(t: str, **fields) -> dict:
 
 def _taken_ids(t: str) -> set:
     return {r.get('id') for r in _all_truth_rows(t)}
+
+
+def _worktree_truth_roots() -> list:
+    """返回同一 git 仓库内所有现存 worktree 的根目录。
+
+    prunable 的条目是 git 记着但目录已没了的历史壳，绝不能因为路径字符串存在
+    就当成活台账；本机 partial clone 里有大量这类残留，误读会拖慢每次分配。
+    """
+    roots = []
+
+    def add(path):
+        try:
+            resolved = Path(path).expanduser().resolve()
+        except (OSError, RuntimeError):
+            return
+        if resolved.is_dir() and resolved not in roots:
+            roots.append(resolved)
+
+    add(REPO)
+    add(REFERENCE_REPO)
+    result = proc_run(
+        ['git', '-C', str(REPO), 'worktree', 'list', '--porcelain'],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return roots
+    blocks, current = [], []
+    for line in (result.stdout or '').splitlines():
+        if line.strip() == '':
+            if current:
+                blocks.append(current)
+                current = []
+        else:
+            current.append(line)
+    if current:
+        blocks.append(current)
+    for block in blocks:
+        if any(line.startswith('prunable ') for line in block):
+            continue
+        for line in block:
+            if line.startswith('worktree '):
+                add(line[len('worktree '):].strip())
+                break
+    return roots
+
+
+def _all_truth_rows_across_worktrees(t: str) -> list:
+    """所有活 worktree 的同类真相行，外加 origin/main 的已提交行。"""
+    relative = Path('ops') / 'truth' / FILES[t]
+    rows = []
+    for root in _worktree_truth_roots():
+        rows.extend(_read(root / relative))
+    rows.extend(_origin_main_rows(t))
+    return rows
+
+
+def _taken_ids_across_worktrees(t: str) -> set:
+    return {str(r.get('id')) for r in _all_truth_rows_across_worktrees(t)
+            if r.get('id')}
+
+
+def _max_num_from_ids(t: str, ids: set) -> int:
+    nums = []
+    for rid in ids:
+        m = re.match(r'^%s-(\d+)$' % PREFIX[t], str(rid))
+        if m:
+            nums.append(int(m.group(1)))
+    return max(nums) if nums else 0
 
 
 def _origin_main_rows(t: str) -> list:
@@ -400,7 +477,7 @@ def _all_truth_rows(t: str) -> list:
 
 
 def next_free_id(t: str, start: int) -> str:
-    taken = _taken_ids(t)
+    taken = _taken_ids_across_worktrees(t)
     n = start
     while f'{PREFIX[t]}-{n:04d}' in taken:
         n += 1
