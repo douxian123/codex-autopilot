@@ -188,6 +188,7 @@ def main():
             "test-panel-intent-trigger.py",
             "test-panel-no-html-fallback.py",
             "test-binding-recovery-action.py",
+            "test-binding-drift.py",
             "test-research-adoption.py",
             "test-specialized-acceptance-executors.py",
             "test-central-command-followup-contract.py",
@@ -2078,11 +2079,17 @@ def test_broken_binding_panel_contract():
                         "KG_TRUNK": str(root / "install-49-trunk")}}},
         }, ensure_ascii=False, indent=2), encoding="utf-8")
 
+        child_env = os.environ.copy()
+        child_env["KG_DAEMON_HOME"] = str(root / "home")
+        # 这个用例要验证 .mcp.json 指向的坏状态根；外层 selftest 可能因为上一个
+        # 夹具留下 KG_REPO，被新的漂移判据当成用户在另一个项目投稿，遮住原本要测
+        # 的「不是 git 仓库 / 普通目录无法闭环」提示。
+        child_env.pop("KG_REPO", None)
+        child_env.pop("KG_TRUNK", None)
         proc = subprocess.Popen([sys.executable, str(plugin / "ops" / "central_mcp.py")],
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True,
-                                env=dict(os.environ, KG_DAEMON_HOME=str(root / "home")),
-                                cwd=str(plugin))
+                                env=child_env, cwd=str(plugin))
         try:
             def send(obj):
                 proc.stdin.write(_json.dumps(obj, ensure_ascii=False) + "\n")

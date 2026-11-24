@@ -57,7 +57,8 @@ MODEL_ROUTE_DESCRIPTIONS = {
 RUNNING_OPS = Path(__file__).resolve().parent
 REPO = RUNNING_OPS.parent
 
-from plugin_binding import (apply_plugin_env, binding_health, binding_line,  # noqa: E402
+from plugin_binding import (apply_plugin_env, binding_drift_guard,  # noqa: E402
+                            binding_health, binding_line,
                             binding_recovery_action, current_ops,
                             stale_code_problem)
 from request_context import RequestContextError, resolve_project  # noqa: E402
@@ -3902,6 +3903,13 @@ def _stale_binding_guard(name):
 
 def call_tool(name, args):
     args = args or {}
+    # 2026-11-24 现场：插件还绑在旧脏 worktree，会话 cwd 已是同一仓库里的干净
+    # 状态根。旧路由把它们当成同一个项目，captured 需求会写进旧账本；这里在写入
+    # 之前 fail-closed，让人先重新绑定，而不是等用户发现需求不见了。
+    if name in {"capture_request", "intake_request", "route_preview"}:
+        drift_guard = binding_drift_guard(name, (args.get("cwd") or "").strip())
+        if drift_guard:
+            return drift_guard, 2
     if name not in STALE_BINDING_DIAGNOSTIC_TOOLS:
         stale_guard = _stale_binding_guard(name)
         if stale_guard:
