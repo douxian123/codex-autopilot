@@ -40,6 +40,7 @@ kgctl —— 自动挡的唯一执行入口（stdlib only）
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -3957,6 +3958,63 @@ def _mirror_truth_into_trunk(wt: Path) -> None:
             mirror_file(src, dst)
 
 
+@contextmanager
+def _experience_modules_for_tree(wt: Path):
+    """Load the experience gate from the tree under validation.
+
+    The runner that happens to execute ``kgctl`` can be an older installed
+    version than the branch being landed.  In 2026-11-24 that difference made
+    ``land`` fail with ``refresh:no visible focus ring`` while the target
+    tree's own runner passed five consecutive real-browser checks.  A gate
+    must describe the target tree, so load both modules from ``wt/ops`` and
+    keep the caller's imports untouched afterwards.
+    """
+    ops_dir = Path(wt) / "ops"
+    contract_file = ops_dir / "experience_contract.py"
+    evidence_file = ops_dir / "experience_evidence.py"
+    if not contract_file.is_file():
+        # 老项目可能还没有把体验门禁模块提交进目标树。保持旧兼容路径，
+        # 但绝不把「目标树宣称有契约」当成新 runner 的绿灯。
+        import experience_contract as fallback
+        yield fallback
+        return
+
+    names = ("experience_contract", "experience_evidence")
+    private_names = ("_kgctl_target_experience_contract",
+                     "_kgctl_target_experience_evidence")
+    previous = {name: sys.modules.get(name) for name in names + private_names}
+    path_added = str(ops_dir) not in sys.path
+    if path_added:
+        sys.path.insert(0, str(ops_dir))
+    try:
+        evidence_spec = importlib.util.spec_from_file_location(
+            private_names[1], evidence_file) if evidence_file.is_file() else None
+        evidence_module = None
+        if evidence_spec and evidence_spec.loader:
+            evidence_module = importlib.util.module_from_spec(evidence_spec)
+            sys.modules[private_names[1]] = evidence_module
+            evidence_spec.loader.exec_module(evidence_module)
+
+        contract_spec = importlib.util.spec_from_file_location(
+            private_names[0], contract_file)
+        contract_module = importlib.util.module_from_spec(contract_spec)
+        sys.modules[private_names[0]] = contract_module
+        contract_spec.loader.exec_module(contract_module)
+
+        if evidence_module is not None:
+            sys.modules["experience_evidence"] = evidence_module
+        sys.modules["experience_contract"] = contract_module
+        yield contract_module
+    finally:
+        for name, module in previous.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+        if path_added and str(ops_dir) in sys.path:
+            sys.path.remove(str(ops_dir))
+
+
 def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
     """落盘前的验证门禁：逐条真实执行，返回 (ok, results, output)。
 
@@ -4019,18 +4077,18 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
                          "cwd": ".", "ok": True, "output": "未声明体验契约"}
     try:
         contract_path = wt / "docs" / "experience" / "experience-contract.json"
-        import experience_contract
-        need_live = experience_contract.changes_require_live_experience(changed)
-        checked = experience_contract.land_gate(
-            contract_path, verify_evidence=need_live, root=wt)
-        experience_result.update({
-            "ok": bool(checked.get("ok")),
-            "output": "%s：%s" % (checked.get("status"), checked.get("reason")),
-        })
-        if checked.get("machine_checks"):
-            experience_result["machine_checks"] = checked["machine_checks"]
-        if checked.get("human_checks"):
-            experience_result["human_checks"] = checked["human_checks"]
+        with _experience_modules_for_tree(wt) as experience_contract:
+            need_live = experience_contract.changes_require_live_experience(changed)
+            checked = experience_contract.land_gate(
+                contract_path, verify_evidence=need_live, root=wt)
+            experience_result.update({
+                "ok": bool(checked.get("ok")),
+                "output": "%s：%s" % (checked.get("status"), checked.get("reason")),
+            })
+            if checked.get("machine_checks"):
+                experience_result["machine_checks"] = checked["machine_checks"]
+            if checked.get("human_checks"):
+                experience_result["human_checks"] = checked["human_checks"]
     except Exception as exc:
         experience_result.update({"ok": False, "output": "体验契约门禁异常：%s" % exc})
     if not experience_result["ok"]:
