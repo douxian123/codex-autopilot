@@ -1,8 +1,4 @@
 {
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@cb5832eff34886df2a516037858fc0e7966ad564": {
-  "files": 4,
-  "lines": 5372
- },
  "codex/land-clean-worktree-gate-20261122@3fba3da49c6cc70a68a6a6d56559b0cf16f431d9@cb5832eff34886df2a516037858fc0e7966ad564": {
   "files": 4,
   "lines": 178
@@ -2396,6 +2392,10 @@
   "lines": 5372
  },
  "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@b0a9fe8dc062466b38a87a1cf89ac8626b649e40": {
+  "files": 4,
+  "lines": 5372
+ },
+ "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@2595e1f38d55b6958196bda6206478b48e8b9daf": {
   "files": 4,
   "lines": 5372
  }
