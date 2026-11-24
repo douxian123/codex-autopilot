@@ -122,5 +122,12 @@
    "ops/truth/product_state.json"
   ],
   "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@e33f1ac4b509cb5545dc8ea0f1fff3a2e5539136@c73683b2e502db139793bc66bd12e4311a991a16": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md",
+   "docs/PROJECT_CONSTITUTION.md"
+  ],
+  "unresolved_marker_files": []
  }
 }
