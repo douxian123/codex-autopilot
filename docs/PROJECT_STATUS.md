@@ -1,6 +1,6 @@
 # 项目状态（自动生成，勿手改）
 
-> 生成时间 2026-11-24 17:09:42　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
+> 生成时间 2026-11-24 20:02:55　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
 
 ## 一、产品主线
 
@@ -44,18 +44,18 @@
 **ux（1 待处理）**
 - `L-0021` 这个面板现在真的能够正常运行在运作吗？怎么全都是报红点点报错还是什么东西？而且这个面板现在的信息承载量怎么少了这么多？连最基础的施工地图、整体进度、项目文件夹这 → `design`
 
-（历史已关闭 15 条）
+（历史已关闭 16 条）
 
 ## 四、进展
 
-- `P-0239` [已落盘] @ `27ad73736e` codex/experience-gate-target-runner-20261124 验证门禁通过，已落盘 main @ 27ad73736e；改动 2 个文件：ops/kgctl.py（+70/-12）、ops/test-verify-gates-use-target-tree.py（+24/-0）｜2 files changed, 94 insertions(+), 12 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- `P-0240` [已落盘] @ `c65f319618` codex/acceptance-id-worktrees-20261124 验证门禁通过，已落盘 main @ c65f319618；改动 2 个文件：ops/test_truthctl_cross_worktree_ids.py（+53/-0）、ops/truthctl.py（+81/-4）｜2 files changed, 134 insertions(+), 4 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0240
 - `P-0243` [已落盘] @ `8b2b9e06c7` codex/b1-final-closure-20261124 验证门禁通过，已落盘 main @ 8b2b9e06c7；改动 6 个文件：docs/PRODUCT_MAINLINE.md（+48/-27）、docs/PROJECT_CONSTITUTION.md（+4/-2）、docs/PROJECT_STATUS.md（+33/-12）、ops/truth/acceptance.jsonl（+1/-0）、ops/truth/decisions.jsonl（+1/-0），另有 1 个文件｜6 files changed, 88 insertions(+), 41 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0244` [已完成] 最终审计确认：B1 全量 PRD 契约包、七管家责任视图、公开 .140 入口、本机面板主链与使用说明已形成可复核闭环；过期 P-0242 已追加停用，人工签收、native 派活与跨设备仍按未闭合项保留。证据见 docs/B1_FINAL_AUDIT_20261124.md 与 A-0243/A-0244。
 - `P-0245` [已落盘] @ `5ae6bae260` codex/final-progress-closure-20261124 验证门禁通过，已落盘 main @ 5ae6bae260；改动 3 个文件：docs/B1_FINAL_AUDIT_20261124.md（+116/-0）、ops/test-truth-dedupe.py（+19/-0）、ops/truthctl.py（+14/-4）｜3 files changed, 149 insertions(+), 4 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - `P-0246` [已完成] panel-design-restore-20261124 的 focus-visible 旧 runner 假红已复核：目标树机器证据全绿，落盘只卡人工体验签收；不再重跑同一失败 land。
 - `P-0247` [已完成] 把 18 条被后续 verified/landed/superseded 或目标树机器证据覆盖的旧 todo 验收转 void；把 steward-history-detail 的 needs_agent 旧行追加 abandoned 终态；人工验收 A-0022/A-0044/A-0187..A-0192、L-0019/L-0020/L-0021 不动。
 - `P-0249` [已完成] 最终审计确认当前可机器闭环项已全部闭环：origin/main 35fedb84；全量 selftest exit 0；experience-evidence PASS 48/48 fresh=True screenshots=4；panel-logic、panel-render、project-constitution 均 exit 0；验收按 id 最新态 verified=167/todo=8/wip=0/blocked=0/void=23，8 条 todo 全为 needs_human=true，机器型未闭环=0；剩余为人工验收、产品/发布决策与 ChatGPT pairing B2。
+- `P-0250` [已完成] 修复插件绑定漂移：旧脏 worktree 绑定被 binding_health 识别，capture_request/intake_request/route_preview 在写入前 fail-closed 并返回 AUTOPILOT_BINDING_DRIFT 恢复动作；安装器自检 opt-out 不误拦脏 source + 干净 trunk 夹具；面板坏绑定夹具清掉外层 KG_REPO。门禁：python3 -u ops/selftest.py exit 0；python3 ops/panel_logic_check.py exit 0；python3 ops/panel_render_check.py --no-shot exit 0；python3 ops/test-project-constitution.py exit 0；python3 ops/experience_evidence.py exit 0 (PASS 48/48 fresh=True screenshots=4)。
+- `P-0251` [已完成] 绑定漂移已改为 fail-closed：旧脏绑定被识别，投稿/路由预演先拦截并给出重绑定+重开 Codex 的恢复动作；安装与坏绑定夹具不误报。记录为 P-0250、A-0246。
 
 ## 五、验收进度
 
@@ -77,7 +77,7 @@
 - `A-0189` [P1] Codex Autopilot 面板人工验收：任务完成感
   - 人看首屏默认截图，确认当前目标、总体进度、最近完成和当前步骤能支撑判断任务是否在推进
 
-**已机器验收（167）**
+**已机器验收（168）**
 - `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
@@ -245,6 +245,7 @@
 - `A-0243` [P1] codex/b1-final-closure-20261124 门禁预跑（未落盘）
 - `A-0244` [P1] codex/b1-final-closure-20261124 落盘验收
 - `A-0245` [P1] codex/final-progress-closure-20261124 落盘验收
+- `A-0246` [P1] 绑定漂移 fail-closed 机器验收
 
 ## 六、决策记录
 
@@ -272,6 +273,8 @@
 - **主动注意提醒**：出现人工验收、需要拍板或异常时，主面板显示明确待处理状态，菜单栏切换警示图标并通过 macOS 通知中心提醒；同一批待办只提醒一次。
 - **自动挡合并队列与真相投影**：已归档（superseded）的分支不再出现在落盘队列或一屏在途项，队列会单列已裁决/已归档数量；真相快照把这类进展显示为「已归档」而不是「在途」。
   - 为什么：修复队列把已归档但无冲突的历史分支反复当成可落盘在途的假信号。
+- **绑定漂移**：插件绑定旧脏 worktree、当前会话在同仓库干净状态根时，binding_health 报漂移；capture_request、intake_request、route_preview 在写入前返回 AUTOPILOT_BINDING_DRIFT，并提示重跑 install.sh <当前状态根> 后重开 Codex；干净多 worktree 和安装自检不误报。
+  - 为什么：2026-11-24 现场发现插件 .mcp.json 绑定旧脏 worktree 时，当前干净状态根的需求会被写进旧账本，面板却显示正常。
 
 ## 八、判断逻辑（同一个判断，人只做一次）
 
