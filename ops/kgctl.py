@@ -5144,6 +5144,31 @@ def _decided_resolve_branches() -> set:
             if t.get("status") in ("landed", "abandoned") and t.get("branch")}
 
 
+def _committed_settled_resolve_record(branch: str, slug: str) -> dict | None:
+    """读 committed `HEAD:ops/tasks/resolve.json`，找出同任务的已裁决终态。
+
+    工作树台账可能被旧守护整文件覆盖回 needs_agent，但已落盘的 landed/abandoned
+    仍在 HEAD 里。自动拆解必须以终态为准，否则旧缓存会把已裁决分支重新报成待解。
+    """
+    try:
+        # 固定仓库相对路径：测试环境里 RESOLVE 可能是 /var 而 REPO 是
+        # /private/var，relative_to 会被符号路径差异打断，静默丢掉 committed 终态。
+        raw = git("show", "HEAD:ops/tasks/resolve.json")
+        data = json.loads(raw)
+    except (RuntimeError, ValueError, TypeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for task in _dedupe_resolve_tasks(data.get("tasks")):
+        if task.get("status") not in ("landed", "abandoned"):
+            continue
+        if branch in (task.get("branch"), task.get("resolve_branch")):
+            return task
+        if slug and slug == task.get("slug"):
+            return task
+    return None
+
+
 def _open_resolve_tasks() -> list:
     """还没收口的冲突任务（needs_agent / gate_fail），已收口的旧记录不算。
 
@@ -5384,6 +5409,12 @@ def _resolve_prepare(args) -> None:
     slug = _resolve_slug(branch)
     resolve_branch = _resolve_branch_name(slug)
     wt = _resolve_worktree_path(slug)
+    committed_settled = _committed_settled_resolve_record(branch, slug)
+    if committed_settled:
+        print(f"× {branch} 已裁决（committed status={committed_settled.get('status')}），"
+              f"工作树里的旧 needs_agent 不算，禁止重开。")
+        print(f"RESOLVE_RESULT branch={branch} outcome=settled")
+        return
     if git("rev-parse", "--verify", resolve_branch):
         # 这里曾经是死胡同：只要 codex/resolve-<slug> 存在就 blocked，
         # 而这条路只有两个出口（resolve --finish / --abandon），都需要一条
