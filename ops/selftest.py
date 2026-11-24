@@ -164,6 +164,7 @@ def main():
             "test-mirror-truth-jsonl-union.py",
             "test-selftest-release-dir.py",
             "test-gate-registration.py",
+            "test-ledger-identity-collision.py",
             "test-acceptance-criteria.py",
             "test-worker-lifecycle.py",
             "test-exec-lifecycle.py",

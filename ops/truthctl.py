@@ -33,6 +33,7 @@ truthctl 管「这个项目现在到底是什么状态」。
   truthctl closure-package show <L-id>  查看闭环施工包与缺口
   truthctl closure-package fill <L-id> --json '{"..."}'  补齐施工包字段（仍停在规划未完成）
   truthctl closure-package confirm <L-id> --note "..." --evidence "..."  确认完整施工包进入 ready
+  truthctl identity <L-id> [L-id...]     查编号是否被多个不同事项复用（自动收口门禁）
   truthctl accept "<标题>" [--human --steps "..."]  登记验收项，分清机器自证/人工验收
   truthctl accept --id <A-id> --status verified [--note "..."]  收敛一条验收项（人工拍板/机器复核）
   truthctl goal <summary|list|create|update|link|close>  跨项目长期目标（显式账本）
@@ -584,6 +585,65 @@ def _latest_ledger(rows: list) -> dict:
 
 def _find_ledger(rid: str) -> dict:
     return _latest_ledger(_read(TRUTH / FILES['ledger'])).get(rid)
+
+
+def _canonical_title(title: str) -> str:
+    """去掉自动收口前缀，得到底层题目。"""
+    t = str(title or '').strip()
+    for prefix in ('收口 ', '关闭 '):
+        if t.startswith(prefix):
+            rest = t[len(prefix):]
+            if rest.startswith('L-') and '：' in rest:
+                return rest.split('：', 1)[1].strip()
+    return t
+
+
+def _same_topic(a: str, b: str) -> bool:
+    """两条标题是否指同一件事（同题被截断/追加结论尾巴时仍算同题）。"""
+    a, b = _canonical_title(a), _canonical_title(b)
+    if not a or not b:
+        return False
+    if a == b or a.startswith(b) or b.startswith(a):
+        return True
+    common = 0
+    for ca, cb in zip(a, b):
+        if ca != cb:
+            break
+        common += 1
+    return common >= 12
+
+
+def ledger_identity(rid: str) -> dict:
+    """判断同一个编号是否被多个不同事项复用。
+
+    必须扫全部历史行，不能只看收敛后的最后一条：真实撞题现场是「旧任务的结论行 +
+    新任务的原题行」并存，收敛后只剩一条，看起来完全正常。
+    """
+    titles = [str(row.get('title') or '').strip()
+              for row in _read(TRUTH / FILES['ledger'])
+              if row.get('id') == rid]
+    titles = [t for t in titles if t]
+    clusters: list[list[str]] = []
+    for title in titles:
+        for cl in clusters:
+            if any(_same_topic(title, other) for other in cl):
+                cl.append(title)
+                break
+        else:
+            clusters.append([title])
+    return {
+        'id': rid,
+        'collision': len(clusters) > 1,
+        'titles': sorted({t for cl in clusters for t in cl}),
+        'issues': [sorted(set(cl)) for cl in clusters],
+    }
+
+
+def cmd_identity(args):
+    if not args:
+        sys.exit('用法: truthctl identity <L-id> [L-id...]')
+    for rid in args:
+        print(json.dumps(ledger_identity(rid), ensure_ascii=False))
 
 
 def _rewrite_jsonl(path: Path, rows: list) -> None:
@@ -2044,7 +2104,7 @@ CMDS = {'add': cmd_add, 'ls': cmd_ls, 'snapshot': cmd_snapshot, 'promote': cmd_p
         'close': cmd_close, 'open': cmd_open, 'synthesize': cmd_synthesize,
         'accept': cmd_accept, 'goal': cmd_goal,
         'closure-package': cmd_closure_package,
-        'constitution': cmd_constitution}
+        'constitution': cmd_constitution, 'identity': cmd_identity}
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
@@ -2056,5 +2116,5 @@ if __name__ == '__main__':
         print('命令：' + ' | '.join(['snapshot', 'ls', 'add', 'promote', 'route', 'lanes',
                                      'next', 'product', 'distill', 'constraints', 'retire',
                                      'close', 'open', 'synthesize', 'accept', 'goal',
-                                     'closure-package', 'constitution']))
+                                     'closure-package', 'constitution', 'identity']))
         sys.exit(1)

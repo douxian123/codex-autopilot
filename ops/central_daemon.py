@@ -1258,6 +1258,11 @@ def _prune_exec_blocked(blocked: dict) -> list:
             commit = str(rec.get("commit") or "").strip()
             if not commit:
                 continue
+            allowed, reason = _auto_close_allowed(repo, rid, commit)
+            if not allowed:
+                blocked[rid] = {"reason": reason, "commit": commit, "ts": _now()}
+                log(f"[exec] {rid} auto-close blocked ({reason}, commit={commit[:12]})")
+                continue
             rc, _, _ = _git(repo, "merge-base", "--is-ancestor", commit, "main")
             if rc != 0:
                 continue
@@ -1280,6 +1285,60 @@ def _run_truthctl(args, extra_env=None, timeout=120):
         return r.returncode, (r.stdout or "") + (r.stderr or "")
     except (OSError, subprocess.TimeoutExpired) as exc:
         return 124, f"调用 truthctl 失败/超时: {exc}"
+
+
+def _ledger_identity(rid: str) -> dict:
+    """Ask truthctl whether one ledger id still names one issue."""
+    rc, out = _run_truthctl(["identity", rid])
+    if rc != 0:
+        return {"check_failed": True, "error": out.strip()[-500:]}
+    try:
+        return json.loads(out.strip().splitlines()[-1])
+    except (IndexError, ValueError):
+        return {"check_failed": True, "error": out.strip()[-500:]}
+
+
+def _commit_touched_files(repo, commit: str):
+    """Files changed by a commit; None means the check itself failed."""
+    rc, out, _ = _git(repo, "show", "--name-only", "--pretty=format:", commit)
+    if rc != 0:
+        return None
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def _files_overlap(files, touched) -> bool:
+    """Whether a commit touched files declared by the ledger item."""
+    if not files or not touched:
+        return True
+
+    def norm(path):
+        return str(path).replace("\\", "/").strip().lstrip("./")
+
+    touched_n = [norm(t) for t in touched]
+    for f in files:
+        fn = norm(f)
+        if not fn:
+            continue
+        for t in touched_n:
+            if fn == t or fn.endswith("/" + t) or t.endswith("/" + fn):
+                return True
+    return False
+
+
+def _auto_close_allowed(repo, rid: str, commit: str) -> tuple[bool, str]:
+    """Guard auto-close against reused ids and mismatched commit evidence."""
+    identity = _ledger_identity(rid)
+    if identity.get("collision"):
+        return False, "identity_collision"
+    if identity.get("check_failed"):
+        return False, "identity_check_failed"
+    if not commit:
+        return True, ""
+    item = (_ledger_latest() or {}).get(rid) or {}
+    touched = _commit_touched_files(repo, commit)
+    if not _files_overlap(item.get("files"), touched):
+        return False, "evidence_mismatch"
+    return True, ""
 
 
 def _link_side_dirs(wt: Path, cfg: dict) -> None:
@@ -2639,8 +2698,13 @@ def _finish_exec(item, cfg, repo, wt, branch, rid, result, blocked,
             ancestor_rc, _, _ = _git(repo, "merge-base", "--is-ancestor",
                                      commit, main_branch)
             if ancestor_rc == 0:
-                _run_truthctl(["close", rid, "auto-close: commit already in main"],
-                              extra_env={"KG_TRUTH_COMMIT": commit})
+                allowed, reason = _auto_close_allowed(repo, rid, commit)
+                if allowed:
+                    _run_truthctl(["close", rid, "auto-close: commit already in main"],
+                                  extra_env={"KG_TRUTH_COMMIT": commit})
+                else:
+                    log(f"[exec] {rid} auto-close blocked ({reason}, "
+                        f"commit={commit[:12]})")
         # 不写进 blocked：no_changes 只是「这一拍没做出东西」，不是「这活做不成」。
         # 永久阻塞会让额度抖动/超时中断过的任务再也不被重派。
         blocked.pop(rid, None)
@@ -4619,13 +4683,17 @@ def dispatch_exec(dry: bool, blocked: dict, workers: dict | None = None):
                 # commit、且该 commit 已在 main 时，才允许免会话自动收口。
                 _commit = str(item.get("commit") or "").strip()
                 if _commit and _main_contains(_commit):
-                    _rc_c, _out_c = _run_truthctl(
-                        ["close", rid, "auto-close: commit already in main"],
-                        extra_env={"KG_TRUTH_COMMIT": _commit})
-                    log(f"[exec] {rid} 台账 commit 已在 main -> 自动收口 "
-                        f"rc={_rc_c}")
-                    if _rc_c == 0:
-                        continue
+                    _allowed_c, _reason_c = _auto_close_allowed(repo, rid, _commit)
+                    if not _allowed_c:
+                        log(f"[exec] {rid} auto-close blocked ({_reason_c})")
+                    else:
+                        _rc_c, _out_c = _run_truthctl(
+                            ["close", rid, "auto-close: commit already in main"],
+                            extra_env={"KG_TRUTH_COMMIT": _commit})
+                        log(f"[exec] {rid} 台账 commit 已在 main -> 自动收口 "
+                            f"rc={_rc_c}")
+                        if _rc_c == 0:
+                            continue
             except Exception as _exc:
                 log(f"[exec] {rid} 自动收口判断失败（忽略）：{_exc!r}")
         _has_inflight = _inflight(item)
