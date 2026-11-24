@@ -1662,6 +1662,18 @@ ROADMAP_LABEL = {'done': '已完成', 'doing': '进行中',
                  'next': '下一步', 'todo': '未开始'}
 
 
+def _progress_mark(row: dict) -> str:
+    """进展的当前状态按台账字段判定，不把 done 非 landed 误写成在途。"""
+    status = row.get('status')
+    if status in ('superseded', 'retired'):
+        return '已归档'
+    if row.get('landed'):
+        return '已落盘'
+    if status == 'done':
+        return '已完成'
+    return '在途'
+
+
 def cmd_synthesize(args):
     """综合：把决策/进展/问题/验收/产品状态合成一页产品主线。
 
@@ -1760,8 +1772,7 @@ def cmd_synthesize(args):
     L += ['## 最近在推进', '']
     if prg[-10:]:
         for r in prg[-10:]:
-            mark = ('已归档' if r.get('status') == 'superseded'
-                    else '已落盘' if r.get('landed') else '在途')
+            mark = _progress_mark(r)
             c = ' @ %s' % r['commit'][:10] if r.get('commit') else ''
             L.append('- [%s]%s %s' % (mark, c, r.get('summary') or r.get('title', '')))
     else:
@@ -1946,8 +1957,7 @@ def cmd_snapshot(args):
 
     L += ['## 四、进展', '']
     for r in prg[-8:]:
-        mark = ('已归档' if r.get('status') == 'superseded'
-                else '已落盘' if r.get('landed') else '在途')
+        mark = _progress_mark(r)
         c = f" @ `{r['commit'][:10]}`" if r.get('commit') else ''
         L.append(f"- `{r['id']}` [{mark}]{c} {r.get('summary') or r.get('title','')}")
     L.append('')
