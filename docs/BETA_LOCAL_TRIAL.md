@@ -65,6 +65,14 @@ B1 只覆盖**本地主链**：在 Codex 里继续用原来的输入框提需求
 
 看到 MCP App / 内联卡片 / 侧栏面板出现，且第一屏显示「需要你决定什么 / 系统正在做什么 / 真正闭环了什么」，才算面板真的加载。当前会话如果只返回 `unsupported call: mcp__codex_autopilot__render_autopilot_panel`，不要改开 HTML 驾驶舱冒充；新开会话或重启宿主后再验。
 
+### 怎么确认多管家真的加载了
+
+面板第一屏的「系统在干对的事吗」下面，应有一条紧凑的管家状态条。正常能看到 8 个名字：`上下文`、`路由`、`合并`、`状态`、`实现`、`项目`、`验收`、`全局健康`。这不是要你选 8 个机器人，也不需要分别打开它们；它们是同一套自动挡链路的 7 个责任视图，加 1 条只读健康摘要。
+
+点任意一个管家名，应展开它的当前状态、最近完成项和历史记录。正常现象包括：`上下文` 显示若干条候选等你确认，`验收` 显示若干条验收候选等你确认，`实现管家：自动实现已关`，`全局健康` 显示 `attention` / `ok` / `unknown` / `off` 之一。看到 `attention` 时，按第一屏「需要你决定什么」里的下一步处理；看到候选时，不要自己批量 promote/dismiss，只有你明确说“这条确认/不算”才处理。
+
+看不到管家条、只有空白、或提示绑定失效，先按旧会话处理：完全退出并重新打开 Codex，在新会话复验。不要把浏览器驾驶舱或 HTML 页面当成这里的多管家面板。
+
 版本和绑定关系可另外核对：
 
 ```bash
@@ -88,10 +96,10 @@ codex plugin list --json
 ## API key 与 ChatGPT 订阅有什么区别
 
 - API key：按量计费，适合本地 CLI、IDE、SDK 等开发工作流。你目前只用 API key，B1 本地主链不需要切换登录方式。
-- ChatGPT 订阅：使用 ChatGPT 账号登录 Codex。Codex cloud、远端/跨设备连接依赖云侧能力，API key 不包含这些功能。
+- ChatGPT 订阅：使用 ChatGPT 账号登录 Codex，走 ChatGPT plan 的 included usage / credits 和 workspace 权限。Codex cloud、远端/跨设备连接依赖云侧能力，API key 不包含这些功能。Free / Go 的 Codex 权益受 rollout 和 plan 限制；Beta 用户更适合 Plus / Pro / Business。
 - Remote Connection / Control this Mac：需要同一 ChatGPT 账号或 workspace、目标 Mac 在线，可能经过 MFA / SSO / passkey，管理员也可能要求先开启 Remote Control access。设置入口是 `Settings > Connections > Control this Mac or PC`，通过 QR 配对。
 
-本次 beta 不会替你执行 `codex login --device-auth`、ChatGPT 配对、provider 切换、桌面端重启或守护重启。先跑通 API key 下的本地主链；远端/跨设备是后续独立验收项。
+本次 beta 不会替你执行 `codex login` 浏览器登录、ChatGPT 配对、provider 切换、桌面端重启或守护重启。先用你当前已有的登录方式跑通本地主链；B1 不要求切换登录，也不承诺远端/跨设备。
 
 ## 已知边界
 
