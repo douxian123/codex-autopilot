@@ -1,5 +1,5 @@
 {
- "main": "29d9bc640767d97d09d2c1a7a7f9b030194a9f30",
+ "main": "d0d901838b9684975357767e8d8af650be09b0ab",
  "branches": [
   "codex/auto-close-identity-gate-20261024",
   "codex/autopilot-brand-panel",
@@ -14,7 +14,7 @@
   "codex/autopilot-brand-panel": 9,
   "codex/disk-admission-clean-20261027": 3,
   "codex/disk-admission-preview29-20261027": 14,
-  "codex/panel-design-restore-20261124": 3,
+  "codex/panel-design-restore-20261124": 8,
   "codex/reap-identical-tracked-20261027": 3,
   "codex/slow-model-routing": 4
  }
