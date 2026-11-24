@@ -1,6 +1,6 @@
 # 项目状态（自动生成，勿手改）
 
-> 生成时间 2026-11-25 02:05:42　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
+> 生成时间 2026-11-25 02:07:01　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
 
 ## 一、产品主线
 
@@ -276,8 +276,8 @@
   - 为什么：修复队列把已归档但无冲突的历史分支反复当成可落盘在途的假信号。
 - **绑定漂移**：插件绑定旧脏 worktree、当前会话在同仓库干净状态根时，binding_health 报漂移；capture_request、intake_request、route_preview 在写入前返回 AUTOPILOT_BINDING_DRIFT，并提示重跑 install.sh <当前状态根> 后重开 Codex；干净多 worktree 和安装自检不误报。
   - 为什么：2026-11-24 现场发现插件 .mcp.json 绑定旧脏 worktree 时，当前干净状态根的需求会被写进旧账本，面板却显示正常。
-- **验收结论口径**：当前问题台账仍有 L-0427、L-0430、L-0431、L-0432、L-0440、L-0543、L-0546、L-0547、L-0555 处于 open；因此不能宣称全产品闭环生效。
-  - 为什么：以 ops/truthctl.py ls ledger 的实时输出为准，修正上一条基于记忆的台账状态说法。
+- **验收结论口径**：当前知识图谱走查修复分支已提交推送但尚未合入 main；真实浏览器复放和 30 条全量重跑未完成，因此不能宣称符合预期或全产品闭环生效。
+  - 为什么：分支 codex/user-audit-quality-closure-r3-20261124 commit 2dabbeb4e6 已推送，main 仍是 fcd634cf99；资源准入拦截浏览器重验证。
 
 ## 八、判断逻辑（同一个判断，人只做一次）
 

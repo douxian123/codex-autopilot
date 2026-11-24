@@ -105,10 +105,10 @@
   },
   {
    "area": "验收结论口径",
-   "behavior": "当前问题台账仍有 L-0427、L-0430、L-0431、L-0432、L-0440、L-0543、L-0546、L-0547、L-0555 处于 open；因此不能宣称全产品闭环生效。",
-   "why": "以 ops/truthctl.py ls ledger 的实时输出为准，修正上一条基于记忆的台账状态说法。",
+   "behavior": "当前知识图谱走查修复分支已提交推送但尚未合入 main；真实浏览器复放和 30 条全量重跑未完成，因此不能宣称符合预期或全产品闭环生效。",
+   "why": "分支 codex/user-audit-quality-closure-r3-20261124 commit 2dabbeb4e6 已推送，main 仍是 fcd634cf99；资源准入拦截浏览器重验证。",
    "files": [
-    "ops/truth/ledger.jsonl"
+    "docs/acceptance/USER_WALKTHROUGH_CLOSURE_MATRIX_20261123.md"
    ],
    "updated": "2026-11-25"
   }
