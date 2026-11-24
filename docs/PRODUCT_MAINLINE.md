@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-24 16:37:10　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-24 16:56:49　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -54,7 +54,6 @@
 
 ## 最近在推进
 
-- [已落盘] @ f79fca2c9f codex/truth-gate-false-green-correction-20261124 验证门禁通过，已落盘 main @ f79fca2c9f；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ d0f8bbf80c codex/port-identity-guard-20261124 验证门禁通过，已落盘 main @ d0f8bbf80c；改动 4 个文件：ops/central_daemon.py（+77/-9）、ops/selftest.py（+1/-0）、ops/test-ledger-identity-collision.py（+163/-0）、ops/truthctl.py（+62/-2）｜4 files changed, 303 insertions(+), 11 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0229、A-0230
 - [已落盘] @ b061c53b60 codex/fix-resolve-stale-adopt-guard-20261124 验证门禁通过，已落盘 main @ b061c53b60；改动 2 个文件：ops/kgctl.py（+31/-0）、ops/selftest.py（+62/-5）｜2 files changed, 93 insertions(+), 5 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0203、A-0204
 - [已落盘] @ 097280a1ba codex/public-beta-docs-closure-20261124 验证门禁通过，已落盘 main @ 097280a1ba；改动 3 个文件：docs/BETA_LOCAL_TRIAL.md（+10/-2）、ops/selftest.py（+9/-0）、plugin/skills/setup/SKILL.md（+1/-0）｜3 files changed, 20 insertions(+), 2 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0233
@@ -64,6 +63,7 @@
 - [已完成] 最终审计确认：B1 全量 PRD 契约包、七管家责任视图、公开 .140 入口、本机面板主链与使用说明已形成可复核闭环；过期 P-0242 已追加停用，人工签收、native 派活与跨设备仍按未闭合项保留。证据见 docs/B1_FINAL_AUDIT_20261124.md 与 A-0243/A-0244。
 - [已落盘] @ 5ae6bae260 codex/final-progress-closure-20261124 验证门禁通过，已落盘 main @ 5ae6bae260；改动 3 个文件：docs/B1_FINAL_AUDIT_20261124.md（+116/-0）、ops/test-truth-dedupe.py（+19/-0）、ops/truthctl.py（+14/-4）｜3 files changed, 149 insertions(+), 4 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已完成] panel-design-restore-20261124 的 focus-visible 旧 runner 假红已复核：目标树机器证据全绿，落盘只卡人工体验签收；不再重跑同一失败 land。
+- [已完成] 把 18 条被后续 verified/landed/superseded 或目标树机器证据覆盖的旧 todo 验收转 void；把 steward-history-detail 的 needs_agent 旧行追加 abandoned 终态；人工验收 A-0022/A-0044/A-0187..A-0192、L-0019/L-0020/L-0021 不动。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 

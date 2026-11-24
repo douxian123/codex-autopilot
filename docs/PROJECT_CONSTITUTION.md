@@ -1,9 +1,9 @@
 # 项目宪法（自动投影，勿手改）
 
-> 生成时间 2026-11-24 16:37:10　·　由 `python3 ops/truthctl.py constitution` 从约束/候选/判断台账投影
+> 生成时间 2026-11-24 16:56:49　·　由 `python3 ops/truthctl.py constitution` 从约束/候选/判断台账投影
 > 只有人确认过的约束才生效；候选与驳回项保留原话供追溯，不自动参与执行。
 
-生效 4 · 待确认 12 · 已确认待落账 0 · 已驳回 0 · 判断逻辑 23
+生效 4 · 待确认 12 · 已确认待落账 0 · 已驳回 0 · 判断逻辑 24
 
 ## 一、生效约束
 
@@ -97,6 +97,8 @@
   - 为什么：2026-11-24 panel-design-restore 的 land gate 用已安装 .140 的旧 experience_evidence.py，重复报 focus-visible: refresh:no visible focus ring；同一棵目标树自己的 runner 连跑 5 次 0 fails，正式 gate 改用目标树模块后机器项全绿，只剩人工体验签收。
 - **J-0027** [process] 当旧 runner 与当前目标树证据冲突时，以目标树可复现的机器证据为准；机器全绿但人工体验未签收时停在人工闸口，不代签也不重复跑同一失败命令。
   - 为什么：panel-design-restore-20261124: 目标树 experience_evidence PASS 48/48 fresh=True screenshots=4、panel_render_check --no-shot 全 PASS，直接 land_gate 的 machine_reason=None；只剩 A-0187..A-0192、A-0022、A-0044 人工体验项未由人确认。
+- **J-0028** [process] 陈旧机器验收要看最新证据：被后续 verified/landed/superseded 或目标树复核覆盖的旧 todo 转 void，不删除历史；人工验收项保持 todo 等待真人拍板。
+  - 为什么：追加式台账里的旧 todo 若已有同事项后续 verified/landed/superseded 证据，继续显示会制造假待办；但 needs_human 项即使有机器证据也不能转 verified。void 用于撤回过期机器记录，verified 用于有真实复核的证据。
 
 ## 六、未接线与缺口
 

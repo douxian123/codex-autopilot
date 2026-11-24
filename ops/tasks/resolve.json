@@ -1,6 +1,30 @@
 {
  "tasks": [
   {
+   "slug": "steward-history-detail-20261123",
+   "branch": "codex/steward-history-detail-20261123",
+   "resolve_branch": "codex/resolve-steward-history-detail-20261123",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-resolve-steward-history-detail-20261123",
+   "base_main": "fe8a5d09fc3c0ae3467f5e14488b690c045e38fb",
+   "source_head": "4077e18c89bedba4ecb660993e9dfb546f946f9e",
+   "source_commits": [
+    "4077e18c89bedba4ecb660993e9dfb546f946f9e"
+   ],
+   "created": "2026-11-24 06:35:34",
+   "updated": "2026-11-24 16:54:55",
+   "conflict_files": [
+    "docs/PRODUCT_MAINLINE.md",
+    "docs/PROJECT_CONSTITUTION.md"
+   ],
+   "unresolved_files": [
+    "docs/PRODUCT_MAINLINE.md",
+    "docs/PROJECT_CONSTITUTION.md"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "abandoned",
+   "reason": "旧 lineage 的真相内容已由 3138a232/c591f7e1 进入 origin/main，P-0232 已判定独立收口；源分支不动，仅清理误报 needs_agent"
+  },
+  {
    "slug": "panel-design-restore-20261124",
    "branch": "codex/panel-design-restore-20261124",
    "resolve_branch": "codex/resolve-panel-design-restore-20261124",
@@ -27,29 +51,6 @@
    "status": "gate_fail",
    "adopted": true,
    "gate_output": "× codex/resolve-panel-design-restore-20261124 与 main 有 1 个冲突文件，拒绝自动 land：\n    ops/truth/product_state.json\n  这是需要归属裁决的信号（kgctl matrix 的 C 组）。"
-  },
-  {
-   "slug": "steward-history-detail-20261123",
-   "branch": "codex/steward-history-detail-20261123",
-   "resolve_branch": "codex/resolve-steward-history-detail-20261123",
-   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-resolve-steward-history-detail-20261123",
-   "base_main": "fe8a5d09fc3c0ae3467f5e14488b690c045e38fb",
-   "source_head": "4077e18c89bedba4ecb660993e9dfb546f946f9e",
-   "source_commits": [
-    "4077e18c89bedba4ecb660993e9dfb546f946f9e"
-   ],
-   "created": "2026-11-24 06:35:34",
-   "updated": "2026-11-24 06:35:34",
-   "conflict_files": [
-    "docs/PRODUCT_MAINLINE.md",
-    "docs/PROJECT_CONSTITUTION.md"
-   ],
-   "unresolved_files": [
-    "docs/PRODUCT_MAINLINE.md",
-    "docs/PROJECT_CONSTITUTION.md"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "needs_agent"
   },
   {
    "slug": "land-clean-worktree-gate-20261122",
@@ -139,5 +140,5 @@
    "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
   }
  ],
- "updated": "2026-11-24 11:08:26"
+ "updated": "2026-11-24 16:54:55"
 }
