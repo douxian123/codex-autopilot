@@ -1,6 +1,6 @@
 # 项目状态（自动生成，勿手改）
 
-> 生成时间 2026-11-24 12:53:03　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
+> 生成时间 2026-11-24 12:43:38　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
 
 ## 一、产品主线
 
@@ -41,18 +41,21 @@
 **gate（1 待处理）**
 - `L-0020` 按你推荐的来，这些肯定不是我发现、修好，然后我自己能用就好了。肯定是它作为一个完整的、能够对外发表的、能让普通人也用得明白的顺畅产品为标准。 → `gate`
 
+**ux（1 待处理）**
+- `L-0021` 这个面板现在真的能够正常运行在运作吗？怎么全都是报红点点报错还是什么东西？而且这个面板现在的信息承载量怎么少了这么多？连最基础的施工地图、整体进度、项目文件夹这 → `design`
+
 （历史已关闭 15 条）
 
 ## 四、进展
 
-- `P-0217` [已落盘] @ `7f10530c0f` codex/rollback-install-state-20261124 验证门禁通过，已落盘 main @ 7f10530c0f；改动 2 个文件：install.sh（+68/-14）、ops/selftest.py（+18/-0）｜2 files changed, 86 insertions(+), 14 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- `P-0219` [已落盘] @ `18f2692f8e` 18f2692f 回滚修复后最新主干复验：.146 隔离安装发布评估 5/5、阴性对照 8/8、原生面板 ok:true；live 仍 .140，tag/prerelease 与人工签收未发生
-- `P-0220` [已落盘] @ `5c57a44bcd` codex/release-doc-truth-alignment-20261124 验证门禁通过，已落盘 main @ 5c57a44bcd；改动 3 个文件：docs/BETA_LOCAL_TRIAL.md（+13/-7）、docs/PREVIEW.md（+1/-1）、ops/selftest.py（+64/-0）｜3 files changed, 78 insertions(+), 8 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- `P-0221` [已落盘] @ `a29fbe25f5` codex/project-health-mainline-freshness-20261124 验证门禁通过，已落盘 main @ a29fbe25f5；改动 2 个文件：ops/project_health.py（+32/-4）、ops/test-project-health.py（+38/-9）｜2 files changed, 70 insertions(+), 13 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- `P-0223` [已落盘] @ `858e540cf4` codex/acceptance-id-collision-20261124 验证门禁通过，已落盘 main @ 858e540cf4；改动 2 个文件：ops/acceptance_criteria.py（+44/-7）、ops/test-acceptance-criteria.py（+47/-0）｜2 files changed, 91 insertions(+), 7 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- `P-0224` [已落盘] @ `d1f160ab0c` codex/experience-evidence-focus-measure-20261124 验证门禁通过，已落盘 main @ d1f160ab0c；改动 1 个文件：ops/experience_evidence.py（+18/-9）｜1 file changed, 18 insertions(+), 9 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- `P-0225` [已归档] @ `ffc371d362` codex/native-thread-bridge 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
-- `P-0228` [在途] 06:22 闭环审计：假在途与孤儿收敛修复已落 origin/main @ fe8a5d09；682f47bfd5 已能被 converge 认领；PRD/B1 文档已同步三口径，live 仍 .140 等待发布换代/人工签收。
+- `P-0234` [已落盘] @ `b94f43ec04` codex/fix-gate-experience-base-20261124 验证门禁通过，已落盘 main @ b94f43ec04；改动 3 个文件：ops/kgctl.py（+10/-1）、ops/selftest.py（+1/-0）、ops/test-gate-experience-base.py（+124/-0）｜3 files changed, 135 insertions(+), 1 deletion(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- `P-0235` [已落盘] @ `f79fca2c9f` codex/truth-gate-false-green-correction-20261124 验证门禁通过，已落盘 main @ f79fca2c9f；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- `P-0236` [已落盘] @ `d0f8bbf80c` codex/port-identity-guard-20261124 验证门禁通过，已落盘 main @ d0f8bbf80c；改动 4 个文件：ops/central_daemon.py（+77/-9）、ops/selftest.py（+1/-0）、ops/test-ledger-identity-collision.py（+163/-0）、ops/truthctl.py（+62/-2）｜4 files changed, 303 insertions(+), 11 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0229、A-0230
+- `P-0237` [已落盘] @ `b061c53b60` codex/fix-resolve-stale-adopt-guard-20261124 验证门禁通过，已落盘 main @ b061c53b60；改动 2 个文件：ops/kgctl.py（+31/-0）、ops/selftest.py（+62/-5）｜2 files changed, 93 insertions(+), 5 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0203、A-0204
+- `P-0238` [已落盘] @ `097280a1ba` codex/public-beta-docs-closure-20261124 验证门禁通过，已落盘 main @ 097280a1ba；改动 3 个文件：docs/BETA_LOCAL_TRIAL.md（+10/-2）、ops/selftest.py（+9/-0）、plugin/skills/setup/SKILL.md（+1/-0）｜3 files changed, 20 insertions(+), 2 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0233
+- `P-0239` [已落盘] @ `27ad73736e` codex/experience-gate-target-runner-20261124 验证门禁通过，已落盘 main @ 27ad73736e；改动 2 个文件：ops/kgctl.py（+70/-12）、ops/test-verify-gates-use-target-tree.py（+24/-0）｜2 files changed, 94 insertions(+), 12 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- `P-0240` [已落盘] @ `c65f319618` codex/acceptance-id-worktrees-20261124 验证门禁通过，已落盘 main @ c65f319618；改动 2 个文件：ops/test_truthctl_cross_worktree_ids.py（+53/-0）、ops/truthctl.py（+81/-4）｜2 files changed, 134 insertions(+), 4 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0240
+- `P-0242` [在途] 最终收口按 B1：公开入口保持 v0.6.0-preview.140；源码 main 修复不等同公开现场生效；不代签人工视觉与体验项。
 
 ## 五、验收进度
 
@@ -74,7 +77,7 @@
 - `A-0189` [P1] Codex Autopilot 面板人工验收：任务完成感
   - 人看首屏默认截图，确认当前目标、总体进度、最近完成和当前步骤能支撑判断任务是否在推进
 
-**已机器验收（147）**
+**已机器验收（164）**
 - `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
@@ -214,20 +217,38 @@
 - `A-0185` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
 - `A-0186` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
 - `A-0197` [P1] codex/route-ownership-contract-20261123 落盘验收
-- `A-0198` [P1] codex/mcp-stale-failclosed-20261124 落盘验收
+- `A-0198` [P1] 面板首屏四项恢复的机器门禁验收
 - `A-0201` [P1] codex/rollback-install-state-20261124 落盘验收
 - `A-0206` [P1] codex/release-doc-truth-alignment-20261124 落盘验收
 - `A-0207` [P1] codex/project-health-mainline-freshness-20261124 落盘验收
 - `A-0208` [P1] codex/acceptance-id-collision-20261124 落盘验收
 - `A-0209` [P1] codex/experience-evidence-focus-measure-20261124 落盘验收
+- `A-0210` [P1] codex/fix-superseded-queue-20261124 落盘验收
+- `A-0212` [P1] codex/fix-converge-orphan-adopt-20261124 落盘验收
+- `A-0214` [P1] codex/truth-closure-audit-20261124 门禁预跑（未落盘）
+- `A-0215` [P1] codex/truth-closure-audit-20261124 落盘验收
+- `A-0216` [P1] codex/fix-stale-resolve-abandon-20261124 落盘验收
+- `A-0219` [P1] codex/fix-gate-experience-base-20261124 落盘验收
+- `A-0221` [P1] codex/truth-gate-false-green-correction-20261124 落盘验收
+- `A-0230` [P1] codex/port-identity-guard-20261124 门禁预跑（未落盘）
+- `A-0231` [P1] codex/port-identity-guard-20261124 落盘验收
+- `A-0202` [P1] 面板秘书简报与工具一致性机器验收
+- `A-0203` [P1] codex/fix-resolve-stale-adopt-guard-20261124 门禁预跑（未落盘）
+- `A-0204` [P1] codex/fix-resolve-stale-adopt-guard-20261124 门禁预跑（未落盘）
+- `A-0232` [P1] codex/fix-resolve-stale-adopt-guard-20261124 落盘验收
+- `A-0233` [P1] codex/public-beta-docs-closure-20261124 门禁预跑（未落盘）
+- `A-0234` [P1] codex/public-beta-docs-closure-20261124 落盘验收
 - `A-0235` [P1] codex/resolve-panel-design-restore-20261124 门禁预跑（未落盘）
+- `A-0237` [P1] codex/experience-gate-target-runner-20261124 落盘验收
 - `A-0240` [P1] codex/acceptance-id-worktrees-20261124 门禁预跑（未落盘）
+- `A-0241` [P1] codex/acceptance-id-worktrees-20261124 落盘验收
 
 ## 六、决策记录
 
 - `D-0001` 自动挡架构收敛为两平面七管家与一层全局健康
 - `D-0003` 受控换代边界与 MCP 重载策略
 - `D-0002` 北极星首问闭环率的唯一口径
+- `D-0005` B1 路线已定：公开 beta 保持 .140
 
 ## 七、产品状态（产品今天是怎么工作的）
 
@@ -251,7 +272,6 @@
 
 ## 八、判断逻辑（同一个判断，人只做一次）
 
-- `J-0016` [process] CLI 写命令的帮助探测不得用 unsupported flag 试探；未知参数可能被子命令当成标题或正文并写入账本，先读总帮助或源码，确认支持后再调用。
 - `J-0019` [workflow] 源码合并不等于现场生效：换代必须回读 install-state、release 元数据、daemon plist 和 live PID 四重一致；取不到写 unknown，不写 0 或正常。
 - `J-0001` [product-architecture] 自动挡架构按“谁能改变事实”分平面，不按愿望数量加管家；全局健康只读，PM 不自动追问，验收截图不替人收口。
 - `J-0002` [process] 原生直连派活的最后一道闸是官方 remote-control 的 ChatGPT 登录/配对，不是 socket 路径或协议；不能用 API key 冒充 ChatGPT 身份，也不应把独立 app-server 会话包装成桌面宿主实时窗口。
@@ -261,5 +281,6 @@
 - `J-0020` [process] 诊断「部分 Codex 对话持续报 upstream_stream_cut」时，先按精确错误对象匹配 emitter，再用 proxy.log 的 ROUTE 行按 thread_id 核对实际模型线路；同一时刻其他线程正常不能排除单线程绑定坏线路。
 - `J-0023` [process] 验收问题必须先证明当前源码和当前 main 的基线，再区分本轮回归、门禁字面量漂移和主线既有红灯；冲击性措辞只作为缺陷线索，不作为已修复或已闭环的证据。
 - `J-0024` [product] 真实用户走查的完成判定必须按题同时看终态、首值、内容相关性、移动端可见性和刷新后状态；done 帧出现但只有一张无证据残句，或 30 秒后出现大量跑题来源，都不能算符合预期。
+- `J-0021` [design] 原生窄面板压缩时，项目卡（含整体进度和一句汇报简语）、施工地图、项目文件夹、管家健康是信息承载底线；后台候选与历史冲突不能用橙色报错语义表达。
 - `J-0025` [process] 公开 beta 的用户可见文档只有在对应 tag/prerelease 或公开文档站更新后才算交付；源码 main 落盘只能证明工程闭环，不能写成公开用户现场已经看到。
 - `J-0026` [process] 落盘门禁必须从正在验证的目标树加载门禁模块，不能从当前已安装 runner 的 ops 目录加载；否则目标树已修好的证据会被旧 runner 否定，形成机器假红。

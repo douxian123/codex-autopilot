@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-24 12:17:28　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-24 12:43:38　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -46,6 +46,7 @@
 - 自动挡架构收敛为两平面七管家与一层全局健康 —— 继续横向加管家会把职责变成角色堆叠，无法说清谁拥有事实、谁执行、谁能改状态。两平面先分真相与执行，再以四层契约处理关系、规划、执行、运行，能保留万法归一入口，同时把写权限和人工介入边界写硬。
 - 受控换代边界与 MCP 重载策略 —— 用户授权 A 是换代并重载自动挡自身运行面，不是授权扩大到宿主全局服务。必须把发布一致性、现场生效和会话内工具未热加载分开记账。
 - 北极星首问闭环率的唯一口径 —— 北极星一直是文案不是数字：被统计的是 landed/resolved/superseded 这类机器动作数，产品价值所在的比例没有分子分母、不会红，这是「做着做着达不到预期」的结构性根因。把它变成会红、可复现的数字，行为才会从「刷动作数」转向「真把需求做闭环」。
+- B1 路线已定：公开 beta 保持 .140 —— 用户原话 2026-11-23T02:30:03.032Z 选 b，2026-11-23T02:35:12.824Z 说按推荐做闭环；当时推荐明确为 B1 本地主链小范围试用。
 
 ## PRD 修订索引
 
@@ -53,48 +54,51 @@
 
 ## 最近在推进
 
-- [在途] @ ee180ad01a 当前主干 ee180ad0 的 .146 发布候选复验：全新隔离 clone + 显式 trunk 安装完成，product_eval 5/5、阴性对照 8/8，首问闭环率 88.2%（15/17），selftest/panel logic/panel render/stale release-dir 门禁均为 0；live 已恢复到公开 .140，未打 tag、未发 prerelease、未换代、未签收 L-0019。
-- [在途] P-0215 冲突补回（远端 tick 删除后按唯一 ID 追加）：当前主干 ee180ad0 的 .146 发布候选复验完成；product_eval 5/5、阴性对照 8/8、首问闭环率 88.2%（15/17），全部专项门禁 exit 0；live 已恢复公开 .140，未发 tag/prerelease、未换代、未签收 L-0019。
-- [已落盘] @ 7f10530c0f codex/rollback-install-state-20261124 验证门禁通过，已落盘 main @ 7f10530c0f；改动 2 个文件：install.sh（+68/-14）、ops/selftest.py（+18/-0）｜2 files changed, 86 insertions(+), 14 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [已落盘] @ 18f2692f8e 18f2692f 回滚修复后最新主干复验：.146 隔离安装发布评估 5/5、阴性对照 8/8、原生面板 ok:true；live 仍 .140，tag/prerelease 与人工签收未发生
-- [已落盘] @ 5c57a44bcd codex/release-doc-truth-alignment-20261124 验证门禁通过，已落盘 main @ 5c57a44bcd；改动 3 个文件：docs/BETA_LOCAL_TRIAL.md（+13/-7）、docs/PREVIEW.md（+1/-1）、ops/selftest.py（+64/-0）｜3 files changed, 78 insertions(+), 8 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [已落盘] @ a29fbe25f5 codex/project-health-mainline-freshness-20261124 验证门禁通过，已落盘 main @ a29fbe25f5；改动 2 个文件：ops/project_health.py（+32/-4）、ops/test-project-health.py（+38/-9）｜2 files changed, 70 insertions(+), 13 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [已落盘] @ 858e540cf4 codex/acceptance-id-collision-20261124 验证门禁通过，已落盘 main @ 858e540cf4；改动 2 个文件：ops/acceptance_criteria.py（+44/-7）、ops/test-acceptance-criteria.py（+47/-0）｜2 files changed, 91 insertions(+), 7 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [已落盘] @ d1f160ab0c codex/experience-evidence-focus-measure-20261124 验证门禁通过，已落盘 main @ d1f160ab0c；改动 1 个文件：ops/experience_evidence.py（+18/-9）｜1 file changed, 18 insertions(+), 9 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [已归档] @ ffc371d362 codex/native-thread-bridge 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
-- [在途] 06:22 闭环审计：假在途与孤儿收敛修复已落 origin/main @ fe8a5d09；682f47bfd5 已能被 converge 认领；PRD/B1 文档已同步三口径，live 仍 .140 等待发布换代/人工签收。
+- [在途] 旧 lineage 的 codex/steward-history-detail-20261123 已用 resolve --abandon 定向收口；源分支原样不动，4077e18c 的真相内容已由 3138a232/c591f7e1 进入 origin/main；resolve --list 只剩 panel-design-restore 的人工验收阻塞。
+- [已落盘] @ b042de9f85 codex/fix-stale-resolve-abandon-20261124 验证门禁通过，已落盘 main @ b042de9f85；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ b94f43ec04 codex/fix-gate-experience-base-20261124 验证门禁通过，已落盘 main @ b94f43ec04；改动 3 个文件：ops/kgctl.py（+10/-1）、ops/selftest.py（+1/-0）、ops/test-gate-experience-base.py（+124/-0）｜3 files changed, 135 insertions(+), 1 deletion(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ f79fca2c9f codex/truth-gate-false-green-correction-20261124 验证门禁通过，已落盘 main @ f79fca2c9f；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ d0f8bbf80c codex/port-identity-guard-20261124 验证门禁通过，已落盘 main @ d0f8bbf80c；改动 4 个文件：ops/central_daemon.py（+77/-9）、ops/selftest.py（+1/-0）、ops/test-ledger-identity-collision.py（+163/-0）、ops/truthctl.py（+62/-2）｜4 files changed, 303 insertions(+), 11 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0229、A-0230
+- [已落盘] @ b061c53b60 codex/fix-resolve-stale-adopt-guard-20261124 验证门禁通过，已落盘 main @ b061c53b60；改动 2 个文件：ops/kgctl.py（+31/-0）、ops/selftest.py（+62/-5）｜2 files changed, 93 insertions(+), 5 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0203、A-0204
+- [已落盘] @ 097280a1ba codex/public-beta-docs-closure-20261124 验证门禁通过，已落盘 main @ 097280a1ba；改动 3 个文件：docs/BETA_LOCAL_TRIAL.md（+10/-2）、ops/selftest.py（+9/-0）、plugin/skills/setup/SKILL.md（+1/-0）｜3 files changed, 20 insertions(+), 2 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0233
+- [已落盘] @ 27ad73736e codex/experience-gate-target-runner-20261124 验证门禁通过，已落盘 main @ 27ad73736e；改动 2 个文件：ops/kgctl.py（+70/-12）、ops/test-verify-gates-use-target-tree.py（+24/-0）｜2 files changed, 94 insertions(+), 12 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- [已落盘] @ c65f319618 codex/acceptance-id-worktrees-20261124 验证门禁通过，已落盘 main @ c65f319618；改动 2 个文件：ops/test_truthctl_cross_worktree_ids.py（+53/-0）、ops/truthctl.py（+81/-4）｜2 files changed, 134 insertions(+), 4 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0240
+- [在途] 最终收口按 B1：公开入口保持 v0.6.0-preview.140；源码 main 修复不等同公开现场生效；不代签人工视觉与体验项。
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0184` [P1] codex/resolve-land-clean-worktree-gate-20261122 落盘验收
+- `A-0221` [P1] codex/truth-gate-false-green-correction-20261124 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
-- `A-0185` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
+- `A-0230` [P1] codex/port-identity-guard-20261124 门禁预跑（未落盘）
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
-- `A-0186` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
+- `A-0231` [P1] codex/port-identity-guard-20261124 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
-- `A-0197` [P1] codex/route-ownership-contract-20261123 落盘验收
+- `A-0203` [P1] codex/fix-resolve-stale-adopt-guard-20261124 门禁预跑（未落盘）
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
-- `A-0198` [P1] codex/mcp-stale-failclosed-20261124 落盘验收
+- `A-0204` [P1] codex/fix-resolve-stale-adopt-guard-20261124 门禁预跑（未落盘）
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
-- `A-0201` [P1] codex/rollback-install-state-20261124 落盘验收
+- `A-0232` [P1] codex/fix-resolve-stale-adopt-guard-20261124 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
-- `A-0206` [P1] codex/release-doc-truth-alignment-20261124 落盘验收
+- `A-0233` [P1] codex/public-beta-docs-closure-20261124 门禁预跑（未落盘）
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
-- `A-0207` [P1] codex/project-health-mainline-freshness-20261124 落盘验收
-  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
-- `A-0208` [P1] codex/acceptance-id-collision-20261124 落盘验收
-  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
-- `A-0209` [P1] codex/experience-evidence-focus-measure-20261124 落盘验收
+- `A-0234` [P1] codex/public-beta-docs-closure-20261124 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0235` [P1] codex/resolve-panel-design-restore-20261124 门禁预跑（未落盘）
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0237` [P1] codex/experience-gate-target-runner-20261124 落盘验收
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 - `A-0240` [P1] codex/acceptance-id-worktrees-20261124 门禁预跑（未落盘）
+  - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
+- `A-0241` [P1] codex/acceptance-id-worktrees-20261124 落盘验收
   - 证据：experience-contract: committed contract validation (cwd=.) -> exit 0
 
 ## 还差什么
 
 **gate（1 待处理）**
 - `L-0020` 按你推荐的来，这些肯定不是我发现、修好，然后我自己能用就好了。肯定是它作为一个完整的、能够对外发表的、能让普通人也用得明白的顺畅产品为标准。
+
+**ux（1 待处理）**
+- `L-0021` 这个面板现在真的能够正常运行在运作吗？怎么全都是报红点点报错还是什么东西？而且这个面板现在的信息承载量怎么少了这么多？连最基础的施工地图、整体进度、项目文件夹这
 
 ## 需要你验收
 
@@ -256,19 +260,36 @@
 - `A-0185` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
 - `A-0186` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
 - `A-0197` [P1] codex/route-ownership-contract-20261123 落盘验收
-- `A-0198` [P1] codex/mcp-stale-failclosed-20261124 落盘验收
+- `A-0198` [P1] 面板首屏四项恢复的机器门禁验收
 - `A-0201` [P1] codex/rollback-install-state-20261124 落盘验收
 - `A-0206` [P1] codex/release-doc-truth-alignment-20261124 落盘验收
 - `A-0207` [P1] codex/project-health-mainline-freshness-20261124 落盘验收
 - `A-0208` [P1] codex/acceptance-id-collision-20261124 落盘验收
 - `A-0209` [P1] codex/experience-evidence-focus-measure-20261124 落盘验收
+- `A-0210` [P1] codex/fix-superseded-queue-20261124 落盘验收
+- `A-0212` [P1] codex/fix-converge-orphan-adopt-20261124 落盘验收
+- `A-0214` [P1] codex/truth-closure-audit-20261124 门禁预跑（未落盘）
+- `A-0215` [P1] codex/truth-closure-audit-20261124 落盘验收
+- `A-0216` [P1] codex/fix-stale-resolve-abandon-20261124 落盘验收
+- `A-0219` [P1] codex/fix-gate-experience-base-20261124 落盘验收
+- `A-0221` [P1] codex/truth-gate-false-green-correction-20261124 落盘验收
+- `A-0230` [P1] codex/port-identity-guard-20261124 门禁预跑（未落盘）
+- `A-0231` [P1] codex/port-identity-guard-20261124 落盘验收
+- `A-0202` [P1] 面板秘书简报与工具一致性机器验收
+- `A-0203` [P1] codex/fix-resolve-stale-adopt-guard-20261124 门禁预跑（未落盘）
+- `A-0204` [P1] codex/fix-resolve-stale-adopt-guard-20261124 门禁预跑（未落盘）
+- `A-0232` [P1] codex/fix-resolve-stale-adopt-guard-20261124 落盘验收
+- `A-0233` [P1] codex/public-beta-docs-closure-20261124 门禁预跑（未落盘）
+- `A-0234` [P1] codex/public-beta-docs-closure-20261124 落盘验收
 - `A-0235` [P1] codex/resolve-panel-design-restore-20261124 门禁预跑（未落盘）
+- `A-0237` [P1] codex/experience-gate-target-runner-20261124 落盘验收
 - `A-0240` [P1] codex/acceptance-id-worktrees-20261124 门禁预跑（未落盘）
+- `A-0241` [P1] codex/acceptance-id-worktrees-20261124 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：15 条
-- 累计落盘：120 条
-- 未决问题：1 条
-- 已验收：147 条
+- 累计落盘：130 条
+- 未决问题：2 条
+- 已验收：164 条
 
