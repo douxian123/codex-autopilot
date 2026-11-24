@@ -5438,9 +5438,38 @@ def test_parallel_exec_slots():
             # 这个用例只验并发槽位。外部残留的自检进程可能刚好带同名
             # worktree，不能让它把本 fixture 的派发静默挡掉。
             central_daemon._live_exec_slugs = lambda: frozenset()
+            # 同一条门禁在 land 的完整链里跑时，临时目录和真实 git worktree add
+            # 会比单独跑更拥挤；这里曾偶发一条 L-0008 拿到 worktree_fail，而
+            # 独立复跑又全绿。产品准入仍由 _worktree_admission fail-closed，
+            # 这个用例只钉并发槽位，所以只对「准入已通过但 git add 失败」做
+            # 有界重试，并清掉 fixture 里空的残留目录/同名分支。
+            real_add_admitted = central_daemon._add_worktree_admitted
+
+            def _add_with_retry(repo, worktree, branch, base=None):
+                last = None
+                for attempt in range(3):
+                    result = real_add_admitted(repo, worktree, branch, base=base)
+                    if result.get("ok"):
+                        return result
+                    # 有明确准入理由时是真的被闸住，不能重试成假绿。
+                    if (result.get("admission") or {}).get("reason"):
+                        return result
+                    last = result
+                    central_daemon._git(repo, "worktree", "prune")
+                    try:
+                        wt_path = Path(worktree)
+                        if wt_path.exists() and not any(wt_path.iterdir()):
+                            wt_path.rmdir()
+                    except OSError:
+                        pass
+                    central_daemon._git(repo, "branch", "-D", branch)
+                    _time.sleep(0.05 * (attempt + 1))
+                return last
+
+            central_daemon._add_worktree_admitted = _add_with_retry
             try:
                 started, workers = central_daemon.dispatch_exec(False, blocked, workers)
-                assert started == [], started
+                assert started == [], (started, blocked, workers)
                 assert not workers.get("exec_jobs"), workers
                 state = _json.loads((home / "state.json").read_text(encoding="utf-8"))
                 assert state["exec_disk_held"] is True, state
@@ -5492,6 +5521,7 @@ def test_parallel_exec_slots():
 
             finally:
                 central_daemon._live_exec_slugs = real_live_slugs
+                central_daemon._add_worktree_admitted = real_add_admitted
                 release.touch()
                 for job in workers.get("exec_jobs", {}).values():
                     proc = job.get("proc")
@@ -6692,7 +6722,8 @@ def test_resolve_orphan_container_is_adopted_not_blocked_forever():
 
     printed = []
 
-    def run_case(*, worktree_exists, markers, existing_record, container_ahead=1):
+    def run_case(*, worktree_exists, markers, existing_record, container_ahead=1,
+                 committed_tasks=()):
         with tempfile.TemporaryDirectory(prefix="kgctl-resolve-orphan-") as tmp:
             root, repo, kgctl = _load(tmp)
             kgctl.RESOLVE = repo / "ops" / "tasks" / "resolve.json"
@@ -6701,6 +6732,7 @@ def test_resolve_orphan_container_is_adopted_not_blocked_forever():
             if worktree_exists:
                 wt.mkdir()
             written, deleted = [], []
+            committed_json = json.dumps({"tasks": list(committed_tasks)})
 
             def fake_write(rec):
                 written.append(rec)
@@ -6726,8 +6758,9 @@ def test_resolve_orphan_container_is_adopted_not_blocked_forever():
                  mock.patch.object(kgctl, "_find_resolve_task", side_effect=lambda t: existing_record), \
                  mock.patch.object(kgctl, "_lock_blocked", return_value=False), \
                  mock.patch.object(kgctl, "_align_main", lambda: None), \
-                 mock.patch.object(kgctl, "git",
-                                   side_effect=lambda *a, **k: "b75c7dd3dc" if "rev-parse" in a else ""), \
+                mock.patch.object(kgctl, "git", side_effect=lambda *a, **k: (
+                    committed_json if "show" in a else
+                    "b75c7dd3dc" if "rev-parse" in a else "")), \
                  mock.patch.object(kgctl, "counts", return_value=(container_ahead, 0)), \
                  mock.patch.object(kgctl, "conflict_files", return_value=["a.ts"]), \
                  mock.patch.object(kgctl, "conflict_burden", return_value=1), \
@@ -6769,7 +6802,31 @@ def test_resolve_orphan_container_is_adopted_not_blocked_forever():
     assert not written, f"已有任务时不该重复登记：{written}"
     assert any("outcome=blocked" in line for line in out), out
 
-    print("selftest ok: resolve 遗留容器分支会被接管/重拆，已解过的绝不自动删，有 open 记录不抢。")
+    # 5) 工作树台账被旧进程写回 needs_agent，committed 已是 abandoned：绝不再接管。
+    settled_abandoned = {
+        "slug": "hover-power-remove-feedback",
+        "branch": "codex/hover-power-remove-feedback",
+        "resolve_branch": "codex/resolve-hover-power-remove-feedback",
+        "status": "abandoned",
+        "updated": "2026-11-24 06:51:26",
+    }
+    written, deleted, out = run_case(
+        worktree_exists=True, markers=["a.ts"],
+        existing_record={"slug": "hover-power-remove-feedback", "status": "needs_agent"},
+        committed_tasks=[settled_abandoned])
+    assert not written, f"committed 已裁决时不该重新登记：{written}"
+    assert deleted == [], f"committed 已裁决时不该删任何分支：{deleted}"
+    assert any("outcome=settled" in line for line in out), out
+
+    # 6) 同样旧台账 + 容器分支 ahead=0：committed 终态优先，不能顺手删容器分支。
+    written, deleted, out = run_case(
+        worktree_exists=False, markers=[], existing_record=None, container_ahead=0,
+        committed_tasks=[settled_abandoned])
+    assert deleted == [], f"committed 已裁决时 ahead=0 容器分支也不该删：{deleted}"
+    assert any("outcome=settled" in line for line in out), out
+
+    print("selftest ok: resolve 遗留容器分支会被接管/重拆，已解过的绝不自动删，"
+          "有 open 记录不抢，committed 终态不被旧台账重开。")
 
 
 def test_resolve_prepare_raises_controlled_error_not_sysexit():
