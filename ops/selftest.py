@@ -2291,6 +2291,15 @@ def test_public_beta_docs_match_release_tags():
     assert all(tag == published for tag in links), (
         f"公开 beta 链接混入了非当前版本：{links}，公开版本={published}")
 
+    for needle in ("怎么确认多管家真的加载了", "状态条", "API key 与 ChatGPT 订阅有什么区别",
+                   "included usage / credits", "这不是要你选 8 个机器人"):
+        assert needle in beta_text, f"BETA_LOCAL_TRIAL.md 缺少普通用户入口说明：{needle}"
+    setup = root / "plugin" / "skills" / "setup" / "SKILL.md"
+    if setup.is_file():
+        setup_text = setup.read_text(encoding="utf-8")
+        assert "多管家是否加载" in setup_text and "状态条" in setup_text, \
+            "setup 入门没有说明怎么看多管家加载状态"
+
     source_version = _installed_version()
     if source_version != published:
         assert source_version in beta_text, "源码候选版本没有在公开文档里说明"
