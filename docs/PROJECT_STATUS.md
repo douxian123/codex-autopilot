@@ -1,6 +1,6 @@
 # 项目状态（自动生成，勿手改）
 
-> 生成时间 2026-11-24 12:14:13　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
+> 生成时间 2026-11-24 12:53:03　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
 
 ## 一、产品主线
 
@@ -74,7 +74,7 @@
 - `A-0189` [P1] Codex Autopilot 面板人工验收：任务完成感
   - 人看首屏默认截图，确认当前目标、总体进度、最近完成和当前步骤能支撑判断任务是否在推进
 
-**已机器验收（146）**
+**已机器验收（147）**
 - `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
@@ -221,6 +221,7 @@
 - `A-0208` [P1] codex/acceptance-id-collision-20261124 落盘验收
 - `A-0209` [P1] codex/experience-evidence-focus-measure-20261124 落盘验收
 - `A-0235` [P1] codex/resolve-panel-design-restore-20261124 门禁预跑（未落盘）
+- `A-0240` [P1] codex/acceptance-id-worktrees-20261124 门禁预跑（未落盘）
 
 ## 六、决策记录
 
