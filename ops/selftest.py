@@ -232,6 +232,10 @@ def main():
         # 用 git common dir，判为 foreign 时退回本仓 <项目名>-trunk。
         run([sys.executable, str(OPS / "test-trunk-is-same-repo.py")],
             cwd=str(OPS.parent), check=True)
+        # Apple Git 不支持 `git checkout --dry-run`；落盘主干切换预演必须
+        # 用 read-tree + 未跟踪文件交集判断，避免把不支持的 flag 当成主干脏。
+        run([sys.executable, str(OPS / "test-trunk-checkout-probe.py")],
+            cwd=str(OPS.parent), check=True)
         # 用户共享检出常有与本次合并无关的在途改动。land 必须在对齐 ref /
         # checkout 前发现它们，改走一次性干净 worktree，不能 stash/reset 用户文件。
         run([sys.executable, str(OPS / "test-land-dirty-trunk-clean-worktree.py")],
@@ -1168,6 +1172,8 @@ def test_publish_lock_and_origin_containment():
         git(repo, "fetch", "-q", "origin", "main")
 
         sys.path.insert(0, str(OPS))
+        saved_repo = os.environ.get("KG_REPO")
+        saved_trunk = os.environ.get("KG_TRUNK")
         os.environ["KG_REPO"] = str(repo)
         os.environ["KG_TRUNK"] = str(root / "unused-trunk")
         import kgctl
@@ -1201,6 +1207,14 @@ def test_publish_lock_and_origin_containment():
         finally:
             kgctl._push_truth_state_locked = real_push
             kgctl.LOCK = real_lock
+            if saved_repo is None:
+                os.environ.pop("KG_REPO", None)
+            else:
+                os.environ["KG_REPO"] = saved_repo
+            if saved_trunk is None:
+                os.environ.pop("KG_TRUNK", None)
+            else:
+                os.environ["KG_TRUNK"] = saved_trunk
 
     print("selftest ok: land/真相推送发布锁互斥，且只有 origin/main 祖先校验通过才算落盘。")
 
@@ -3154,15 +3168,24 @@ def test_panel_contract():
             {"id": "foreign", "name": "另一个项目", "path": str(foreign),
              "active": False, "source_thread_id": "thread-foreign"}]}, ensure_ascii=False),
             encoding="utf-8")
+        # 装出来的 release 目录带 .mcp.json，绑定守卫会拒绝临时 KG_REPO；
+        # 这里复制源码式 ops/ 并隔离 HOME，避免 current_ops() 回退到用户真实安装
+        # 记录后再读到真实 .mcp.json。只为多项目探针构造无插件绑定的运行布局。
+        probe_ops = Path(tmp) / "probe-ops"
+        shutil.copytree(OPS, probe_ops,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        probe_home = Path(tmp) / "probe-home"
+        probe_home.mkdir()
         script = (
             "import json,sys\n"
             "sys.path.insert(0,%r)\n"
             "import central_mcp\n"
             "p=central_mcp._status_payload(fast=True)['project_folders']\n"
-            "print(json.dumps(p,ensure_ascii=False))\n" % str(OPS))
+            "print(json.dumps(p,ensure_ascii=False))\n" % str(probe_ops))
         env = os.environ.copy()
         env["KG_REPO"] = str(state)
-        probe = subprocess.run([sys.executable, "-c", script], cwd=str(OPS.parent), env=env,
+        env["HOME"] = str(probe_home)
+        probe = subprocess.run([sys.executable, "-c", script], cwd=str(tmp), env=env,
                                capture_output=True, text=True)
         assert probe.returncode == 0, f"多项目状态探针失败：{probe.stderr[-500:]}"
         multi = _json.loads(probe.stdout.strip().splitlines()[-1])
@@ -8799,13 +8822,17 @@ def test_product_eval():
 def test_compact_session_logs_is_lossless_and_under_pressure_only():
     import tempfile
     from unittest import mock
+    # Keep the fixture above the mocked minimum-size gate while avoiding tens
+    # of megabytes of temporary writes on a nearly full developer disk.
+    fixture_lines = 40_000
+    fixture_min_mb = 1.0
     with tempfile.TemporaryDirectory(
             prefix="codex-autopilot-session-compact-") as tmp:
         root = Path(tmp)
         sessions = root / ".codex/sessions/2026/01/01"
         sessions.mkdir(parents=True)
         old = sessions / "old.jsonl"
-        old.write_bytes(b'{"type":"event","payload":"keep me"}\n' * 900_000)
+        old.write_bytes(b'{"type":"event","payload":"keep me"}\n' * fixture_lines)
         old.touch()
         import os as _os
         _old = old.stat().st_mtime
@@ -8816,17 +8843,20 @@ def test_compact_session_logs_is_lossless_and_under_pressure_only():
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         # 这条夹具的 old.jsonl 是合成文件；compact 的 log() 写的是模块级全局 LOG，
-        # 不重定向就会把「压缩旧会话 old.jsonl: 33300000 -> 2857 bytes」写进真实的
+        # 不重定向就会把合成夹具的压缩记录写进真实的
         # ~/.codex-autopilot/disk-reap.log —— 实测 2026-11-11 该行反复出现，全是测试产物。
         mod.LOG = root / "disk-reap-test.log"
+        mod.SESSION_COMPACT_MIN_MB = fixture_min_mb
         with mock.patch.dict("os.environ", {"CODEX_HOME": str(root / ".codex")}), \
              mock.patch.object(mod, "free_gb", return_value=20.0):
             _os.environ.pop("KG_SESSION_COMPACT", None)
+            _os.environ.pop("KG_SESSION_COMPACT_ALLOW_DANGEROUS", None)
             assert mod.compact_session_logs() == (0, 0)
             assert old.exists() and not old.with_name(old.name + ".zst").exists()
         with mock.patch.dict("os.environ", {"CODEX_HOME": str(root / ".codex")}), \
              mock.patch.object(mod, "free_gb", return_value=1.0):
             _os.environ.pop("KG_SESSION_COMPACT", None)
+            _os.environ.pop("KG_SESSION_COMPACT_ALLOW_DANGEROUS", None)
             assert mod.compact_session_logs() == (0, 0)
             assert old.exists() and not old.with_name(old.name + ".zst").exists()
         with mock.patch.dict("os.environ",
@@ -8837,7 +8867,7 @@ def test_compact_session_logs_is_lossless_and_under_pressure_only():
              mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
              mock.patch.object(mod, "SESSION_COMPACT_RECENT_WRITE_MIN", 0.0):
             assert mod.compact_session_logs() == (0, 0)
-        assert old.is_file()
+        assert old.is_file() and not old.with_name(old.name + ".zst").exists()
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
                               "KG_SESSION_COMPACT": "1",
@@ -8854,7 +8884,7 @@ def test_compact_session_logs_is_lossless_and_under_pressure_only():
 
         # 活跃会话不能被归档；压缩后、删除前的复查失败也必须保留原文件。
         active = sessions / "active.jsonl"
-        active.write_bytes(b'{"type":"event","payload":"active"}\n' * 900_000)
+        active.write_bytes(b'{"type":"event","payload":"active"}\n' * fixture_lines)
         active_ts = active.stat().st_mtime
         _os.utime(active, (active_ts - 7 * 3600, active_ts - 7 * 3600))
         with mock.patch.dict("os.environ",

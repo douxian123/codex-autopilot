@@ -259,9 +259,10 @@ def compact_session_logs(dry: bool = False) -> tuple[int, int]:
     if os.environ.get("KG_SESSION_COMPACT", "0").strip().lower() not in (
             "1", "on", "true", "yes"):
         return 0, 0
-    # 2026-11-25 incident guard: legacy opt-in alone must never move session
-    # JSONL files. Require a separate dangerous switch so repointing launchd
-    # cannot silently re-enable destructive transcript archiving.
+    # 2026-11-25: one opt-in was enough for launchd to move transcripts out of
+    # the tree indexed by state_5.sqlite, which made every chat unopenable.
+    # Moving history now requires a second, explicitly dangerous switch so a
+    # repointed plist or an inherited environment cannot silently re-enable it.
     if os.environ.get("KG_SESSION_COMPACT_ALLOW_DANGEROUS", "0").strip().lower() not in (
             "1", "on", "true", "yes"):
         return 0, 0

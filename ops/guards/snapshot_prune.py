@@ -326,6 +326,13 @@ def prunable_snapshots(
 
 
 def main() -> int:
+    # 2026-11-25: pruning historical snapshots removed the only surviving
+    # plaintext rollouts before they could be archived. Normal launchd runs
+    # must never prune; the helper only acts with an explicit dangerous opt-in.
+    if os.environ.get("KG_SNAPSHOT_PRUNE_ALLOW_DANGEROUS", "0").strip().lower() not in (
+            "1", "on", "true", "yes"):
+        print("snapshot prune disabled (set KG_SNAPSHOT_PRUNE_ALLOW_DANGEROUS=1 to override)")
+        return 0
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, required=True)
     parser.add_argument("--snapshots", type=Path, required=True)

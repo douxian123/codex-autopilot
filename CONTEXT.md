@@ -587,6 +587,16 @@ codex app-server daemon version     # → failed to connect to …/app-server-co
 
 ---
 
+### 12.17 会话历史防复发闸门（2026-11-25）
+
+- 事故机制：`com.danta.codex-guard` 的快照裁剪在 2026-11-23 误判独有明文 rollout 已被覆盖，在归档前移除历史文件；`disk_reap` 的旧会话压缩又把 `.jsonl` 搬出 Codex 扫描树，导致 `state_5.sqlite` 中的 `rollout_path` 全部指向不存在的路径，桌面端聊天打不开。
+- 修复范围：`ops/guards/snapshot_prune.py` 与 `ops/disk_reap.py` 增加双重 fail-closed 闸门。默认运行不再裁剪历史快照、不再搬走任何会话文件；必须在显式危险开关打开时才进入原有归档逻辑。旧开关单独打开不再足以触发迁移。
+- 回归证据：`python3 ops/test-reap-zstd-path.py` 与 `/usr/bin/python3 ops/test-snapshot-clone-prune.py` 全 PASS，含「旧开关单独打开不迁移任何会话」「默认禁止 snapshot prune，历史快照不会被移动」；源码分支 2026-11-25 全量 `python3 ops/selftest.py` EXIT=0。宿主 release 同批定向测试 PASS，但全量 `python3 ops/selftest.py` 在 `test-selftest-release-dir.py` 的旧安装回滚用例失败（EXIT=1）；源码分支同一条用例 PASS，差异来自宿主 release 的 `install.sh` 旧于源码，非本次会话历史改动。
+- 发布与现场：源码已合入 `origin/main`，合并提交 `7ec1f947`；同批五个文件同步到当前宿主执行的 `0.6.0-preview.140` release 并复测 PASS。现场全量核对 `state_5.sqlite` 的 3303 条线程：`missing 0`、`bad_first 0`（`.zst` 按 zstd 解码）。
+- 边界：没有 reload、重启服务、切 provider、删数据或发布新版。app-server 控制 socket 当前是失效符号链接，本轮无法再做新的 `thread/read` 抽样，这一项如实记为未实测。
+
+---
+
 ## 十三、下一步（谁该做什么）
 
 **用户（只有这几件，别的不用管）**：
