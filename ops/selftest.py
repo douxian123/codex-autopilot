@@ -8509,16 +8509,28 @@ def test_compact_session_logs_is_lossless_and_under_pressure_only():
         with mock.patch.dict("os.environ", {"CODEX_HOME": str(root / ".codex")}), \
              mock.patch.object(mod, "free_gb", return_value=20.0):
             _os.environ.pop("KG_SESSION_COMPACT", None)
+            _os.environ.pop("KG_SESSION_COMPACT_ALLOW_DANGEROUS", None)
             assert mod.compact_session_logs() == (0, 0)
             assert old.exists() and not old.with_name(old.name + ".zst").exists()
         with mock.patch.dict("os.environ", {"CODEX_HOME": str(root / ".codex")}), \
              mock.patch.object(mod, "free_gb", return_value=1.0):
             _os.environ.pop("KG_SESSION_COMPACT", None)
+            _os.environ.pop("KG_SESSION_COMPACT_ALLOW_DANGEROUS", None)
             assert mod.compact_session_logs() == (0, 0)
             assert old.exists() and not old.with_name(old.name + ".zst").exists()
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
-                              "KG_SESSION_COMPACT": "1"}), \
+                              "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "0"}), \
+             mock.patch.object(mod, "free_gb", return_value=1.0), \
+             mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
+             mock.patch.object(mod, "SESSION_COMPACT_RECENT_WRITE_MIN", 0.0):
+            assert mod.compact_session_logs() == (0, 0)
+        assert old.is_file() and not old.with_name(old.name + ".zst").exists()
+        with mock.patch.dict("os.environ",
+                             {"CODEX_HOME": str(root / ".codex"),
+                              "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
              mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
              mock.patch.object(mod, "SESSION_COMPACT_RECENT_WRITE_MIN", 0.0):
@@ -8536,7 +8548,8 @@ def test_compact_session_logs_is_lossless_and_under_pressure_only():
         _os.utime(active, (active_ts - 7 * 3600, active_ts - 7 * 3600))
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
-                              "KG_SESSION_COMPACT": "1"}), \
+                              "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
              mock.patch.object(mod, "_path_is_open", side_effect=[False, True]), \
              mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \

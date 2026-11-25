@@ -259,6 +259,13 @@ def compact_session_logs(dry: bool = False) -> tuple[int, int]:
     if os.environ.get("KG_SESSION_COMPACT", "0").strip().lower() not in (
             "1", "on", "true", "yes"):
         return 0, 0
+    # 2026-11-25: one opt-in was enough for launchd to move transcripts out of
+    # the tree indexed by state_5.sqlite, which made every chat unopenable.
+    # Moving history now requires a second, explicitly dangerous switch so a
+    # repointed plist or an inherited environment cannot silently re-enable it.
+    if os.environ.get("KG_SESSION_COMPACT_ALLOW_DANGEROUS", "0").strip().lower() not in (
+            "1", "on", "true", "yes"):
+        return 0, 0
     if free_gb() >= SESSION_COMPACT_UNDER_FREE_GB:
         return 0, 0
     home = Path.home()
