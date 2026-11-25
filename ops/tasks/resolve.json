@@ -11,7 +11,7 @@
     "4cc6c7b8d3de55c0f21ca55578fce5da7aabd77d"
    ],
    "created": "2026-11-25 22:14:21",
-   "updated": "2026-11-25 22:14:21",
+   "updated": "2026-11-26 03:17:50",
    "conflict_files": [
     "ops/central_daemon.py",
     "ops/selftest.py",
@@ -23,7 +23,9 @@
     "ops/workspace_guard.py"
    ],
    "auto_resolved_jsonl": [],
-   "status": "needs_agent"
+   "status": "landed",
+   "landed_commit": "8c20327973db41ac2f0d6f8387adf62f484f7bc0",
+   "reason": "源提交 4cc6c7b8d 与 resolve 分支 91f68a3a7 均为 main 祖先；P-0264/A-0256 已记录 8c203279 落盘，旧 needs_agent 是状态回归。"
   },
   {
    "slug": "truth-sync-clean-20261124",

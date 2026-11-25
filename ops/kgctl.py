@@ -3793,6 +3793,62 @@ def _verify_evidence(verify_results: list) -> str:
         lines.append(f"{r.get('name')}: {r.get('cmd')} (cwd={r.get('cwd')}) -> exit {code}")
     return "\n".join(lines)
 
+
+def _mark_resolve_landed_in_file(path: Path, branch: str, commit: str) -> bool:
+    """把一个 resolve 任务标记成 landed；只改同一任务的一条当前记录。
+
+    返回是否真的改动，供调用方决定是否把 `ops/tasks/resolve.json` 一起暂存。
+    已裁决（landed/abandoned）的记录不再改写，避免重复 land 把理由冲掉。
+    """
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    tasks = [t for t in data.get("tasks", []) if isinstance(t, dict)]
+    matched = [t for t in tasks
+               if t.get("resolve_branch") == branch or t.get("branch") == branch]
+    if not matched:
+        return False
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    changed = False
+    for rec in matched:
+        if rec.get("status") in ("landed", "abandoned"):
+            continue
+        rec["status"] = "landed"
+        rec["updated"] = stamp
+        rec["landed_commit"] = commit
+        changed = True
+    if not changed:
+        return False
+    data["tasks"] = _dedupe_resolve_tasks(tasks)
+    data["updated"] = max(str(data.get("updated") or ""), stamp)
+    write_json(path, data)
+    return True
+
+
+def _mark_resolve_landed_for_land(wt: Path, branch: str, commit: str) -> bool:
+    """直接 land resolve 分支时，任务台账必须同步收口。
+
+    2026-11-26 实测：`codex/resolve-reap-identical-tracked-20261027` 通过
+    `kgctl land` 落盘后，进展/验收台账都写了，唯独 resolve.json 还停在
+    needs_agent，`resolve --list` 每轮继续报同一条待解任务。走
+    `resolve --finish` 时由 `_resolve_land` 收口，直接 land 却没有这条出口。
+    这里在 land 的真相提交里补上，状态根副本也同步，避免下一拍被旧快照回退。
+    """
+    candidate = wt / "ops" / "tasks" / "resolve.json"
+    changed = _mark_resolve_landed_in_file(candidate, branch, commit)
+    try:
+        same = candidate.resolve() == RESOLVE.resolve()
+    except OSError:
+        same = False
+    if not same:
+        changed = _mark_resolve_landed_in_file(RESOLVE, branch, commit) or changed
+    return changed
+
 def _build_only_evidence(verify_results: list) -> bool:
     """Return true when every recorded gate is only a compile/build check."""
     if not verify_results:
@@ -3959,9 +4015,14 @@ def _record_land_progress(wt: Path, branch: str, commit: str, verify_results: li
     if accepted.returncode != 0:
         raise RuntimeError(f"写验收台账失败: {(accepted.stdout + accepted.stderr).strip()[:500]}")
 
+    # 直接 land codex/resolve-* 时，resolve 任务台账也要跟着收口。否则进展/验收
+    # 证明已落盘，resolve --list 却仍把同一条报成 needs_agent，下一拍又被重拆。
+    resolve_marked = _mark_resolve_landed_for_land(wt, branch, commit)
+    staged_paths = ["ops/truth/progress.jsonl", "ops/truth/acceptance.jsonl"]
+    if resolve_marked:
+        staged_paths.append("ops/tasks/resolve.json")
     staged = proc_run(
-        ["git", "-C", str(wt), "add", "ops/truth/progress.jsonl",
-         "ops/truth/acceptance.jsonl"],
+        ["git", "-C", str(wt), "add", *staged_paths],
         capture_output=True, text=True)
     if staged.returncode != 0:
         raise RuntimeError(f"暂存真相信台账失败: {staged.stderr.strip()[:500]}")
