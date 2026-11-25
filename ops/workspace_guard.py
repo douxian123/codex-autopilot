@@ -81,6 +81,7 @@ REGENERABLE_TRACKED_DIRS = (
 )
 
 
+<<<<<<< HEAD
 def regenerable_dirs_state(worktree: Path) -> dict[str, str]:
     """Report, per regenerable dir, whether its working copy may be stripped.
 
@@ -257,6 +258,8 @@ def strip_regenerable_files(worktree: Path) -> dict[str, int]:
     return freed
 
 
+=======
+>>>>>>> codex/reap-identical-tracked-20261027
 def restore_regenerable_tracked(worktree: Path) -> list[str]:
     """Restore tracked files under regenerable output dirs from HEAD.
 
@@ -275,6 +278,7 @@ def restore_regenerable_tracked(worktree: Path) -> list[str]:
         if res.returncode == 0:
             touched.append(rel)
     return touched
+<<<<<<< HEAD
 
 # Machine-written scratch that every task worktree accumulates, and that no human
 # ever authored. These are *untracked* by definition (matched by `??`), so
@@ -304,6 +308,8 @@ UNTRACKED_SCRATCH_PATTERNS = (
     re.compile(r"^(?:.*/)?\.DS_Store$"),
     re.compile(r"^(?:.*/)?[^/]*\.log$"),
 )
+=======
+>>>>>>> codex/reap-identical-tracked-20261027
 
 
 def run_git(path: Path, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
@@ -644,10 +650,14 @@ def worktree_removable(
     commands: str | None = None,
     backup_unique: bool = False,
     stamp: str = "",
+<<<<<<< HEAD
     drop_scratch: bool = False,
     restore_regenerable: bool = False,
     accept_stripped_regenerable: bool = False,
     live_guard_mode: str = "cwd",
+=======
+    restore_regenerable: bool = False,
+>>>>>>> codex/reap-identical-tracked-20261027
 ) -> dict:
     """Assess a worktree without deleting source."""
     if not worktree.exists():
@@ -679,6 +689,7 @@ def worktree_removable(
     ahead = max(ahead, head_ahead)
     if status(worktree):
         remove_generated_dirs(worktree)
+<<<<<<< HEAD
         # Opt-in: when the *only* thing making this tree dirty is untracked
         # machine scratch (.kg-task-env, SQLite -shm/-wal, .verify-tmp), erase
         # that scratch so a genuinely-abandoned worktree can be reclaimed.
@@ -729,6 +740,16 @@ def worktree_removable(
         if status(worktree) and not (
                 accept_stripped_regenerable
                 and only_regenerable_deletions(worktree)):
+=======
+        # Opt-in: a worktree whose only "dirt" is a modified/deleted copy of a
+        # tracked-but-regenerable artifact (backend/evidence etc.) is not a
+        # human's work in progress. Restoring it from HEAD makes the assessment
+        # honest instead of permanently "dirty". Off by default so the plain
+        # reaper never rewrites anyone's tree.
+        if restore_regenerable:
+            restore_regenerable_tracked(worktree)
+        if status(worktree):
+>>>>>>> codex/reap-identical-tracked-20261027
             return {"ok": False, "reason": "dirty", "ahead": ahead, "backup": ""}
     else:
         scratch_note = ""

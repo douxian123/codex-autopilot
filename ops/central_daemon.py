@@ -4344,6 +4344,7 @@ def _reap_dead_worktrees(dry: bool = False,
             # frontend/.verify-tmp 21 棵）—— 任意一个就让 git status 非空。
             # 打开后只有「全部脏项都是未跟踪机器残留」才放行，已跟踪内容一律不变。
             assessment = workspace_guard.worktree_removable(
+<<<<<<< HEAD
                 repo, d, branch, "main", commands=_proc_cmds, backup_unique=False,
                 live_guard_mode="all",
                 drop_scratch=_pressure_reap,
@@ -4358,6 +4359,14 @@ def _reap_dead_worktrees(dry: bool = False,
                 # 的纯重复。安全判据没放松：可再生产物之外只要还有一处改动，
                 # 整棵树原地不动。`git checkout -- <dir>` 可随时原样还原。
                 accept_stripped_regenerable=_pressure_reap)
+=======
+                repo, d, branch, "main", commands="", backup_unique=False,
+                # 压力回收路径：一个现场如果唯一「脏」的是 backend/evidence 这类
+                # 已跟踪但可重建的产物（每个 worktree 各存一份 ~131MB，实测
+                # 50+ 现场合计 6.25GB 完全重复），就从 HEAD 还原再判脏。安全判据
+                # 一条没放松：未跟踪的人间产物、未落提交、活进程仍全部保留。
+                restore_regenerable=True)
+>>>>>>> codex/reap-identical-tracked-20261027
             if not assessment.get("ok"):
                 _skip(f"{d.name}：安全判据未通过"
                       f"（{assessment.get('reason') or 'dirty'}）")

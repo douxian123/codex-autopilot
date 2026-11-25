@@ -7577,7 +7577,11 @@ def test_regenerable_tracked_restore_is_opt_in_and_lossless():
 
     2026-10-27 根因：backend/evidence 这类目录被门禁脚本写入，但历史上被
     commit 过，于是每个 worktree 都 checkout 一份（实测 50+ 现场 x 131MB，
+<<<<<<< HEAD
     约 6GB 完全重复），而只要删了它 git status 就报 dirty，现场永远
+=======
+    约 6.25GB 完全重复），而只要删了它 git status 就报 dirty，现场永远
+>>>>>>> codex/reap-identical-tracked-20261027
     回收不了。修复：显式 opt-in 时用 `git checkout -- <dir>` 从 HEAD 还原。
 
     本测试守住三条不变式：
@@ -7638,6 +7642,7 @@ def test_regenerable_tracked_restore_is_opt_in_and_lossless():
     print("selftest ok: 可重建已跟踪产物只在 opt-in 时从 HEAD 恢复，人间改动不受影响。")
 
 
+<<<<<<< HEAD
 
 def test_strip_regenerable_duplicate_is_opt_in_and_lossless():
     """剥离「已跟踪但可重建」的重复副本：零信息损失，且只动纯重复。
@@ -7954,6 +7959,8 @@ def test_strip_regenerable_files_is_per_file_and_lossless():
     print("selftest ok: 逐文件剥离只动与 HEAD 相同的跟踪文件，人间产物与改动一律保留。")
 
 
+=======
+>>>>>>> codex/reap-identical-tracked-20261027
 def test_mcp_contract():
     """MCP 合约：resources 能力、面板资源可读、状态/控制/渲染工具可用。"""
     import json as _json
@@ -9171,10 +9178,13 @@ if __name__ == "__main__":
     test_disk_reap_pressure_threshold_follows_admission_resume_line()
     test_reap_scan_is_sliced_and_throttled()
     test_regenerable_tracked_restore_is_opt_in_and_lossless()
+<<<<<<< HEAD
     test_strip_regenerable_duplicate_is_opt_in_and_lossless()
     test_strip_duplicate_decouples_from_tree_dirtiness()
     test_task_worktree_name_predicate_is_shared_and_complete()
     test_strip_regenerable_files_is_per_file_and_lossless()
+=======
+>>>>>>> codex/reap-identical-tracked-20261027
     test_mcp_contract()
     test_closure_rate()
     test_product_eval()
