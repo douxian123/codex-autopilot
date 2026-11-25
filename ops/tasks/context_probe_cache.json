@@ -136,5 +136,22 @@
    "docs/PROJECT_CONSTITUTION.md"
   ],
   "unresolved_marker_files": []
+ },
+ "codex/converge-682f47bfd5@6c86bc01cfb8d61573a7039ef2e5d6458440665d@8996251e07929a5376cbd936d06a1adaa506d151": {
+  "conflict_files": [
+   "CONTEXT.md",
+   "docs/PREVIEW.md",
+   "install.sh",
+   "ops/central_daemon.py",
+   "ops/kgctl.py",
+   "ops/panel_logic_check.py",
+   "ops/panel_render_check.py",
+   "ops/selftest.py",
+   "ops/test-ledger-identity-collision.py",
+   "ops/truthctl.py",
+   "plugin/.codex-plugin/plugin.json",
+   "plugin/ui/panel.html"
+  ],
+  "unresolved_marker_files": []
  }
 }
