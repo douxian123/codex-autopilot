@@ -1,12 +1,13 @@
 {
- "main": "e9291d574d7df93dec2cebef5a10cfe9b56a7ce4",
+ "main": "fbb7bb9882294f75bd7ffcef08c8d92292831478",
  "branches": [
   "codex/auto-close-identity-gate-20261024",
   "codex/autopilot-brand-panel",
   "codex/disk-admission-clean-20261027",
   "codex/disk-admission-preview29-20261027",
   "codex/reap-identical-tracked-20261027",
-  "codex/slow-model-routing"
+  "codex/slow-model-routing",
+  "codex/truth-sync-clean-20261124"
  ],
  "burden": {
   "codex/auto-close-identity-gate-20261024": 3,
@@ -14,6 +15,7 @@
   "codex/disk-admission-clean-20261027": 3,
   "codex/disk-admission-preview29-20261027": 14,
   "codex/reap-identical-tracked-20261027": 3,
-  "codex/slow-model-routing": 4
+  "codex/slow-model-routing": 4,
+  "codex/truth-sync-clean-20261124": 2
  }
 }

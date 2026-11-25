@@ -1,6 +1,29 @@
 {
  "tasks": [
   {
+   "slug": "truth-sync-clean-20261124",
+   "branch": "codex/truth-sync-clean-20261124",
+   "resolve_branch": "codex/resolve-truth-sync-clean-20261124",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-truth-sync-20261124-resolve-truth-sync-clean-20261124",
+   "base_main": "fbb7bb9882294f75bd7ffcef08c8d92292831478",
+   "source_head": "43e20a2bd761c6de27c9166ad4c7c65ed67e911a",
+   "source_commits": [
+    "43e20a2bd761c6de27c9166ad4c7c65ed67e911a"
+   ],
+   "created": "2026-11-25 15:53:32",
+   "updated": "2026-11-25 15:53:32",
+   "conflict_files": [
+    "docs/PROJECT_STATUS.md",
+    "ops/tasks/context_probe_cache.json"
+   ],
+   "unresolved_files": [
+    "docs/PROJECT_STATUS.md",
+    "ops/tasks/context_probe_cache.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
    "slug": "session-compact-danger-switch-20261125",
    "branch": "codex/session-compact-danger-switch-20261125",
    "resolve_branch": "codex/resolve-session-compact-danger-switch-20261125",
@@ -167,5 +190,5 @@
    "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
   }
  ],
- "updated": "2026-11-25 12:53:09"
+ "updated": "2026-11-25 15:53:33"
 }
