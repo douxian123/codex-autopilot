@@ -176,6 +176,7 @@ def main():
             "test-context-archive.py",
             "test-project-constitution.py",
             "test-stale-worktree-map.py",
+            "test-stale-resolve-worktree-registration.py",
             "test-e2e-ten-real-inputs.py",
             "test-pm-research-decision.py",
             "test-closure-package.py",

@@ -600,6 +600,84 @@ def _is_generated_branch(branch: str) -> bool:
     return _is_convergence_branch(branch) or _is_resolve_branch(branch)
 
 
+def _prune_stale_worktree_registration(branch: str) -> bool:
+    """把指定 resolve 容器的失效 worktree 登记挪出 Git 的扫描目录。
+
+    `git worktree list` 里的 `prunable` 登记仍会阻止 `git branch -D`：Git 认为分支
+    还被一个 worktree 占用，哪怕目录已经不存在。这里不像 `git worktree prune`
+    那样扫描全仓，而是只处理精确命中的注册目录：
+
+      1. 分支必须是自动挡自己生成的 `codex/resolve-*`（绝不碰用户源分支）；
+      2. 注册目录的 `HEAD` 必须精确写成 `ref: refs/heads/<branch>`；
+      3. `gitdir` 指向的 worktree 目录确实不存在。
+
+    只要有一条命中的 worktree 目录还在，就整批不动，避免把真实执行现场误判成失效。
+    登记不是直接删除，而是挪到 `.git/kgctl-stale-worktrees/` 留证：这不是账本，
+    只是误删现场的反证，但能保住 index / reflog 供复盘。
+
+    2026-11-25 实测：遗留 resolve 分支 `codex/resolve-reap-identical-tracked-20261027`
+    的 worktree 目录早已消失，但注册还在，导致 `kgctl resolve --auto --go` 每次都在
+    `git branch -D` 上报 `used by worktree` 而原地卡住。旧登记的路径未必等于当前
+    状态根推导出的新路径，所以不能按路径比对，只能按分支精确归属。
+    """
+    if not _is_resolve_branch(branch):
+        return False
+    common_dir = _git_common_dir()
+    registrations = common_dir / "worktrees"
+    if not registrations.is_dir():
+        return False
+    expected_head = f"ref: refs/heads/{branch}"
+    stale: list[tuple[Path, Path]] = []
+    for admin in sorted(registrations.iterdir()):
+        if not admin.is_dir():
+            continue
+        try:
+            head = (admin / "HEAD").read_text(encoding="utf-8").strip()
+            gitdir_text = (admin / "gitdir").read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if head != expected_head or not gitdir_text:
+            continue
+        gitdir_path = Path(gitdir_text)
+        if not gitdir_path.is_absolute():
+            gitdir_path = (admin / gitdir_path).resolve()
+        worktree_path = gitdir_path.parent
+        if worktree_path.is_dir():
+            print(f"× {branch} 的 worktree 仍在 {worktree_path}，不清理登记。")
+            return False
+        stale.append((admin, worktree_path))
+    if not stale:
+        return False
+    archive = common_dir / "kgctl-stale-worktrees"
+    try:
+        archive.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"× 清理 {branch} 的失效 worktree 登记失败（建归档目录）：{exc}")
+        return False
+    stamp = time.strftime("%Y%m%d%H%M%S")
+    for admin, worktree_path in stale:
+        dest = archive / f"{admin.name}-{stamp}-{secrets.token_hex(3)}"
+        try:
+            shutil.move(str(admin), str(dest))
+        except OSError as exc:
+            print(f"× 清理 {branch} 的失效 worktree 登记失败（{admin}）：{exc}")
+            return False
+        print(f"  归档 {branch} 的失效 worktree 登记 -> {dest}（目录不存在：{worktree_path}）。")
+    return True
+
+
+def _delete_resolve_container(branch: str, why: str):
+    """删除自动挡自己的 resolve 容器；失败时返回 git 输出供调用方判定。"""
+    _prune_stale_worktree_registration(branch)
+    gone = proc_run(["git", "-C", str(REPO), "branch", "-D", branch],
+                    capture_output=True, text=True)
+    if gone.returncode == 0:
+        return None
+    text = (gone.stdout + gone.stderr).strip()[:300]
+    print(f"× {why} {branch} 撤不掉：{text}")
+    return text
+
+
 def conflict_groups(rows=None) -> list:
     """把冲突分支按「抢同一批文件」收成少数几个冲突族。
 
@@ -5696,11 +5774,7 @@ def _resolve_prepare(args) -> None:
         # 于是又一次卡回同一个 blocked（2026-10-27 实测 codex/resolve-hover-card-info-restore）。
         container_ahead, _cb = counts(resolve_branch)
         if container_ahead == 0:
-            gone0 = proc_run(["git", "-C", str(REPO), "branch", "-D", resolve_branch],
-                             capture_output=True, text=True)
-            if gone0.returncode != 0:
-                print(f"× 已合入 main 的残留容器分支 {resolve_branch} 撤不掉："
-                      f"{(gone0.stdout + gone0.stderr).strip()[:300]}")
+            if _delete_resolve_container(resolve_branch, "已合入 main 的残留容器分支"):
                 print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
                 return
             print(f"  撤掉残留容器分支 {resolve_branch}（ahead=0，内容已全在 {MAIN}），重新拆一条。")
@@ -5715,10 +5789,7 @@ def _resolve_prepare(args) -> None:
             print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
             return
         if resolve_branch_exists:
-            gone = proc_run(["git", "-C", str(REPO), "branch", "-D", resolve_branch],
-                            capture_output=True, text=True)
-            if gone.returncode != 0:
-                print(f"× 遗留分支 {resolve_branch} 撤不掉：{(gone.stdout + gone.stderr).strip()[:300]}")
+            if _delete_resolve_container(resolve_branch, "遗留容器分支"):
                 print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
                 return
             print(f"  撤掉遗留容器分支 {resolve_branch}（原 head={orphan_head[:8]}，worktree 已不在；"
