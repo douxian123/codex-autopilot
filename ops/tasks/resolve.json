@@ -214,7 +214,54 @@
    "updated": "2026-10-17 07:17:30",
    "status": "abandoned",
    "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
+  },
+  {
+   "slug": "native-thread-bridge",
+   "branch": "codex/native-thread-bridge",
+   "base_main": "e8857c7a18aa0712589b75f1b7e15aa590b7fbaf",
+   "source_head": "ffc371d3621cb1f8280f17fbfeaf597de11b3714",
+   "source_commits": [
+    "ffc371d3621cb1f8280f17fbfeaf597de11b3714"
+   ],
+   "conflict_files": [
+    "ops/test-central-command-followup-contract.py"
+   ],
+   "unresolved_files": [
+    "ops/test-central-command-followup-contract.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "created": "2026-11-25 22:32:47",
+   "updated": "2026-11-25 22:32:47",
+   "status": "abandoned",
+   "reason": "源提交的用户可见路由责任段落已在 main 的 plugin/skills/central-command/SKILL.md；其测试旧路径会被 main 的 release 目录兼容版本回退，port 实测 add/add 冲突后已 abort。源分支保留不动。"
+  },
+  {
+   "slug": "disk-admission-clean-20261027",
+   "branch": "codex/disk-admission-clean-20261027",
+   "base_main": "e8857c7a18aa0712589b75f1b7e15aa590b7fbaf",
+   "source_head": "728b93900d9e3376026062185d606bdc24523a25",
+   "source_commits": [
+    "728b93900d9e3376026062185d606bdc24523a25",
+    "50c852b82371cfec53b9798d232f09cfa42d6e0d",
+    "99f8548bb8568a994776f4d1516480f9d383942b",
+    "3896b32e0e20d8035a6ac5b3dd657a7dbbd6e7ee"
+   ],
+   "conflict_files": [
+    "ops/central_daemon.py",
+    "ops/selftest.py",
+    "plugin/.codex-plugin/plugin.json"
+   ],
+   "unresolved_files": [
+    "ops/central_daemon.py",
+    "ops/selftest.py",
+    "plugin/.codex-plugin/plugin.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "created": "2026-11-25 22:32:48",
+   "updated": "2026-11-25 22:32:48",
+   "status": "abandoned",
+   "reason": "磁盘准入、压力回收预算与相关回归均已由 main 的 central_daemon.py/selftest.py 覆盖；源分支还带旧版本目录与大规模过时树，整支合并会回退 main。源分支保留不动。"
   }
  ],
- "updated": "2026-11-25 22:14:21"
+ "updated": "2026-11-25 22:32:48"
 }
