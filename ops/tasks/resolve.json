@@ -1,6 +1,61 @@
 {
  "tasks": [
   {
+   "slug": "session-compact-danger-switch-20261125",
+   "branch": "codex/session-compact-danger-switch-20261125",
+   "resolve_branch": "codex/resolve-session-compact-danger-switch-20261125",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-truth-sync-20261124-resolve-session-compact-danger-switch-20261125",
+   "base_main": "477acbe772fd49ff7a0a2ba14f25809e2b795461",
+   "source_head": "86d06d629b0372cabf1c9c7185e0bb0aa5c526e8",
+   "source_commits": [
+    "86d06d629b0372cabf1c9c7185e0bb0aa5c526e8"
+   ],
+   "created": "2026-11-25 12:46:30",
+   "updated": "2026-11-25 12:53:09",
+   "conflict_files": [
+    "ops/disk_reap.py",
+    "ops/selftest.py",
+    "ops/test-reap-zstd-path.py"
+   ],
+   "unresolved_files": [
+    "ops/disk_reap.py",
+    "ops/selftest.py",
+    "ops/test-reap-zstd-path.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "abandoned",
+   "reason": "同一安全修复已在 main b72c63265 落地并发布到 0.6.0-preview.147；本分支是并发重复实现，保留源分支原样不动"
+  },
+  {
+   "slug": "panel-design-restore-20261124",
+   "branch": "codex/panel-design-restore-20261124",
+   "resolve_branch": "codex/resolve-panel-design-restore-20261124",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-resolve-panel-design-restore-20261124",
+   "base_main": "1c795184609df518366607aaa6e50deb1297e893",
+   "source_head": "86b2cdeec044ac9c9cff0ac36d8e21e463541d88",
+   "source_commits": [
+    "7b7c3e0c7e58c79f8e3ae770ca09272de34fbddf",
+    "84bb134b6bce6ab09f580777ac04341817123dae",
+    "7efda6501fa1c3b515e008fd52f0b1ce832cdedb",
+    "11d7603672427d7e1c72b4677658d95fe390cf1e",
+    "de21a3b077094c05935e7c16e82d41a90fadf08b",
+    "86b2cdeec044ac9c9cff0ac36d8e21e463541d88"
+   ],
+   "created": "2026-11-24 03:45:14",
+   "updated": "2026-11-25 12:53:09",
+   "conflict_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "unresolved_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "abandoned",
+   "adopted": true,
+   "gate_output": "× codex/resolve-panel-design-restore-20261124 与 main 有 1 个冲突文件，拒绝自动 land：\n    ops/truth/product_state.json\n  这是需要归属裁决的信号（kgctl matrix 的 C 组）。",
+   "reason": "目标树机器证据已全绿；旧 resolve 任务为 focus-visible runner 假红，resolve worktree 已不存在，保留源分支原样不动"
+  },
+  {
    "slug": "steward-history-detail-20261123",
    "branch": "codex/steward-history-detail-20261123",
    "resolve_branch": "codex/resolve-steward-history-detail-20261123",
@@ -23,34 +78,6 @@
    "auto_resolved_jsonl": [],
    "status": "abandoned",
    "reason": "旧 lineage 的真相内容已由 3138a232/c591f7e1 进入 origin/main，P-0232 已判定独立收口；源分支不动，仅清理误报 needs_agent"
-  },
-  {
-   "slug": "panel-design-restore-20261124",
-   "branch": "codex/panel-design-restore-20261124",
-   "resolve_branch": "codex/resolve-panel-design-restore-20261124",
-   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-resolve-panel-design-restore-20261124",
-   "base_main": "1c795184609df518366607aaa6e50deb1297e893",
-   "source_head": "86b2cdeec044ac9c9cff0ac36d8e21e463541d88",
-   "source_commits": [
-    "7b7c3e0c7e58c79f8e3ae770ca09272de34fbddf",
-    "84bb134b6bce6ab09f580777ac04341817123dae",
-    "7efda6501fa1c3b515e008fd52f0b1ce832cdedb",
-    "11d7603672427d7e1c72b4677658d95fe390cf1e",
-    "de21a3b077094c05935e7c16e82d41a90fadf08b",
-    "86b2cdeec044ac9c9cff0ac36d8e21e463541d88"
-   ],
-   "created": "2026-11-24 03:45:14",
-   "updated": "2026-11-24 11:08:26",
-   "conflict_files": [
-    "docs/PRODUCT_MAINLINE.md"
-   ],
-   "unresolved_files": [
-    "docs/PRODUCT_MAINLINE.md"
-   ],
-   "auto_resolved_jsonl": [],
-   "status": "gate_fail",
-   "adopted": true,
-   "gate_output": "× codex/resolve-panel-design-restore-20261124 与 main 有 1 个冲突文件，拒绝自动 land：\n    ops/truth/product_state.json\n  这是需要归属裁决的信号（kgctl matrix 的 C 组）。"
   },
   {
    "slug": "land-clean-worktree-gate-20261122",
@@ -140,5 +167,5 @@
    "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
   }
  ],
- "updated": "2026-11-24 16:54:55"
+ "updated": "2026-11-25 12:53:09"
 }
