@@ -1,6 +1,6 @@
 # Codex 自动挡 · 预览包说明
 
-版本：`0.6.0-preview.146`
+版本：`0.6.0-preview.146`（源码发布候选，尚未打公开 tag/prerelease；公开入口见 `docs/BETA_LOCAL_TRIAL.md`）
 形态：Codex 插件 + macOS 菜单栏 Companion（一个状态锚点，不是第二套产品）
 
 本版是 B1「本地主链小范围试用准备」。默认安装只装插件主链：不首次安装常驻守护，

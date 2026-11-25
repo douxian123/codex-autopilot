@@ -1,18 +1,20 @@
 {
- "main": "3254683b695735c58c0d5688e1b61682d1240425",
+ "main": "bde4aa2f1b6726a38eaa9db433799510e30702ec",
  "branches": [
   "codex/auto-close-identity-gate-20261024",
   "codex/autopilot-brand-panel",
   "codex/disk-admission-clean-20261027",
   "codex/disk-admission-preview29-20261027",
+  "codex/panel-design-restore-20261124",
   "codex/reap-identical-tracked-20261027",
   "codex/slow-model-routing"
  ],
  "burden": {
-  "codex/auto-close-identity-gate-20261024": 2,
+  "codex/auto-close-identity-gate-20261024": 3,
   "codex/autopilot-brand-panel": 9,
   "codex/disk-admission-clean-20261027": 3,
-  "codex/disk-admission-preview29-20261027": 13,
+  "codex/disk-admission-preview29-20261027": 14,
+  "codex/panel-design-restore-20261124": 8,
   "codex/reap-identical-tracked-20261027": 3,
   "codex/slow-model-routing": 4
  }

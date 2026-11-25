@@ -162,6 +162,15 @@ def main() -> int:
         check("进展 active 投影为空", not active_rows(progress),
               active_rows(progress))
 
+        # done 但没有 landed 的进展是「已完成」而不是「在途」。此前只按 landed
+        # 判进展，B1 最终审计这类手工 done 记录会被状态页与产品主线误标在途。
+        progress.write_text(
+            progress.read_text(encoding="utf-8")
+            + json.dumps({"id": "P-0002", "type": "progress",
+                          "summary": "已完成的审计进展",
+                          "status": "done", "landed": False}, ensure_ascii=False) + "\n",
+            encoding="utf-8")
+
         snap = subprocess.run(
             [sys.executable, str(OPS / "truthctl.py"), "snapshot"],
             cwd=str(REPO), env=env, capture_output=True, text=True)
@@ -171,6 +180,10 @@ def main() -> int:
         status_text = status_path.read_text(encoding="utf-8") if status_path.exists() else ""
         check("停用的进展不进项目状态", "停用的进展" not in status_text,
               status_text[-200:])
+        check("done 非 landed 进展显示为已完成",
+              "- `P-0002` [已完成]" in status_text, status_text[-300:])
+        check("done 非 landed 进展不显示为在途",
+              "- `P-0002` [在途]" not in status_text, status_text[-300:])
 
         synth = subprocess.run(
             [sys.executable, str(OPS / "truthctl.py"), "synthesize"],
@@ -181,6 +194,12 @@ def main() -> int:
         mainline_text = mainline_path.read_text(encoding="utf-8") if mainline_path.exists() else ""
         check("停用的进展不进产品主线", "停用的进展" not in mainline_text,
               mainline_text[-200:])
+        check("产品主线把 done 进展写成已完成",
+              "[已完成] 已完成的审计进展" in mainline_text,
+              mainline_text[-300:])
+        check("产品主线不把 done 进展写成在途",
+              "[在途] 已完成的审计进展" not in mainline_text,
+              mainline_text[-300:])
 
         acceptance = root / "ops" / "truth" / "acceptance.jsonl"
         acceptance.write_text(

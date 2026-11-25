@@ -33,6 +33,7 @@ truthctl 管「这个项目现在到底是什么状态」。
   truthctl closure-package show <L-id>  查看闭环施工包与缺口
   truthctl closure-package fill <L-id> --json '{"..."}'  补齐施工包字段（仍停在规划未完成）
   truthctl closure-package confirm <L-id> --note "..." --evidence "..."  确认完整施工包进入 ready
+  truthctl identity <L-id> [L-id...]     查编号是否被多个不同事项复用（自动收口门禁）
   truthctl accept "<标题>" [--human --steps "..."]  登记验收项，分清机器自证/人工验收
   truthctl accept --id <A-id> --status verified [--note "..."]  收敛一条验收项（人工拍板/机器复核）
   truthctl goal <summary|list|create|update|link|close>  跨项目长期目标（显式账本）
@@ -320,6 +321,11 @@ def _next_id(t: str) -> str:
     旧实现是 len(rows)+1：同 id 的状态覆盖行会让行数虚高、编号跳号，并发时两个
     进程还会算出同一个号（L-0056）。跨 worktree 时，各自台账的最大编号也可能
     相同，因此再叠一层按项目共享的高水位。
+
+    2026-11-24 实测补强：共享高水位可能被子进程环境隔离或测试临时根覆盖，
+    单靠它仍会让分支先登记的人工验收在合回主干时被另一分支的门禁记录同号覆盖。
+    因此分配前还要扫描同一 git 仓库所有未 pruning 的 worktree 台账，把已经
+    出现过的 id 全算作已占用。
     """
     with _truth_id_lock() as state_dir:
         sequence_path = state_dir / 'truth-id-sequences.json'
@@ -333,8 +339,8 @@ def _next_id(t: str) -> str:
             reserved = int(state.get(t, 0))
         except (TypeError, ValueError):
             reserved = 0
-        taken = _taken_ids(t)
-        n = max(_max_num(t), reserved) + 1
+        taken = _taken_ids_across_worktrees(t)
+        n = max(_max_num(t), _max_num_from_ids(t, taken), reserved) + 1
         while f'{PREFIX[t]}-{n:04d}' in taken:
             n += 1
         state[t] = n
@@ -349,7 +355,11 @@ def _next_id(t: str) -> str:
 def _append_new(t: str, **fields) -> dict:
     """在临界区里分配 id 并追加一条新记录。所有「新条目」都走这里。"""
     with _truth_lock():
-        rec = {'id': _next_id(t), 'ts': time.strftime('%Y-%m-%d %H:%M:%S'), 'type': t}
+        rid = _next_id(t)
+        if rid in _taken_ids_across_worktrees(t):
+            sys.exit('× 拒绝新增重复 %s id %s（台账/工作树已有同号，不能静默覆盖）'
+                     % (t, rid))
+        rec = {'id': rid, 'ts': time.strftime('%Y-%m-%d %H:%M:%S'), 'type': t}
         rec.update(fields)
         _append(rec)
         return rec
@@ -357,6 +367,74 @@ def _append_new(t: str, **fields) -> dict:
 
 def _taken_ids(t: str) -> set:
     return {r.get('id') for r in _all_truth_rows(t)}
+
+
+def _worktree_truth_roots() -> list:
+    """返回同一 git 仓库内所有现存 worktree 的根目录。
+
+    prunable 的条目是 git 记着但目录已没了的历史壳，绝不能因为路径字符串存在
+    就当成活台账；本机 partial clone 里有大量这类残留，误读会拖慢每次分配。
+    """
+    roots = []
+
+    def add(path):
+        try:
+            resolved = Path(path).expanduser().resolve()
+        except (OSError, RuntimeError):
+            return
+        if resolved.is_dir() and resolved not in roots:
+            roots.append(resolved)
+
+    add(REPO)
+    add(REFERENCE_REPO)
+    result = proc_run(
+        ['git', '-C', str(REPO), 'worktree', 'list', '--porcelain'],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        return roots
+    blocks, current = [], []
+    for line in (result.stdout or '').splitlines():
+        if line.strip() == '':
+            if current:
+                blocks.append(current)
+                current = []
+        else:
+            current.append(line)
+    if current:
+        blocks.append(current)
+    for block in blocks:
+        if any(line.startswith('prunable ') for line in block):
+            continue
+        for line in block:
+            if line.startswith('worktree '):
+                add(line[len('worktree '):].strip())
+                break
+    return roots
+
+
+def _all_truth_rows_across_worktrees(t: str) -> list:
+    """所有活 worktree 的同类真相行，外加 origin/main 的已提交行。"""
+    relative = Path('ops') / 'truth' / FILES[t]
+    rows = []
+    for root in _worktree_truth_roots():
+        rows.extend(_read(root / relative))
+    rows.extend(_origin_main_rows(t))
+    return rows
+
+
+def _taken_ids_across_worktrees(t: str) -> set:
+    return {str(r.get('id')) for r in _all_truth_rows_across_worktrees(t)
+            if r.get('id')}
+
+
+def _max_num_from_ids(t: str, ids: set) -> int:
+    nums = []
+    for rid in ids:
+        m = re.match(r'^%s-(\d+)$' % PREFIX[t], str(rid))
+        if m:
+            nums.append(int(m.group(1)))
+    return max(nums) if nums else 0
 
 
 def _origin_main_rows(t: str) -> list:
@@ -399,7 +477,7 @@ def _all_truth_rows(t: str) -> list:
 
 
 def next_free_id(t: str, start: int) -> str:
-    taken = _taken_ids(t)
+    taken = _taken_ids_across_worktrees(t)
     n = start
     while f'{PREFIX[t]}-{n:04d}' in taken:
         n += 1
@@ -584,6 +662,65 @@ def _latest_ledger(rows: list) -> dict:
 
 def _find_ledger(rid: str) -> dict:
     return _latest_ledger(_read(TRUTH / FILES['ledger'])).get(rid)
+
+
+def _canonical_title(title: str) -> str:
+    """去掉自动收口前缀，得到底层题目。"""
+    t = str(title or '').strip()
+    for prefix in ('收口 ', '关闭 '):
+        if t.startswith(prefix):
+            rest = t[len(prefix):]
+            if rest.startswith('L-') and '：' in rest:
+                return rest.split('：', 1)[1].strip()
+    return t
+
+
+def _same_topic(a: str, b: str) -> bool:
+    """两条标题是否指同一件事（同题被截断/追加结论尾巴时仍算同题）。"""
+    a, b = _canonical_title(a), _canonical_title(b)
+    if not a or not b:
+        return False
+    if a == b or a.startswith(b) or b.startswith(a):
+        return True
+    common = 0
+    for ca, cb in zip(a, b):
+        if ca != cb:
+            break
+        common += 1
+    return common >= 12
+
+
+def ledger_identity(rid: str) -> dict:
+    """判断同一个编号是否被多个不同事项复用。
+
+    必须扫全部历史行，不能只看收敛后的最后一条：真实撞题现场是「旧任务的结论行 +
+    新任务的原题行」并存，收敛后只剩一条，看起来完全正常。
+    """
+    titles = [str(row.get('title') or '').strip()
+              for row in _read(TRUTH / FILES['ledger'])
+              if row.get('id') == rid]
+    titles = [t for t in titles if t]
+    clusters: list[list[str]] = []
+    for title in titles:
+        for cl in clusters:
+            if any(_same_topic(title, other) for other in cl):
+                cl.append(title)
+                break
+        else:
+            clusters.append([title])
+    return {
+        'id': rid,
+        'collision': len(clusters) > 1,
+        'titles': sorted({t for cl in clusters for t in cl}),
+        'issues': [sorted(set(cl)) for cl in clusters],
+    }
+
+
+def cmd_identity(args):
+    if not args:
+        sys.exit('用法: truthctl identity <L-id> [L-id...]')
+    for rid in args:
+        print(json.dumps(ledger_identity(rid), ensure_ascii=False))
 
 
 def _rewrite_jsonl(path: Path, rows: list) -> None:
@@ -1525,6 +1662,18 @@ ROADMAP_LABEL = {'done': '已完成', 'doing': '进行中',
                  'next': '下一步', 'todo': '未开始'}
 
 
+def _progress_mark(row: dict) -> str:
+    """进展的当前状态按台账字段判定，不把 done 非 landed 误写成在途。"""
+    status = row.get('status')
+    if status in ('superseded', 'retired'):
+        return '已归档'
+    if row.get('landed'):
+        return '已落盘'
+    if status == 'done':
+        return '已完成'
+    return '在途'
+
+
 def cmd_synthesize(args):
     """综合：把决策/进展/问题/验收/产品状态合成一页产品主线。
 
@@ -1623,7 +1772,7 @@ def cmd_synthesize(args):
     L += ['## 最近在推进', '']
     if prg[-10:]:
         for r in prg[-10:]:
-            mark = '已落盘' if r.get('landed') else '在途'
+            mark = _progress_mark(r)
             c = ' @ %s' % r['commit'][:10] if r.get('commit') else ''
             L.append('- [%s]%s %s' % (mark, c, r.get('summary') or r.get('title', '')))
     else:
@@ -1808,7 +1957,7 @@ def cmd_snapshot(args):
 
     L += ['## 四、进展', '']
     for r in prg[-8:]:
-        mark = '已落盘' if r.get('landed') else '在途'
+        mark = _progress_mark(r)
         c = f" @ `{r['commit'][:10]}`" if r.get('commit') else ''
         L.append(f"- `{r['id']}` [{mark}]{c} {r.get('summary') or r.get('title','')}")
     L.append('')
@@ -2042,7 +2191,7 @@ CMDS = {'add': cmd_add, 'ls': cmd_ls, 'snapshot': cmd_snapshot, 'promote': cmd_p
         'close': cmd_close, 'open': cmd_open, 'synthesize': cmd_synthesize,
         'accept': cmd_accept, 'goal': cmd_goal,
         'closure-package': cmd_closure_package,
-        'constitution': cmd_constitution}
+        'constitution': cmd_constitution, 'identity': cmd_identity}
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
@@ -2054,5 +2203,5 @@ if __name__ == '__main__':
         print('命令：' + ' | '.join(['snapshot', 'ls', 'add', 'promote', 'route', 'lanes',
                                      'next', 'product', 'distill', 'constraints', 'retire',
                                      'close', 'open', 'synthesize', 'accept', 'goal',
-                                     'closure-package', 'constitution']))
+                                     'closure-package', 'constitution', 'identity']))
         sys.exit(1)

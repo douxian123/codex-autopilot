@@ -6,7 +6,7 @@
   用户要的不是「再加一张卡片」，而是有人为整个项目的健康负责。判断必须来自
   已有台账，不能另造一套分数。这里锁住六个容易腐化的边界：
 
-  1. 主线过期 → attention，并说清过期多少天；
+  1. 自动综合主线过期 → attention，并说清过期多少天；人拍板方向旧但主线新不误报；
   2. 约束台账为空 → attention（用户的预期还没沉淀）；
   3. 标了 done 却没证据 → attention（不能拿「已完成」冒充闭环）；
   4. 真相目录读不到 → unknown，绝不降级成「正常」；
@@ -76,14 +76,26 @@ def main():
           fresh["layers"])
 
     stale = project_health.evaluate(
-        snapshot(mainline_updated=(now - timedelta(days=35)).strftime("%Y-%m-%d")),
+        snapshot(mainline_generated_at=(now - timedelta(days=35)).strftime("%Y-%m-%d")),
         runtime={"auto_exec": True}, now=now)
-    check("主线过期抬成 attention", stale["level"] == "attention", stale)
-    check("主线过期说清多少天",
-          "35 天" in " ".join(layer(stale, "truth")["reasons"]),
+    check("自动综合主线过期抬成 attention", stale["level"] == "attention", stale)
+    check("自动综合主线过期说清多少天",
+          "自动综合主线 35 天没更新" in " ".join(layer(stale, "truth")["reasons"]),
           layer(stale, "truth"))
     check("过期只报一条标题，不搬整段台账",
-          "35 天" in stale["headline"], stale["headline"])
+          "自动综合主线 35 天没更新" in stale["headline"], stale["headline"])
+
+    old_direction_new_mainline = project_health.evaluate(
+        snapshot(
+            mainline_updated="2026-10-18",
+            mainline_generated_at=now.strftime("%Y-%m-%d"),
+        ),
+        runtime={"auto_exec": True}, now=now)
+    check("人工方向旧但自动主线新不误报过期",
+          old_direction_new_mainline["level"] == "ok", old_direction_new_mainline)
+    check("旧人工日期不冒充主线过期理由",
+          "天没更新" not in " ".join(layer(old_direction_new_mainline, "truth")["reasons"]),
+          layer(old_direction_new_mainline, "truth"))
 
     empty = project_health.evaluate(snapshot(constraints=0),
                                     runtime={"auto_exec": True}, now=now)
@@ -130,8 +142,15 @@ def main():
         repo = Path(tmp)
         truth = repo / "ops" / "truth"
         truth.mkdir(parents=True)
+        docs = repo / "docs"
+        docs.mkdir(parents=True)
+        (docs / "PRODUCT_MAINLINE.md").write_text(
+            "# 产品主线\n\n> 生成时间 %s　·　由 synthesize 综合\n"
+            % now.strftime("%Y-%m-%d %H:%M:%S"),
+            encoding="utf-8",
+        )
         (truth / "mainline.json").write_text(json.dumps({
-            "product": "demo", "updated": now.strftime("%Y-%m-%d"),
+            "product": "demo", "updated": "2026-10-18",
             "stage": "内部可用",
         }), encoding="utf-8")
         (truth / "constraints.jsonl").write_text(json.dumps({
@@ -142,9 +161,19 @@ def main():
             "title": "没写证据就标完成",
         }) + "\n", encoding="utf-8")
         real = project_health.compute(str(repo), runtime={"auto_exec": True}, now=now)
-        check("真实目录读得到并给出 attention",
-              real["level"] == "attention" and real["signals"]["open_items"] == 0,
+        check("真实目录读得到且旧人工方向不误报",
+              real["level"] == "attention"
+              and "条标了完成但没有证据" in " ".join(layer(real, "truth")["reasons"])
+              and "天没更新" not in " ".join(layer(real, "truth")["reasons"]),
               real)
+
+        (docs / "PRODUCT_MAINLINE.md").unlink()
+        missing_generated = project_health.compute(
+            str(repo), runtime={"auto_exec": True}, now=now)
+        check("自动主线生成时间读不到时退回人工方向日期",
+              "产品方向 31 天没更新" in " ".join(
+                  layer(missing_generated, "truth")["reasons"]),
+              missing_generated)
 
         (truth / "constraints.jsonl").unlink()
         (truth / "ledger.jsonl").unlink()

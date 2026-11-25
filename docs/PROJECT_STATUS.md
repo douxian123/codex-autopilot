@@ -1,6 +1,6 @@
 # 项目状态（自动生成，勿手改）
 
-> 生成时间 2026-11-24 01:58:15　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
+> 生成时间 2026-11-25 09:41:10　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
 
 ## 一、产品主线
 
@@ -41,18 +41,21 @@
 **gate（1 待处理）**
 - `L-0020` 按你推荐的来，这些肯定不是我发现、修好，然后我自己能用就好了。肯定是它作为一个完整的、能够对外发表的、能让普通人也用得明白的顺畅产品为标准。 → `gate`
 
-（历史已关闭 15 条）
+**ux（1 待处理）**
+- `L-0021` 这个面板现在真的能够正常运行在运作吗？怎么全都是报红点点报错还是什么东西？而且这个面板现在的信息承载量怎么少了这么多？连最基础的施工地图、整体进度、项目文件夹这 → `design`
+
+（历史已关闭 16 条）
 
 ## 四、进展
 
-- `P-0207` [已落盘] @ `a66902bcb0` codex/resolve-land-clean-worktree-gate-20261122 验证门禁通过，已落盘 main @ a66902bcb0；改动 1 个文件：CONTEXT.md（+8/-0）｜1 file changed, 8 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- `P-0208` [在途] @ `300ea39314` codex/disk-admission-fix-20261105 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
-- `P-0209` [在途] @ `07b17402d8` codex/disk-reap-into-repo 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
-- `P-0210` [在途] launchd 陈旧路径已收口：10 条 guard plist 从 .145 收回到 .140，freshness 门禁 0 条旧路径，product_eval 5/5；外部 ok8888 bridge 保持登记 external，不动用户服务
-- `P-0211` [在途] B1 本地主链公开 beta 闭环证据已汇总到专用状态根：.140 / product_eval 5/5 / launchd freshness 0 stale / 全局待路由清零
-- `P-0212` [在途] 机器侧可交付；旧会话面板可见性未闭环，L-0019 必须在新会话由人确认。
-- `P-0213` [已落盘] @ `d845d0dc1d` codex/route-ownership-contract-20261123 验证门禁通过，已落盘 main @ d845d0dc1d；改动 3 个文件：ops/selftest.py（+1/-0）、ops/test-central-command-followup-contract.py（+22/-0）、plugin/skills/central-command/SKILL.md（+7/-0）｜3 files changed, 30 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- `P-0214` [已落盘] @ `81e1246be8` codex/mcp-stale-failclosed-20261124 验证门禁通过，已落盘 main @ 81e1246be8；改动 3 个文件：ops/central_mcp.py（+41/-0）、ops/selftest.py（+4/-0）、ops/test-mcp-stale-failclosed.py（+142/-0）｜3 files changed, 187 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- `P-0244` [已完成] 最终审计确认：B1 全量 PRD 契约包、七管家责任视图、公开 .140 入口、本机面板主链与使用说明已形成可复核闭环；过期 P-0242 已追加停用，人工签收、native 派活与跨设备仍按未闭合项保留。证据见 docs/B1_FINAL_AUDIT_20261124.md 与 A-0243/A-0244。
+- `P-0245` [已落盘] @ `5ae6bae260` codex/final-progress-closure-20261124 验证门禁通过，已落盘 main @ 5ae6bae260；改动 3 个文件：docs/B1_FINAL_AUDIT_20261124.md（+116/-0）、ops/test-truth-dedupe.py（+19/-0）、ops/truthctl.py（+14/-4）｜3 files changed, 149 insertions(+), 4 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- `P-0246` [已完成] panel-design-restore-20261124 的 focus-visible 旧 runner 假红已复核：目标树机器证据全绿，落盘只卡人工体验签收；不再重跑同一失败 land。
+- `P-0247` [已完成] 把 18 条被后续 verified/landed/superseded 或目标树机器证据覆盖的旧 todo 验收转 void；把 steward-history-detail 的 needs_agent 旧行追加 abandoned 终态；人工验收 A-0022/A-0044/A-0187..A-0192、L-0019/L-0020/L-0021 不动。
+- `P-0249` [已完成] 最终审计确认当前可机器闭环项已全部闭环：origin/main 35fedb84；全量 selftest exit 0；experience-evidence PASS 48/48 fresh=True screenshots=4；panel-logic、panel-render、project-constitution 均 exit 0；验收按 id 最新态 verified=167/todo=8/wip=0/blocked=0/void=23，8 条 todo 全为 needs_human=true，机器型未闭环=0；剩余为人工验收、产品/发布决策与 ChatGPT pairing B2。
+- `P-0250` [已完成] 修复插件绑定漂移：旧脏 worktree 绑定被 binding_health 识别，capture_request/intake_request/route_preview 在写入前 fail-closed 并返回 AUTOPILOT_BINDING_DRIFT 恢复动作；安装器自检 opt-out 不误拦脏 source + 干净 trunk 夹具；面板坏绑定夹具清掉外层 KG_REPO。门禁：python3 -u ops/selftest.py exit 0；python3 ops/panel_logic_check.py exit 0；python3 ops/panel_render_check.py --no-shot exit 0；python3 ops/test-project-constitution.py exit 0；python3 ops/experience_evidence.py exit 0 (PASS 48/48 fresh=True screenshots=4)。
+- `P-0251` [已完成] 绑定漂移已改为 fail-closed：旧脏绑定被识别，投稿/路由预演先拦截并给出重绑定+重开 Codex 的恢复动作；安装与坏绑定夹具不误报。记录为 P-0250、A-0246。
+- `P-0252` [已落盘] @ `f83677fb91` codex/truth-sync-clean-20261124 验证门禁通过，已落盘 main @ f83677fb91；改动 8 个文件：docs/B1_FINAL_AUDIT_20261124.md（+42/-0）、docs/BETA_LOCAL_TRIAL.md（+8/-0）、docs/experience/experience-evidence.json（+1/-1）、install.sh（+8/-1）、ops/central_mcp.py（+9/-1），另有 3 个文件｜8 files changed, 440 insertions(+), 9 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0246
 
 ## 五、验收进度
 
@@ -74,7 +77,7 @@
 - `A-0189` [P1] Codex Autopilot 面板人工验收：任务完成感
   - 人看首屏默认截图，确认当前目标、总体进度、最近完成和当前步骤能支撑判断任务是否在推进
 
-**已机器验收（140）**
+**已机器验收（169）**
 - `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
@@ -214,13 +217,43 @@
 - `A-0185` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
 - `A-0186` [P1] codex/panel-native-surface-20261123 门禁预跑（未落盘）
 - `A-0197` [P1] codex/route-ownership-contract-20261123 落盘验收
-- `A-0198` [P1] codex/mcp-stale-failclosed-20261124 落盘验收
+- `A-0198` [P1] 面板首屏四项恢复的机器门禁验收
+- `A-0201` [P1] codex/rollback-install-state-20261124 落盘验收
+- `A-0206` [P1] codex/release-doc-truth-alignment-20261124 落盘验收
+- `A-0207` [P1] codex/project-health-mainline-freshness-20261124 落盘验收
+- `A-0208` [P1] codex/acceptance-id-collision-20261124 落盘验收
+- `A-0209` [P1] codex/experience-evidence-focus-measure-20261124 落盘验收
+- `A-0210` [P1] codex/fix-superseded-queue-20261124 落盘验收
+- `A-0212` [P1] codex/fix-converge-orphan-adopt-20261124 落盘验收
+- `A-0214` [P1] codex/truth-closure-audit-20261124 门禁预跑（未落盘）
+- `A-0215` [P1] codex/truth-closure-audit-20261124 落盘验收
+- `A-0216` [P1] codex/fix-stale-resolve-abandon-20261124 落盘验收
+- `A-0219` [P1] codex/fix-gate-experience-base-20261124 落盘验收
+- `A-0221` [P1] codex/truth-gate-false-green-correction-20261124 落盘验收
+- `A-0230` [P1] codex/port-identity-guard-20261124 门禁预跑（未落盘）
+- `A-0231` [P1] codex/port-identity-guard-20261124 落盘验收
+- `A-0202` [P1] 面板秘书简报与工具一致性机器验收
+- `A-0203` [P1] codex/fix-resolve-stale-adopt-guard-20261124 门禁预跑（未落盘）
+- `A-0204` [P1] codex/fix-resolve-stale-adopt-guard-20261124 门禁预跑（未落盘）
+- `A-0232` [P1] codex/fix-resolve-stale-adopt-guard-20261124 落盘验收
+- `A-0233` [P1] codex/public-beta-docs-closure-20261124 门禁预跑（未落盘）
+- `A-0234` [P1] codex/public-beta-docs-closure-20261124 落盘验收
+- `A-0235` [P1] codex/resolve-panel-design-restore-20261124 门禁预跑（未落盘）
+- `A-0237` [P1] codex/experience-gate-target-runner-20261124 落盘验收
+- `A-0240` [P1] codex/acceptance-id-worktrees-20261124 门禁预跑（未落盘）
+- `A-0241` [P1] codex/acceptance-id-worktrees-20261124 落盘验收
+- `A-0243` [P1] codex/b1-final-closure-20261124 门禁预跑（未落盘）
+- `A-0244` [P1] codex/b1-final-closure-20261124 落盘验收
+- `A-0245` [P1] codex/final-progress-closure-20261124 落盘验收
+- `A-0246` [P1] 绑定漂移 fail-closed 机器验收
+- `A-0247` [P1] codex/truth-sync-clean-20261124 落盘验收
 
 ## 六、决策记录
 
 - `D-0001` 自动挡架构收敛为两平面七管家与一层全局健康
 - `D-0003` 受控换代边界与 MCP 重载策略
 - `D-0002` 北极星首问闭环率的唯一口径
+- `D-0005` B1 路线已定：公开 beta 保持 .140
 
 ## 七、产品状态（产品今天是怎么工作的）
 
@@ -239,18 +272,24 @@
 - **视觉/设计方案提示词**：做视觉/设计前先当产品经理+产品设计师，尊重用户、保护注意力：先截图看现状再改，改完再截图对比，只允许正向改动，不能更丑、更乱、更难读。
   - 为什么：视觉改动最容易越改越丑；把设计要求写进 harness 才能让每次改动都守住注意力秩序
 - **主动注意提醒**：出现人工验收、需要拍板或异常时，主面板显示明确待处理状态，菜单栏切换警示图标并通过 macOS 通知中心提醒；同一批待办只提醒一次。
+- **自动挡合并队列与真相投影**：已归档（superseded）的分支不再出现在落盘队列或一屏在途项，队列会单列已裁决/已归档数量；真相快照把这类进展显示为「已归档」而不是「在途」。
+  - 为什么：修复队列把已归档但无冲突的历史分支反复当成可落盘在途的假信号。
+- **绑定漂移**：插件绑定旧脏 worktree、当前会话在同仓库干净状态根时，binding_health 报漂移；capture_request、intake_request、route_preview 在写入前返回 AUTOPILOT_BINDING_DRIFT，并提示重跑 install.sh <当前状态根> 后重开 Codex；干净多 worktree 和安装自检不误报。
+  - 为什么：2026-11-24 现场发现插件 .mcp.json 绑定旧脏 worktree 时，当前干净状态根的需求会被写进旧账本，面板却显示正常。
+- **验收结论口径**：当前知识图谱走查修复分支已提交推送但尚未合入 main；真实浏览器复放和 30 条全量重跑未完成，因此不能宣称符合预期或全产品闭环生效。
+  - 为什么：分支 codex/user-audit-quality-closure-r3-20261124 commit 2dabbeb4e6 已推送，main 仍是 fcd634cf99；资源准入拦截浏览器重验证。
 
 ## 八、判断逻辑（同一个判断，人只做一次）
 
-- `J-0011` [process] 修复完成后必须同步翻 ledger 状态，否则闭环率会把已修复问题算成未闭环。
-- `J-0012` [arch] 常驻自追踪必须幂等：真相内容没变时不重写生成视图和生成时间。
-- `J-0013` [architecture] 管家是责任视图而非人类岗位表；运行时按 execute/control/evaluate 分工，状态管家的路线效用职责只做只读检测与授权后的复核闭环，不声称全局最优。
-- `J-0014` [arch] 路线与效用健康不是新增管家或自动纠偏器，而是 evaluate 层的只读责任视图；最优是可证伪闭环，目标是目标可核对、偏离可发现、纠偏有边界、纠偏后复测。
-- `J-0016` [process] CLI 写命令的帮助探测不得用 unsupported flag 试探；未知参数可能被子命令当成标题或正文并写入账本，先读总帮助或源码，确认支持后再调用。
-- `J-0019` [workflow] 源码合并不等于现场生效：换代必须回读 install-state、release 元数据、daemon plist 和 live PID 四重一致；取不到写 unknown，不写 0 或正常。
-- `J-0001` [product-architecture] 自动挡架构按“谁能改变事实”分平面，不按愿望数量加管家；全局健康只读，PM 不自动追问，验收截图不替人收口。
 - `J-0002` [process] 原生直连派活的最后一道闸是官方 remote-control 的 ChatGPT 登录/配对，不是 socket 路径或协议；不能用 API key 冒充 ChatGPT 身份，也不应把独立 app-server 会话包装成桌面宿主实时窗口。
 - `J-0003` [product] 机器闭环和人工验收不能混为一谈
 - `J-0017` [process] 源码合并不等于现场生效：换代必须回读 install-state、release 元数据、daemon plist 和 live PID 四重一致；取不到写 unknown，不写 0 或正常。 --scope workflow --why 2026-11-22 宪法页修复在源码和手工 tick 已通过，但当前安装版 .121 仍不含修复；只有受控换代并回读现场才能证明用户现场生效。
 - `J-0018` [workflow] 源码合并不等于现场生效：换代必须回读四重现场证据
 - `J-0020` [process] 诊断「部分 Codex 对话持续报 upstream_stream_cut」时，先按精确错误对象匹配 emitter，再用 proxy.log 的 ROUTE 行按 thread_id 核对实际模型线路；同一时刻其他线程正常不能排除单线程绑定坏线路。
+- `J-0023` [process] 验收问题必须先证明当前源码和当前 main 的基线，再区分本轮回归、门禁字面量漂移和主线既有红灯；冲击性措辞只作为缺陷线索，不作为已修复或已闭环的证据。
+- `J-0024` [product] 真实用户走查的完成判定必须按题同时看终态、首值、内容相关性、移动端可见性和刷新后状态；done 帧出现但只有一张无证据残句，或 30 秒后出现大量跑题来源，都不能算符合预期。
+- `J-0021` [design] 原生窄面板压缩时，项目卡（含整体进度和一句汇报简语）、施工地图、项目文件夹、管家健康是信息承载底线；后台候选与历史冲突不能用橙色报错语义表达。
+- `J-0025` [process] 公开 beta 的用户可见文档只有在对应 tag/prerelease 或公开文档站更新后才算交付；源码 main 落盘只能证明工程闭环，不能写成公开用户现场已经看到。
+- `J-0026` [process] 落盘门禁必须从正在验证的目标树加载门禁模块，不能从当前已安装 runner 的 ops 目录加载；否则目标树已修好的证据会被旧 runner 否定，形成机器假红。
+- `J-0027` [process] 当旧 runner 与当前目标树证据冲突时，以目标树可复现的机器证据为准；机器全绿但人工体验未签收时停在人工闸口，不代签也不重复跑同一失败命令。
+- `J-0028` [process] 陈旧机器验收要看最新证据：被后续 verified/landed/superseded 或目标树复核覆盖的旧 todo 转 void，不删除历史；人工验收项保持 todo 等待真人拍板。

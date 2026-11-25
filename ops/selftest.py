@@ -164,6 +164,7 @@ def main():
             "test-mirror-truth-jsonl-union.py",
             "test-selftest-release-dir.py",
             "test-gate-registration.py",
+            "test-ledger-identity-collision.py",
             "test-acceptance-criteria.py",
             "test-worker-lifecycle.py",
             "test-exec-lifecycle.py",
@@ -182,10 +183,12 @@ def main():
             "test-cost-discipline.py",
             "test-experience-contract.py",
             "test-experience-contract-gate.py",
+            "test-gate-experience-base.py",
             "test-panel-renderer-contract.py",
             "test-panel-intent-trigger.py",
             "test-panel-no-html-fallback.py",
             "test-binding-recovery-action.py",
+            "test-binding-drift.py",
             "test-research-adoption.py",
             "test-specialized-acceptance-executors.py",
             "test-central-command-followup-contract.py",
@@ -1589,6 +1592,24 @@ def test_installer():
         assert any(p["name"] == "other-plugin" for p in restored["plugins"])
         assert sentinel.read_text(encoding="utf-8") == "keep\n"
         assert (release / "ops" / "central_mcp.py").is_file()
+        # 现场事故回归：旧版回滚只改 marketplace，install-state 仍指向新版本，
+        # current_ops() 与面板因此继续跑旧代码。回滚必须同时回写安装态。
+        rolled_state = _json.loads(
+            (home / "plugins" / "codex-autopilot" / "install-state.json")
+            .read_text(encoding="utf-8"))
+        assert rolled_state["source"] == restored_entry["source"]["path"], \
+            "回滚后 install-state 与 marketplace 入口不一致"
+        assert rolled_state["version"] == state["version"], \
+            "回滚后 install-state.version 丢失可追溯版本"
+        second_rollback = run(["bash", str(source_install), "--rollback"],
+                              env=env, check=False)
+        if second_rollback.returncode:
+            raise AssertionError(f"连续回滚失败:\n{second_rollback.stdout}\n{second_rollback.stderr}")
+        second_state = _json.loads(
+            (home / "plugins" / "codex-autopilot" / "install-state.json")
+            .read_text(encoding="utf-8"))
+        assert second_state["source"] == restored_entry["source"]["path"], \
+            "连续回滚把 install-state 改到了错误版本"
 
         # 2026-11-23 现场事故：把不存在的 <状态根>-trunk 写进 KG_TRUNK 和 release
         # 配置，安装看似成功，product_eval 的 consistent 判据永久失败。显式 --trunk
@@ -2058,11 +2079,17 @@ def test_broken_binding_panel_contract():
                         "KG_TRUNK": str(root / "install-49-trunk")}}},
         }, ensure_ascii=False, indent=2), encoding="utf-8")
 
+        child_env = os.environ.copy()
+        child_env["KG_DAEMON_HOME"] = str(root / "home")
+        # 这个用例要验证 .mcp.json 指向的坏状态根；外层 selftest 可能因为上一个
+        # 夹具留下 KG_REPO，被新的漂移判据当成用户在另一个项目投稿，遮住原本要测
+        # 的「不是 git 仓库 / 普通目录无法闭环」提示。
+        child_env.pop("KG_REPO", None)
+        child_env.pop("KG_TRUNK", None)
         proc = subprocess.Popen([sys.executable, str(plugin / "ops" / "central_mcp.py")],
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, text=True,
-                                env=dict(os.environ, KG_DAEMON_HOME=str(root / "home")),
-                                cwd=str(plugin))
+                                env=child_env, cwd=str(plugin))
         try:
             def send(obj):
                 proc.stdin.write(_json.dumps(obj, ensure_ascii=False) + "\n")
@@ -2241,6 +2268,78 @@ def test_release_contract_includes_pm_briefing_and_acceptance_screenshots():
                    "异常发现 → 自动复测 → 恢复或持续待复核"):
         assert needle in architecture, f"架构文档缺少约束：{needle}"
     print(f"selftest ok: 发布包包含 PM 简报、验收标准候选与截图通道，版本 {version}。")
+
+
+def test_public_beta_docs_match_release_tags():
+    """公开 beta 文档只能指向真实发布的 tag，不能把源码候选写成可安装版本。
+
+    2026-11-24 现场：公开远端只有 v0.6.0-preview.140，仓库文档却写了
+    v0.6.0-preview.146 prerelease 和 clone 命令。源码候选已经合入主干不等于
+    普通用户能下载；这类文档错误会让新用户第一步就失败。
+    """
+    import re
+
+    root = OPS.parent
+    beta = root / "docs" / "BETA_LOCAL_TRIAL.md"
+    assert beta.is_file(), "公开 beta 说明不存在"
+    beta_text = beta.read_text(encoding="utf-8")
+
+    declared = re.search(r"公开 beta：`([^`]+)`", beta_text)
+    assert declared, "BETA_LOCAL_TRIAL.md 没有声明当前公开 beta 版本"
+    published = declared.group(1)
+
+    clone = re.search(r"git clone --branch v([^\s]+)", beta_text)
+    assert clone, "公开 beta 说明缺少 clone 命令"
+    assert clone.group(1) == published, (
+        f"公开 beta 版本 {published} 与 clone tag {clone.group(1)} 不一致")
+
+    links = re.findall(r"releases/tag/v([0-9A-Za-z.\-]+)", beta_text)
+    assert links, "公开 beta 说明缺少 prerelease 链接"
+    assert all(tag == published for tag in links), (
+        f"公开 beta 链接混入了非当前版本：{links}，公开版本={published}")
+
+    for needle in ("怎么确认多管家真的加载了", "状态条", "API key 与 ChatGPT 订阅有什么区别",
+                   "included usage / credits", "这不是要你选 8 个机器人"):
+        assert needle in beta_text, f"BETA_LOCAL_TRIAL.md 缺少普通用户入口说明：{needle}"
+    setup = root / "plugin" / "skills" / "setup" / "SKILL.md"
+    if setup.is_file():
+        setup_text = setup.read_text(encoding="utf-8")
+        assert "多管家是否加载" in setup_text and "状态条" in setup_text, \
+            "setup 入门没有说明怎么看多管家加载状态"
+
+    source_version = _installed_version()
+    if source_version != published:
+        assert source_version in beta_text, "源码候选版本没有在公开文档里说明"
+        assert any(note in beta_text for note in (
+            "尚未打公开 tag", "没有公开 prerelease", "未发布")), (
+            f"源码版本 {source_version} 未明确标为未公开候选")
+        assert f"git clone --branch v{source_version}" not in beta_text, (
+            "未发布候选被写成用户安装入口")
+        assert f"releases/tag/v{source_version}" not in beta_text, (
+            "未发布候选被写成公开 prerelease 链接")
+
+    # 源码 checkout 有 Git 元数据时，公开版本必须在仓库里真有 tag；
+    # 安装后的不可变 release 目录没有 .git，只做文档一致性检查。
+    shown_root = run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                     check=False)
+    if shown_root.returncode == 0 and Path(
+            shown_root.stdout.strip()).resolve() == root.resolve():
+        tags = run(["git", "-C", str(root), "tag", "--list",
+                    f"v{published}"]).stdout.splitlines()
+        assert f"v{published}" in tags, (
+            f"公开 beta {published} 在仓库里没有对应 tag")
+
+    preview = root / "docs" / "PREVIEW.md"
+    if preview.is_file():
+        preview_text = preview.read_text(encoding="utf-8")
+        preview_version = re.search(r"版本：`([^`]+)`", preview_text)
+        if preview_version and preview_version.group(1) != published:
+            assert any(note in preview_text for note in (
+                "源码发布候选", "不是公开 prerelease", "尚未打公开 tag")), (
+                "PREVIEW.md 的非公开版本没有标明候选状态")
+
+    print(f"selftest ok: 公开 beta 入口 {published} 指向真实发布版本，"
+          f"源码 {source_version} 不会被误写成公开下载。")
 
 
 def test_preview_check_contract():
@@ -3976,6 +4075,16 @@ def test_verify_and_truth():
         if "判断逻辑" not in snap2.stdout or "J-0001" not in snap2.stdout:
             raise AssertionError(f"snapshot 没有渲染判断逻辑:\n{snap2.stdout}")
 
+        # 已归档进展不能显示成在途：superseded 是终态，只是没产生空合并提交。
+        archived = truthctl(repo, "add", "progress", "重复分支已归档",
+                            extra_env={"KG_TRUTH_STATUS": "superseded",
+                                       "KG_TRUTH_SUMMARY": "内容已全在 main"})
+        if archived.returncode != 0:
+            raise AssertionError(f"progress add 失败:\n{archived.stdout}\n{archived.stderr}")
+        snap3 = truthctl(repo, "snapshot", "--print")
+        if "[已归档]" not in snap3.stdout:
+            raise AssertionError(f"snapshot 把 superseded 仍显示在途:\n{snap3.stdout}")
+
         # 问题闭环：新增一条 ledger -> close 标 done 并写进展 -> open 能重开。
         add = truthctl(repo, "add", "ledger", "按钮点着没反应",
                        extra_env={"KG_TRUTH_KIND": "bug", "KG_TRUTH_DETAIL": "首页按钮无响应"})
@@ -5345,9 +5454,38 @@ def test_parallel_exec_slots():
             # 这个用例只验并发槽位。外部残留的自检进程可能刚好带同名
             # worktree，不能让它把本 fixture 的派发静默挡掉。
             central_daemon._live_exec_slugs = lambda: frozenset()
+            # 同一条门禁在 land 的完整链里跑时，临时目录和真实 git worktree add
+            # 会比单独跑更拥挤；这里曾偶发一条 L-0008 拿到 worktree_fail，而
+            # 独立复跑又全绿。产品准入仍由 _worktree_admission fail-closed，
+            # 这个用例只钉并发槽位，所以只对「准入已通过但 git add 失败」做
+            # 有界重试，并清掉 fixture 里空的残留目录/同名分支。
+            real_add_admitted = central_daemon._add_worktree_admitted
+
+            def _add_with_retry(repo, worktree, branch, base=None):
+                last = None
+                for attempt in range(3):
+                    result = real_add_admitted(repo, worktree, branch, base=base)
+                    if result.get("ok"):
+                        return result
+                    # 有明确准入理由时是真的被闸住，不能重试成假绿。
+                    if (result.get("admission") or {}).get("reason"):
+                        return result
+                    last = result
+                    central_daemon._git(repo, "worktree", "prune")
+                    try:
+                        wt_path = Path(worktree)
+                        if wt_path.exists() and not any(wt_path.iterdir()):
+                            wt_path.rmdir()
+                    except OSError:
+                        pass
+                    central_daemon._git(repo, "branch", "-D", branch)
+                    _time.sleep(0.05 * (attempt + 1))
+                return last
+
+            central_daemon._add_worktree_admitted = _add_with_retry
             try:
                 started, workers = central_daemon.dispatch_exec(False, blocked, workers)
-                assert started == [], started
+                assert started == [], (started, blocked, workers)
                 assert not workers.get("exec_jobs"), workers
                 state = _json.loads((home / "state.json").read_text(encoding="utf-8"))
                 assert state["exec_disk_held"] is True, state
@@ -5399,6 +5537,7 @@ def test_parallel_exec_slots():
 
             finally:
                 central_daemon._live_exec_slugs = real_live_slugs
+                central_daemon._add_worktree_admitted = real_add_admitted
                 release.touch()
                 for job in workers.get("exec_jobs", {}).values():
                     proc = job.get("proc")
@@ -6599,7 +6738,8 @@ def test_resolve_orphan_container_is_adopted_not_blocked_forever():
 
     printed = []
 
-    def run_case(*, worktree_exists, markers, existing_record, container_ahead=1):
+    def run_case(*, worktree_exists, markers, existing_record, container_ahead=1,
+                 committed_tasks=()):
         with tempfile.TemporaryDirectory(prefix="kgctl-resolve-orphan-") as tmp:
             root, repo, kgctl = _load(tmp)
             kgctl.RESOLVE = repo / "ops" / "tasks" / "resolve.json"
@@ -6608,6 +6748,7 @@ def test_resolve_orphan_container_is_adopted_not_blocked_forever():
             if worktree_exists:
                 wt.mkdir()
             written, deleted = [], []
+            committed_json = json.dumps({"tasks": list(committed_tasks)})
 
             def fake_write(rec):
                 written.append(rec)
@@ -6633,8 +6774,9 @@ def test_resolve_orphan_container_is_adopted_not_blocked_forever():
                  mock.patch.object(kgctl, "_find_resolve_task", side_effect=lambda t: existing_record), \
                  mock.patch.object(kgctl, "_lock_blocked", return_value=False), \
                  mock.patch.object(kgctl, "_align_main", lambda: None), \
-                 mock.patch.object(kgctl, "git",
-                                   side_effect=lambda *a, **k: "b75c7dd3dc" if "rev-parse" in a else ""), \
+                mock.patch.object(kgctl, "git", side_effect=lambda *a, **k: (
+                    committed_json if "show" in a else
+                    "b75c7dd3dc" if "rev-parse" in a else "")), \
                  mock.patch.object(kgctl, "counts", return_value=(container_ahead, 0)), \
                  mock.patch.object(kgctl, "conflict_files", return_value=["a.ts"]), \
                  mock.patch.object(kgctl, "conflict_burden", return_value=1), \
@@ -6676,7 +6818,31 @@ def test_resolve_orphan_container_is_adopted_not_blocked_forever():
     assert not written, f"已有任务时不该重复登记：{written}"
     assert any("outcome=blocked" in line for line in out), out
 
-    print("selftest ok: resolve 遗留容器分支会被接管/重拆，已解过的绝不自动删，有 open 记录不抢。")
+    # 5) 工作树台账被旧进程写回 needs_agent，committed 已是 abandoned：绝不再接管。
+    settled_abandoned = {
+        "slug": "hover-power-remove-feedback",
+        "branch": "codex/hover-power-remove-feedback",
+        "resolve_branch": "codex/resolve-hover-power-remove-feedback",
+        "status": "abandoned",
+        "updated": "2026-11-24 06:51:26",
+    }
+    written, deleted, out = run_case(
+        worktree_exists=True, markers=["a.ts"],
+        existing_record={"slug": "hover-power-remove-feedback", "status": "needs_agent"},
+        committed_tasks=[settled_abandoned])
+    assert not written, f"committed 已裁决时不该重新登记：{written}"
+    assert deleted == [], f"committed 已裁决时不该删任何分支：{deleted}"
+    assert any("outcome=settled" in line for line in out), out
+
+    # 6) 同样旧台账 + 容器分支 ahead=0：committed 终态优先，不能顺手删容器分支。
+    written, deleted, out = run_case(
+        worktree_exists=False, markers=[], existing_record=None, container_ahead=0,
+        committed_tasks=[settled_abandoned])
+    assert deleted == [], f"committed 已裁决时 ahead=0 容器分支也不该删：{deleted}"
+    assert any("outcome=settled" in line for line in out), out
+
+    print("selftest ok: resolve 遗留容器分支会被接管/重拆，已解过的绝不自动删，"
+          "有 open 记录不抢，committed 终态不被旧台账重开。")
 
 
 def test_resolve_prepare_raises_controlled_error_not_sysexit():
@@ -6917,6 +7083,153 @@ def test_zero_file_branches_do_not_occupy_land_queue():
             assert ok is True and notes == ["净零文件：分支相对自身基线没有文件级改动"], notes
 
     print("selftest ok: 0 文件空壳不占 land 队列，supersede 不再为它们跑 git cherry。")
+
+
+def test_superseded_branches_are_settled_not_landable():
+    """已 superseded 的 clean 分支必须归到已裁决，不能继续占 land 队列。"""
+    import contextlib
+    import importlib.util
+    import io
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    with tempfile.TemporaryDirectory(prefix="kgctl-superseded-") as tmp:
+        root = Path(tmp)
+        (root / "ops" / "truth").mkdir(parents=True)
+        (root / "ops" / "tasks").mkdir(parents=True)
+        (root / "ops" / "truth" / "progress.jsonl").write_text("", encoding="utf-8")
+        with mock.patch.dict(os.environ, {
+            "KG_REPO": str(root),
+            "KG_TRUNK": str(root / "state-trunk"),
+        }):
+            spec = importlib.util.spec_from_file_location(
+                "kgctl_superseded_selftest", ops / "kgctl.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            now = int(_time.time())
+            index = {
+                "codex/archived-clean": {
+                    "ahead": 3, "behind": 900, "ts": now, "subject": "superseded clean",
+                },
+                "codex/live-clean": {
+                    "ahead": 1, "behind": 2, "ts": now, "subject": "real change",
+                },
+            }
+            with mock.patch.object(module, "branch_index", return_value=index), \
+                 mock.patch.object(module, "changed_files", return_value=["app.ts"]), \
+                 mock.patch.object(module, "conflict_files", return_value=[]), \
+                 mock.patch.object(module, "unresolved_marker_files", return_value=[]), \
+                 mock.patch.object(module, "_decided_resolve_branches", return_value=set()), \
+                 mock.patch.object(
+                     module, "already_superseded",
+                     return_value={"codex/archived-clean"}):
+                rows = module.scan()
+
+            by_branch = {r["branch"]: r for r in rows}
+            assert by_branch["codex/archived-clean"]["kind"] == "SETTLED", by_branch
+            assert by_branch["codex/live-clean"]["kind"] == "CLEAN", by_branch
+
+            output = io.StringIO()
+            with mock.patch.object(module, "scan", return_value=rows), \
+                 contextlib.redirect_stdout(output):
+                module.cmd_queue([])
+            queue_text = output.getvalue()
+            assert "kgctl land codex/live-clean" in queue_text, queue_text
+            assert "kgctl land codex/archived-clean" not in queue_text, queue_text
+            assert "1 个已裁决/已归档" in queue_text, queue_text
+
+    print("selftest ok: superseded clean 分支归到已裁决，不再冒充可落盘在途。")
+
+
+def test_convergence_adopts_unregistered_worktree():
+    """收敛分支存在但台账缺失时，必须认领真实 worktree 并补齐台账。"""
+    import contextlib
+    import importlib.util
+    import io
+    from unittest import mock
+
+    ops = Path(__file__).resolve().parent
+    with tempfile.TemporaryDirectory(prefix="kgctl-converge-orphan-") as tmp:
+        root = Path(tmp)
+        (root / "ops" / "tasks").mkdir(parents=True)
+        (root / "ops" / "truth").mkdir(parents=True)
+        actual_wt = root / "elsewhere-converge-abc12345"
+        actual_wt.mkdir()
+        group = {
+            "id": "abc12345",
+            "branches": ["codex/src-a"],
+            "files": ["common.txt"],
+        }
+
+        class Result:
+            def __init__(self, returncode, stdout, stderr=""):
+                self.returncode = returncode
+                self.stdout = stdout
+                self.stderr = stderr
+
+        with mock.patch.dict(os.environ, {
+            "KG_REPO": str(root),
+            "KG_TRUNK": str(root / "trunk"),
+        }):
+            spec = importlib.util.spec_from_file_location(
+                "kgctl_converge_orphan_selftest", ops / "kgctl.py")
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            proc_calls = []
+
+            def fake_proc_run(args, **kwargs):
+                cmd = [str(x) for x in args]
+                proc_calls.append(cmd)
+                if "fetch" in cmd:
+                    return Result(0, "", "")
+                if "grep" in cmd and "-l" in cmd:
+                    return Result(0, "", "")
+                if "rev-parse" in cmd and cmd[-1] == "HEAD":
+                    return Result(0, "headsha\n", "")
+                if "worktree" in cmd and "add" in cmd:
+                    raise AssertionError(f"已有 worktree 不应被重建：{cmd}")
+                return Result(0, "", "")
+
+            def fake_git(*args, check=False):
+                if args and args[0] == "rev-parse":
+                    return "sha"
+                return ""
+
+            written = []
+            with mock.patch.object(module, "scan", return_value=[]), \
+                 mock.patch.object(module, "conflict_groups", return_value=[group]), \
+                 mock.patch.object(module, "load_convergence", return_value={"groups": []}), \
+                 mock.patch.object(module, "_adopt_stable_ids", lambda *a, **k: None), \
+                 mock.patch.object(module, "_lock_take", lambda *a, **k: None), \
+                 mock.patch.object(module, "_lock_drop", lambda *a, **k: None), \
+                 mock.patch.object(
+                     module, "worktree_map",
+                     return_value={"codex/converge-abc12345": str(actual_wt)}), \
+                 mock.patch.object(module, "git", side_effect=fake_git), \
+                 mock.patch.object(module, "proc_run", side_effect=fake_proc_run), \
+                 mock.patch.object(module, "_abort_stale_merge", return_value=False), \
+                 mock.patch.object(module, "_branch_contained", return_value=True), \
+                 mock.patch.object(module, "_clean_orphan_convergences", return_value=[]), \
+                 mock.patch.object(
+                     module, "_write_convergence_record",
+                     side_effect=lambda record: written.append(dict(record))):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    module.cmd_converge(["--go"])
+
+            text = output.getvalue()
+            assert "认领既有 worktree" in text, text
+            assert "续跑未合入的源分支" in text, text
+            assert not any("worktree" in c and "add" in c for c in proc_calls), proc_calls
+            assert len(written) == 1, written
+            record = written[0]
+            assert record["worktree"] == str(actual_wt), record
+            assert record["status"] == "ready", record
+            assert record["unresolved_files"] == [], record
+
+    print("selftest ok: 未登记但有真实 worktree 的收敛分支会被认领并补齐台账，不再永久跳过。")
 
 
 def test_prune_keeps_open_resolve_hold():
@@ -8750,6 +9063,8 @@ if __name__ == "__main__":
     test_resolve_land_reports_exit_code_without_killing_caller()
     test_resolve_prepare_raises_controlled_error_not_sysexit()
     test_zero_file_branches_do_not_occupy_land_queue()
+    test_superseded_branches_are_settled_not_landable()
+    test_convergence_adopts_unregistered_worktree()
     test_conflict_decision_hold_survives_existing_markers()
     test_prune_keeps_open_resolve_hold()
     test_reset_trunk_truth_conflict()
@@ -8773,6 +9088,7 @@ if __name__ == "__main__":
     test_companion_contract()
     test_panel_contract()
     test_release_contract_includes_pm_briefing_and_acceptance_screenshots()
+    test_public_beta_docs_match_release_tags()
     test_preview_check_contract()
     test_installed_copy_binding()
     test_binding_preflight_rejects_empty_shell()

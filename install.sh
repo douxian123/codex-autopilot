@@ -327,6 +327,7 @@ fi
 if [ "$ROLLBACK" -eq 1 ]; then
   "$PY" - "$MARKET" "$INSTALL_STATE" <<'PYEOF'
 import json, os, sys, tempfile
+from pathlib import Path
 market, state_path = sys.argv[1:3]
 try:
     state = json.load(open(state_path, encoding="utf-8"))
@@ -342,29 +343,66 @@ except (OSError, ValueError) as exc:
 entry = next((p for p in data.get("plugins", []) if p.get("name") == "codex-autopilot"), None)
 if not entry:
     raise SystemExit("marketplace 中找不到 Codex 自动挡，未执行回滚。")
+
+def atomic_json(path, payload, prefix):
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=prefix, dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+current = state.get("source")
+current_version = state.get("version") or ""
+if current:
+    marker = "./plugins/codex-autopilot/releases/"
+    current_version = current.rsplit(marker, 1)[-1] if marker in current else ""
 if previous:
     entry["source"] = {"source": "local", "path": previous}
+    previous_version = previous.rsplit("./plugins/codex-autopilot/releases/", 1)[-1] \
+        if "./plugins/codex-autopilot/releases/" in previous else ""
+    # 回滚后的 install-state 必须继续保留一个更早的回滚点；否则第二次
+    # --rollback 会原地打转，或者把不存在的版本当成上一代。
+    older = state.get("older_source")
+    if older == current and current_version:
+        older = f"./plugins/codex-autopilot/releases/{current_version}"
+    rolled_state = {
+        "version": previous_version or state.get("version"),
+        "source": previous,
+        "previous_source": older,
+        "source_commit": state.get("rollback_source_commit"),
+    }
 else:
     data["plugins"] = [p for p in data.get("plugins", [])
                        if p.get("name") != "codex-autopilot"]
-fd, tmp = tempfile.mkstemp(prefix=".marketplace-codex-autopilot-", dir=os.path.dirname(market))
-try:
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
-        fh.write("\n")
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, market)
-except BaseException:
+    rolled_state = None
+
+# marketplace 与 install-state 必须一起回滚；只改 marketplace 会让
+# current_ops() 仍跟随旧 install-state 指向已回滚版本，形成“入口回去了、
+# 运行代码没回去”的假回滚。先写临时文件，两个目标都准备好后再原子替换。
+atomic_json(market, data, ".marketplace-codex-autopilot-")
+if rolled_state is None:
     try:
-        os.unlink(tmp)
-    except OSError:
+        os.unlink(state_path)
+    except FileNotFoundError:
         pass
-    raise
-if previous:
-    print(f"已回滚 Codex 自动挡入口到 {previous}；其他 marketplace 项目保持不变，已安装版本目录均保留。")
 else:
-    print("已从 marketplace 移除本次新增的 Codex 自动挡入口；其他项目和已安装版本目录均保留。")
+    atomic_json(state_path, rolled_state, ".install-state-")
+if previous:
+    print(f"已回滚 Codex 自动挡到 {previous}；install-state 与入口一致，其他 marketplace 项目保持不变，已安装版本目录均保留。")
+else:
+    print("已从 marketplace 移除本次新增的 Codex 自动挡入口和 install-state；其他项目和已安装版本目录均保留。")
 PYEOF
   exit 0
 fi
@@ -713,11 +751,18 @@ done
 # 绑定自检：从即将发布的这份副本按 .mcp.json 解析状态根，必须证明真的落账。
 # 这个检查放在移动版本目录之前，失败只删除 staging，不影响现有安装。
 if ! "$PY" - "$STAGE/ops/plugin_binding.py" <<'PYEOF'
-import importlib.util, sys
+import importlib.util, os, sys
 from pathlib import Path
 spec = importlib.util.spec_from_file_location("binding_check", sys.argv[1])
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
+# 这里验证的是刚写好的 .mcp.json 绑定，不是调用 install.sh 的 shell 里
+# 可能残留的 KG_REPO/KG_TRUNK。继承它们会把安装自检误判成项目漂移。
+os.environ.pop("KG_REPO", None)
+os.environ.pop("KG_TRUNK", None)
+# 安装夹具可能故意带未提交项来验证来源；这里只校验刚写好的 .mcp.json 绑定，
+# 不做「当前会话 cwd 指向另一个干净状态根」的用户侧漂移检测。
+os.environ["CODEX_AUTOPILOT_SKIP_WORKTREE_DRIFT"] = "1"
 h = mod.binding_health()
 if h.get("status") == "broken":
     print("× 安装绑定自检失败：", file=sys.stderr)
@@ -738,6 +783,7 @@ echo "已安装不可变版本 $VERSION 到 $DEST"
 if [ "$NO_MARKET" -eq 0 ]; then
   "$PY" - "$MARKET" "$INSTALL_STATE" "$VERSION" "$SOURCE_COMMIT" <<'PYEOF'
 import json, os, shutil, sys, tempfile
+from pathlib import Path
 path, state_path, version, source_commit = sys.argv[1:5]
 name = "codex-autopilot"
 source_path = f"./plugins/codex-autopilot/releases/{version}"
@@ -790,7 +836,22 @@ except BaseException:
     except OSError:
         pass
     raise
+# 给 rollback 留下两层指针：previous_source 是紧邻上一代，older_source 是再上一代。
+# 回滚后把 older_source 提升为 previous_source，才能连续回退而不是原地打转。
+rollback_source_commit = None
+if previous:
+    marker = "./plugins/codex-autopilot/releases/"
+    previous_version = previous.rsplit(marker, 1)[-1] if marker in previous else ""
+    previous_meta = Path(os.path.expanduser("~")) / "plugins" / "codex-autopilot" / "releases" / previous_version / ".codex-autopilot-source.json"
+    try:
+        previous_data = json.loads(previous_meta.read_text(encoding="utf-8"))
+        if previous_data.get("commit") and not previous_data.get("dirty"):
+            rollback_source_commit = previous_data["commit"]
+    except (OSError, ValueError):
+        pass
 state = {"version": version, "source": source_path, "previous_source": previous,
+         "older_source": install_state.get("previous_source"),
+         "rollback_source_commit": rollback_source_commit,
          "source_commit": source_commit or None}
 fd, tmp = tempfile.mkstemp(prefix=".install-state-", dir=os.path.dirname(state_path))
 try:

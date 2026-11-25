@@ -40,6 +40,7 @@ kgctl —— 自动挡的唯一执行入口（stdlib only）
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -1918,10 +1919,11 @@ def cmd_suggest(args):
 # ---------------------------------------------------------------- 分诊
 
 def scan(light=False, check_markers=True):
-    # 已裁决的源分支不再算「待裁决冲突」。resolve.json 里 landed/abandoned 的、
-    # progress.jsonl 里 superseded 的，git 层还可能显示 ahead+conflict（它们本来就是
-    # 没合进 main 的历史分支），只按 ahead/conflict 判定就会把它们反复捞回 C 组：
-    # 队列数字虚高，守护进程每轮还重拆同一条已收口的分支。单列一档 SETTLED。
+    # 已裁决的源分支不再算「待裁决冲突」或「可落盘泳道」。resolve.json 里
+    # landed/abandoned 的、progress.jsonl 里 superseded 的，git 层还可能显示
+    # ahead+conflict 或 ahead+clean（它们本来就是没合进 main 的历史分支），只按
+    # ahead/conflict 判定就会把它们反复捞回 C 组或 land 队列：队列数字虚高，
+    # 守护进程每轮还重拆同一条已收口的分支。单列一档 SETTLED。
     settled = set()
     if not light:
         settled = _decided_resolve_branches() | already_superseded()
@@ -1955,7 +1957,7 @@ def scan(light=False, check_markers=True):
             conf = conflict_files(b)
             markers = unresolved_marker_files(b) if check_markers and not conf else []
             kind = "CONFLICT" if conf else ("UNRESOLVED" if markers else "CLEAN")
-            if kind == "CONFLICT" and b in settled:
+            if b in settled:
                 kind = "SETTLED"
         return dict(branch=b, ahead=ahead, behind=behind,
                     age=round((time.time() - ts) / 86400, 1) if ts else -1,
@@ -2093,14 +2095,15 @@ def cmd_queue(args):
         print(f"      最后提交 {age_txt}")
     if not clean:
         print("  队列为空")
+    settled = sum(1 for r in rows if r["kind"] == "SETTLED")
+    unresolved = sum(1 for r in rows if r["kind"] == "UNRESOLVED")
     print(f"\n其余 {len(rows)-len(clean)} 个："
           f"{sum(1 for r in rows if r['kind']=='MERGED')} 个已合并待回收、"
-          f"{sum(1 for r in rows if r['kind']=='CONFLICT')} 个有冲突需裁决。")
+          f"{sum(1 for r in rows if r['kind']=='CONFLICT')} 个有冲突需裁决、"
+          f"{settled} 个已裁决/已归档、"
+          f"{unresolved} 个残留冲突标记。")
     if empty:
         print(f"另有 {len(empty)} 个 0 文件空分支，等待 supersede 归档，不进入 land 队列。")
-    unresolved = sum(1 for r in rows if r["kind"] == "UNRESOLVED")
-    if unresolved:
-        print(f"另有 {unresolved} 个分支残留冲突标记，已从队列排除。")
 
 
 def cmd_gate(args):
@@ -2143,7 +2146,16 @@ def cmd_gate(args):
         print(f"门禁工作树（临时）：{wt}")
     try:
         _link_side_dirs(wt)
-        ok, results, out = _run_verify_gates(wt)
+        # `land` 验的是 main..HEAD 的合并结果；旧 gate 不传基准，等于
+        # `git diff HEAD HEAD`，UI/体验改动被当成空集，人工体验证据门禁被跳过。
+        # 这里改用同一条主线基准，确保 gate 绿灯和 land 门禁是同一口径。
+        main_ref = f"refs/remotes/origin/{MAIN}"
+        if not git("rev-parse", "--verify", main_ref):
+            main_ref = MAIN
+        base = git("merge-base", main_ref, branch)
+        if not base:
+            sys.exit(f"× 找不到 {main_ref} 与 {branch} 的共同祖先，拒绝无基准门禁")
+        ok, results, out = _run_verify_gates(wt, base)
         for r in results:
             print(f"  [{r.get('name')}] $ {r.get('cmd')} (cwd={r.get('cwd')}) -> exit "
                   f"{0 if r.get('ok') else 1}")
@@ -2518,6 +2530,7 @@ def cmd_converge(args):
         return
     _lock_take("converge")
     made = []
+    wt_map = worktree_map()
     try:
         fetch = proc_run(["git", "-C", str(REPO), "fetch", "origin", MAIN],
                                capture_output=True, text=True)
@@ -2525,23 +2538,37 @@ def cmd_converge(args):
         base_sha = git("rev-parse", base_ref)
         for g in groups:
             branch = _convergence_branch(g)
-            existing = records.get(g["id"]) or {}
+            existing = dict(records.get(g["id"]) or {})
             branch_exists = bool(git("rev-parse", "--verify", branch))
-            wt = REPO.parent / f"{REPO.name}-converge-{g['id']}"
-            resume = branch_exists and existing.get("branch") == branch and wt.exists()
-            if resume:
+            default_wt = REPO.parent / f"{REPO.name}-converge-{g['id']}"
+            registered_wt = existing.get("worktree")
+            actual_wt = wt_map.get(branch)
+            if branch_exists:
+                # 收敛 worktree 不一定建在默认路径：历史任务可能换过目录，台账也可能
+                # 被清掉。只认 Git 真实注册表或本组台账里的有效路径，避免把同名目录
+                # 当成别的分支现场。认领后补齐台账并续跑，不再永久跳过。
+                if actual_wt and Path(actual_wt).exists():
+                    wt = Path(actual_wt)
+                elif existing.get("branch") == branch and registered_wt and Path(registered_wt).exists():
+                    wt = Path(registered_wt)
+                else:
+                    print(f"  {branch} 已存在但未登记或 worktree 缺失，跳过")
+                    continue
+                if existing.get("branch") != branch or existing.get("worktree") != str(wt):
+                    print(f"  {branch} 认领既有 worktree {wt}（补齐台账）")
+                existing["branch"] = branch
+                existing["worktree"] = str(wt)
                 # 断点续跑：先清掉可能残留的半合并（已提交的 merge 在历史里，不会丢），
                 # 再只补合尚未进入 HEAD 的源分支；已合入的靠 is-ancestor 跳过。
                 aborted = _abort_stale_merge(wt)
-                print(f"  {branch} 已存在，续跑未合入的源分支"
+                print(f"  {branch} 续跑未合入的源分支"
                       + ("（清掉了残留半合并）" if aborted else ""))
-            elif branch_exists:
-                print(f"  {branch} 已存在但未登记或 worktree 缺失，跳过")
-                continue
-            elif wt.exists():
+            elif default_wt.exists():
+                wt = default_wt
                 print(f"  × {wt} 已存在但不是已登记分支；跳过 {branch}")
                 continue
             else:
+                wt = default_wt
                 add = proc_run(
                     ["git", "-C", str(REPO), "worktree", "add", "-b", branch, str(wt), base_ref],
                     capture_output=True, text=True)
@@ -3931,6 +3958,63 @@ def _mirror_truth_into_trunk(wt: Path) -> None:
             mirror_file(src, dst)
 
 
+@contextmanager
+def _experience_modules_for_tree(wt: Path):
+    """Load the experience gate from the tree under validation.
+
+    The runner that happens to execute ``kgctl`` can be an older installed
+    version than the branch being landed.  In 2026-11-24 that difference made
+    ``land`` fail with ``refresh:no visible focus ring`` while the target
+    tree's own runner passed five consecutive real-browser checks.  A gate
+    must describe the target tree, so load both modules from ``wt/ops`` and
+    keep the caller's imports untouched afterwards.
+    """
+    ops_dir = Path(wt) / "ops"
+    contract_file = ops_dir / "experience_contract.py"
+    evidence_file = ops_dir / "experience_evidence.py"
+    if not contract_file.is_file():
+        # 老项目可能还没有把体验门禁模块提交进目标树。保持旧兼容路径，
+        # 但绝不把「目标树宣称有契约」当成新 runner 的绿灯。
+        import experience_contract as fallback
+        yield fallback
+        return
+
+    names = ("experience_contract", "experience_evidence")
+    private_names = ("_kgctl_target_experience_contract",
+                     "_kgctl_target_experience_evidence")
+    previous = {name: sys.modules.get(name) for name in names + private_names}
+    path_added = str(ops_dir) not in sys.path
+    if path_added:
+        sys.path.insert(0, str(ops_dir))
+    try:
+        evidence_spec = importlib.util.spec_from_file_location(
+            private_names[1], evidence_file) if evidence_file.is_file() else None
+        evidence_module = None
+        if evidence_spec and evidence_spec.loader:
+            evidence_module = importlib.util.module_from_spec(evidence_spec)
+            sys.modules[private_names[1]] = evidence_module
+            evidence_spec.loader.exec_module(evidence_module)
+
+        contract_spec = importlib.util.spec_from_file_location(
+            private_names[0], contract_file)
+        contract_module = importlib.util.module_from_spec(contract_spec)
+        sys.modules[private_names[0]] = contract_module
+        contract_spec.loader.exec_module(contract_module)
+
+        if evidence_module is not None:
+            sys.modules["experience_evidence"] = evidence_module
+        sys.modules["experience_contract"] = contract_module
+        yield contract_module
+    finally:
+        for name, module in previous.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+        if path_added and str(ops_dir) in sys.path:
+            sys.path.remove(str(ops_dir))
+
+
 def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
     """落盘前的验证门禁：逐条真实执行，返回 (ok, results, output)。
 
@@ -3993,18 +4077,18 @@ def _run_verify_gates(wt: Path, pre: str = "") -> tuple:
                          "cwd": ".", "ok": True, "output": "未声明体验契约"}
     try:
         contract_path = wt / "docs" / "experience" / "experience-contract.json"
-        import experience_contract
-        need_live = experience_contract.changes_require_live_experience(changed)
-        checked = experience_contract.land_gate(
-            contract_path, verify_evidence=need_live, root=wt)
-        experience_result.update({
-            "ok": bool(checked.get("ok")),
-            "output": "%s：%s" % (checked.get("status"), checked.get("reason")),
-        })
-        if checked.get("machine_checks"):
-            experience_result["machine_checks"] = checked["machine_checks"]
-        if checked.get("human_checks"):
-            experience_result["human_checks"] = checked["human_checks"]
+        with _experience_modules_for_tree(wt) as experience_contract:
+            need_live = experience_contract.changes_require_live_experience(changed)
+            checked = experience_contract.land_gate(
+                contract_path, verify_evidence=need_live, root=wt)
+            experience_result.update({
+                "ok": bool(checked.get("ok")),
+                "output": "%s：%s" % (checked.get("status"), checked.get("reason")),
+            })
+            if checked.get("machine_checks"):
+                experience_result["machine_checks"] = checked["machine_checks"]
+            if checked.get("human_checks"):
+                experience_result["human_checks"] = checked["human_checks"]
     except Exception as exc:
         experience_result.update({"ok": False, "output": "体验契约门禁异常：%s" % exc})
     if not experience_result["ok"]:
@@ -5118,6 +5202,31 @@ def _decided_resolve_branches() -> set:
             if t.get("status") in ("landed", "abandoned") and t.get("branch")}
 
 
+def _committed_settled_resolve_record(branch: str, slug: str) -> dict | None:
+    """读 committed `HEAD:ops/tasks/resolve.json`，找出同任务的已裁决终态。
+
+    工作树台账可能被旧守护整文件覆盖回 needs_agent，但已落盘的 landed/abandoned
+    仍在 HEAD 里。自动拆解必须以终态为准，否则旧缓存会把已裁决分支重新报成待解。
+    """
+    try:
+        # 固定仓库相对路径：测试环境里 RESOLVE 可能是 /var 而 REPO 是
+        # /private/var，relative_to 会被符号路径差异打断，静默丢掉 committed 终态。
+        raw = git("show", "HEAD:ops/tasks/resolve.json")
+        data = json.loads(raw)
+    except (RuntimeError, ValueError, TypeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for task in _dedupe_resolve_tasks(data.get("tasks")):
+        if task.get("status") not in ("landed", "abandoned"):
+            continue
+        if branch in (task.get("branch"), task.get("resolve_branch")):
+            return task
+        if slug and slug == task.get("slug"):
+            return task
+    return None
+
+
 def _open_resolve_tasks() -> list:
     """还没收口的冲突任务（needs_agent / gate_fail），已收口的旧记录不算。
 
@@ -5358,6 +5467,12 @@ def _resolve_prepare(args) -> None:
     slug = _resolve_slug(branch)
     resolve_branch = _resolve_branch_name(slug)
     wt = _resolve_worktree_path(slug)
+    committed_settled = _committed_settled_resolve_record(branch, slug)
+    if committed_settled:
+        print(f"× {branch} 已裁决（committed status={committed_settled.get('status')}），"
+              f"工作树里的旧 needs_agent 不算，禁止重开。")
+        print(f"RESOLVE_RESULT branch={branch} outcome=settled")
+        return
     if git("rev-parse", "--verify", resolve_branch):
         # 这里曾经是死胡同：只要 codex/resolve-<slug> 存在就 blocked，
         # 而这条路只有两个出口（resolve --finish / --abandon），都需要一条
@@ -5822,7 +5937,13 @@ def cmd_status(args):
     print(f"  ├ 可入队落盘   {sum(1 for r in rows if row_is_landable(r))}")
     print(f"  ├ 0文件待归档  {sum(1 for r in rows if row_is_empty_candidate(r))}")
     print(f"  ├ 有冲突需裁决 {sum(1 for r in rows if r['kind']=='CONFLICT')}")
-    print(f"  └ 残留冲突标记 {sum(1 for r in rows if r['kind']=='UNRESOLVED')}")
+    unresolved_count = sum(1 for r in rows if r["kind"] == "UNRESOLVED")
+    settled_count = sum(1 for r in rows if r["kind"] == "SETTLED")
+    if settled_count:
+        print(f"  ├ 残留冲突标记 {unresolved_count}")
+        print(f"  └ 已裁决/已归档 {settled_count}（不再计入在途）")
+    else:
+        print(f"  └ 残留冲突标记 {unresolved_count}")
     groups = conflict_groups(rows)
     print(f"冲突收拢族     {len(groups)} 个（可把冲突分支收成 convergence 任务）")
     conflicts = [r for r in rows if r["kind"] == "CONFLICT"]
