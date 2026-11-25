@@ -25,6 +25,11 @@ from unittest import mock
 OPS = Path(__file__).resolve().parent
 failures = []
 
+# Keep the fixture above the (mocked) minimum-size gate while avoiding tens of
+# megabytes of temporary writes on a nearly full developer disk.
+SESSION_FIXTURE_LINES = 40_000
+SESSION_FIXTURE_MIN_MB = 1.0
+
 
 def check(label, cond, detail=""):
     if cond:
@@ -43,6 +48,7 @@ def load_disk_reap(log_path: Path | None = None):
     # 合成夹具的压缩记录伪装成生产事件（实测 2026-11-11 反复出现）。
     if log_path is not None:
         mod.LOG = log_path
+    mod.SESSION_COMPACT_MIN_MB = SESSION_FIXTURE_MIN_MB
     return mod
 
 
@@ -50,7 +56,7 @@ def make_old_session(root: Path) -> Path:
     sessions = root / ".codex/sessions/2026/01/01"
     sessions.mkdir(parents=True)
     old = sessions / "old.jsonl"
-    old.write_bytes(b'{"type":"event","payload":"keep me"}\n' * 900_000)
+    old.write_bytes(b'{"type":"event","payload":"keep me"}\n' * SESSION_FIXTURE_LINES)
     old.touch()
     ts = old.stat().st_mtime
     os.utime(old, (ts - 7 * 3600, ts - 7 * 3600))
@@ -177,7 +183,7 @@ def main():
         os.utime(old, (old_ts, old_ts))
         sessions = old.parent
         hot = sessions / "hot.jsonl"
-        hot.write_bytes(b'{"type":"event","payload":"hot"}\n' * 900_000)
+        hot.write_bytes(b'{"type":"event","payload":"hot"}\n' * SESSION_FIXTURE_LINES)
         # Keep hot much newer than old. The previous fixture gave both files
         # the same mtime, which cannot test a recency exclusion.
         hot_ts = time.time() - 3600
