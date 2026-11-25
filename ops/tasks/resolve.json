@@ -1,6 +1,31 @@
 {
  "tasks": [
   {
+   "slug": "reap-identical-tracked-20261027",
+   "branch": "codex/reap-identical-tracked-20261027",
+   "resolve_branch": "codex/resolve-reap-identical-tracked-20261027",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-truth-sync-20261124-land-clean-1795595101-resolve-reap-identical-tracked-20261027",
+   "base_main": "91ea9687f0c753a8473e0f401ff0651519b27031",
+   "source_head": "4cc6c7b8d3de55c0f21ca55578fce5da7aabd77d",
+   "source_commits": [
+    "4cc6c7b8d3de55c0f21ca55578fce5da7aabd77d"
+   ],
+   "created": "2026-11-25 22:14:21",
+   "updated": "2026-11-25 22:14:21",
+   "conflict_files": [
+    "ops/central_daemon.py",
+    "ops/selftest.py",
+    "ops/workspace_guard.py"
+   ],
+   "unresolved_files": [
+    "ops/central_daemon.py",
+    "ops/selftest.py",
+    "ops/workspace_guard.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "needs_agent"
+  },
+  {
    "slug": "truth-sync-clean-20261124",
    "branch": "codex/truth-sync-clean-20261124",
    "resolve_branch": "codex/resolve-truth-sync-clean-20261124",
@@ -191,5 +216,5 @@
    "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
   }
  ],
- "updated": "2026-11-25 18:00:24"
+ "updated": "2026-11-25 22:14:21"
 }
