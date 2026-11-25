@@ -4811,6 +4811,11 @@ def _restore_truth_files(wt: Path, snap: dict) -> None:
                 # 生成视图谁新留谁；同时间戳时 main 已是权威，不让旧工作副本回退。
                 if generated_time(snap_text) > generated_time(current):
                     dst.write_text(snap_text, encoding="utf-8")
+            elif rel == "ops/tasks/resolve.json":
+                # land 切主干前会先恢复快照。resolve.json 的旧快照曾把已经落盘的
+                # landed/abandoned 倒退回 needs_agent；按任务终态并集后再写回。
+                dst.write_text(_union_resolve_with_head(current, snap_text),
+                               encoding="utf-8")
             elif rel.endswith(".json"):
                 try:
                     old_json, new_json = json.loads(snap_text), json.loads(current)
@@ -5009,7 +5014,7 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     for rel in truth_pending_status(wt):
         path = _porcelain_body(rel).strip('"')
         if not (path.startswith(("ops/truth/", "ops/tasks/"))
-                and path.endswith(".jsonl")):
+                and (path.endswith(".jsonl") or path == "ops/tasks/resolve.json")):
             continue
         head = proc_run(["git", "-C", str(wt), "show", f"HEAD:{path}"],
                         capture_output=True, text=True, errors="replace")
@@ -5020,10 +5025,17 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
             work_text = target.read_text(encoding="utf-8")
         except OSError:
             continue
-        merged = _union_jsonl_text(head.stdout, work_text)
+        if path == "ops/tasks/resolve.json":
+            # resolve.json 不是 append-only JSONL：一条源分支只留一条终态。工作副本
+            # 若来自旧守护/旧检出，可能把 HEAD 已落盘的 landed/abandoned 倒退回
+            # needs_agent；与 HEAD 做任务级并集后再暂存，绝不让旧快照撤回裁决。
+            merged_text = _union_resolve_with_head(head.stdout, work_text)
+        else:
+            merged_text = _union_jsonl_text(head.stdout, work_text)
+        merged = merged_text
         if merged != work_text:
             target.write_text(merged, encoding="utf-8")
-            print(f"  JSONL 台账 {path} 已与 HEAD 并集对齐（防旧状态根覆盖）")
+            print(f"  台账 {path} 已与 HEAD 并集对齐（防旧状态根覆盖）")
     add_failures = []
     for rel in TRUTH_PATHS:
         if not (wt / rel).exists():
@@ -5119,6 +5131,34 @@ def _union_jsonl_text(a: str, b: str) -> str:
 
     lines = [entry["line"] for entry in entries]
     return "\n".join(lines) + ("\n" if lines else "")
+
+
+def _union_resolve_with_head(head_text: str, work_text: str) -> str:
+    """按任务终态合并 `resolve.json`：HEAD 的 landed/abandoned 不能被旧工作副本撤回。
+
+    2026-11-25 实测：共享检出工作副本把 4 条已裁决记录退回 needs_agent，同时新增
+    2 条裁决。普通 JSON 的按 `updated` 选一侧在这里不够：两侧各有必须保留的记录。
+    这里按 slug/branch 分组，用 `_resolve_record_rank` 选终态优先的当前记录，未冲突
+    的任务原样保留；其余顶层键以工作副本为准，但 `updated` 取两者较新值。
+    """
+    def parse(text: str) -> dict:
+        try:
+            data = json.loads(text)
+        except (ValueError, TypeError):
+            return {"tasks": []}
+        if not isinstance(data, dict):
+            return {"tasks": []}
+        return data
+
+    head = parse(head_text)
+    work = parse(work_text)
+    merged = dict(work)
+    tasks = [t for t in (head.get("tasks") or []) + (work.get("tasks") or [])
+             if isinstance(t, dict)]
+    merged["tasks"] = _dedupe_resolve_tasks(tasks)
+    merged["updated"] = max(str(head.get("updated") or ""),
+                            str(work.get("updated") or ""))
+    return json.dumps(merged, ensure_ascii=False, indent=1) + "\n"
 
 
 def _merge_json_value(a, b):
