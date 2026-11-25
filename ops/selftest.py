@@ -232,6 +232,10 @@ def main():
         # 用 git common dir，判为 foreign 时退回本仓 <项目名>-trunk。
         run([sys.executable, str(OPS / "test-trunk-is-same-repo.py")],
             cwd=str(OPS.parent), check=True)
+        # Apple Git 不支持 `git checkout --dry-run`；落盘主干切换预演必须
+        # 用 read-tree + 未跟踪文件交集判断，避免把不支持的 flag 当成主干脏。
+        run([sys.executable, str(OPS / "test-trunk-checkout-probe.py")],
+            cwd=str(OPS.parent), check=True)
         # 用户共享检出常有与本次合并无关的在途改动。land 必须在对齐 ref /
         # checkout 前发现它们，改走一次性干净 worktree，不能 stash/reset 用户文件。
         run([sys.executable, str(OPS / "test-land-dirty-trunk-clean-worktree.py")],
