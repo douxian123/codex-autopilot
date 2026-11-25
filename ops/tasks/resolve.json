@@ -11,7 +11,7 @@
     "43e20a2bd761c6de27c9166ad4c7c65ed67e911a"
    ],
    "created": "2026-11-25 15:53:32",
-   "updated": "2026-11-25 15:53:32",
+   "updated": "2026-11-25 18:00:24",
    "conflict_files": [
     "docs/PROJECT_STATUS.md",
     "ops/tasks/context_probe_cache.json"
@@ -21,7 +21,8 @@
     "ops/tasks/context_probe_cache.json"
    ],
    "auto_resolved_jsonl": [],
-   "status": "needs_agent"
+   "status": "abandoned",
+   "reason": "旧分支唯一未落地提交 43e20a2bd 是 15:53 的旧真相快照；其净差异会删除 main 5d060b629 已落地的 test-truth-push-diverged-clean-worktree.py 与 test-truth-sync-stale-head-fake-dirty.py 修复测试。真相同步/推送修复已由 2ac88ecd 与 f66d05d3a 落盘；保留源分支不动，裁决为已覆盖，不再计入冲突队列。"
   },
   {
    "slug": "session-compact-danger-switch-20261125",
@@ -190,5 +191,5 @@
    "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
   }
  ],
- "updated": "2026-11-25 15:53:33"
+ "updated": "2026-11-25 18:00:24"
 }
