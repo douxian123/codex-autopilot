@@ -1168,6 +1168,8 @@ def test_publish_lock_and_origin_containment():
         git(repo, "fetch", "-q", "origin", "main")
 
         sys.path.insert(0, str(OPS))
+        saved_repo = os.environ.get("KG_REPO")
+        saved_trunk = os.environ.get("KG_TRUNK")
         os.environ["KG_REPO"] = str(repo)
         os.environ["KG_TRUNK"] = str(root / "unused-trunk")
         import kgctl
@@ -1201,6 +1203,14 @@ def test_publish_lock_and_origin_containment():
         finally:
             kgctl._push_truth_state_locked = real_push
             kgctl.LOCK = real_lock
+            if saved_repo is None:
+                os.environ.pop("KG_REPO", None)
+            else:
+                os.environ["KG_REPO"] = saved_repo
+            if saved_trunk is None:
+                os.environ.pop("KG_TRUNK", None)
+            else:
+                os.environ["KG_TRUNK"] = saved_trunk
 
     print("selftest ok: land/真相推送发布锁互斥，且只有 origin/main 祖先校验通过才算落盘。")
 
@@ -3154,15 +3164,24 @@ def test_panel_contract():
             {"id": "foreign", "name": "另一个项目", "path": str(foreign),
              "active": False, "source_thread_id": "thread-foreign"}]}, ensure_ascii=False),
             encoding="utf-8")
+        # 装出来的 release 目录带 .mcp.json，绑定守卫会拒绝临时 KG_REPO；
+        # 这里复制源码式 ops/ 并隔离 HOME，避免 current_ops() 回退到用户真实安装
+        # 记录后再读到真实 .mcp.json。只为多项目探针构造无插件绑定的运行布局。
+        probe_ops = Path(tmp) / "probe-ops"
+        shutil.copytree(OPS, probe_ops,
+                        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        probe_home = Path(tmp) / "probe-home"
+        probe_home.mkdir()
         script = (
             "import json,sys\n"
             "sys.path.insert(0,%r)\n"
             "import central_mcp\n"
             "p=central_mcp._status_payload(fast=True)['project_folders']\n"
-            "print(json.dumps(p,ensure_ascii=False))\n" % str(OPS))
+            "print(json.dumps(p,ensure_ascii=False))\n" % str(probe_ops))
         env = os.environ.copy()
         env["KG_REPO"] = str(state)
-        probe = subprocess.run([sys.executable, "-c", script], cwd=str(OPS.parent), env=env,
+        env["HOME"] = str(probe_home)
+        probe = subprocess.run([sys.executable, "-c", script], cwd=str(tmp), env=env,
                                capture_output=True, text=True)
         assert probe.returncode == 0, f"多项目状态探针失败：{probe.stderr[-500:]}"
         multi = _json.loads(probe.stdout.strip().splitlines()[-1])
