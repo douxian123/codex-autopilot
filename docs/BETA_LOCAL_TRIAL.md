@@ -1,7 +1,7 @@
 # Codex Autopilot B1 本地主链试用说明
 
 公开 beta：`0.6.0-preview.140`  
-源码发布候选：`0.6.0-preview.148`（已合入 `origin/main`，尚未打公开 tag/prerelease）
+源码发布候选：`0.6.0-preview.149`（已合入 `origin/main`，尚未打公开 tag/prerelease）
 
 ## 从哪里拿这个 beta
 
