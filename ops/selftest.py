@@ -206,6 +206,11 @@ def main():
         # 就是这份截断快照造成的。
         run([sys.executable, str(OPS / "test-truth-sync-sidecar-and-ledger.py")],
             cwd=str(OPS.parent), check=True)
+        # 旧 HEAD + 工作副本/索引已等于 origin/main 时，git status 会报出假脏。
+        # 门禁要求假脏既不卡住 tick 的真相同步，也不能被吞进 chore(truth)；
+        # 真代码改动、第三种暂存内容和文件删除仍必须 fail-closed。
+        run([sys.executable, str(OPS / "test-truth-sync-stale-head-fake-dirty.py")],
+            cwd=str(OPS.parent), check=True)
         # 生成视图（PROJECT_STATUS / CONTROL_BOARD / CONTROL_PLANE / ops/context）被
         # .gitignore 排除且从未跟踪，旧实现照 `git add` 会报 `paths are ignored`，
         # 并把已 add 成功的真账本留在索引里形成半暂存 —— 下一次 merge 立刻被挡住，

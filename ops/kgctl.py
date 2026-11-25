@@ -4437,6 +4437,52 @@ def _is_zero_loss_noise(line: str, head_regenerable: set) -> bool:
     return bool(head_regenerable) and _is_regenerable_rel(body) and body in head_regenerable
 
 
+def _stale_head_matches_origin(wt: Path, line: str) -> bool:
+    """这条非真相脏记录是否只是旧 HEAD 造成的假脏。
+
+    共享检出可能还停在一条已合入的 codex 分支，而工作副本已经被落盘流程拉伸到
+    `origin/main`。此时 `git status` 会把「与 origin/main 逐字节相同的文件」报成
+    修改；它不是在途代码，但也不能被吞进 `chore(truth)`。
+
+    严格判据（三条同时成立才豁免）：
+      1. 工作副本内容与 `origin/main` 一致；
+      2. 索引要么是 `origin/main` 版本，要么仍是 HEAD 版本（没有第三种暂存内容）；
+      3. 调用方已排除真相层与运行时伴随文件。
+    """
+    if line.startswith("??"):
+        return False
+    rel = _porcelain_body(line)
+    if not rel or is_truth_path(line) or is_runtime_sidecar(line):
+        return False
+    origin_ref = f"origin/{MAIN}"
+    if proc_run(["git", "-C", str(wt), "rev-parse", "--verify", "-q",
+                 origin_ref], capture_output=True).returncode != 0:
+        return False
+    work_path = wt / rel
+    if not work_path.is_file():
+        return False
+    # `git diff --quiet` 把「文件已删除」也当成与 origin 相同；这里必须直接比 blob，
+    # 否则真实的删除会被误判成假脏，等下一拍被吞进 chore(truth)。
+    work_blob = proc_run(["git", "-C", str(wt), "hash-object", "--", str(work_path)],
+                         capture_output=True, text=True)
+    origin_blob = proc_run(["git", "-C", str(wt), "rev-parse", f"{origin_ref}:{rel}"],
+                           capture_output=True, text=True)
+    if (work_blob.returncode != 0 or origin_blob.returncode != 0
+            or work_blob.stdout.strip() != origin_blob.stdout.strip()):
+        return False
+    # 索引允许两种安全形状：已经等于 origin，或还停在旧 HEAD。第三种暂存内容一律拒绝。
+    stage = proc_run(["git", "-C", str(wt), "rev-parse", f":{rel}"],
+                     capture_output=True, text=True)
+    if stage.returncode != 0:
+        return False
+    head_blob = proc_run(["git", "-C", str(wt), "rev-parse", f"HEAD:{rel}"],
+                         capture_output=True, text=True)
+    stage_oid = stage.stdout.strip()
+    return (stage_oid == origin_blob.stdout.strip()
+            or (head_blob.returncode == 0
+                and stage_oid == head_blob.stdout.strip()))
+
+
 def trunk_truth_commits(wt: Path, base: str = None):
     base = base or MAIN
     out = git("-C", str(wt), "log", "--format=%s", f"{base}..HEAD")
@@ -4831,8 +4877,16 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     pending = truth_pending_status(wt)
     if not pending:
         return False
-    dirty = [line for line in trunk_status(wt)
-             if not is_truth_path(line) and not is_runtime_sidecar(line)]
+    regenerable = _regenerable_head_paths(wt)
+    stale_head = []
+    dirty = []
+    for line in trunk_status(wt):
+        if is_truth_path(line) or _is_zero_loss_noise(line, regenerable):
+            continue
+        if _stale_head_matches_origin(wt, line):
+            stale_head.append(_porcelain_body(line))
+            continue
+        dirty.append(line)
     if dirty:
         # 共享检出里可能有并行任务在写代码/产品文件。只提交真相层会把它们吞进
         # `chore(truth)`，并让本地 main 与 origin/main 分叉，随后 land 永久卡死。
@@ -4844,6 +4898,14 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
         for line in dirty[:20]:
             print("  " + line)
         return False
+    # 放宽门禁不等于可以把它写进 chore(truth)。这些文件的工作副本已经等于
+    # origin/main；把索引退回 HEAD 只会撤销「被旧 HEAD 拉伸出来的假暂存」，
+    # 工作副本一个字节不动，下一拍对齐主干后自然消失。
+    if stale_head:
+        proc_run(["git", "-C", str(wt), "reset", "-q", "--", *stale_head],
+                 capture_output=True, text=True)
+        print(f"  跳过 {len(stale_head)} 个旧 HEAD 假脏文件（工作副本保持 origin/main）："
+              + "、".join(stale_head[:3]))
     if not _ensure_truth_baselines(wt):
         print("  × 稳定性基准保护失败，拒绝提交真相层")
         return False
