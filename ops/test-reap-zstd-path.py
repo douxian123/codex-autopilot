@@ -149,7 +149,8 @@ def main():
         old = make_old_session(root)
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
-                              "KG_SESSION_COMPACT": "1"}), \
+                              "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
              mock.patch.object(mod, "_path_is_open", return_value=True), \
              mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
@@ -166,10 +167,11 @@ def main():
                               "KG_SESSION_COMPACT": "1",
                               "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
-             mock.patch.object(mod, "_path_is_open", side_effect=[False, True]), \
+             mock.patch.object(mod, "_path_is_open", side_effect=[False, True]) as is_open, \
              mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
              mock.patch.object(mod, "SESSION_COMPACT_RECENT_WRITE_MIN", 0.0):
             n, freed = mod.compact_session_logs()
+        check("压缩后复查确实执行", is_open.call_count >= 2, is_open.call_count)
         archive_root = root / ".codex/session-archive"
         leftovers = list(archive_root.rglob("*.zst")) + list(archive_root.rglob("*.tmp")) if archive_root.exists() else []
         check("压缩后、删除前再次打开时不替换原文件",
