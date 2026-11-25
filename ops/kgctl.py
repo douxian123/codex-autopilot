@@ -3454,11 +3454,30 @@ def _trunk_is_foreign_clone(wt: Path) -> bool:
 
 
 def _trunk_can_checkout_main(wt: Path) -> bool:
-    """预演切到 main：有会覆盖用户文件的风险时返回 False。"""
-    probe = proc_run(["git", "-C", str(wt), "checkout", "--dry-run",
-                      "--detach", MAIN],
+    """预演切到 main：有会覆盖用户文件的风险时返回 False。
+
+    Apple Git 2.50.1 的 `git checkout --dry-run` 直接报 unknown option，旧实现
+    因此把所有候选主干都判成不可安全切换，最后去 checkout 一个还没创建的目录。
+    read-tree 的 dry-run 同时检查 index 与工作树；未跟踪文件单独求交集，因为
+    read-tree 不负责它们。
+    """
+    if not wt.exists() or not (wt / ".git").exists():
+        return False
+    probe = proc_run(["git", "-C", str(wt), "read-tree", "-n", "-m", "-u",
+                      "HEAD", MAIN],
                      capture_output=True, text=True)
-    return probe.returncode == 0
+    if probe.returncode != 0:
+        return False
+    untracked = proc_run(["git", "-C", str(wt), "ls-files", "--others", "-z"],
+                         capture_output=True, text=True)
+    target = proc_run(["git", "-C", str(wt), "ls-tree", "-r", "-z",
+                       "--name-only", MAIN],
+                      capture_output=True, text=True)
+    if untracked.returncode != 0 or target.returncode != 0:
+        return False
+    untracked_paths = set(filter(None, untracked.stdout.split("\0")))
+    target_paths = set(filter(None, target.stdout.split("\0")))
+    return not (untracked_paths & target_paths)
 
 
 def _trunk_worktree():
@@ -3490,8 +3509,12 @@ def _trunk_worktree():
         wt = fallback
     if not (wt / ".git").exists():
         wt.parent.mkdir(parents=True, exist_ok=True)
-        proc_run(["git", "-C", str(REPO), "worktree", "add", "--detach", str(wt), MAIN],
-                       capture_output=True, text=True)
+        worktree_add = proc_run(
+            ["git", "-C", str(REPO), "worktree", "add", "--detach", str(wt), MAIN],
+            capture_output=True, text=True)
+        if worktree_add.returncode != 0:
+            detail = (worktree_add.stderr or worktree_add.stdout or "").strip()
+            sys.exit(f"无法创建干净落盘工作树（{wt}）：{detail[-600:]}")
     shared = central_config.shared_dir(REPO, CFG)
     for side in (CFG.get("link_dirs") or []):
         dst = wt / side / "node_modules"

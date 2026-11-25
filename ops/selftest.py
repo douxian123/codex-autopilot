@@ -232,6 +232,10 @@ def main():
         # 用 git common dir，判为 foreign 时退回本仓 <项目名>-trunk。
         run([sys.executable, str(OPS / "test-trunk-is-same-repo.py")],
             cwd=str(OPS.parent), check=True)
+        # Apple Git 不支持 `git checkout --dry-run`；落盘主干切换预演必须
+        # 用 read-tree + 未跟踪文件交集判断，避免把不支持的 flag 当成主干脏。
+        run([sys.executable, str(OPS / "test-trunk-checkout-probe.py")],
+            cwd=str(OPS.parent), check=True)
         # 用户共享检出常有与本次合并无关的在途改动。land 必须在对齐 ref /
         # checkout 前发现它们，改走一次性干净 worktree，不能 stash/reset 用户文件。
         run([sys.executable, str(OPS / "test-land-dirty-trunk-clean-worktree.py")],
@@ -8818,13 +8822,17 @@ def test_product_eval():
 def test_compact_session_logs_is_lossless_and_under_pressure_only():
     import tempfile
     from unittest import mock
+    # Keep the fixture above the mocked minimum-size gate while avoiding tens
+    # of megabytes of temporary writes on a nearly full developer disk.
+    fixture_lines = 40_000
+    fixture_min_mb = 1.0
     with tempfile.TemporaryDirectory(
             prefix="codex-autopilot-session-compact-") as tmp:
         root = Path(tmp)
         sessions = root / ".codex/sessions/2026/01/01"
         sessions.mkdir(parents=True)
         old = sessions / "old.jsonl"
-        old.write_bytes(b'{"type":"event","payload":"keep me"}\n' * 900_000)
+        old.write_bytes(b'{"type":"event","payload":"keep me"}\n' * fixture_lines)
         old.touch()
         import os as _os
         _old = old.stat().st_mtime
@@ -8835,9 +8843,10 @@ def test_compact_session_logs_is_lossless_and_under_pressure_only():
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         # 这条夹具的 old.jsonl 是合成文件；compact 的 log() 写的是模块级全局 LOG，
-        # 不重定向就会把「压缩旧会话 old.jsonl: 33300000 -> 2857 bytes」写进真实的
+        # 不重定向就会把合成夹具的压缩记录写进真实的
         # ~/.codex-autopilot/disk-reap.log —— 实测 2026-11-11 该行反复出现，全是测试产物。
         mod.LOG = root / "disk-reap-test.log"
+        mod.SESSION_COMPACT_MIN_MB = fixture_min_mb
         with mock.patch.dict("os.environ", {"CODEX_HOME": str(root / ".codex")}), \
              mock.patch.object(mod, "free_gb", return_value=20.0):
             _os.environ.pop("KG_SESSION_COMPACT", None)
@@ -8875,7 +8884,7 @@ def test_compact_session_logs_is_lossless_and_under_pressure_only():
 
         # 活跃会话不能被归档；压缩后、删除前的复查失败也必须保留原文件。
         active = sessions / "active.jsonl"
-        active.write_bytes(b'{"type":"event","payload":"active"}\n' * 900_000)
+        active.write_bytes(b'{"type":"event","payload":"active"}\n' * fixture_lines)
         active_ts = active.stat().st_mtime
         _os.utime(active, (active_ts - 7 * 3600, active_ts - 7 * 3600))
         with mock.patch.dict("os.environ",
