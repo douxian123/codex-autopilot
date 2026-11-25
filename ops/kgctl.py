@@ -3490,8 +3490,12 @@ def _trunk_worktree():
         wt = fallback
     if not (wt / ".git").exists():
         wt.parent.mkdir(parents=True, exist_ok=True)
-        proc_run(["git", "-C", str(REPO), "worktree", "add", "--detach", str(wt), MAIN],
-                       capture_output=True, text=True)
+        worktree_add = proc_run(
+            ["git", "-C", str(REPO), "worktree", "add", "--detach", str(wt), MAIN],
+            capture_output=True, text=True)
+        if worktree_add.returncode != 0:
+            detail = (worktree_add.stderr or worktree_add.stdout or "").strip()
+            sys.exit(f"无法创建干净落盘工作树（{wt}）：{detail[-600:]}")
     shared = central_config.shared_dir(REPO, CFG)
     for side in (CFG.get("link_dirs") or []):
         dst = wt / side / "node_modules"

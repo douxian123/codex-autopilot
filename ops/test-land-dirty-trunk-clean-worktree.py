@@ -73,6 +73,14 @@ def main():
           "OPS.mkdir(parents=True, exist_ok=True)\n    clean_wt = None\n    try:" in src)
     check("干净落盘主干跳过 reset checkout",
           "if not clean_wt:" in src and "reset_trunk_head(wt)" in src)
+    trunk_fn = next(n for n in tree.body
+                    if isinstance(n, ast.FunctionDef) and n.name == "_trunk_worktree")
+    trunk_src = ast.get_source_segment(SOURCE, trunk_fn) or ""
+    check("新建兜底主干时检查 worktree add 结果",
+          "worktree_add = proc_run(" in trunk_src
+          and "if worktree_add.returncode != 0:" in trunk_src
+          and "无法创建干净落盘工作树" in trunk_src,
+          "(worktree add failure must fail closed with its stderr)")
     check("同步后仍保留兜底检查",
           len(status_calls) >= 2 and status_calls[-1].lineno > clean[0].lineno,
           f"(status={[c.lineno for c in status_calls]} clean={[c.lineno for c in clean]})")
