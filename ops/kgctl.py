@@ -49,6 +49,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
@@ -5126,7 +5127,94 @@ def _merge_truth_from_origin() -> bool:
     return False
 
 
-def _git_bounded(args, timeout: int, label: str = ""):
+def _merge_truth_from_origin_in_clean_worktree() -> Path | None:
+    """分叉的真相提交在干净 worktree 里并回 origin/main，不碰共享检出。
+
+    2026-11-25 现场：状态根 HEAD 还停在已合入的 codex 分支，`origin/main` 已前进；
+    工作副本里又有 `ops/disk_reap.py` 这种「旧 HEAD 假脏」和真实未跟踪产物。原地
+    `git merge origin/main` 会被这些文件挡住，旧实现随后静默 return，tick 报「真相层
+    已提交」但永远不推送。这里制作一份 origin/main 的临时 worktree，只把状态根相对
+    merge-base 的真相层净改动镜像进去，再按现有 JSONL/台账并集规则提交。
+
+    非真相层净改动一律不搬运：那属于在途代码，交给 land，绝不混进真相推送。
+    """
+    base = proc_run(["git", "-C", str(REPO), "merge-base", "HEAD", f"origin/{MAIN}"],
+                    capture_output=True, text=True)
+    if base.returncode != 0 or not base.stdout.strip():
+        print("  × 找不到状态根与 origin/main 的共同祖先，拒绝自动合并真相层")
+        return None
+    merge_base = base.stdout.strip()
+    diff = proc_run(["git", "-C", str(REPO), "diff", "--name-only", merge_base, "HEAD"],
+                    capture_output=True, text=True)
+    if diff.returncode != 0:
+        print("  × 读不出状态根相对 origin/main 的净改动，拒绝自动合并真相层")
+        return None
+    changed = [line.strip() for line in diff.stdout.splitlines() if line.strip()]
+    if not changed:
+        return None
+    non_truth = [rel for rel in changed if not _truth_rel(rel)]
+    if non_truth:
+        print(f"  主干工作树有 {len(non_truth)} 个非真相层提交，跳过自动推送（交给 land）："
+              + "、".join(non_truth[:3]))
+        return None
+    tmp_root = tempfile.mkdtemp(prefix="autopilot-truth-push-")
+    wt = Path(tmp_root) / "trunk"
+
+    def cleanup_temp():
+        proc_run(["git", "-C", str(REPO), "worktree", "remove", "--force",
+                  str(wt)], capture_output=True, text=True)
+        shutil.rmtree(tmp_root, ignore_errors=True)
+
+    add = proc_run(["git", "-C", str(REPO), "worktree", "add", "-q", "--detach",
+                    str(wt), f"origin/{MAIN}"], capture_output=True, text=True)
+    if add.returncode != 0:
+        cleanup_temp()
+        print(f"  × 无法创建真相推送临时主干：{(add.stdout + add.stderr).strip()[:200]}")
+        return None
+    ok = False
+    try:
+        snap = {}
+        for rel in changed:
+            blob = proc_run(["git", "-C", str(REPO), "show", f"HEAD:{rel}"],
+                            capture_output=True, text=True, errors="replace")
+            if blob.returncode != 0:
+                print(f"  × 状态根 HEAD 缺少真相文件 {rel}，拒绝自动推送")
+                return None
+            # 复用既有恢复规则：JSONL 行级并集、追加台账按章节并集、生成视图按时间，
+            # 不让旧状态根把 origin/main 上已落盘的记录整文件覆盖掉。
+            snap[rel] = blob.stdout.encode("utf-8")
+        _restore_truth_files(wt, snap)
+        added = proc_run(["git", "-C", str(wt), "add", "--", *changed],
+                         capture_output=True, text=True)
+        if added.returncode != 0:
+            print(f"  × 真相推送临时主干暂存失败："
+                  f"{(added.stdout + added.stderr).strip()[:200]}")
+            return None
+        staged = proc_run(["git", "-C", str(wt), "diff", "--cached", "--name-only"],
+                          capture_output=True, text=True).stdout.strip()
+        if not staged:
+            print("  × 真相推送临时主干没有可提交的净改动")
+            return None
+        commit = proc_run(
+            ["git", "-C", str(wt), "commit", "-m",
+             "chore(truth): merge diverged truth state into origin/main"],
+            capture_output=True, text=True)
+        if commit.returncode != 0:
+            print(f"  × 真相推送临时主干提交失败："
+                  f"{(commit.stdout + commit.stderr).strip()[:200]}")
+            return None
+        ok = True
+        print("  真相层已在独立 worktree 中合并到 origin/main（不碰共享检出）")
+        return wt
+    except Exception as exc:
+        print(f"  × 真相推送临时主干异常：{type(exc).__name__}: {exc}")
+        return None
+    finally:
+        if not ok:
+            cleanup_temp()
+
+
+def _git_bounded(args, timeout: int, label: str = "", repo: Path | None = None):
     """有界的 git 调用：超时就杀，返回 (rc, 合并后的输出)，绝不无限期挂着。
 
     事故（2026-10-15 22:19 那一轮）：tick 挂满 1800s 被守护进程杀掉，日志里只剩
@@ -5136,7 +5224,7 @@ def _git_bounded(args, timeout: int, label: str = ""):
     这里给每一步一个上限，把「无限期挂着」变成「一条可见的失败」。
     """
     try:
-        p = proc_run(["git", "-C", str(REPO), *args], capture_output=True,
+        p = proc_run(["git", "-C", str(repo or REPO), *args], capture_output=True,
                            text=True, errors="replace", timeout=timeout)
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except subprocess.TimeoutExpired:
@@ -5166,16 +5254,37 @@ def _push_truth_state_locked() -> None:
         return
     ff = proc_run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
                          f"origin/{MAIN}", "HEAD"], capture_output=True, text=True)
+    temp_root = None
+    push_repo = REPO
     if ff.returncode != 0:
-        if not _merge_truth_from_origin():
+        push_wt = _merge_truth_from_origin_in_clean_worktree()
+        if push_wt is None:
             return
-        ahead = int(git("rev-list", "--count", f"origin/{MAIN}..HEAD") or 0)
-    prc, pout = _git_bounded(["push", "origin", f"HEAD:{MAIN}"], 180)
+        push_repo = push_wt
+        temp_root = push_wt.parent
+        ahead = int(git("-C", str(push_repo), "rev-list",
+                        "--count", f"origin/{MAIN}..HEAD") or 0)
+    pushed_head = ""
+    try:
+        prc, pout = _git_bounded(["push", "origin", f"HEAD:{MAIN}"], 180,
+                                 repo=push_repo)
+        if prc == 0:
+            got = proc_run(["git", "-C", str(push_repo), "rev-parse", "HEAD"],
+                           capture_output=True, text=True)
+            pushed_head = got.stdout.strip() if got.returncode == 0 else ""
+    finally:
+        if temp_root is not None:
+            proc_run(["git", "-C", str(REPO), "worktree", "remove", "--force",
+                      str(push_repo)], capture_output=True, text=True)
+            shutil.rmtree(temp_root, ignore_errors=True)
     if prc != 0:
         print(f"  真相层推送失败，{ahead} 条提交留在本地：{pout.strip()[:200]}")
         return
-    proc_run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}", "HEAD"],
-                   check=False)
+    if pushed_head:
+        proc_run(["git", "-C", str(REPO), "update-ref",
+                  f"refs/heads/{MAIN}", pushed_head], check=False)
+        proc_run(["git", "-C", str(REPO), "update-ref",
+                  f"refs/remotes/origin/{MAIN}", pushed_head], check=False)
     print(f"  真相层 {ahead} 条提交已推送 origin/{MAIN}")
 
 

@@ -211,6 +211,10 @@ def main():
         # 真代码改动、第三种暂存内容和文件删除仍必须 fail-closed。
         run([sys.executable, str(OPS / "test-truth-sync-stale-head-fake-dirty.py")],
             cwd=str(OPS.parent), check=True)
+        # 状态根 HEAD 停在旧分支分叉时，真相推送不能在脏共享检出里原地 merge；
+        # 必须在干净 worktree 合并并真推到 bare remote，且不碰用户脏文件。
+        run([sys.executable, str(OPS / "test-truth-push-diverged-clean-worktree.py")],
+            cwd=str(OPS.parent), check=True)
         # 生成视图（PROJECT_STATUS / CONTROL_BOARD / CONTROL_PLANE / ops/context）被
         # .gitignore 排除且从未跟踪，旧实现照 `git add` 会报 `paths are ignored`，
         # 并把已 add 成功的真账本留在索引里形成半暂存 —— 下一次 merge 立刻被挡住，
