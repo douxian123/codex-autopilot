@@ -259,6 +259,12 @@ def compact_session_logs(dry: bool = False) -> tuple[int, int]:
     if os.environ.get("KG_SESSION_COMPACT", "0").strip().lower() not in (
             "1", "on", "true", "yes"):
         return 0, 0
+    # 2026-11-25 incident guard: legacy opt-in alone must never move session
+    # JSONL files. Require a separate dangerous switch so repointing launchd
+    # cannot silently re-enable destructive transcript archiving.
+    if os.environ.get("KG_SESSION_COMPACT_ALLOW_DANGEROUS", "0").strip().lower() not in (
+            "1", "on", "true", "yes"):
+        return 0, 0
     if free_gb() >= SESSION_COMPACT_UNDER_FREE_GB:
         return 0, 0
     home = Path.home()

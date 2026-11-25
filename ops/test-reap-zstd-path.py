@@ -87,6 +87,7 @@ def main():
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
                               "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "1",
                               "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
              mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
@@ -105,7 +106,8 @@ def main():
         old = make_old_session(root)
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
-                              "KG_SESSION_COMPACT": "1"}), \
+                              "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
              mock.patch.object(mod, "_zstd_path", return_value=None), \
              mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
@@ -122,7 +124,8 @@ def main():
         old = make_old_session(root)
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
-                              "KG_SESSION_COMPACT": "1"}), \
+                              "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
              mock.patch.object(mod, "_path_is_open", return_value=True), \
              mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
@@ -136,7 +139,8 @@ def main():
         old = make_old_session(root)
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
-                              "KG_SESSION_COMPACT": "1"}), \
+                              "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
              mock.patch.object(mod, "_path_is_open", side_effect=[False, True]), \
              mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
@@ -168,7 +172,8 @@ def main():
         check("低盘默认不自动迁移历史会话", n == 0 and freed == 0 and old.is_file(), (n, freed))
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
-                              "KG_SESSION_COMPACT": "1"}), \
+                              "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
              mock.patch.object(mod, "SESSION_COMPACT_MAX_FILES", 1):
             n, freed = mod.compact_session_logs()
