@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-01 03:29:33　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-26 06:25:47　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -45,9 +45,12 @@
 - Companion 打开 Codex 用 bundle id 而不是路径 —— Codex 桌面端本体是 /Applications/ChatGPT.app（已从 Info.plist 核实 CFBundleIdentifier=com.openai.codex）；按 bundle id 解析路径比写死 /Applications/ChatGPT.app 稳，名字换了也不会失效
 - 北极星首问闭环率的唯一口径 —— 北极星一直是文案不是数字：被统计的是 landed/resolved/superseded 这类机器动作数，产品价值所在的比例没有分子分母、不会红，这是「做着做着达不到预期」的结构性根因。把它变成会红、可复现的数字，行为才会从「刷动作数」转向「真把需求做闭环」。
 
+## PRD 修订索引
+
+- 修订 0 条，需收敛 0 条
+
 ## 最近在推进
 
-- [在途] 端到端落位验收已走到台账确认：入口->归类->账本->面板逻辑检查全部闭环
 - [在途] 把机器已验证证据清单和真人待验清单固化进 PRODUCT_VALUE.md；preview/panel-logic/panel-render/selftest/probe/closure-rate/A-0045/A-0046 是机器证据，A-0005/A-0006/A-0007/A-0008/A-0022 未人工确认前保持 todo
 - [在途] 实机验证总闸关闭态：companion_api disable -> enabled=false lifecycle=off；关闭后 intake 返回 AUTOPILOT_DISABLED exit 2；panel_render_check 在关闭态仍渲染真实面板；随后 enable 恢复 enabled=true lifecycle=on。A-0006 仍保留真人确认首屏观感与总闸交互
 - [在途] 尝试自动化唤出菜单栏 Companion 弹窗：osascript 发送 ⌥⌘A 后 CGWindowList 未出现 Companion popover 窗口，screencapture 只拍到壁纸；System Events 对 CodexAutopilotCompanion 的 menu bar item 返回 missing value。结论：当前虚拟桌面无法由机器补足 A-0005 视觉证据，仍需真人验收
@@ -56,12 +59,11 @@
 - [已落盘] @ aa875f742f codex/remove-accidental-conflict-backup-20261025 验证门禁通过，已落盘 main @ aa875f742f；改动 1 个文件：ops/tasks/conflict_burden.json.bak-codex-20261025-042835（+0/-11）｜1 file changed, 11 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ 145970ba94 codex/reap-regenerable-on-49-20261027 验证门禁通过，已落盘 main @ 145970ba94；改动 3 个文件：ops/central_daemon.py（+7/-1）、ops/selftest.py（+67/-0）、ops/workspace_guard.py（+48/-0）｜3 files changed, 122 insertions(+), 1 deletion(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 - [已落盘] @ bc129de253 codex/release-50 验证门禁通过，已落盘 main @ bc129de253；改动 1 个文件：plugin/.codex-plugin/plugin.json（+1/-1）｜1 file changed, 1 insertion(+), 1 deletion(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
-- [在途] 面板质量门禁四态与工程进度快照已落盘（6b7b66d9，合入 douxian123/codex-autopilot main）。36 题严格质量保持 RED、50 题真人盲评 0/50 如实显示为 HUMAN_PENDING/UNVERIFIED，不再折叠成验收计数；ThoughLoom 19 层进度按 2026-10-23 快照显示。门禁：test_panel_contract / test_preview_check_contract / test_panel_first_screen / test_mcp_contract 全过；panel_render_check 结果全部通过。
+- [已完成] 面板质量门禁四态与工程进度快照已落盘（6b7b66d9，合入 douxian123/codex-autopilot main）。36 题严格质量保持 RED、50 题真人盲评 0/50 如实显示为 HUMAN_PENDING/UNVERIFIED，不再折叠成验收计数；ThoughLoom 19 层进度按 2026-10-23 快照显示。门禁：test_panel_contract / test_preview_check_contract / test_panel_first_screen / test_mcp_contract 全过；panel_render_check 结果全部通过。
+- [已落盘] @ d4d1750768 codex/resolve-land-no-sysexit-20261109 验证门禁通过，已落盘 main @ d4d1750768；改动 2 个文件：ops/kgctl.py（+11/-4）、ops/selftest.py（+67/-0）｜2 files changed, 78 insertions(+), 4 deletions(-)｜门禁：selftest exit 0；panel-logic exit 0；panel-render exit 0
 
 ## 关键验收证据（核对用，不替代 mainline.json）
 
-- `A-0037` [P1] Companion 真机运行与环境入口就绪（进程、服务菜单、通知、截图快捷键、拖拽入口均有真实注册）
-  - 证据：pgrep -> /Users/danta/Applications/CodexAutopilotCompanion.app/Contents/MacOS/CodexAutopilotCompanion 进程在跑; launchctl print gui/501 -> com.douxian.codex-autopilot.companion 已注册, ServiceProvi…
 - `A-0038` [P1] Companion 真机运行与环境入口就绪（机器自证已验）
   - 证据：pgrep -> /Users/danta/Applications/CodexAutopilotCompanion.app/Contents/MacOS/CodexAutopilotCompanion 进程在跑; launchctl print gui/501 -> com.douxian.codex-autopilot.companion 已注册, ServiceProvi…
 - `A-0039` [P1] codex/release-preview10 落盘验收
@@ -83,6 +85,8 @@
 - `A-0049` [P1] codex/reap-regenerable-on-49-20261027 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 - `A-0050` [P1] codex/release-50 落盘验收
+  - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
+- `A-0051` [P1] codex/resolve-land-no-sysexit-20261109 落盘验收
   - 证据：selftest: python3 ops/selftest.py (cwd=.) -> exit 0
 
 ## 还差什么
@@ -146,11 +150,12 @@
 - `A-0048` [P1] codex/remove-accidental-conflict-backup-20261025 落盘验收
 - `A-0049` [P1] codex/reap-regenerable-on-49-20261027 落盘验收
 - `A-0050` [P1] codex/release-50 落盘验收
+- `A-0051` [P1] codex/resolve-land-no-sysexit-20261109 落盘验收
 
 ## 进度概览
 
 - 累计关闭问题：7 条
-- 累计落盘：13 条
+- 累计落盘：14 条
 - 未决问题：0 条
-- 已验收：40 条
+- 已验收：41 条
 

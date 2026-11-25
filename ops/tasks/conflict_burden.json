@@ -1,19 +1,21 @@
 {
- "main": "55a16e2561578fdd86f366359a1353ec2878c68a",
+ "main": "7ec1f9475354232e373872b9b5a86bd7102090df",
  "branches": [
-  "codex/auto-close-identity-gate-20261024",
-  "codex/disk-admission-clean-20261027",
-  "codex/disk-admission-preview29-20261027",
-  "codex/disk-reap-into-repo",
-  "codex/reap-identical-tracked-20261027",
-  "codex/slow-model-routing"
+  "codex/disk-production-admission-20261112",
+  "codex/final-ledger-restore-20261120",
+  "codex/guard-release-version-20261119",
+  "codex/prd-closure-package-20261121",
+  "codex/project-autonomy-main-port-20261121",
+  "codex/project-autonomy-mode-20261121",
+  "codex/release-124-truthctl-runtime-20261122"
  ],
  "burden": {
-  "codex/auto-close-identity-gate-20261024": 1,
-  "codex/disk-admission-clean-20261027": 3,
-  "codex/disk-admission-preview29-20261027": 8,
-  "codex/disk-reap-into-repo": 5,
-  "codex/reap-identical-tracked-20261027": 3,
-  "codex/slow-model-routing": 4
+  "codex/disk-production-admission-20261112": 3,
+  "codex/final-ledger-restore-20261120": 1,
+  "codex/guard-release-version-20261119": 1,
+  "codex/prd-closure-package-20261121": 2,
+  "codex/project-autonomy-main-port-20261121": 12,
+  "codex/project-autonomy-mode-20261121": 5,
+  "codex/release-124-truthctl-runtime-20261122": 3
  }
 }
