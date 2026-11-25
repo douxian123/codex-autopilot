@@ -10,6 +10,8 @@
 本门禁用真实 Git 夹具锁住两个入口：
   * 真相同步前与 HEAD 做任务级并集，已裁决终态不能倒退，工作副本新记录要保留；
   * 切主干前恢复快照时也按任务终态并集，不让旧快照吞掉已落盘裁决。
+  * 直接 land codex/resolve-* 时任务台账同步收口，不让已落盘的 resolve 分支
+    继续出现在 resolve --list / matrix 的待解队列里。
 """
 
 from __future__ import annotations
@@ -106,6 +108,37 @@ def states(doc: dict) -> dict:
 
 
 def main() -> int:
+    # 直接 land resolve 分支：必须随同一批真相提交把任务标记成 landed。
+    with tempfile.TemporaryDirectory(prefix="kg-resolve-land-status-") as tmp:
+        root = Path(tmp)
+        repo = seed_repo(
+            root / "state",
+            [task("resolve-direct-land", "needs_agent", "2026-11-26 03:00:00")],
+            "2026-11-26 03:00:00",
+        )
+        kg = load_kgctl(repo, root / "truth-ids")
+        record = dict(task("resolve-direct-land", "needs_agent", "2026-11-26 03:00:00"))
+        record["resolve_branch"] = "codex/resolve-resolve-direct-land"
+        (repo / "ops" / "tasks" / "resolve.json").write_text(
+            resolve_doc([record], "2026-11-26 03:00:00"), encoding="utf-8")
+        assert kg._mark_resolve_landed_for_land(
+            repo, "codex/resolve-resolve-direct-land", "abc1234567") is True
+        data = json.loads((repo / "ops" / "tasks" / "resolve.json").read_text(encoding="utf-8"))
+        landed = next(t for t in data["tasks"] if t["slug"] == "resolve-direct-land")
+        assert landed["status"] == "landed", landed
+        assert landed["landed_commit"] == "abc1234567", landed
+
+        # 已裁决记录不能因为重复 land 被覆盖（尤其不能冲掉 abandoned 理由）。
+        record["status"] = "abandoned"
+        record["reason"] = "covered by main"
+        (repo / "ops" / "tasks" / "resolve.json").write_text(
+            resolve_doc([record], "2026-11-26 03:10:00"), encoding="utf-8")
+        assert kg._mark_resolve_landed_for_land(
+            repo, "codex/resolve-resolve-direct-land", "def7654321") is False
+        data = json.loads((repo / "ops" / "tasks" / "resolve.json").read_text(encoding="utf-8"))
+        kept = next(t for t in data["tasks"] if t["slug"] == "resolve-direct-land")
+        assert kept["status"] == "abandoned" and kept.get("reason") == "covered by main", kept
+
     with tempfile.TemporaryDirectory(prefix="kg-resolve-truth-baseline-") as tmp:
         root = Path(tmp)
         repo = seed_repo(
