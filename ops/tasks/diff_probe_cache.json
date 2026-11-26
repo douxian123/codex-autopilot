@@ -1,8 +1,4 @@
 {
- "codex/steward-history-detail-20261123@4077e18c89bedba4ecb660993e9dfb546f946f9e@fe8a5d09fc3c0ae3467f5e14488b690c045e38fb": {
-  "files": 3,
-  "lines": 14
- },
  "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@c591f7e185deedd2a47d5747b7141060f2cc8c15": {
   "files": 4,
   "lines": 5372
@@ -2396,6 +2392,10 @@
   "lines": 5372
  },
  "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@7ad9c7167b9198bd628dc4a9b0f4cbbd9b9c4ab3": {
+  "files": 4,
+  "lines": 5372
+ },
+ "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@841c3071a65eae95d5a908d88ee6563ad177472d": {
   "files": 4,
   "lines": 5372
  }
