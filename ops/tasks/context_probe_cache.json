@@ -187,5 +187,39 @@
    "plugin/ui/panel.html"
   ],
   "unresolved_marker_files": []
+ },
+ "codex/session-history-guard-20261125@36b6b4fba7f862fce33036d1733b111cea419e33@7ec1f9475354232e373872b9b5a86bd7102090df": {
+  "conflict_files": [],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-d6c50f03d9@b2d073fd1f9a31c0cd1cac0872b524fdbab626c2@7ec1f9475354232e373872b9b5a86bd7102090df": {
+  "conflict_files": [],
+  "unresolved_marker_files": [
+   "codex/converge-d6c50f03d9:docs/PRE_ACCEPTANCE_STANDARD.md",
+   "codex/converge-d6c50f03d9:docs/PRODUCT_MAINLINE.md",
+   "codex/converge-d6c50f03d9:docs/PROJECT_CONSTITUTION.md",
+   "codex/converge-d6c50f03d9:docs/PROJECT_STATUS.md",
+   "codex/converge-d6c50f03d9:ops/central_daemon.py",
+   "codex/converge-d6c50f03d9:ops/central_mcp.py",
+   "codex/converge-d6c50f03d9:ops/disk_reap.py",
+   "codex/converge-d6c50f03d9:ops/dynamic_acceptance_scope.py",
+   "codex/converge-d6c50f03d9:ops/pre_acceptance.py",
+   "codex/converge-d6c50f03d9:ops/selftest.py",
+   "codex/converge-d6c50f03d9:ops/tasks/conflict_burden.json",
+   "codex/converge-d6c50f03d9:ops/tasks/diff_probe_cache.json",
+   "codex/converge-d6c50f03d9:ops/tasks/resolve.json",
+   "codex/converge-d6c50f03d9:ops/test-dynamic-acceptance-scope.py",
+   "codex/converge-d6c50f03d9:ops/test-reap-zstd-path.py",
+   "codex/converge-d6c50f03d9:ops/test-snapshot-clone-prune.py",
+   "codex/converge-d6c50f03d9:plugin/.codex-plugin/plugin.json",
+   "codex/converge-d6c50f03d9:plugin/README.md",
+   "codex/converge-d6c50f03d9:plugin/ui/panel.html"
+  ]
+ },
+ "codex/converge-d218251f8b@c35fff1b4e295690f07f00f14ac503adf36e7696@7ec1f9475354232e373872b9b5a86bd7102090df": {
+  "conflict_files": [
+   "docs/PRODUCT_CONTRACT.md"
+  ],
+  "unresolved_marker_files": []
  }
 }
