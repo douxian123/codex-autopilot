@@ -1,9 +1,17 @@
 # Codex 自动挡 · 预览包说明
 
-版本：`0.6.0-preview.28`
+版本：`0.6.0-preview.146`（源码发布候选，尚未打公开 tag/prerelease；公开入口见 `docs/BETA_LOCAL_TRIAL.md`）
 形态：Codex 插件 + macOS 菜单栏 Companion（一个状态锚点，不是第二套产品）
 
-本版修掉一处会把失败误报成成功的进程收口竞态，并保留前两版的发布修复：
+本版是 B1「本地主链小范围试用准备」。默认安装只装插件主链：不首次安装常驻守护，
+不替你改已装的 launchd / hooks，不迁移本地密钥，不切换 provider。需要本机能力时
+分别显式传 `--enable-local-guards`、`--install-daemon`、`--migrate-local-secrets`；
+跨机移植包默认也不再包含 `~/.codex/auth.json`，只有 `--include-auth` 才包含。
+
+同时修掉资源准入 hook 安装路径回归：模板不再写死 `/Users/danta`，安装时会展开到
+`$HOME/.codex/hooks/resource-admission.py`，并有回归测试守住这条路径。
+
+历史预览修复继续保留：
 
 1. 子进程刚退出、PID 已从进程表消失但 `Popen` 尚未返回状态时，自动挡现在先取回真实退出码；取不到就继续等待，不再用固定 `0` 的替身收口。失败任务不会被误标为已落盘，也不会把半成品提交进 main。
 2. preview.27 的不可变安装来源可追溯：正式安装前拒绝 dirty 源码工作区，并在版本目录与安装记录中写入唯一 commit，避免把已提交代码和未发布本地改动混进同一版本。
@@ -61,7 +69,7 @@ bash install.sh
 
 它会做四件事，全部可回退：
 
-1. 把这一版装进一个不可变版本目录：`~/plugins/codex-autopilot/releases/0.6.0-preview.28/`
+1. 把这一版装进一个不可变版本目录：`~/plugins/codex-autopilot/releases/0.6.0-preview.146/`
 2. 把插件市场清单里的一行指向这个版本目录（原子替换，只动自动挡这一条）
 3. 编译菜单栏 Companion 到 `~/Applications/CodexAutopilotCompanion.app`
 4. 写一份 Companion 配置到 `~/Library/Application Support/CodexAutopilot/companion.json`

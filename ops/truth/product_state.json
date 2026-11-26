@@ -1,5 +1,5 @@
 {
- "updated": "2026-10-16",
+ "updated": "2026-11-25",
  "modules": [
   {
    "area": "唯一入口",
@@ -77,6 +77,40 @@
    "why": "",
    "files": [],
    "updated": "2026-10-16"
+  },
+  {
+   "area": "自动挡合并队列与真相投影",
+   "behavior": "已归档（superseded）的分支不再出现在落盘队列或一屏在途项，队列会单列已裁决/已归档数量；真相快照把这类进展显示为「已归档」而不是「在途」。",
+   "why": "修复队列把已归档但无冲突的历史分支反复当成可落盘在途的假信号。",
+   "files": [
+    "ops/kgctl.py",
+    "ops/truthctl.py",
+    "ops/selftest.py"
+   ],
+   "updated": "2026-11-24"
+  },
+  {
+   "area": "绑定漂移",
+   "behavior": "插件绑定旧脏 worktree、当前会话在同仓库干净状态根时，binding_health 报漂移；capture_request、intake_request、route_preview 在写入前返回 AUTOPILOT_BINDING_DRIFT，并提示重跑 install.sh <当前状态根> 后重开 Codex；干净多 worktree 和安装自检不误报。",
+   "why": "2026-11-24 现场发现插件 .mcp.json 绑定旧脏 worktree 时，当前干净状态根的需求会被写进旧账本，面板却显示正常。",
+   "files": [
+    "ops/plugin_binding.py",
+    "ops/central_mcp.py",
+    "install.sh",
+    "ops/selftest.py",
+    "ops/test-binding-drift.py",
+    "docs/BETA_LOCAL_TRIAL.md"
+   ],
+   "updated": "2026-11-24"
+  },
+  {
+   "area": "验收结论口径",
+   "behavior": "当前知识图谱走查修复分支已提交推送但尚未合入 main；真实浏览器复放和 30 条全量重跑未完成，因此不能宣称符合预期或全产品闭环生效。",
+   "why": "分支 codex/user-audit-quality-closure-r3-20261124 commit 2dabbeb4e6 已推送，main 仍是 fcd634cf99；资源准入拦截浏览器重验证。",
+   "files": [
+    "docs/acceptance/USER_WALKTHROUGH_CLOSURE_MATRIX_20261123.md"
+   ],
+   "updated": "2026-11-25"
   }
  ]
 }

@@ -25,6 +25,10 @@ description: Codex 自动挡。当用户在同一项目里提出零散、即时�
 7. 每轮蒸馏：收口后回看这轮人额外说了什么，把「为什么这么判断」写回判断逻辑台账；只记判断逻辑，不记一次性细节。
 8. 产品讨论自动成主线：每轮收口 `truthctl synthesize`，把决策/进展/问题/验收综合成 `docs/PRODUCT_MAINLINE.md`。人只读这一页，就知道现状、最近在推什么、还差什么；不用人肉把零散对话归类成 PRD。
 9. 问题一次提出就闭环：bug/视觉/体验/架构收进台账后，由你主动推进修复 -> 验证 -> `truthctl close <L-id> "<结论>"`。关闭要带 commit/证据；不许修完了还挂在 `open`，也不许没验证就标 `done`。
+9.1 **「done」这一格只能由人翻**：执行层（磨「离目标多远」）归你，判断层（「这个目标本身对不对」）归人。视觉、体验这两类，以及登记时标了 `needs_human` 的条目，`close` 会停在 `awaiting_human`（「等你确认」），**这是正确结果，不是失败**：不要重试、不要换个说法再 close、不要自己加 `--confirm-human`。只有用户亲口说「看过 / 可以了」，才用 `truthctl close <L-id> "看过，可以" --confirm-human` 或 `close_item` 带 `confirm_human: true` 翻成 `done`。
+    - 为什么：机器能把「离目标多远」磨到零，但判不了「26°C 是不是今天该设的温度」。把最后一票交给机器，等于删掉高层反馈——它会又快又狠地冲向一个没人质疑过的错误目标，而台账上看起来「全部完成」。
+    - bug / gate / arch 不在此列：它们有客观判据（退出码、断言、diff），收口直达 `done`，不要把它们也拿去问人，那会把闭环拖死。
+    - 误报怎么办：判错了 kind（本该是 bug 被归成 visual）就先用 `truthctl add ledger` 记一条正确的，别硬改状态绕过门禁。
 10. **「没有」与「不知道」必须说成两句不同的话**：报告任何统计量时，取数失败要明说「取不到」，不能输出成「0 / 无 / 正常」。探针自己坏了本身就是一个要上报的问题——静默降级成「没问题」是最难发现的假阴性。
 11. **纪律要能机器验证**：新增任何「要求模型别做什么 / 必须做什么」的规则，同一轮必须回答「谁来查、查不到怎么办、误报了怎么办」。只有文字没有门禁的规则按未修处理——本插件自己的教训：**规范是文字，文字输给顺手**。
 12. **长驻窗口有生命周期**：挂 heartbeat/automation 的窗口会被每拍的工具输出永久喂大，越长越倾向「用最短的话结束轮次」。默认规则是**高频 heartbeat 不挂在中央司令窗/产品总监窗**，而是挂在专用监督窗；中央窗只接收四段结论、拍板请求和路线变化。挂载检查与轮换仍看 `ops/cockpit_pulse.py --automation <名字>`：体检报「已越轮换线」就按 `ops/cockpit_rotate.py` 预演轮换，并把结论写进给人看的那一页。**不要假装窗口可以无限期跑下去**。
@@ -77,6 +81,13 @@ description: Codex 自动挡。当用户在同一项目里提出零散、即时�
   `generate_context`、`dashboard`、`capture_request`（只追加）、`suggest_branch`、
   `product_state` / `product_update`（产品状态）、`distill_review` / `distill_add`（判断逻辑蒸馏）、
   `synthesize_mainline`（综合成产品主线）、`register_acceptance`（登记验收，分人验收/机器自证）、`close_item` / `reopen_item`（问题收口）。
+
+  **调用 `intake_request` / `capture_request` 时务必带上 `cwd`（当前会话所在目录）。**
+  插件安装时只绑定了一个项目，MCP 进程又是全局单例、看不到是哪个窗口在调用；归属
+  判定完全依赖调用方把上下文传下来。带 `cwd` 才能把记录落进你正在说的那个项目；
+  不带就可能判不清，那时系统会把它放进全局待路由箱（`~/.codex-autopilot/routing/inbox.jsonl`）
+  并在 `project_status` 里列出来，**不会**硬塞进某个项目账本。用户明说了是哪个项目，
+  就再带一个 `project`（项目名或状态根路径）。
 - 否则走 CLI。运行时代码在插件里（自包含安装：`~/plugins/codex-autopilot/ops/`），
   项目里只留账本；手敲时先设 `KG_REPO` 指到项目（MCP 调用时插件已自动注入）：
 
@@ -93,8 +104,20 @@ python3 "$KGCTL" tick
 # 看项目真相 / 当前待办 / 驾驶舱
 sed -n 1,80p "$KG_REPO/docs/PROJECT_STATUS.md"
 python3 "$KGCTL" next
-python3 "$KGCTL" dash --open            # 生成并打开 docs/CONTROL_PLANE.html
+python3 "$KGCTL" dash --open            # 仅内部诊断驾驶舱，不是自动挡面板
 ```
+
+### 打开 Codex Autopilot 面板（唯一成功路径）
+用户说“打开 Codex Autopilot 面板 / 打开自动挡面板 / 面板打不开 / 面板在哪看”时，只允许两条成功路径：
+
+1. 调用 `render_autopilot_panel`，并确认结果以 MCP App / 内联卡片 / 对话侧栏 /
+   全局侧栏出现。
+2. 宿主侧栏已有原生「自动挡」入口，并确认它是宿主渲染的面板，不是浏览器标签页。
+
+如果当前会话没有暴露 `render_autopilot_panel`，必须直接说明工具不可见并建议新开
+会话或重启 Codex，不得改用 `docs/CONTROL_PLANE.html`、`companion_api.py panel`、
+`kgctl dash --open`、`open file://...` 或任何浏览器页面代替。
+`CONTROL_PLANE.html` 只能叫“内部诊断驾驶舱”，绝不能叫“Codex Autopilot 面板”。
 
 ## 分支很多、到底谁先合
 冲突分支不要逐条问用户。默认把每条轻冲突拆成**一个可执行任务**，逐条收口；量大且分散时再收拢成族：
@@ -135,3 +158,10 @@ python3 "$KGCTL" context <分支>    # 给该分支写一份版本化 Context Pa
 - 这个 skill 管“怎么把散乱输入收成一个有序系统”，不代替产品判断。
 - 涉及产品方向、删数据、发布，必须停下来问用户，并给出“选 A / 选 B”的具体后果。
 - 不重复造多 agent 框架：编排用现有 Codex 会话/worktree/skill；这里只做输入归一、真相沉淀、合并串行。
+
+## 路由后的责任与验收
+- `intake_request` / `inbox` 只表示需求已接单并进入控制面，不代表有人已经开始改代码，更不代表需求已经完成。
+- 路由后由自动挡继续推进：明确责任泳道/分支或执行 worker，持续跟踪实现、真实验证、落盘、登记验收和关闭台账。当前对话不是默认的唯一执行者；若实际由其他 worker 执行，必须告诉用户由谁/哪个泳道负责。
+- 每次向用户回报已路由，必须同时说明台账编号、当前泳道/责任分支（尚未分配就明确写“尚未分配”）、当前状态、后续跟进责任方和下一处可查入口。不能用“入口待路由数为 0”代替单条需求已分配或正在执行的证据。
+- 进度查项目 `docs/PROJECT_STATUS.md`，产品行为查 `docs/PRODUCT_MAINLINE.md`，自动挡实时状态查 `autopilot_status` 或自动挡面板。若这些入口没有列出该需求，就明确说明尚无可追踪的执行任务，不得声称自动挡会持续跟进。
+- 只有实现已完成、真实门禁证据已写入验收台账、并通过 `register_acceptance` 登记人工验收步骤和实际打开地址后，才通知用户验收。验收完成后再关闭问题；不能把“已路由”或“分支已创建”当成验收通知。

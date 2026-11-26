@@ -22,6 +22,8 @@
   * 原子写（临时文件 + os.replace），进程被打断不会留下半截 JSON。
 """
 
+from __future__ import annotations
+
 import json
 import os
 from datetime import datetime, timezone

@@ -1,6 +1,10 @@
 {
  "main": "7ec1f9475354232e373872b9b5a86bd7102090df",
  "branches": [
+  "codex/auto-close-identity-gate-20261024",
+  "codex/autopilot-brand-panel",
+  "codex/disk-admission-preview29-20261027",
+  "codex/slow-model-routing",
   "codex/disk-production-admission-20261112",
   "codex/final-ledger-restore-20261120",
   "codex/guard-release-version-20261119",
@@ -10,6 +14,10 @@
   "codex/release-124-truthctl-runtime-20261122"
  ],
  "burden": {
+  "codex/auto-close-identity-gate-20261024": 3,
+  "codex/autopilot-brand-panel": 9,
+  "codex/disk-admission-preview29-20261027": 14,
+  "codex/slow-model-routing": 4,
   "codex/disk-production-admission-20261112": 3,
   "codex/final-ledger-restore-20261120": 1,
   "codex/guard-release-version-20261119": 1,

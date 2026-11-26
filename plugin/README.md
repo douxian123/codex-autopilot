@@ -4,6 +4,11 @@
 需求（视觉、体验、bug、架构、门禁红灯、多分支要不要合、下一步做什么）收进唯一入口，
 由控制面统一归类、路由、追踪，并给出当前最该动的工作。
 
+产品定位、PM 管家持续质量职责、执行标准和验收标准以仓库的
+[`docs/PRODUCT_CONTRACT.md`](../docs/PRODUCT_CONTRACT.md) 为准。PM 管家不是一次性拆单器：
+它要在研究、方案、施工、验收和复盘之间持续检查当前实现是否仍然是基于用户目标和证据的
+最佳路径；发现路线偏离时先重新规划，不让任务数量代替产品质量。
+
 它**不是**新的 Codex，也**不改** Codex 二进制；它是装在 Codex 原生入口上的控制面。
 完整说明见仓库根目录的 [`README.md`](../README.md)。
 
@@ -41,10 +46,26 @@
 - **产品路线**（`ops/truth/mainline.json` 的 `roadmap`）：方向不是一句口号，而是一步步走到产品预期的路线；每一步标 `done / doing / next / todo`，面板直接显示走到哪了。
 - **验收分堆**（`ops/truth/acceptance.jsonl`）：机器能跑命令验证的归到「已机器验收」；审美、手感、真实产品里点一下这类必须人拍板的归到「需要你验收」，并原样显示 `steps`，用户不用猜怎么看。
 - **自动实现需求**（`auto_exec`，默认关闭）：用户显式打开后，自动挡把未关闭的台账条目派给独立 worktree 里的真实 `codex exec` 会话，自己实现、自己提交，过同一道门禁后落盘并收口；失败保留分支与 worktree，不丢在途工作。
+- **项目自主运行**：面板里的“仅启用”保存项目授权但不派新活；“开始运行”才允许项目在用户不盯着时持续派发、验收和收口。项目状态与任务租约写在 `~/.codex-autopilot/projects/<project-key>/`，不污染目标项目 Git。暂停只停止新派发，已在途任务安全收口；遇到需要产品方向、发布、删除数据或人工验收时停在待确认。
 
 面板第一屏就能看到「产品路线 · 需要你验收 · 当前在做什么 · 还差什么」，点「高级」还能看到产品状态、判断逻辑、最近一次自验证和自动实现开关。对应的 MCP 工具是
 `product_state` / `product_update` / `distill_review` / `distill_add` /
-`synthesize_mainline` / `register_acceptance` / `close_item` / `reopen_item`。
+`synthesize_mainline` / `register_acceptance` / `close_item` / `reopen_item` /
+`project_autonomy_status` / `project_autonomy_control`。
+
+在对话中调用 `render_autopilot_panel` 打开面板；看到“项目自主运行”状态变为“运行中”，并且计数区出现待派、运行中、卡住或待确认，说明项目级运行状态已经加载。`project_autonomy_control` 支持 `enable`、`run`、`pause`、`wait`、`disable`。
+
+## 原生直连红灯
+
+面板「任务路线」里的「原生自检」是用户主动触发的修复入口。缺控制 socket 时，它会调用
+官方 `codex app-server daemon start`，等待 socket 出现后再真连一次；不会杀桌面端、切
+provider 或改账号。命令行等价入口是：
+
+```bash
+python3 ops/codex_native.py probe --repair
+```
+
+只有在结果里看到 `connected: true` 与 `can_dispatch: true`，才能说原生派活已连通。
 
 ## 安装
 

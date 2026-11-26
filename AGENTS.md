@@ -19,6 +19,8 @@
 5. 改完必跑 `python3 ops/selftest.py`；动了 Companion 或原生协议时加对应环境开关
    （见 `CONTEXT.md` 第十四节快速命令索引）。
 6. 防空转：同一命令/同一失败连续 3 次就停，贴原始错误 + 已试差异。
+7. UI / 产品视觉任务开始前先读根目录 `DESIGN.md` 与 `docs/PANEL_INTERACTION_DESIGN.md`；
+   复用其中 token、组件与信息层级，新增 UI 决策必须回写 `DESIGN.md`。
 
 ## 汇报规范（用户明确要求）
 

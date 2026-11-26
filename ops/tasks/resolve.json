@@ -1,32 +1,159 @@
 {
  "tasks": [
   {
-   "slug": "disk-admission-clean-20261027",
-   "branch": "codex/disk-admission-clean-20261027",
-   "resolve_branch": "codex/resolve-disk-admission-clean-20261027",
-   "worktree": "/Users/danta/autopilot-worktrees/install-49-resolve-disk-admission-clean-20261027",
-   "base_main": "79eaf7b43ae4eeb4b2a275d30ee06430cecbdf17",
-   "source_head": "728b93900d9e3376026062185d606bdc24523a25",
+   "slug": "reap-identical-tracked-20261027",
+   "branch": "codex/reap-identical-tracked-20261027",
+   "resolve_branch": "codex/resolve-reap-identical-tracked-20261027",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-truth-sync-20261124-land-clean-1795595101-resolve-reap-identical-tracked-20261027",
+   "base_main": "91ea9687f0c753a8473e0f401ff0651519b27031",
+   "source_head": "4cc6c7b8d3de55c0f21ca55578fce5da7aabd77d",
    "source_commits": [
-    "3896b32e0e20d8035a6ac5b3dd657a7dbbd6e7ee",
-    "99f8548bb8568a994776f4d1516480f9d383942b",
-    "50c852b82371cfec53b9798d232f09cfa42d6e0d",
-    "728b93900d9e3376026062185d606bdc24523a25"
+    "4cc6c7b8d3de55c0f21ca55578fce5da7aabd77d"
    ],
-   "created": "2026-10-27 21:01:20",
-   "updated": "2026-10-27 21:01:20",
+   "created": "2026-11-25 22:14:21",
+   "updated": "2026-11-26 03:17:50",
    "conflict_files": [
     "ops/central_daemon.py",
     "ops/selftest.py",
-    "plugin/.codex-plugin/plugin.json"
+    "ops/workspace_guard.py"
    ],
    "unresolved_files": [
     "ops/central_daemon.py",
     "ops/selftest.py",
-    "plugin/.codex-plugin/plugin.json"
+    "ops/workspace_guard.py"
    ],
    "auto_resolved_jsonl": [],
-   "status": "needs_agent"
+   "status": "landed",
+   "landed_commit": "8c20327973db41ac2f0d6f8387adf62f484f7bc0",
+   "reason": "源提交 4cc6c7b8d 与 resolve 分支 91f68a3a7 均为 main 祖先；P-0264/A-0256 已记录 8c203279 落盘，旧 needs_agent 是状态回归。"
+  },
+  {
+   "slug": "truth-sync-clean-20261124",
+   "branch": "codex/truth-sync-clean-20261124",
+   "resolve_branch": "codex/resolve-truth-sync-clean-20261124",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-truth-sync-20261124-resolve-truth-sync-clean-20261124",
+   "base_main": "fbb7bb9882294f75bd7ffcef08c8d92292831478",
+   "source_head": "43e20a2bd761c6de27c9166ad4c7c65ed67e911a",
+   "source_commits": [
+    "43e20a2bd761c6de27c9166ad4c7c65ed67e911a"
+   ],
+   "created": "2026-11-25 15:53:32",
+   "updated": "2026-11-25 18:00:24",
+   "conflict_files": [
+    "docs/PROJECT_STATUS.md",
+    "ops/tasks/context_probe_cache.json"
+   ],
+   "unresolved_files": [
+    "docs/PROJECT_STATUS.md",
+    "ops/tasks/context_probe_cache.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "abandoned",
+   "reason": "旧分支唯一未落地提交 43e20a2bd 是 15:53 的旧真相快照；其净差异会删除 main 5d060b629 已落地的 test-truth-push-diverged-clean-worktree.py 与 test-truth-sync-stale-head-fake-dirty.py 修复测试。真相同步/推送修复已由 2ac88ecd 与 f66d05d3a 落盘；保留源分支不动，裁决为已覆盖，不再计入冲突队列。"
+  },
+  {
+   "slug": "session-compact-danger-switch-20261125",
+   "branch": "codex/session-compact-danger-switch-20261125",
+   "resolve_branch": "codex/resolve-session-compact-danger-switch-20261125",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-truth-sync-20261124-resolve-session-compact-danger-switch-20261125",
+   "base_main": "477acbe772fd49ff7a0a2ba14f25809e2b795461",
+   "source_head": "86d06d629b0372cabf1c9c7185e0bb0aa5c526e8",
+   "source_commits": [
+    "86d06d629b0372cabf1c9c7185e0bb0aa5c526e8"
+   ],
+   "created": "2026-11-25 12:46:30",
+   "updated": "2026-11-25 12:53:09",
+   "conflict_files": [
+    "ops/disk_reap.py",
+    "ops/selftest.py",
+    "ops/test-reap-zstd-path.py"
+   ],
+   "unresolved_files": [
+    "ops/disk_reap.py",
+    "ops/selftest.py",
+    "ops/test-reap-zstd-path.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "abandoned",
+   "reason": "同一安全修复已在 main b72c63265 落地并发布到 0.6.0-preview.147；本分支是并发重复实现，保留源分支原样不动"
+  },
+  {
+   "slug": "panel-design-restore-20261124",
+   "branch": "codex/panel-design-restore-20261124",
+   "resolve_branch": "codex/resolve-panel-design-restore-20261124",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-resolve-panel-design-restore-20261124",
+   "base_main": "1c795184609df518366607aaa6e50deb1297e893",
+   "source_head": "86b2cdeec044ac9c9cff0ac36d8e21e463541d88",
+   "source_commits": [
+    "7b7c3e0c7e58c79f8e3ae770ca09272de34fbddf",
+    "84bb134b6bce6ab09f580777ac04341817123dae",
+    "7efda6501fa1c3b515e008fd52f0b1ce832cdedb",
+    "11d7603672427d7e1c72b4677658d95fe390cf1e",
+    "de21a3b077094c05935e7c16e82d41a90fadf08b",
+    "86b2cdeec044ac9c9cff0ac36d8e21e463541d88"
+   ],
+   "created": "2026-11-24 03:45:14",
+   "updated": "2026-11-25 12:53:09",
+   "conflict_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "unresolved_files": [
+    "docs/PRODUCT_MAINLINE.md"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "abandoned",
+   "adopted": true,
+   "gate_output": "× codex/resolve-panel-design-restore-20261124 与 main 有 1 个冲突文件，拒绝自动 land：\n    ops/truth/product_state.json\n  这是需要归属裁决的信号（kgctl matrix 的 C 组）。",
+   "reason": "目标树机器证据已全绿；旧 resolve 任务为 focus-visible runner 假红，resolve worktree 已不存在，保留源分支原样不动"
+  },
+  {
+   "slug": "steward-history-detail-20261123",
+   "branch": "codex/steward-history-detail-20261123",
+   "resolve_branch": "codex/resolve-steward-history-detail-20261123",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-resolve-steward-history-detail-20261123",
+   "base_main": "fe8a5d09fc3c0ae3467f5e14488b690c045e38fb",
+   "source_head": "4077e18c89bedba4ecb660993e9dfb546f946f9e",
+   "source_commits": [
+    "4077e18c89bedba4ecb660993e9dfb546f946f9e"
+   ],
+   "created": "2026-11-24 06:35:34",
+   "updated": "2026-11-24 16:54:55",
+   "conflict_files": [
+    "docs/PRODUCT_MAINLINE.md",
+    "docs/PROJECT_CONSTITUTION.md"
+   ],
+   "unresolved_files": [
+    "docs/PRODUCT_MAINLINE.md",
+    "docs/PROJECT_CONSTITUTION.md"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "abandoned",
+   "reason": "旧 lineage 的真相内容已由 3138a232/c591f7e1 进入 origin/main，P-0232 已判定独立收口；源分支不动，仅清理误报 needs_agent"
+  },
+  {
+   "slug": "land-clean-worktree-gate-20261122",
+   "branch": "codex/land-clean-worktree-gate-20261122",
+   "resolve_branch": "codex/resolve-land-clean-worktree-gate-20261122",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-native-autopilot-resolve-land-clean-worktree-gate-20261122",
+   "base_main": "cb5832eff34886df2a516037858fc0e7966ad564",
+   "source_head": "3fba3da49c6cc70a68a6a6d56559b0cf16f431d9",
+   "source_commits": [
+    "9a5ad1425bfbf6d63a6a858caf92f02e2b92645d",
+    "3fba3da49c6cc70a68a6a6d56559b0cf16f431d9"
+   ],
+   "created": "2026-11-22 13:38:23",
+   "updated": "2026-11-22 17:01:32",
+   "conflict_files": [
+    "ops/kgctl.py",
+    "ops/test-land-dirty-trunk-clean-worktree.py"
+   ],
+   "unresolved_files": [
+    "ops/kgctl.py",
+    "ops/test-land-dirty-trunk-clean-worktree.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "landed",
+   "gate_output": "→ codex/resolve-land-clean-worktree-gate-20261122: 7 提交、落后 0、无冲突\n  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main\n  !配置的落盘主干不可安全切换（/Users/danta/Documents/Codex/codex-autopilot-native-autopilot-trunk），已改用一次性干净主干：/Users/danta/Documents/Codex/codex-autopilot-native-autopilot-land-clean-1795337546\n  main 本地引用 cb5832ef -> 607c7aa2（同步 origin）\n  已把 52 个真相层文件从切换前状态写回（路由/台账不丢）\n  JSONL 台账 ops/truth/progress.jsonl 已与 HEAD 并集对齐（防旧状态根覆盖）\n  跳过 1 个备份/临时副本（留在磁盘，不进版本库）：ops/tasks/conflict_burden.json.bak-codex-20261025-042835\n  真相层 19 个文件已提交（chore(truth): sync state before landing）\n  PM 产品决策门 ok\n  真相层同步遇到非真相文件冲突，已放弃：ops/kgctl.py\n× 合并失败，已丢弃："
   },
   {
    "slug": "panel-project-route-ia",
@@ -89,7 +216,54 @@
    "updated": "2026-10-17 07:17:30",
    "status": "abandoned",
    "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
+  },
+  {
+   "slug": "native-thread-bridge",
+   "branch": "codex/native-thread-bridge",
+   "base_main": "e8857c7a18aa0712589b75f1b7e15aa590b7fbaf",
+   "source_head": "ffc371d3621cb1f8280f17fbfeaf597de11b3714",
+   "source_commits": [
+    "ffc371d3621cb1f8280f17fbfeaf597de11b3714"
+   ],
+   "conflict_files": [
+    "ops/test-central-command-followup-contract.py"
+   ],
+   "unresolved_files": [
+    "ops/test-central-command-followup-contract.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "created": "2026-11-25 22:32:47",
+   "updated": "2026-11-25 22:32:47",
+   "status": "abandoned",
+   "reason": "源提交的用户可见路由责任段落已在 main 的 plugin/skills/central-command/SKILL.md；其测试旧路径会被 main 的 release 目录兼容版本回退，port 实测 add/add 冲突后已 abort。源分支保留不动。"
+  },
+  {
+   "slug": "disk-admission-clean-20261027",
+   "branch": "codex/disk-admission-clean-20261027",
+   "base_main": "e8857c7a18aa0712589b75f1b7e15aa590b7fbaf",
+   "source_head": "728b93900d9e3376026062185d606bdc24523a25",
+   "source_commits": [
+    "728b93900d9e3376026062185d606bdc24523a25",
+    "50c852b82371cfec53b9798d232f09cfa42d6e0d",
+    "99f8548bb8568a994776f4d1516480f9d383942b",
+    "3896b32e0e20d8035a6ac5b3dd657a7dbbd6e7ee"
+   ],
+   "conflict_files": [
+    "ops/central_daemon.py",
+    "ops/selftest.py",
+    "plugin/.codex-plugin/plugin.json"
+   ],
+   "unresolved_files": [
+    "ops/central_daemon.py",
+    "ops/selftest.py",
+    "plugin/.codex-plugin/plugin.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "created": "2026-11-25 22:32:48",
+   "updated": "2026-11-25 22:32:48",
+   "status": "abandoned",
+   "reason": "磁盘准入、压力回收预算与相关回归均已由 main 的 central_daemon.py/selftest.py 覆盖；源分支还带旧版本目录与大规模过时树，整支合并会回退 main。源分支保留不动。"
   }
  ],
- "updated": "2026-10-27 21:01:21"
+ "updated": "2026-11-25 22:32:48"
 }

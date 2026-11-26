@@ -56,6 +56,57 @@ def ids_from(path):
     ]
 
 
+def prepare_truth(repo):
+    (repo / "ops" / "tasks").mkdir(parents=True)
+    (repo / "ops" / "truth").mkdir(parents=True)
+    (repo / "ops" / "tasks" / "inbox.jsonl").write_text("", encoding="utf-8")
+    for name in ("decisions", "ledger", "progress", "acceptance",
+                 "judgments", "constraints"):
+        (repo / "ops" / "truth" / f"{name}.jsonl").write_text(
+            "", encoding="utf-8")
+
+
+def truthctl(repo, state_dir, *args, env_extra=None):
+    env = os.environ.copy()
+    env.update({
+        "KG_REPO": str(repo),
+        "KG_TRUTH_ID_STATE_DIR": str(state_dir),
+    })
+    if env_extra:
+        env.update(env_extra)
+    return run([sys.executable, str(TRUTHCTL), *args], OPS.parent, env)
+
+
+def worktree_id_collision_regression(root):
+    """同一仓库不同 worktree 的高水位被隔离时，分支人工项也不能被主干门禁覆盖。"""
+    primary = root / "primary"
+    primary.mkdir()
+    git = lambda *args: run(["git", "-C", str(primary), *args], root, os.environ.copy())
+    git("init", "-q")
+    git("config", "user.email", "test@example.invalid")
+    git("config", "user.name", "Worktree ID Test")
+    (primary / "README").write_text("fixture\n", encoding="utf-8")
+    git("add", "README")
+    git("commit", "-q", "-m", "fixture")
+
+    branch = root / "branch"
+    git("worktree", "add", "-q", "-b", "codex/branch", str(branch))
+    prepare_truth(primary)
+    prepare_truth(branch)
+
+    branch_state = root / "branch-id-state"
+    main_state = root / "main-id-state"
+    truthctl(branch, branch_state, "accept", "面板人工验收", "--human",
+             "--steps", "看首屏")
+    truthctl(primary, main_state, "add", "acceptance", "门禁预跑（未落盘）",
+             env_extra={"KG_TRUTH_STATUS": "verified"})
+
+    branch_ids = ids_from(branch / "ops" / "truth" / "acceptance.jsonl")
+    main_ids = ids_from(primary / "ops" / "truth" / "acceptance.jsonl")
+    assert branch_ids == ["A-0001"], branch_ids
+    assert main_ids == ["A-0002"], main_ids
+
+
 def main():
     with tempfile.TemporaryDirectory(prefix="truthctl-cross-worktree-") as tmp:
         root = Path(tmp)
@@ -87,6 +138,8 @@ def main():
         state = json.loads(
             (state_dir / "truth-id-sequences.json").read_text(encoding="utf-8"))
         assert state["progress"] == 2, state
+
+        worktree_id_collision_regression(root)
 
 
 if __name__ == "__main__":

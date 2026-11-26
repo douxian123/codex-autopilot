@@ -12,8 +12,10 @@
 
 口径（改动必须先写进 decisions.jsonl）
 ------------------------------------
-  分母 = `ops/truth/ledger.jsonl` 里 `type=="ledger"` 的全部条目
-         （问题台账里的每一条，都代表被提出过一次的需求）
+  分母 = `ops/truth/ledger.jsonl` 里**按 id 收敛后**的条目数
+         （台账只追加、同 id 后写覆盖，所以「需求」只能按 id 取最新一条来数。
+           直接数物理行会把历史重开、旧快照当成一条条独立需求，分母虚高、
+           比例被压低——实测 851 行里只有 317 个 id）
   分子 = 分母中 `status=="done"` **且** `evidence` 非空的条目
          （标了 done 却没有证据的，按**未闭环**算，并单独报出来）
 
@@ -31,6 +33,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 OPS_DIR = Path(__file__).resolve().parent
+if str(OPS_DIR) not in sys.path:
+    sys.path.insert(0, str(OPS_DIR))
+from ledger_state import latest_ledger_by_id  # noqa: E402
+
 DEFAULT_REPO = OPS_DIR.parent
 EXIT_OK = 0
 EXIT_FAIL = 2
@@ -93,6 +99,10 @@ def compute(repo=None):
                        denominator=0, numerator=0, rate_pct=None,
                        done_without_evidence=[], not_closed={},
                        unreadable_lines=0)
+
+    # 分母必须先按 id 收敛：台账是只追加 + 同 id 后写覆盖（见 ledger_state），
+    # 直接遍历物理行会把历史重开/旧快照当成独立需求重复计数。
+    rows = list(latest_ledger_by_id(rows).values())
 
     closed, no_evidence = [], []
     status_counts = Counter()

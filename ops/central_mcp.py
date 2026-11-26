@@ -24,14 +24,69 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from datetime import datetime, timezone
 
 PROTOCOL_VERSION = "2025-06-18"
 SERVER_NAME = "codex-autopilot"
 
-OPS_DIR = Path(__file__).resolve().parent
-REPO = OPS_DIR.parent
-KGCTL = OPS_DIR / "kgctl.py"
-TRUTHCTL = OPS_DIR / "truthctl.py"
+# 面向用户的任务等级：只暴露三个用户能判断的词，底层仍映射到 model + effort。
+MODEL_ROUTE_LEVELS = ("quick", "standard", "deep")
+MODEL_ROUTE_DEFAULTS = {
+    "quick": {"model": None, "reasoning_effort": "low"},
+    "standard": {"model": None, "reasoning_effort": "medium"},
+    "deep": {"model": None, "reasoning_effort": "high"},
+}
+MODEL_ROUTE_EFFORTS = ("low", "medium", "high")
+MODEL_ROUTE_LABELS = {
+    "quick": "快速处理",
+    "standard": "标准施工",
+    "deep": "深度决策",
+}
+GOAL_OVERRIDE_MAX = 240
+MODEL_ROUTE_DESCRIPTIONS = {
+    "quick": "小修、门禁、界面来回，优先响应",
+    "standard": "常规实现与验证，按项目默认通道",
+    "deep": "架构、PRD、取舍判断，允许更慢更细",
+}
+
+# 本进程启动时所在的 ops/，也就是**正在跑的这份代码**。
+# 注意它不等于「现在装的是哪一份」：Codex 升级插件会删掉旧的版本目录，而这个
+# 已经在跑的进程不会重启（见 2026-11-16 的陈旧进程事故）。所以凡是去调
+# kgctl / truthctl 的地方，路径都必须在那一次调用的当下解析，不能在这里算一次就
+# 锁死 —— 那样等于把「目录被删」这件事固化进进程内存，原故障照旧复现。
+RUNNING_OPS = Path(__file__).resolve().parent
+REPO = RUNNING_OPS.parent
+
+from plugin_binding import (apply_plugin_env, binding_drift_guard,  # noqa: E402
+                            binding_health, binding_line,
+                            binding_recovery_action, current_ops,
+                            stale_code_problem)
+from request_context import RequestContextError, resolve_project  # noqa: E402
+
+
+def _live_ops() -> Path:
+    """这一次调用当下「真正装好的那份 ops/」。
+
+    为什么必须是函数、而不是模块级常量（2026-11-16 实测）：升级删掉旧版本目录的
+    动作发生在进程启动**之后**。若在 import 时把路径算一次，那时候旧目录还在，
+    `current_ops()` 会合法地判定「本目录能用」并返回它，路径就被锁死在一个很快
+    会被删掉的目录上 —— 之后每次调用照样 `can't open file`，原故障一字未改。
+    """
+    return current_ops()
+
+
+def _fallback_repo() -> Path:
+    """没有显式 KG_REPO 时，子进程该把 cwd / 状态根落在哪。"""
+    return _live_ops().parent
+
+
+def _infer_experience_kind(text: str, files, declared: str) -> str:
+    """Keep MCP intake and CLI inbox on the same visual/ux classification."""
+    try:
+        import experience_contract
+        return experience_contract.infer_experience_kind(text, files, declared)
+    except Exception:
+        return declared or "unknown"
 
 
 def _closure_rate_summary():
@@ -42,7 +97,7 @@ def _closure_rate_summary():
     """
     try:
         import closure_rate
-        res = closure_rate.compute(os.environ.get("KG_REPO") or REPO)
+        res = closure_rate.compute(os.environ.get("KG_REPO") or _fallback_repo())
     except Exception as exc:  # 模块坏了本身就是要上报的问题，不能静默成「没问题」
         res = {"status": "unknown",
                "reason": "闭环率计算失败（%s）" % exc,
@@ -59,10 +114,844 @@ def _closure_rate_line(res):
     return "北极星首问闭环率取不到：%s" % (res.get("reason") or "原因未记录")
 
 
+def _harness_health():
+    """状态管家：当前 harness 的上下文健康（压缩频率 / 峰值 input / 用量）。
+
+    真相只有一份：读 `budget_gate` 每拍已经算好的判定（`~/.codex-autopilot/
+    budget-gate.json` 的 `last_report`），不在这里重算一遍——否则面板和守护会
+    各说各话。取不到就说取不到，绝不用「正常」冒充（本项目硬规则 10）。
+
+    只读，不触发换代、不改任何 harness 配置；真正调优由 budget_gate 在越线时按
+    自己的保护条件（窗口空闲 + cooldown）执行，面板只负责让人看得见。
+    """
+    try:
+        base = Path(os.environ.get("KG_DAEMON_HOME")
+                    or (Path.home() / ".codex-autopilot")).expanduser()
+        data = json.loads((base / "budget-gate.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"status": "unknown",
+                "reason": "还没跑过状态体检（守护下一拍会写）", "threads": []}
+    if not isinstance(data, dict):
+        return {"status": "unknown", "reason": "状态体检记录格式不对", "threads": []}
+    report = data.get("last_report") or {}
+    rows = report.get("threads") or []
+    if not rows:
+        return {"status": "no_data", "updated": data.get("last_run"),
+                "reason": "状态体检还没测到长驻窗口", "threads": []}
+    order = {"ok": 0, "warn": 1, "over": 2}
+    worst = max(rows, key=lambda r: order.get(r.get("level"), -1))
+    level = worst.get("level") or "unknown"
+    return {
+        "status": "ok",
+        "level": level,
+        "updated": data.get("last_run"),
+        "headline": _harness_health_line(level, worst),
+        "reasons": worst.get("reasons") or [],
+        "usage": report.get("usage") or {},
+        # 只留面板描述健康所需的最小字段，不把整份 rollout 读数搬上屏。
+        "threads": [{
+            "automation": r.get("automation"),
+            "generation": r.get("generation"),
+            "level": r.get("level"),
+            "peak_input_recent": r.get("peak_input_recent"),
+            "compactions_recent": r.get("compactions_recent"),
+            "tokens_used": r.get("tokens_used"),
+            "reasons": r.get("reasons") or [],
+        } for r in rows],
+        "dispatch_paused": bool(data.get("dispatch_paused")),
+        "dispatch_paused_reason": data.get("dispatch_paused_reason") or "",
+    }
+
+
+def _harness_health_line(level, worst):
+    name = worst.get("automation") or "长驻窗口"
+    if level == "ok":
+        return "上下文健康：正常"
+    if level == "warn":
+        return "上下文偏紧：建议空闲时整理"
+    if level == "over":
+        return "上下文已饱和：建议空闲时换新窗口"
+    return "上下文健康：读不到判定"
+
+
+def _harness_tune_summary():
+    """状态管家：待用户点头的 harness 调整卡（只读，绝不在这里改 config）。
+
+    卡片由守护每拍按真实体检结论提出（见 harness_tune.py）；这里只把「有几张、
+    调什么、为什么」拼给面板。取不到就说取不到，不用「0 张」冒充（硬规则 10）。
+    """
+    try:
+        import harness_tune
+        rows = harness_tune.pending()
+    except Exception as exc:
+        return {"status": "unknown", "reason": f"读不到调整卡（{exc!r}）", "items": []}
+    items = [{
+        "id": r.get("id"),
+        "key": r.get("key"),
+        "label": _HARNESS_KEY_LABEL.get(r.get("key"), r.get("key")),
+        "old": r.get("old"),
+        "new": r.get("new"),
+        "why": r.get("why"),
+    } for r in rows]
+    return {"status": "ok", "count": len(items), "items": items}
+
+
+# 只给面板显示用的人话标签（键名本身照旧用于 apply，不翻译）。
+_HARNESS_KEY_LABEL = {
+    "model_auto_compact_token_limit": "上下文压缩线",
+    "tool_output_token_limit": "单条工具输出上限",
+}
+
+
+def _constraint_candidates_summary():
+    """上下文管家：待用户点头的「约束候选」（只读，绝不在这里写生效约束）。
+
+    候选由守护每拍扫已路由的入口原话提出（见 constraint_candidates.py）；这里只把
+    「有几条、原话是什么、命中什么信号」拼给面板。候选**不参与落盘门禁**，只有人
+    显式点头 promote 才升成生效约束。取不到就说取不到，不用「0 条」冒充。
+    """
+    try:
+        import constraint_candidates
+        rows = constraint_candidates.pending()
+    except Exception as exc:
+        return {"status": "unknown", "reason": f"读不到约束候选（{exc!r}）", "items": []}
+    learning = {"status": "unknown", "themes": []}
+    try:
+        import context_learning
+        observed = context_learning.observe()
+        learning = {"status": observed.get("status"),
+                    "themes": observed.get("themes") or [],
+                    "reason": observed.get("reason")}
+    except Exception as exc:
+        learning = {"status": "unknown", "reason": f"读不到重复主题（{exc!r}）", "themes": []}
+    items = [{
+        "id": r.get("id"),
+        "text": r.get("text"),
+        "title": r.get("title"),
+        "kind": r.get("kind"),
+        "scope": r.get("scope") or [],
+        "scope_class": r.get("scope_class"),
+        "signals": r.get("signals") or [],
+        "source": r.get("source") or "intake",
+        "mentions": r.get("mentions"),
+        "threads": r.get("threads"),
+        "priority": r.get("priority"),
+        "evidence": (r.get("evidence") or [])[:2],
+    } for r in rows]
+    return {"status": "ok", "count": len(items), "items": items, "learning": learning}
+
+
+def _context_archive_summary():
+    """上下文管家：只读档案投影，回答自动收了什么、来源是什么、现在停在哪。"""
+    try:
+        import context_archive
+        return context_archive.collect()
+    except Exception as exc:
+        return {
+            "status": "unknown",
+            "reason": f"上下文档案模块不可用（{exc!r}）",
+            "counts": {},
+            "items": [],
+            "unknown": [f"上下文档案模块不可用（{exc!r}）"],
+            "note": "取不到不等于 0 条。",
+        }
+
+
+def _acceptance_criteria_summary():
+    """验收管家：待用户点头的「可判定验收标准候选」（只读）。
+
+    候选从已路由原话里提名，确认前不进 acceptance.jsonl；确认后也只是登记
+    验收项，机器自证项仍需真门禁证据。取不到就说取不到，不用 0 冒充正常。
+    """
+    try:
+        import acceptance_criteria
+        rows = acceptance_criteria.pending()
+    except Exception as exc:
+        return {"status": "unknown", "reason": f"读不到验收标准候选（{exc!r}）",
+                "items": []}
+    items = [{
+        "id": r.get("id"),
+        "text": r.get("text"),
+        "title": r.get("title"),
+        "needs_human": bool(r.get("needs_human")),
+        "machine_gate_suggested": bool(r.get("machine_gate_suggested")),
+        "steps": r.get("steps") or "",
+        "signals": r.get("signals") or [],
+        "files": r.get("files") or [],
+    } for r in rows]
+    return {"status": "ok", "count": len(items), "items": items}
+
+
+def _pre_acceptance_summary():
+    """验收管家的产品级预验收闸：未 ready 不得进入用户验收台。"""
+    try:
+        import pre_acceptance
+        return pre_acceptance.evaluate(Path(_truth_dir()).parent.parent)
+    except Exception as exc:
+        return {
+            "status": "unknown",
+            "label": "验收管家：交付前自检取不到，不通知你验收",
+            "checks": [],
+            "passed": 0,
+            "total": 4,
+            "notify_user": False,
+            "reason": repr(exc),
+        }
+
+
+def _route_health_summary(payload, state=None):
+    """状态管家内部的路线/效能只读检测：不是第八个管家，不自动纠偏。
+
+    判据只来自现有现场：worker 生命周期声明的 scope、当前工作区改动、
+    生命周期世代/推进事件、已知 exec 卡点。拿不到就交给检测器输出 unknown；
+    没有在跑的实现时是明确的空闲 ok，不拿「没有对象」冒充「检测通过」。
+    现场组装逻辑在 `route_health_runtime`，与 daemon 每拍巡检共用，避免两套定义。
+    """
+    try:
+        import route_health_runtime
+    except Exception as exc:
+        return {"status": "ok", "level": "unknown",
+                "headline": "路线与效能判据取不到：检测器不可用（%s）" % exc,
+                "unknown": ["检测器不可用"], "reasons": [], "action": "none"}
+    summary = route_health_runtime.summarize(payload, state=state, runtime=RUNTIME)
+    try:
+        import route_review
+        summary["review"] = route_review.current(RUNTIME)
+    except Exception as exc:
+        summary["review"] = {"status": "error", "level": "unknown", "count": None,
+                             "items": [], "headline": "路线复核状态取不到（%s）" % exc}
+    return summary
+
+
+_RUNTIME_FRESHNESS_UNSET = object()
+
+
+def _autopilot_source_repo_path():
+    """Find the plugin source repo when this machine actually has one.
+
+    KG_REPO points at the *target project*, which is not always the autopilot
+    source. Only treat it as source when it visibly contains the plugin
+    manifest and this server, otherwise source-vs-installed comparison stays
+    unavailable instead of guessing.
+    """
+    candidates = (
+        os.environ.get("KG_AUTOPILOT_SOURCE_REPO"),
+        os.environ.get("KG_REPO"),
+    )
+    for raw in candidates:
+        if not raw:
+            continue
+        repo = Path(raw).expanduser()
+        if ((repo / "plugin/.codex-plugin/plugin.json").is_file()
+                and (repo / "ops/central_mcp.py").is_file()):
+            return repo
+    return None
+
+
+def _autopilot_source_commit():
+    """Read the local source main commit without fetching or changing refs."""
+    repo = _autopilot_source_repo_path()
+    if repo is None:
+        return None
+    for ref in ("refs/remotes/origin/main", "HEAD"):
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(repo), "rev-parse", ref],
+                capture_output=True, text=True, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        commit = (proc.stdout or "").strip() if proc.returncode == 0 else ""
+        if commit:
+            return commit
+    return None
+
+
+def _daemon_freshness_summary():
+    """只读采集 daemon 代际：plist 指向、共享存活判据绑定、daemon 源码 commit。"""
+    result = {"installed": None, "script": None, "live": None,
+              "source_commit": None, "repo_matches": None,
+              "bound_repo": None, "target_repo": None}
+    try:
+        import central_daemon
+        installed = central_daemon.PLIST_PATH.is_file()
+        result["installed"] = installed
+        result["script"] = central_daemon.plist_script_path()
+        if installed and result["script"]:
+            script = Path(result["script"])
+            metadata = script.parent.parent / ".codex-autopilot-source.json"
+            try:
+                import json
+                result["source_commit"] = str(
+                    json.loads(metadata.read_text(encoding="utf-8")).get("commit") or "").strip() or None
+            except (OSError, ValueError):
+                result["source_commit"] = None
+    except Exception:
+        return {k: None for k in result}
+
+    try:
+        import daemon_liveness
+        target = os.environ.get("KG_REPO") or _fallback_repo()
+        state = daemon_liveness.daemon_liveness(str(target))
+        result["live"] = state.get("live")
+        result["repo_matches"] = state.get("matches_repo")
+        result["bound_repo"] = state.get("bound_repo")
+        result["target_repo"] = state.get("repo")
+    except Exception:
+        result["live"] = None
+        result["repo_matches"] = None
+    return result
+
+
+def _runtime_freshness_summary(binding=None, source_commit=_RUNTIME_FRESHNESS_UNSET,
+                               daemon=_RUNTIME_FRESHNESS_UNSET):
+    """状态管家内部判据：源码、已装版本、运行代码、daemon 是否同一代。只读。"""
+    try:
+        import plugin_binding
+        import runtime_freshness
+    except Exception as exc:
+        return {"status": "ok", "level": "unknown",
+                "headline": "运行态判据取不到：检测器不可用（%s）" % exc,
+                "unknown": ["检测器不可用"], "reasons": [], "action": "none"}
+    if source_commit is _RUNTIME_FRESHNESS_UNSET:
+        source_commit = _autopilot_source_commit()
+    if daemon is _RUNTIME_FRESHNESS_UNSET:
+        daemon = _daemon_freshness_summary()
+    return runtime_freshness.evaluate(
+        binding or plugin_binding.install_consistency(),
+        source_commit=source_commit, daemon=daemon)
+
+
+def _project_health_summary(payload):
+    """全局健康层：项目真相 / 执行流动 / 验收三层，只读聚合，不造第二套台账。
+
+    与 `harness_health` 分开：那个回答「这台 harness 累不累」，这个回答
+    「这个项目还健康吗」。判据全部来自已有台账与面板已算好的运行面字段，
+    取不到就 unknown，绝不降级成「正常」。
+    """
+    try:
+        import project_health
+        blocked = payload.get("blocked") or {}
+        return project_health.compute(
+            os.environ.get("KG_REPO") or _fallback_repo(),
+            runtime={
+                "auto_exec": bool((payload.get("switches") or {}).get("auto_exec")),
+                "exec_stuck": len(blocked.get("exec") or []),
+                "land_failures": len(blocked.get("failures") or []),
+                "resolve": len(blocked.get("resolve") or []),
+                "overlap_waiting": len(blocked.get("exec_waiting") or []),
+            },
+        )
+    except Exception as exc:
+        # 模块坏了本身就是要上报的问题，不能静默成「没问题」。
+        return {"status": "unknown", "level": "unknown",
+                "headline": "项目健康算不出来（%s）" % exc,
+                "layers": [], "signals": {}}
+
+
+def _pm_briefing_summary(runtime=None):
+    """PM 简报：只读聚合预期、施工路径、让路与追问候选，不新增台账、不派活。"""
+    try:
+        import pm_briefing
+        return pm_briefing.compute(
+            os.environ.get("KG_REPO") or _fallback_repo(),
+            runtime=runtime or {},
+        )
+    except Exception as exc:
+        return {"status": "unknown",
+                "expectations": {"status": "unknown", "items": [], "missing": [str(exc)]},
+                "overlap_holds": {"status": "unknown", "items": [],
+                                  "note": "PM 简报算不出来（%s）" % exc},
+                "follow_up_candidates": {"status": "unknown", "items": [],
+                                         "note": "PM 简报算不出来（%s）" % exc},
+                "source": "pm_briefing 模块不可用"}
+
+
+def _authorized_followup_summary(root=None):
+    """追问授权账本的只读投影：候选不是动作，只有逐项 explicit 授权才可发送。"""
+    try:
+        import authorized_followup
+        return authorized_followup.summary(
+            Path(root) if root else Path(os.environ.get("KG_REPO") or _fallback_repo()))
+    except Exception as exc:
+        return {"status": "unknown", "items": [],
+                "counts": {"approved": None, "sent": None,
+                           "cancelled": None, "failed": None},
+                "note": "追问授权账本取不到（%s）；不把不知道当成 0。" % exc}
+
+
+def _relationship_goals_summary():
+    """关系层只读摘要：跨项目长期目标、需要人的时机，不派活、不替人定优先级。"""
+    try:
+        import relationship_ledger
+        return relationship_ledger.summary()
+    except Exception as exc:
+        return {"status": "unknown", "level": "unknown",
+                "headline": "跨项目目标取不到（%s）" % exc,
+                "note": "取不到不等于 0 条；本层不自动派活，也不替你决定目标。",
+                "count": None, "needs_human_count": None, "items": []}
+
+
+def _outcome_score_summary():
+    """结果代理分：只读原始台账，命令绿灯不冒充用户结果。"""
+    try:
+        import outcome_score
+        return outcome_score.compute(os.environ.get("KG_REPO") or _fallback_repo())
+    except Exception as exc:
+        return {"status": "unknown", "score": None, "grade": "未知",
+                "coverage": 0.0,
+                "headline": "结果代理分取不到（%s）" % exc,
+                "note": "取不到不等于 0 分；机器命令通过不等于用户结果变好。",
+                "components": [], "missing": ["结果代理分"], "shortfalls": []}
+
+
+def _screenshots_env(value):
+    """把 MCP 的 screenshots 数组归一成 truthctl 的 ':' 分隔 env。"""
+    if value is None:
+        return None
+    if isinstance(value, (list, tuple, set)):
+        items = [str(v).strip() for v in value if str(v or "").strip()]
+    else:
+        items = [x.strip() for x in str(value).replace(",", ":").split(":") if x.strip()]
+    return ":".join(items) or None
+
+
+def _acceptance_record(acceptance_id):
+    """按 id 取验收台账的最新一条；取不到就返回 None，不猜。"""
+    aid = str(acceptance_id or "").strip()
+    latest = {}
+    for row in _read_jsonl(_truth_dir() / "acceptance.jsonl"):
+        if row.get("id"):
+            latest[row["id"]] = row
+    return latest.get(aid)
+
+
+def _capture_ready_acceptance(record):
+    """只有已自验、仍待人工复核的项才允许补截图。
+
+    这把「先自验，再打扰用户」的顺序写进调用口：截图是复核附件，不能把
+    没有 evidence 的项伪装成可以给人看，也不能顺手把状态改成 verified。
+    """
+    rec = record or {}
+    return (bool(rec.get("needs_human"))
+            and rec.get("status") in ("todo", "wip", "blocked")
+            and bool(str(rec.get("evidence") or "").strip()))
+
+
+def _n(value):
+    """把可能为 None 的计数渲染成面板能读的字样。
+
+    实测缺陷（2026-11-17）：健康条直接把 `queue["clean"]` 之类塞进 `%s`，
+    守护没跑时那些字段是 None，于是首屏印出「可合 None · 冲突 None」——
+    内部空值泄漏到读者面。取不到就说「—」，不印 Python 字面量。
+    """
+    return "—" if value is None else str(value)
+
+
+def _ui_text(value, fallback="取不到"):
+    """UI 边界的最后一道脱敏：内部空值/布尔字面量不得进读者面。"""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return fallback
+    text = str(value)
+    return (text.replace("None", "取不到")
+                .replace("True", "是")
+                .replace("False", "否"))
+
+
+def _experience_summary():
+    """把体验契约投影成面板可渲染的只读摘要。
+
+    体验契约之前只被 kgctl 校验，面板首屏不消费，于是「注意力顺序」和
+    「适用状态」只停在文档里。这里只做投影，不重新定义契约，也不评分 taste。
+    """
+    path = REPO / "docs" / "experience" / "experience-contract.json"
+    fallback = {
+        "status": "unknown",
+        "headline": "体验契约取不到，首屏不冒充已按契约验收",
+        "schema_version": None,
+        "primary_task": None,
+        "attention_order": [],
+        "states": [],
+        "machine_checks": [],
+        "human_checks": [],
+    }
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return fallback
+    try:
+        import experience_contract
+        experience_contract.validate_contract(data)
+    except Exception as exc:
+        out = dict(fallback)
+        out["headline"] = "体验契约校验失败：%s" % _ui_text(exc)
+        return out
+    return {
+        "status": "ok" if data.get("experience_required") else "unknown",
+        "headline": "体验契约已生效：先%s，再让用户验收" % (
+            "看当前工作与阻塞" if data.get("attention_order") else "看当前状态"),
+        "schema_version": data.get("schema_version"),
+        "primary_task": data.get("primary_task"),
+        "attention_order": list(data.get("attention_order") or []),
+        "states": [s.get("name") for s in (data.get("states") or []) if isinstance(s, dict)],
+        "machine_checks": list(data.get("machine_checks") or []),
+        "human_checks": list(data.get("human_checks") or []),
+    }
+
+
+def _renderer_contract_summary():
+    """把权威 renderer contract 投给面板，当前 HTML 与最终面板都消费同一份。"""
+    fallback = {
+        "status": "unknown",
+        "headline": "面板渲染契约取不到，当前界面不冒充最终设计",
+        "mode": "unknown",
+        "final_visual_approved": False,
+        "official_ui_reuse": {"status": "unknown", "package": None},
+        "attention_order": [],
+        "states": [],
+        "resource_uri": None,
+    }
+    path = REPO / "docs" / "experience" / "panel-renderer-contract.json"
+    try:
+        import panel_renderer_contract
+        data = panel_renderer_contract.load(path)
+        panel_renderer_contract.validate(data)
+    except Exception as exc:
+        out = dict(fallback)
+        out["headline"] = "面板渲染契约校验失败：%s" % _ui_text(exc)
+        return out
+    return {
+        "status": "ok",
+        "headline": "当前面板是中间态 renderer，最终视觉另行定稿",
+        "mode": data.get("renderer_mode"),
+        "final_visual_approved": bool(data.get("final_visual_approved")),
+        "official_ui_reuse": {
+            "status": (data.get("official_ui_reuse") or {}).get("status"),
+            "package": (data.get("official_ui_reuse") or {}).get("package"),
+        },
+        "attention_order": list(data.get("attention_order") or []),
+        "states": [s.get("name") for s in (data.get("states") or []) if isinstance(s, dict)],
+        "resource_uri": data.get("resource_uri"),
+    }
+
+
+def _steward_recent_completed(limit=3):
+    """Return conservatively attributed recent progress for steward details."""
+    # 公共 gate / product / project 等词会同时命中多个职责，不能拿来做归属。
+    # 只接受明确的 lane 标记或职责专属中文标题；判不清就留在项目级最近完成。
+    rules = (
+        ("context", ("context",), ("上下文", "约束", "归档")),
+        ("route", ("route", "router", "routing"), ("路由", "归属", "待路由")),
+        ("merge", ("land", "merge", "conflict", "resolve"), ("合入", "合并", "冲突", "收拢")),
+        ("tune", ("runtime", "freshness", "harness", "disk"), ("运行态", "状态管家", "换代", "磁盘门禁")),
+        ("exec", ("exec", "implement", "worker"), ("实现管家", "自动实现", "施工")),
+        ("accept", ("acceptance", "verification", "verify"), ("验收", "验收标准", "验证")),
+        ("pm", ("panel", "pm", "prd"), ("项目经理", "项目路线", "面板首屏")),
+    )
+    latest = {}
+    for row in _read_jsonl(_truth_dir() / "progress.jsonl"):
+        if row.get("id"):
+            latest[row["id"]] = row
+    out = {key: [] for key, _, _ in rules}
+    rows = sorted(latest.values(), key=lambda row: str(row.get("ts") or ""), reverse=True)
+    for row in rows:
+        if row.get("status") not in ("done", "wontfix"):
+            continue
+        lane = str(row.get("lane") or "").lower()
+        title = " ".join(str(row.get("title") or row.get("summary") or "").split())
+        title_lower = title.lower()
+        matches = []
+        for key, lane_needles, title_needles in rules:
+            if any(n in lane for n in lane_needles) or any(n in title_lower for n in title_needles):
+                matches.append(key)
+        key = matches[0] if len(matches) == 1 else None
+        if not key or len(out[key]) >= limit:
+            continue
+        out[key].append({"title": title[:120], "ts": row.get("ts") or ""})
+    return out
+
+
+def _steward_health(payload):
+    """七管家健康条：把七个管家的真实状态收敛成一份面板可读的清单。
+
+    用户问过「面板要怎么做」，也给过「单一入口 + 背后许多管家」的完整设想。
+    面板此前只散着显示路由/合并/实现/项目经理的一部分，状态与上下文管家按到最近
+    才有卡 —— 没有一个地方能一眼看出**哪个管家断了**。这里只做**聚合**，判据全部
+    来自各处已经算好的真实字段，不重算、不新增第二套真相。
+
+    每个管家给三样：`key`（稳定标识）、`state`（ok / attention / off / unknown）、
+    `label`（人话一行）。`state` 只有这四态：`attention` = 需要人或需要修，
+    `off` = 用户自己关的（不是故障），`unknown` = 取不到（不冒充正常）。
+
+    末尾另有一行 `health`，它不是第八个管家，而是只读的项目级全局健康结论。
+    """
+    sw = payload.get("switches") or {}
+    daemon = payload.get("daemon") or {}
+    tune = payload.get("harness_tune") or {}
+    cand = payload.get("constraint_candidates") or {}
+    learning = cand.get("learning") or {}
+    acc_criteria = payload.get("acceptance_criteria") or {}
+    harness_health = payload.get("harness_health") or {}
+    route_health = payload.get("route_health") or {}
+    route_review = route_health.get("review") or {}
+    route_review_count = route_review.get("count")
+    project_health = payload.get("project_health") or {}
+    runtime_freshness = payload.get("runtime_freshness") or {}
+    queue = payload.get("queue") or {}
+    counters = payload.get("counters") or {}
+    blocked = payload.get("blocked") or {}
+
+    rows = []
+    # 面板默认只展示三条；这里多取一小段，供用户主动展开更早记录。
+    recent_by_key = _steward_recent_completed(limit=12)
+
+    # 1. 上下文管家：自动收录候选 + 生效约束条数。候选待确认 = 需要人，不是故障。
+    try:
+        import constraints as constraints_mod
+        active = len(constraints_mod.active_constraints(_truth_dir() / "constraints.jsonl"))
+    except Exception:
+        active = None
+    pending_c = cand.get("count")
+    if cand.get("status") != "ok" or active is None:
+        rows.append({"key": "context", "state": "unknown",
+                     "label": "上下文管家：约束台账读不到"})
+    elif pending_c:
+        label = "上下文管家：%s 条候选等你确认 · 已生效 %s 条" % (pending_c, active)
+        if learning.get("status") == "ok" and learning.get("themes"):
+            label += " · 发现 %s 个重复主题" % len(learning["themes"])
+        rows.append({"key": "context", "state": "attention", "label": label})
+    else:
+        rows.append({"key": "context", "state": "ok",
+                     "label": "上下文管家：已生效 %s 条约束，无待确认" % active})
+
+    # 2. 路由管家：跨项目收口是不是真在跑。真实判据是全局待路由箱里还没归到项目的
+    # 条数（`_answer_needed_count`），不是 `_route_summary` 里的字段——它根本没有
+    # unrouted，写成那样会永远走「已归类」的假绿。
+    unrouted = _answer_needed_count()
+    if not daemon.get("live"):
+        rows.append({"key": "route", "state": "unknown",
+                     "label": "路由管家：守护没在跑，收口状态取不到"})
+    elif unrouted:
+        rows.append({"key": "route", "state": "attention",
+                     "label": "路由管家：%s 条还在等归属，没进任何项目" % unrouted})
+    else:
+        rows.append({"key": "route", "state": "ok",
+                     "label": "路由管家：新收需求都已归到项目"})
+
+    # 3. 合并管家：自动合入 / 拆冲突的开关与卡点。
+    if not sw.get("auto_land"):
+        rows.append({"key": "merge", "state": "off",
+                     "label": "合并管家：自动合入已关"})
+    elif blocked.get("failures") or blocked.get("resolve"):
+        rows.append({"key": "merge", "state": "attention",
+                     "label": "合并管家：%s 条卡在门禁 / %s 条待拆冲突"
+                     % (len(blocked.get("failures") or []), len(blocked.get("resolve") or []))})
+    else:
+        rows.append({"key": "merge", "state": "ok",
+                     "label": "合并管家：可合 %s · 已合 %s · 冲突 %s"
+                     % (_n(queue.get("clean")), _n(counters.get("landed")),
+                        _n(queue.get("conflict")))})
+
+    # 4. 状态管家：待点头的 harness 调整卡 + 上下文健康 + 路线/效能复核 + 运行态新鲜度。
+    # 这些信号都是同一个管家内部的只读检测器；不新增一行，也不生成动作。
+    route_level = route_health.get("level")
+    freshness_level = runtime_freshness.get("level")
+    if tune.get("status") != "ok":
+        rows.append({"key": "tune", "state": "unknown",
+                     "label": "状态管家：调整卡读不到"})
+    elif freshness_level == "attention":
+        rows.append({"key": "tune", "state": "attention",
+                     "label": "状态管家：%s（需受控换代或重载，不会自动重启）"
+                     % (runtime_freshness.get("headline") or "运行态需要复核")})
+    elif route_level == "unknown":
+        rows.append({"key": "tune", "state": "unknown",
+                     "label": "状态管家：%s" % (route_health.get("headline")
+                                              or "路线与效能判据取不到")})
+    elif route_review.get("status") == "error":
+        rows.append({"key": "tune", "state": "unknown",
+                     "label": "状态管家：%s" % (route_review.get("headline")
+                                              or "路线复核状态取不到")})
+    elif route_review_count:
+        rows.append({"key": "tune", "state": "attention",
+                     "label": "状态管家：%s 项路线与效能待复核（只提复核，不自动纠偏）"
+                              % route_review_count})
+    elif tune.get("count"):
+        rows.append({"key": "tune", "state": "attention",
+                     "label": "状态管家：%s 张调整卡等你点头（config 未动）" % tune.get("count")})
+    elif harness_health.get("status") == "ok" and harness_health.get("level") in ("warn", "over"):
+        rows.append({"key": "tune", "state": "attention",
+                     "label": "状态管家：%s" % (harness_health.get("headline") or "上下文偏紧")})
+    elif route_level == "attention":
+        rows.append({"key": "tune", "state": "attention",
+                     "label": "状态管家：路线与效能需复核（只提复核，不自动纠偏）"})
+    elif freshness_level == "unknown":
+        # 开发检出没有安装锚点只是「判据不足」，不能盖住真正需要人看的路线
+        # attention。放在最后：有可执行结论先报，确实取不到才报取不到。
+        rows.append({"key": "tune", "state": "unknown",
+                     "label": "状态管家：%s" % (runtime_freshness.get("headline")
+                                              or "运行态判据取不到")})
+    else:
+        rows.append({"key": "tune", "state": "ok",
+                     "label": "状态管家：%s" % (harness_health.get("headline") or "当前无待调整项")})
+
+    # 5. 实现管家：auto_exec 开关。关着是用户的选择（off），不是故障。
+    if not sw.get("auto_exec"):
+        rows.append({"key": "exec", "state": "off",
+                     "label": "实现管家：自动实现已关（只路由和合并，不自动写码）"})
+    elif blocked.get("exec"):
+        rows.append({"key": "exec", "state": "attention",
+                     "label": "实现管家：%s 条实现卡住" % len(blocked.get("exec") or [])})
+    else:
+        rows.append({"key": "exec", "state": "ok",
+                     "label": "实现管家：已开，会按槽位自动派活"})
+
+    # 6. 项目经理：对外可视的三问面板本身是否在产出。取不到就说取不到。
+    if payload.get("project", {}).get("path"):
+        rows.append({"key": "pm", "state": "ok",
+                     "label": "项目经理：已绑定 %s，三问面板在产出"
+                     % _ui_text(payload["project"].get("name"), "未命名项目")})
+    else:
+        rows.append({"key": "pm", "state": "unknown",
+                     "label": "项目经理：还没绑定项目"})
+
+    # 7. 验收管家：先把活自己跑一遍，验完了才来提醒人。顺序是语义，不是礼貌：
+    # 没人自验的人工项如果直接进「等你验收」，用户就成了第一道测试。
+    self_check_n = payload.get("self_check_count")
+    human_ready = payload.get("human_acceptance") or []
+    if self_check_n is None:
+        rows.append({"key": "accept", "state": "unknown",
+                     "label": "验收管家：待自验项读不到"})
+    elif acc_criteria.get("status") != "ok":
+        rows.append({"key": "accept", "state": "unknown",
+                     "label": "验收管家：验收标准候选取不到"})
+    elif acc_criteria.get("count"):
+        rows.append({"key": "accept", "state": "attention",
+                     "label": "验收管家：%s 条验收标准候选等你确认（未登记）"
+                     % acc_criteria.get("count")})
+    elif (payload.get("pre_acceptance_blocked_count") or 0) or (
+            payload.get("pre_acceptance", {}).get("status") in ("blocked", "unknown")):
+        pre = payload.get("pre_acceptance") or {}
+        pre_checks = pre.get("checks") or []
+        failed = [r.get("title") for r in pre_checks if r.get("state") != "pass"]
+        label = "、".join([x for x in failed if x][:2]) or "交付前自检"
+        rows_text = "；".join(
+            "%s：%s" % (r.get("title"), r.get("summary"))
+            for r in pre_checks if r.get("state") != "pass"
+        )
+        rows_text = rows_text or "证据不完整"
+        rows.append({"key": "accept", "state": "attention",
+                     "label": "验收管家：%s 未通过，先返修，不通知你验收（%s）"
+                     % (label, rows_text)})
+    elif self_check_n and not sw.get("auto_exec"):
+        # 待自验却没人会去跑，是真实卡点，不是「正在处理」。
+        rows.append({"key": "accept", "state": "attention",
+                     "label": "验收管家：%s 条还没自验，但自动实现已关，没人会去跑" % self_check_n})
+    elif self_check_n:
+        rows.append({"key": "accept", "state": "ok",
+                     "label": "验收管家：%s 条正在自验，验完才提醒你" % self_check_n})
+    elif human_ready:
+        rows.append({"key": "accept", "state": "attention",
+                     "label": "验收管家：%s 条已自验，等你确认" % len(human_ready)})
+    else:
+        rows.append({"key": "accept", "state": "ok",
+                     "label": "验收管家：没有待你验收的项"})
+
+    # 8. 全局健康：不只 harness，而是项目真相 / 执行流动 / 验收三层。
+    # 与上面七行不同，它不为某一道工序负责，专门回答「这个项目还健康吗」。
+    p_state = project_health.get("level")
+    if project_health.get("status") != "ok" or p_state not in ("ok", "attention", "unknown"):
+        rows.append({"key": "health", "state": "unknown",
+                     "label": "全局健康：%s" % (project_health.get("headline")
+                                               or "结论取不到")})
+    else:
+        rows.append({"key": "health", "state": p_state,
+                     "label": "全局健康：%s" % (project_health.get("headline")
+                                               or "暂无异常")})
+
+    stable_order = {key: index for index, key in enumerate(
+        ("context", "route", "merge", "tune", "exec", "pm", "accept", "health"))}
+    rows.sort(key=lambda r: stable_order.get(r.get("key"), 99))
+    counts = {}
+    for r in rows:
+        counts[r["state"]] = counts.get(r["state"], 0) + 1
+    descriptions = {
+        "context": "维护项目约束与历史上下文",
+        "route": "将新需求归入正确项目",
+        "merge": "把通过门禁的改动安全收口",
+        "tune": "观察运行状态并提出调整建议",
+        "exec": "在授权范围内实现工程项",
+        "pm": "整理项目目标、路线和下一步",
+        "accept": "先完成机器自验，再交给你确认",
+        "health": "汇总项目真相、运行和验收状态",
+    }
+    for row in rows:
+        row["label"] = _ui_text(row.get("label"), "状态取不到")
+        key = row.get("key")
+        row["description"] = descriptions.get(key, "当前职责状态")
+        row["recent_completed"] = recent_by_key.get(key, [])
+    return {"rows": rows, "counts": counts}
+
+
+def _autonomy_summary(state):
+    """授权情况摘要：这一拍有多少工序是明确授权执行的、多少还在观察、多少等你转正。
+
+    判据只读守护写进 `state.json` 的 `last_passes`，不重算注册表、不维护第二套真相。
+    取不到时返回 `unknown` 并如实写「取不到」——不能把「没有记录」显示成
+    「0 条在观察」，那等于假装一切正常。
+    """
+    passes = (state or {}).get("last_passes")
+    if not isinstance(passes, list) or not passes:
+        return {
+            "status": "unknown",
+            "label": "授权情况：本轮记录取不到",
+            "explicit": None,
+            "observing": None,
+            "proposed": None,
+            "passes": [],
+        }
+
+    def _detail(pass_row):
+        row = pass_row if isinstance(pass_row, dict) else {}
+
+        def _value(key):
+            value = row.get(key)
+            return str(value).strip() if value not in (None, "") else "取不到"
+
+        return {
+            "name": _value("name"),
+            "mode": _value("mode"),
+            "status": _value("status"),
+            "authorization": _value("authorization"),
+            "effect": _value("effect"),
+        }
+
+    explicit = sum(1 for p in passes if (p or {}).get("authorization") == "explicit")
+    observing = sum(1 for p in passes if (p or {}).get("mode") == "observe")
+    proposed = sum(1 for p in passes if (p or {}).get("status") == "proposed")
+    errored = sum(1 for p in passes if (p or {}).get("status") == "errored")
+    bits = ["已明确授权 %d 条" % explicit, "观察中 %d 条" % observing]
+    if proposed:
+        bits.append("%d 条等你转正" % proposed)
+    if errored:
+        bits.append("%d 条出错" % errored)
+    return {
+        "status": "ok",
+        "label": "授权情况：" + " · ".join(bits),
+        "explicit": explicit,
+        "observing": observing,
+        "proposed": proposed,
+        "errored": errored,
+        "passes": [_detail(p) for p in passes],
+    }
+
+
 def _server_version() -> str:
-    """版本以插件清单为准，避免 MCP 里再写死一份导致漂移。"""
+    """版本以插件清单为准，避免 MCP 里再写死一份导致漂移。
+
+    读的是**当前装好的那一份**清单，不是本进程启动时的旧目录 —— 旧目录在升级后
+    已经不存在，读它只会退回 "0.0.0"，让面板看不出自己到底跑的是哪一代。
+    """
     for rel in (".codex-plugin/plugin.json", "plugin/.codex-plugin/plugin.json"):
-        manifest = OPS_DIR.parent / rel
+        manifest = _live_ops().parent / rel
         try:
             return json.loads(manifest.read_text(encoding="utf-8")).get("version", "0.0.0")
         except (OSError, ValueError):
@@ -72,10 +961,10 @@ def _server_version() -> str:
 
 SERVER_VERSION = _server_version()
 
-from plugin_binding import apply_plugin_env, binding_health, binding_line  # noqa: E402
-
 import control_state  # noqa: E402
+import project_autonomy  # noqa: E402
 import codex_native  # noqa: E402
+import acceptance_criteria  # noqa: E402
 from ledger_state import latest_ledger_by_id  # noqa: E402
 
 try:
@@ -93,8 +982,9 @@ PANEL_URI = "ui://autopilot/panel-v2.html"
 
 def _panel_html_path():
     """面板 HTML 在源码树里是 plugin/ui/，自包含安装后是 <插件根>/ui/。"""
-    for cand in (OPS_DIR.parent / "ui" / "panel.html",
-                 OPS_DIR.parent / "plugin" / "ui" / "panel.html"):
+    root = _live_ops().parent
+    for cand in (root / "ui" / "panel.html",
+                 root / "plugin" / "ui" / "panel.html"):
         if cand.exists():
             return cand
     return None
@@ -106,7 +996,7 @@ def _run(argv, extra_env=None, timeout=900):
         env.update({k: str(v) for k, v in extra_env.items() if v is not None})
     # cwd 用状态根：kgctl 的 git 回退路径（worktree list / rev-parse）要落在目标项目里，
     # 而不是插件自己所在的目录（那里通常不是一个 Git 仓库）。
-    cwd = os.environ.get("KG_REPO") or str(REPO)
+    cwd = os.environ.get("KG_REPO") or str(_fallback_repo())
     try:
         p = subprocess.run([sys.executable, *argv], capture_output=True, text=True,
                            cwd=cwd, env=env, timeout=timeout)
@@ -119,18 +1009,96 @@ def _run(argv, extra_env=None, timeout=900):
 
 
 def kgctl(*args, extra_env=None):
-    return _run([str(KGCTL), *args], extra_env)
+    return _run([str(_live_ops() / "kgctl.py"), *args], extra_env)
+
+
+def _json_line(text):
+    """从 kgctl 输出里取最后一行 JSON；人类可读行仍在，机器只读结构化尾行。"""
+    for line in reversed(str(text or "").splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            got = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(got, dict):
+            return got
+    return None
+
+
+def _registered_projects():
+    try:
+        import project_router
+        return [{"name": str(p.get("name") or ""),
+                 "root": str(p.get("root") or "")}
+                for p in project_router.load_registry()
+                if p.get("name")]
+    except Exception:
+        return []
+
+
+def _global_routing_summary():
+    """全局待路由箱的三态摘要：ok 有明确计数，unknown 绝不冒充 0。"""
+    projects = _registered_projects()
+    try:
+        import project_router
+        path = project_router.routing_inbox_path()
+        if not path.exists():
+            return {"status": "ok", "count": 0, "items": [],
+                    "projects": projects, "path": str(path),
+                    "text": "全局待路由箱为空"}
+        pending = project_router.pending_routing_records(path)
+        items = []
+        for item in pending:
+            row = item.get("record") or {}
+            items.append({
+                "index": item.get("index"),
+                "fingerprint": item.get("fingerprint"),
+                "ts": row.get("ts"),
+                "text": str(row.get("text") or ""),
+                "candidates": [c.get("name") for c in (row.get("candidates") or [])
+                               if isinstance(c, dict) and c.get("name")],
+            })
+        count = len(items)
+        return {"status": "ok", "count": count, "items": items,
+                "projects": projects, "path": str(path),
+                "text": ("全局待路由 %d 条待复核" % count) if count
+                        else "全局待路由箱为空"}
+    except Exception as exc:
+        return {"status": "unknown", "count": None, "items": [],
+                "projects": projects, "error": str(exc),
+                "text": "全局待路由箱取不到；不会当成 0 条"}
 
 
 def truthctl(*args, extra_env=None):
-    return _run([str(TRUTHCTL), *args], extra_env)
+    return _run([str(_live_ops() / "truthctl.py"), *args], extra_env)
+
+
+def _request_env(args, *, required=False):
+    """Resolve per-call project context without guessing across projects."""
+    args = args or {}
+    if not args.get("project") and not args.get("cwd"):
+        if required:
+            raise RequestContextError(
+                "当前入口缺少项目归属；请传入 project 或 cwd，未写入任何项目账本")
+        return {}
+    try:
+        repo = resolve_project(project=args.get("project"), cwd=args.get("cwd"),
+                               bound=os.environ.get("KG_REPO"))
+    except RequestContextError as exc:
+        raise exc
+    return {"KG_REPO": str(repo)}
 
 
 TOOLS = [
     {
         "name": "project_status",
         "description": "一屏看清项目到哪了：状态根、主干、待路由输入、分支可合并/冲突数、共享检出脏度。用户问“现在到哪了 / 还有什么没做”时先用它。",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "inputSchema": {"type": "object", "properties": {
+            "project": {"type": "string", "description": "当前项目状态根绝对路径"},
+            "cwd": {"type": "string", "description": "当前 Codex 工作目录"},
+        }, "additionalProperties": False},
     },
     {
         "name": "capture_request",
@@ -143,6 +1111,28 @@ TOOLS = [
                           "description": "相关文件路径（可选，帮助路由到既有泳道）"},
                 "kind": {"type": "string", "enum": ["visual", "ux", "bug", "arch", "gate", "unknown"],
                          "description": "粗分类，拿不准就用 unknown"},
+                "cwd": {"type": "string",
+                        "description": "当前会话所在目录（强烈建议带上）。归属判定靠它区分不同项目；不带就可能判不清，记录会进全局待路由箱而不是某个项目账本"},
+                "project": {"type": "string",
+                            "description": "明确指定项目名或状态根（用户说了是哪个项目时带上）"},
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "route_preview",
+        "description": "只读预演当前这句话会落到哪个项目：不改账本、不注册项目。判不清就明说，默认落点也明说，不猜。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "用户原话，别重写、别归类"},
+                "files": {"type": "array", "items": {"type": "string"},
+                          "description": "相关文件路径（可选，帮助判断落点）"},
+                "cwd": {"type": "string",
+                        "description": "当前会话所在目录（可选；调用方知道时带上）"},
+                "project": {"type": "string",
+                            "description": "明确指定的项目名或状态根（可选）"},
             },
             "required": ["text"],
             "additionalProperties": False,
@@ -152,6 +1142,26 @@ TOOLS = [
         "name": "sync_control_plane",
         "description": "自动挡主循环：路由 inbox 到固定泳道 -> 刷新项目真相 -> 刷新控制看板 -> 落盘真相层 -> 给出下一步。用户一次抛了多条需求后调用。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "routing_review_list",
+        "description": "只读列出全局待路由箱里仍未复核指派的投稿。它不等于 route_inbox：后者是把当前项目 inbox 落到泳道，这里只处理跨项目判不清归属的原始记录。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "routing_review_assign",
+        "description": "把一条全局待路由投稿显式指派给某个项目。默认预演不写账本；只有同时给出 fingerprint、project、confirm=true 才追加目标项目 inbox 和复核凭证，原始待路由记录不删不改。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "fingerprint": {"type": "string", "description": "routing_review_list 返回的稳定指纹"},
+                "project": {"type": "string", "description": "注册项目名、别名或状态根路径；歧义会拒绝，绝不取第一个"},
+                "reason": {"type": "string", "description": "复核依据，写进 append-only 凭证"},
+                "confirm": {"type": "boolean", "description": "true 才真正追加；缺省或 false 只预演"},
+            },
+            "required": ["fingerprint", "project"],
+            "additionalProperties": False,
+        },
     },
     {
         "name": "route_inbox",
@@ -214,6 +1224,42 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
+        "name": "constraints_add",
+        "description": "把用户说过的一句预期/返修/决策/禁忌收成一条带 scope 的项目约束。目的是“说过一次就不再犯”：scope 写清管哪些路径/模块，实现那块改动时系统会自动把相关约束拼给执行者。能写成断言的门禁填 gate，审美/手感填 checklist，老实标 none。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "statement": {"type": "string", "description": "约束原话（用户怎么说就怎么记，别改写）"},
+                "kind": {"type": "string", "enum": ["expectation", "rework", "decision", "taboo"],
+                         "description": "预期 / 返修 / 决策 / 禁忌，默认 expectation"},
+                "scope": {"type": "string",
+                          "description": "管哪些路径或模块，冒号分隔的 glob，如 “backend:plugin/ui/*.html”；留空=全局约束（恒命中）"},
+                "enforceable": {"type": "string", "enum": ["none", "gate", "checklist"],
+                                "description": "none=纯记录 / gate=有机器门禁 / checklist=人验收项，默认 none"},
+                "cmd": {"type": "string",
+                        "description": "enforceable=gate 时必填：落盘那一刻真跑的验证命令（如 “python3 ops/test-x.py”）。写不出命令就别标 gate。"},
+                "cwd": {"type": "string",
+                        "description": "命令的工作目录，相对仓库根，默认仓库根"},
+                "policy_version": {"type": "string", "description": "约束版本标识，可选（用于改动传播）"},
+                "supersedes": {"type": "string", "description": "被这条取代的旧约束 id，可选"},
+            },
+            "required": ["statement"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "constraints_list",
+        "description": "列出项目约束台账；带 files 时只列命中这些路径的（这就是“精准调取”：不是把全部上下文喂进去）。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "files": {"type": "array", "items": {"type": "string"},
+                          "description": "改动文件路径，可选；给了就只返回命中的约束"},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "close_item",
         "description": "关闭问题台账里的一条（bug/视觉/体验/架构）：标 done 并把结论追加成进展；可带 commit 与证据。用户报的 bug 修完、验收过之后调用，让它从「收到」走到「已关闭」，不再依赖用户自己记。",
         "inputSchema": {
@@ -223,6 +1269,7 @@ TOOLS = [
                 "note": {"type": "string", "description": "结论/证据，一句话"},
                 "commit": {"type": "string", "description": "落盘 commit sha，可选"},
                 "evidence": {"type": "string", "description": "可复核的验证证据，可选"},
+                "confirm_human": {"type": "boolean", "description": "仅当用户亲口说过「看过/可以了」时传 true。视觉、体验类条目默认停在「等你确认」，不要自己替用户签收。"},
             },
             "required": ["id"],
             "additionalProperties": False,
@@ -250,10 +1297,17 @@ TOOLS = [
                 "title": {"type": "string", "description": "验收项标题，一句话"},
                 "needs_human": {"type": "boolean", "description": "true=必须人拍板（审美/手感/真实产品里点一下）；false=机器自证"},
                 "steps": {"type": "string", "description": "人要怎么复核，如“1) 打开面板 2) 看第一屏 3) 确认不挤”"},
+                "screenshots": {"type": "array", "items": {"type": "string"},
+                                "description": "待用户复核的截图/录屏路径，可选；不参与机器自验判定"},
                 "level": {"type": "string", "description": "优先级，默认 P1"},
                 "lane": {"type": "string", "description": "归属分支，可选"},
-                "status": {"type": "string", "description": "todo / wip / verified，默认 todo"},
+                "status": {"type": "string", "description": "todo / wip / blocked / verified / void，默认 todo"},
                 "evidence": {"type": "string", "description": "机器自证的真实命令+结果，可选"},
+                "domain": {"type": "string", "description": "验收域，可选；体验任务可填 experience"},
+                "criterion": {"type": "string", "description": "体验契约中的验收项，可选"},
+                "standard": {"type": "string", "description": "适用标准或项目契约版本，可选"},
+                "applicable": {"type": "boolean", "description": "该验收项是否适用，可选"},
+                "contract_version": {"type": "string", "description": "体验契约版本，可选"},
             },
             "required": ["title"],
             "additionalProperties": False,
@@ -263,6 +1317,38 @@ TOOLS = [
         "name": "suggest_branch",
         "description": "按文件重叠给“该并进哪个既有分支”的只读建议，不落账。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "resolve_acceptance",
+        "description": "收敛一条已登记的验收项：人工拍板（用户看过、点过、说可以）或机器复核完之后，把对应 A-id 从 todo/wip/blocked 翻成 verified；误登记项翻成 void，从卡点与验收统计里消失。传 id 必带 status；人工拍板不需要 evidence，机器复核建议带 evidence。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "验收台账 id，如 A-0030"},
+                "status": {"type": "string", "enum": ["todo", "wip", "blocked", "verified", "void"],
+                           "description": "目标状态；人工验收通过用 verified"},
+                "note": {"type": "string", "description": "为什么翻成这个状态，一句话，可选"},
+                "evidence": {"type": "string", "description": "机器复核的命令+结果，可选"},
+                "screenshots": {"type": "array", "items": {"type": "string"},
+                                "description": "补充待复核截图路径，可选；只追加，不覆盖已有附件"},
+            },
+            "required": ["id", "status"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "capture_acceptance_screenshot",
+        "description": "用户在面板上主动给一条待人工复核的验收项补截图：本机交互式框选，图片写到用户级目录，只把路径追加到对应 A-id 的 screenshots，绝不自动把验收项标成通过。必须显式 confirm=true。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "验收台账 id，如 A-0030"},
+                "confirm": {"type": "boolean",
+                            "description": "用户已点击「补一张复核截图」并明确同意框选；false 一律拒绝"},
+            },
+            "required": ["id", "confirm"],
+            "additionalProperties": False,
+        },
     },
     {
         "name": "intake_request",
@@ -275,6 +1361,18 @@ TOOLS = [
                           "description": "相关文件路径（可选，帮助路由到既有泳道）"},
                 "kind": {"type": "string", "enum": ["visual", "ux", "bug", "arch", "gate", "unknown"],
                          "description": "粗分类，拿不准就用 unknown"},
+                "cwd": {"type": "string",
+                        "description": "当前会话所在目录（强烈建议带上）。归属判定靠它区分不同项目；不带就可能判不清，记录会进全局待路由箱而不是某个项目账本"},
+                "project": {"type": "string",
+                            "description": "明确指定项目名或状态根（用户说了是哪个项目时带上）"},
+                "product_shape": {"type": "array", "items": {"type": "string"},
+                                  "description": "产品形态，如 web_app / browser_extension / backend_service"},
+                "delivery_goal": {"type": "string",
+                                   "description": "交付目标，如 reviewable / acceptance_ready / production_release"},
+                "impacts": {"type": "array", "items": {"type": "string"},
+                            "description": "显式影响标签，如 security / deployment / performance"},
+                "confirm_scope": {"type": "boolean",
+                                  "description": "确认将本次动态验收范围写入目标项目；默认只返回预览"},
             },
             "required": ["text"],
             "additionalProperties": False,
@@ -360,7 +1458,7 @@ TOOLS = [
     },
     {
         "name": "autopilot_status",
-        "description": "自动挡的当前状态：总开关 on/draining/off/error、自动开关、Codex 原生 task/worktree 映射（仅已有真实记录）、正在做什么和需要处理的事项。面板用它渲染；fast=true 只读缓存。",
+        "description": "Codex Autopilot 的当前状态：总开关 on/draining/off/error、自动开关、Codex 原生 task/worktree 映射（仅已有真实记录）、正在做什么和需要处理的事项。面板用它渲染；fast=true 只读缓存。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -370,8 +1468,26 @@ TOOLS = [
         },
     },
     {
+        "name": "project_autonomy_status",
+        "description": "查看当前项目的自主运行状态、任务队列、运行中的 worker、等待用户事项和过期租约。它只读，不启动任务。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "project_autonomy_control",
+        "description": "设置当前项目的自主运行模式：enable 只登记项目、run 开始持续推进、pause 暂停新派活、wait 等待用户、disable 关闭项目自主运行。项目级状态不影响其它项目。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "action": {"type": "string", "enum": ["enable", "run", "pause", "wait", "disable"]},
+                "reason": {"type": "string", "description": "暂停或等待的原因，可选"},
+            },
+            "required": ["action"],
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "autopilot_control",
-        "description": "控制自动挡总开关与运行状态。disable 关闭外挂并拒绝新自动工作，enable 恢复；pause 暂停推进但允许安全收尾，resume 恢复；其余 action 控制自动动作和后台常驻。",
+        "description": "控制 Codex Autopilot 总开关与运行状态。disable 关闭外挂并拒绝新自动工作，enable 恢复；pause 暂停推进但允许安全收尾，resume 恢复；其余 action 控制自动动作和持续运行。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -394,8 +1510,12 @@ TOOLS = [
     },
     {
         "name": "codex_native_probe",
-        "description": "真跑一次「原生直连」自检：桌面端控制 socket 通不通、能不能把任务派进 Codex 窗口。结果会记下来，面板显示的是这次实测结果而不是猜测。",
-        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "description": "真跑一次「原生直连」自检：桌面端控制 socket 通不通、能不能把任务派进 Codex 窗口。缺 socket 时可显式要求启动官方 app-server daemon 修复，不会杀桌面端、不改 provider。结果会记下来，面板显示的是这次实测结果而不是猜测。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"repair": {"type": "boolean", "description": "仅在控制 socket 缺失时启动官方 app-server daemon；默认 false"}},
+            "additionalProperties": False,
+        },
     },
     {
         "name": "codex_native_create_section",
@@ -461,7 +1581,7 @@ TOOLS = [
     },
     {
         "name": "render_autopilot_panel",
-        "description": "打开自动挡面板（inline 卡片 / 对话侧栏 / 全局侧栏 / 全屏）。面板第一屏用大白话说明：它是什么、怎么用（普通 Codex 输入框就是总输入框，不用新建对话或分支）、它替你做了什么、现在在做什么、你需要做什么、随时可暂停。用户问“自动挡在哪看 / 怎么用 / 现在开着吗”时用它。",
+        "description": "打开 Codex Autopilot 原生面板（MCP App：inline 卡片 / 对话侧栏 / 全局侧栏 / 全屏）。用户说“打开 Codex Autopilot 面板 / 打开自动挡面板 / 面板打不开 / 面板在哪看”时必须立即调用本工具，不要只解释入口、不要只去侧栏找按钮，也不要打开 CONTROL_PLANE.html / companion panel / browser 页面冒充面板。面板第一屏用大白话说明：需要你决定什么、系统正在做什么、真正闭环了什么，并可随时暂停。",
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         "_meta": {
             "ui": {"resourceUri": PANEL_URI},
@@ -472,8 +1592,16 @@ TOOLS = [
                 "entrypoints": [{"type": "global"}, {"type": "thread"}],
                 "preferredModelDisplayMode": "inline",
             },
-            "openai/toolInvocation/invoking": "打开自动挡面板…",
-            "openai/toolInvocation/invoked": "自动挡面板已打开。",
+            "openai/toolInvocation/invoking": "打开 Codex Autopilot 面板…",
+            "openai/toolInvocation/invoked": "Codex Autopilot 面板已打开。",
+        },
+        # Codex treats MCP tools without explicit read-only semantics as approval-gated.
+        # Opening the bundled panel is local and non-destructive; declaring it here
+        # lets the host render the app inline without an approval prompt.
+        "annotations": {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "openWorldHint": False,
         },
     },
     {
@@ -526,6 +1654,300 @@ TOOLS = [
             "required": ["values"],
         },
     },
+    {
+        "name": "project_goal_read",
+        "description": "读取当前绑定项目的用户目标与自动生成目标。用户目标为空时，面板显示自动生成目标。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "project_goal_update",
+        "description": "更新当前绑定项目的用户目标；传空字符串会清除覆盖并恢复自动生成目标。只影响当前项目，不动其他项目。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project_path": {"type": "string", "description": "可选；目标项目根目录。留空表示当前绑定项目。项目卡编辑必须传该项目自己的路径。"},
+                "goal": {"type": "string", "description": "用户填写的目标；留空表示恢复自动生成目标。"},
+                "confirm": {"type": "boolean", "description": "必须由用户显式确认后写入。"},
+            },
+            "required": ["goal", "confirm"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "model_routes_read",
+        "description": "读取全局任务模型路由：快速处理、标准施工、深度决策各自的模型与推理程度。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "annotations": {"readOnlyHint": True},
+    },
+    {
+        "name": "model_routes_update",
+        "description": "更新全局任务模型路由。未填模型的等级继续沿用现有 fast/slow 通道，不会新建另一套调度器。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "routes": {
+                    "type": "object",
+                    "properties": {
+                        "quick": {"type": "object"},
+                        "standard": {"type": "object"},
+                        "deep": {"type": "object"},
+                    },
+                    "additionalProperties": False,
+                },
+                "confirm": {"type": "boolean", "description": "必须由用户显式确认后写入。"},
+            },
+            "required": ["routes", "confirm"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "harness_tune_list",
+        "description": "状态管家：列出待你点头的 harness 调整卡（压缩线 / 单条工具输出上限）。这些卡由守护按长驻窗口的真实体检结论提出；不点头 config 一个字都不会变。用户问“上下文健康 / 该不该调配置 / 状态管家提了什么”时用它。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "harness_tune_apply",
+        "description": "状态管家：应用一张调整卡。只有用户明确点头才能调用（confirm=true 是「人已同意」的语义）。应用前按字节备份 config.toml，只替换白名单里那一个键的那一行，其余字节不动；出卡后 config 被人改过则整张卡作废，绝不覆盖人的编辑。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "调整卡 id，如 T-0001"},
+                "confirm": {"type": "boolean",
+                            "description": "必须为 true：代表用户已经明确同意这次改动"},
+            },
+            "required": ["id", "confirm"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "harness_tune_rollback",
+        "description": "状态管家：把一张已应用的调整卡按字节回滚到应用前的 config.toml。改了不舒服可以一键退回，这个动作只碰被这张卡改过的那份文件。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "string", "description": "调整卡 id，如 T-0001"}},
+            "required": ["id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "constraint_candidates_list",
+        "description": "上下文管家：列出待你点头的「约束候选」。这些候选由守护扫已路由的入口原话自动提出（命中「绝不/必须/不许/以后都/记住」等规范性措辞），附上你的原话与命中信号。候选**不参与落盘门禁**，不点头就什么都不生效。用户问“上下文管家收了我哪些说法 / 有没有待确认的约束”时用它。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "context_archive",
+        "description": "上下文管家：只读查看自动收录档案，区分待确认、已确认、已驳回和生效约束，保留来源、重复次数、会话数与用户原话。这里不提供第二个审批入口：要确认或驳回仍走 constraint_candidate_promote / constraint_candidate_dismiss。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "constraint_candidate_promote",
+        "description": "上下文管家：把一条候选升成真正生效的项目约束（走 truthctl constraints add）。只有用户明确点头才能调用（confirm=true 是「人已同意」的语义）。生效后这条会参与落盘门禁与执行者 prompt，所以必须由人确认。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "候选 id，如 CC-0001"},
+                "confirm": {"type": "boolean",
+                            "description": "必须为 true：代表用户已经明确同意这条约束"},
+            },
+            "required": ["id", "confirm"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "constraint_candidate_dismiss",
+        "description": "上下文管家：把一条候选标记为「不算」——它既不会生效，以后同一句原话也不会再弹回来。用户说“这条不算 / 我不是那个意思 / 别收这条”时用它。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "候选 id，如 CC-0001"},
+                "reason": {"type": "string", "description": "为什么不算（可选，仅留档）"},
+            },
+            "required": ["id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "acceptance_criteria_list",
+        "description": "验收管家：列出待确认的「可判定验收标准候选」。守护从已路由原话里提名“怎么算完成”，候选阶段不写验收台账、不伪造自验证据，也不会自动催用户。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "generate_acceptance_scope",
+        "description": "按当前产品形态、交付目标、任务文本和改动文件生成最小充分验收范围。默认只预览；confirm=true 且项目归属明确时，才写入目标项目 ops/truth/acceptance_scope.json。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "本次交付或变更描述"},
+                "kind": {"type": "string", "description": "任务类型，如 visual / bug / gate / documentation"},
+                "files": {"type": "array", "items": {"type": "string"}},
+                "product_shape": {"type": "array", "items": {"type": "string"}},
+                "delivery_goal": {"type": "string", "description": "如 reviewable / acceptance_ready / production_release"},
+                "impacts": {"type": "array", "items": {"type": "string"}},
+                "cwd": {"type": "string"},
+                "project": {"type": "string"},
+                "confirm": {"type": "boolean", "description": "true 才写入验收范围；默认只预览"},
+            },
+            "required": ["text"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "acceptance_criteria_promote",
+        "description": "验收管家：用户点头后，把一条验收标准候选登记成正式验收项（走 truthctl accept）。confirm=true 表示用户已明确同意；确认后仍需真门禁证据，机器自证项不会自动标 verified，人工项也不会自动催用户。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "候选 id，如 AC-0001"},
+                "confirm": {"type": "boolean", "description": "必须为 true：代表用户已明确同意"},
+                "needs_human": {"type": "boolean", "description": "是否必须人看；默认按候选建议"},
+                "steps": {"type": "string", "description": "复核步骤（可选，默认按原话生成）"},
+                "level": {"type": "string", "description": "优先级，如 P0 / P1"},
+            },
+            "required": ["id", "confirm"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "acceptance_criteria_dismiss",
+        "description": "验收管家：把一条验收标准候选标记为「不算」——不登记验收项，同一句原话以后也不会再弹回来。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "id": {"type": "string", "description": "候选 id，如 AC-0001"},
+                "reason": {"type": "string", "description": "为什么不算（可选，仅留档）"},
+            },
+            "required": ["id"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "followup_authorize",
+        "description": "PM 管家：逐项授权一条追问候选。候选本身不会自动发消息；只有 confirm=true 才先把 explicit 授权写入 append-only 授权账本，再由后台在发送前重新校验资格后投递一次。重复授权不会重复打扰。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "ticket_id": {"type": "string", "description": "工作项 id，如 L-0021"},
+                "thread_id": {"type": "string", "description": "真实 Codex 原生窗口 id"},
+                "prompt": {"type": "string", "description": "要发给该窗口的追问答"},
+                "reason": {"type": "string", "description": "为什么现在授权追问；会留在账本里"},
+                "confirm": {"type": "boolean",
+                            "description": "必须为 true：代表用户已经明确同意这条追问"},
+            },
+            "required": ["ticket_id", "thread_id", "prompt", "reason", "confirm"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "followup_cancel",
+        "description": "PM 管家：撤销一条尚未发送的追问授权。已经发出去的消息不能撤回；撤销只追加事件，不覆盖历史。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "request_id": {"type": "string", "description": "授权 id，如 FU-xxxxxxxx"},
+                "reason": {"type": "string", "description": "为什么撤销；必填留痕"},
+            },
+            "required": ["request_id", "reason"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "followup_list",
+        "description": "PM 管家：只读查看追问授权账本摘要，区分 approved/sent/cancelled/failed；取不到就说取不到，不把不知道当成 0。",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+    },
+    {
+        "name": "pm_research_status",
+        "description": "PM 管家：查看竞品/开源研究与产品决策状态。只展示研究结论、等待确认和阻塞，不把没有证据误报成没有成熟方案。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"research_id": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "pm_research_request",
+        "description": "PM 管家：为一个产品诉求创建研究请求。研究由宿主或人工适配器提供证据；本工具不联网、不绑定搜索 provider。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "intent_id": {"type": "string"},
+                "question": {"type": "string"},
+                "scope": {"type": "array", "items": {"type": "string"}},
+                "research_level": {"type": "string", "enum": ["L0", "L1", "L2", "L3"]},
+                "risk_level": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
+            },
+            "required": ["intent_id", "question"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "pm_research_evidence",
+        "description": "PM 管家：写入一个研究来源和证据摘要。来源必须可追溯；许可证未知时不能自动 Adopt。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "research_id": {"type": "string"},
+                "source_url": {"type": "string"},
+                "source_kind": {"type": "string"},
+                "title": {"type": "string"},
+                "claims": {"type": "array", "items": {"type": "string"}},
+                "license_status": {"type": "string"},
+                "maintenance_signal": {"type": "string"},
+                "relevance": {"type": "string"},
+                "confidence": {"type": "string"},
+                "notes": {"type": "string"},
+            },
+            "required": ["research_id", "source_url"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "pm_research_option",
+        "description": "PM 管家：登记候选方案及 Adopt/Adapt/Build/Defer/Reject 判断。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "research_id": {"type": "string"},
+                "name": {"type": "string"},
+                "disposition": {"type": "string", "enum": ["adopt", "adapt", "build", "defer", "reject"]},
+                "rationale": {"type": "string"},
+                "capabilities": {"type": "array", "items": {"type": "string"}},
+                "gaps": {"type": "array", "items": {"type": "string"}},
+                "license_status": {"type": "string"},
+                "confidence": {"type": "string"},
+                "selected": {"type": "boolean"},
+            },
+            "required": ["research_id", "name"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "pm_product_decide",
+        "description": "PM 管家：将研究候选写入既有决策台账。L3、高风险或许可证未知的 Adopt 必须 confirm=true；未批准不能施工。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "research_id": {"type": "string"},
+                "choice": {"type": "string", "enum": ["adopt", "adapt", "build", "defer", "reject"]},
+                "selected_option": {"type": "string"},
+                "why": {"type": "string"},
+                "alternatives": {"type": "array", "items": {"type": "string"}},
+                "confirm": {"type": "boolean"},
+            },
+            "required": ["research_id", "choice"],
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "pm_execution_gate",
+        "description": "PM 管家：检查一个工作项是否已有可执行的产品决策；没有决策或高风险未批准时 fail-closed。",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"intent_id": {"type": "string"}, "research_id": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    },
 ]
 
 # 设置项：宿主在插件设置页用原生控件渲染，本 server 负责读值、写值、持久化。
@@ -534,17 +1956,18 @@ TOOLS = [
 SETTINGS_READ_TOOL = "autopilot_settings_read"
 SETTINGS_UPDATE_TOOL = "autopilot_settings_update"
 
+
 SETTINGS_SCHEMA = {
     "type": "object",
     "properties": {
         "enabled": {
             "type": "boolean",
-            "title": "启用 Codex 自动挡",
-            "description": "关闭后停止自动挡的 intake、调度与后台动作；已有任务和工作区保留。",
+            "title": "启用 Codex Autopilot",
+            "description": "关闭后停止 Codex Autopilot 的接收、调度与持续运行；已有任务和工作区保留。",
         },
         "paused": {
             "type": "boolean",
-            "title": "暂停自动挡",
+            "title": "暂停 Codex Autopilot",
             "description": "暂停后不再启动新工作；正在跑的 Git 操作会安全收尾。",
         },
         "auto_land": {
@@ -569,7 +1992,7 @@ SETTINGS_SCHEMA = {
         },
         "daemon_enabled": {
             "type": "boolean",
-            "title": "后台常驻",
+            "title": "持续运行",
             "description": "用系统自带的常驻机制定时检查；关掉后只在对话里手动触发。",
         },
     },
@@ -590,7 +2013,7 @@ SETTINGS_LAYOUT = [
         {"kind": "property", "property": "auto_port"},
         {"kind": "property", "property": "auto_exec"},
     ]},
-    {"kind": "group", "title": "后台", "items": [
+    {"kind": "group", "title": "持续运行", "items": [
         {"kind": "property", "property": "daemon_enabled"},
     ]},
 ]
@@ -603,29 +2026,173 @@ def _json_file(path):
         return {}
 
 
+def _central_config_path(repo=None):
+    root = Path(repo or os.environ.get("KG_REPO") or _fallback_repo()).expanduser()
+    return root / "ops" / "central.config.json"
+
+
+def _atomic_write_json(path: Path, data: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                   encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _truth_dir_for(project_path=None):
+    repo = Path(project_path or os.environ.get("KG_REPO") or _fallback_repo()).expanduser()
+    return repo.resolve() / "ops" / "truth"
+
+
+def _goal_text(ml):
+    """用户目标优先；没有用户目标时退回自动摘要。"""
+    ml = ml if isinstance(ml, dict) else {}
+    override = str(ml.get("goal_override") or "").strip()
+    auto = str(ml.get("one_liner") or "").strip()
+    return override or auto, override, auto
+
+
+def _project_goal_payload(project_path=None):
+    path = _truth_dir_for(project_path) / "mainline.json"
+    ml = _json_file(path)
+    goal, override, auto = _goal_text(ml)
+    return {
+        "project_path": str(Path(project_path).expanduser().resolve()) if project_path else None,
+        "goal": goal,
+        "goal_override": override,
+        "auto_goal": auto,
+        "editable": True,
+        "source": "user" if override else ("auto" if auto else "missing"),
+        "__text__": goal or "这个项目还没有可显示的目标。",
+    }
+
+
+def _project_goal_update(goal, project_path=None):
+    guard = control_state.mutation_guard()
+    if guard:
+        return guard, 2
+    text = str(goal or "").strip()
+    if len(text) > GOAL_OVERRIDE_MAX:
+        return "项目目标请控制在 %d 字以内。" % GOAL_OVERRIDE_MAX, 2
+    tdir = _truth_dir_for(project_path)
+    if project_path:
+        repo = tdir.parent.parent
+        if not repo.is_dir() or not (repo / ".git").exists():
+            return "找不到这个项目目录；目标没有写入。", 2
+    path = tdir / "mainline.json"
+    try:
+        ml = _json_file(path)
+        if text:
+            ml["goal_override"] = text
+        else:
+            ml.pop("goal_override", None)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_json(path, ml)
+    except OSError as exc:
+        return "项目目标未写入：%s" % exc, 2
+    payload = _project_goal_payload(project_path)
+    payload["persisted"] = True
+    payload["__text__"] = ("目标已更新；只影响当前项目。"
+                           if text else "用户目标已清空；面板恢复自动摘要。")
+    return payload, 0
+
+
+def _model_routes_read_payload():
+    data = _json_file(_central_config_path())
+    cfg = data.get("auto_exec") if isinstance(data.get("auto_exec"), dict) else {}
+    configured = cfg.get("model_routes") if isinstance(cfg.get("model_routes"), dict) else {}
+    legacy_effort = str(cfg.get("reasoning_effort") or "").strip()
+    levels = []
+    routes = {}
+    labels = MODEL_ROUTE_LABELS
+    for key in MODEL_ROUTE_LEVELS:
+        row = configured.get(key) if isinstance(configured.get(key), dict) else {}
+        model = str(row.get("model") or "").strip() or None
+        effort = str(row.get("reasoning_effort") or row.get("effort") or "").strip()
+        if effort not in MODEL_ROUTE_EFFORTS:
+            effort = legacy_effort if legacy_effort in MODEL_ROUTE_EFFORTS else \
+                MODEL_ROUTE_DEFAULTS[key]["reasoning_effort"]
+        source = "project" if (row.get("model") or row.get("reasoning_effort")
+                               or row.get("effort")) else ("legacy" if legacy_effort else "default")
+        routes[key] = {"model": model, "reasoning_effort": effort}
+        levels.append({"key": key, "label": labels[key],
+                       "description": MODEL_ROUTE_DESCRIPTIONS[key],
+                       "model": model or "", "reasoning_effort": effort,
+                       "source": source})
+    return {"levels": levels, "routes": routes,
+            "__text__": "任务模型：快速处理 / 标准施工 / 深度决策"}
+
+
+def _model_routes_update(routes):
+    guard = control_state.mutation_guard()
+    if guard:
+        return guard, 2
+    if not isinstance(routes, dict):
+        return "model_routes_update 需要 routes。", 2
+    normalized = {}
+    for key in MODEL_ROUTE_LEVELS:
+        row = routes.get(key)
+        if row is None:
+            continue
+        if not isinstance(row, dict):
+            return "%s 的模型路由格式不对。" % key, 2
+        model = str(row.get("model") or "").strip()
+        if len(model) > 200:
+            return "%s 的模型名太长。" % key, 2
+        effort = str(row.get("reasoning_effort") or row.get("effort") or "").strip()
+        if effort and effort not in MODEL_ROUTE_EFFORTS:
+            return "%s 的推理程度只支持 low / medium / high。" % key, 2
+        item = {"model": model or None, "reasoning_effort": effort or None}
+        item = {k: v for k, v in item.items() if v is not None}
+        if item:
+            normalized[key] = item
+    path = _central_config_path()
+    try:
+        data = _json_file(path) if path.exists() else {}
+        cfg = data.get("auto_exec") if isinstance(data.get("auto_exec"), dict) else {}
+        if normalized:
+            cfg["model_routes"] = normalized
+        else:
+            cfg.pop("model_routes", None)
+        data["auto_exec"] = cfg
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _atomic_write_json(path, data)
+    except OSError as exc:
+        return "任务模型路由未写入：%s" % exc, 2
+    payload = _model_routes_read_payload()
+    payload["persisted"] = True
+    payload["__text__"] = "任务模型已保存。"
+    return payload, 0
+
+
 def _daemon_state():
     return _json_file(RUNTIME / "state.json")
 
 
 def _daemon_live():
-    """从 launchd 读取存活状态和绑定项目，不用受沙箱限制的 kill(pid, 0)。"""
-    uid = os.getuid() if hasattr(os, "getuid") else 0
+    """从 launchd 读取存活状态和绑定项目，不用受沙箱限制的 kill(pid, 0)。
+
+    判据只有一份（ops/daemon_liveness.py），与 kgctl status / doctor 共用；
+    否则面板和 CLI 会各说各话：CLI 报「未安装」而面板仍显示「持续运行=开」。
+    """
     try:
-        result = subprocess.run(
-            ["launchctl", "print", f"gui/{uid}/com.codex-autopilot.daemon"],
-            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=3,
-        )
-    except (OSError, subprocess.TimeoutExpired):
+        import daemon_liveness
+    except Exception:
         return False, None, None
-    if result.returncode != 0:
-        return False, None, None
-    text = result.stdout or ""
-    state = re.search(r"(?m)^\s*state = (\w+)\s*$", text)
-    pid_match = re.search(r"(?m)^\s*pid = (\d+)\s*$", text)
-    repo_match = re.search(r"(?m)^\s*KG_REPO => (.+?)\s*$", text)
-    pid = int(pid_match.group(1)) if pid_match else None
-    bound_repo = str(Path(repo_match.group(1)).expanduser().resolve()) if repo_match else None
-    return bool(state and state.group(1) == "running" and pid), pid, bound_repo
+    st = daemon_liveness.daemon_liveness(os.environ.get("KG_REPO") or _fallback_repo())
+    return bool(st.get("live")), st.get("pid"), st.get("bound_repo")
+
+
+def _daemon_liveness_action(daemon_enabled=True):
+    """一次采样同时产生 doctor 详情与首屏短结论，避免同一拍两份读数。"""
+    try:
+        import daemon_liveness
+        st = daemon_liveness.daemon_liveness(os.environ.get("KG_REPO") or _fallback_repo())
+        problem = daemon_liveness.liveness_problem(st, daemon_enabled)
+        headline, detail = daemon_liveness.liveness_need_action(st, daemon_enabled)
+        return problem, headline, detail
+    except Exception:
+        return None, None, None
 
 
 def _ledger_count():
@@ -666,21 +2233,49 @@ def _open_ledger_count():
 
 
 def _truth_dir():
-    repo = os.environ.get("KG_REPO") or str(REPO)
+    repo = os.environ.get("KG_REPO") or str(_fallback_repo())
     return Path(repo) / "ops" / "truth"
 
 
-def _roadmap():
-    """mainline.json 的产品路线：每一步到哪了。只读、秒级。"""
-    ml = _json_file(_truth_dir() / "mainline.json")
+# 产品路线的状态别名。项目自己的 truthctl.py 已经把 in_progress 文档化为合法的
+# 「进行中」（ROADMAP_LABEL 里与 doing 同义），但面板/文本/主线摘要只认 doing。
+# 2026-11-16 实测后果：ThoughLoom 的 mainline.json 里 5 条路线全是 in_progress，
+# 面板因此一条都匹配不上，只能一路退到 next / 首个未完成项 —— 用户看到的「当前阶段」
+# 是错的。归一放在数据源头这一处，三个消费点一起修好，不各修一遍。
+ROADMAP_STATUS_ALIASES = {
+    "in_progress": "doing", "in-progress": "doing", "active": "doing",
+    "ongoing": "doing", "wip": "doing", "current": "doing",
+    "complete": "done", "completed": "done", "finished": "done", "shipped": "done",
+    "todo": "todo", "pending": "todo", "not_started": "todo", "backlog": "todo",
+    "next": "next", "planned": "next", "upcoming": "next",
+}
+
+
+def _normalize_roadmap_status(status):
+    """把项目侧的状态词归一成面板统一的 done|doing|next|todo。"""
+    if not isinstance(status, str):
+        return "todo"
+    key = status.strip().lower()
+    if key in ("done", "doing", "next", "todo"):
+        return key
+    return ROADMAP_STATUS_ALIASES.get(key, "todo")
+
+
+def _roadmap_rows(ml):
+    """mainline.json 的 roadmap → [{step, expected, status}]，状态已归一。"""
     rows = []
     for it in (ml.get("roadmap") or []):
         if isinstance(it, str):
             rows.append({"step": it, "expected": "", "status": "todo"})
         elif isinstance(it, dict):
             rows.append({"step": it.get("step", ""), "expected": it.get("expected", ""),
-                         "status": it.get("status") or "todo"})
+                         "status": _normalize_roadmap_status(it.get("status"))})
     return rows
+
+
+def _roadmap():
+    """mainline.json 的产品路线：每一步到哪了。只读、秒级。"""
+    return _roadmap_rows(_json_file(_truth_dir() / "mainline.json"))
 
 
 def _project_folder_project_ids():
@@ -927,15 +2522,11 @@ def _read_project_truth(root):
 
     ml = _json_file(truth / "mainline.json")
     mainline_product = ml.get("product") or ""
-    mainline_one_liner = ml.get("one_liner") or ""
+    auto_goal = ml.get("one_liner") or ""
+    goal_override = ml.get("goal_override") or ""
+    mainline_one_liner = goal_override or auto_goal
     mainline_stage = ml.get("stage") or ""
-    road = []
-    for item in (ml.get("roadmap") or []):
-        if isinstance(item, str):
-            road.append({"step": item, "expected": "", "status": "todo"})
-        elif isinstance(item, dict):
-            road.append({"step": item.get("step", ""), "expected": item.get("expected", ""),
-                         "status": item.get("status") or "todo"})
+    road = _roadmap_rows(ml)
     current_step = next((r for r in road if r.get("status") == "doing"), None)
     if not current_step:
         current_step = next((r for r in road if r.get("status") == "next"), None)
@@ -951,6 +2542,8 @@ def _read_project_truth(root):
         "route_tasks": route_tasks,
         "product": mainline_product,
         "one_liner": mainline_one_liner,
+        "auto_goal": auto_goal,
+        "goal_override": goal_override,
         "stage": mainline_stage,
         "quality_gate": _read_quality_gate(root),
         "engineering_radar": _read_engineering_radar(root),
@@ -964,7 +2557,7 @@ def _project_folders(fast=True):
     自己的 ops/truth，绝不写回，也不把别的项目工作项混进当前项目。读不到某个项目
     账本时，该文件夹保留并明确标成无法读取，不静默显示 0。
     """
-    current = str(Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve())
+    current = str(Path(os.environ.get("KG_REPO") or _fallback_repo()).expanduser().resolve())
     ml = _mainline_summary()
     board = _acceptance_board()
     road = _roadmap()
@@ -1000,6 +2593,8 @@ def _project_folders(fast=True):
             "active": bool(meta.get("active") or (meta.get("path") or current) == current),
             "product": data.get("product") or meta.get("product") or Path(meta.get("path") or current).name,
             "one_liner": data.get("one_liner") or meta.get("one_liner") or "",
+            "auto_goal": data.get("auto_goal") or "",
+            "goal_override": data.get("goal_override") or "",
             "stage": data.get("stage") or meta.get("stage") or "",
             "source_thread_id": meta.get("source_thread_id"),
             "current_step": data.get("current_step") or "路线待拆解",
@@ -1030,11 +2625,16 @@ def _project_folders(fast=True):
         "active": True,
         "product": ml.get("product") or Path(current).name,
         "one_liner": ml.get("one_liner") or "",
+        "auto_goal": ml.get("auto_goal") or "",
+        "goal_override": ml.get("goal_override") or "",
         "stage": ml.get("stage") or "",
         "source_thread_id": current_meta.get("source_thread_id"),
         "quality_gate": current_meta.get("quality_gate"),
     }, {
         "roadmap": road,
+        "one_liner": ml.get("one_liner") or "",
+        "auto_goal": ml.get("auto_goal") or "",
+        "goal_override": ml.get("goal_override") or "",
         "current_step": (current_step or {}).get("step") or "路线待拆解",
         "current_step_status": (current_step or {}).get("status") or "todo",
         "doing_items": board.get("doing") or [],
@@ -1126,10 +2726,47 @@ def _auto_section_name():
     """
     base = codex_native.DEFAULT_SECTION_NAME
     try:
-        project = Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve().name
+        project = Path(os.environ.get("KG_REPO") or _fallback_repo()).expanduser().resolve().name
     except (OSError, ValueError):
         project = ""
     return "%s · %s" % (base, project) if project else base
+
+
+_THREAD_TITLE_RE = re.compile(r"[^0-9A-Za-z\u4e00-\u9fff]+")
+
+
+def _compact_project_label(item, cwd=""):
+    """从账本/路径取一个短项目名，供原生对话标题使用。"""
+    raw = str(item.get("project") or item.get("project_root") or cwd or "").strip()
+    if not raw:
+        return "global"
+    name = Path(raw).name
+    parts = [p for p in _THREAD_TITLE_RE.split(name.lower()) if p]
+    if len(parts) > 1:
+        short = "".join(p[0] for p in parts)
+    else:
+        short = name
+    short = _THREAD_TITLE_RE.sub("", short).lower()[:12]
+    return short or "global"
+
+
+def _native_thread_prompt(item, prompt, cwd=""):
+    """把原生子对话的首句做成可扫读的标题，同时保留完整任务正文。
+
+    Codex 侧栏标题来自首条 user message；当前 app-server 契约没有独立的
+    thread/rename，所以把约定格式放在首行是唯一不写宿主库的落地方式。
+    """
+    body = str(prompt or "").strip()
+    if body.startswith("[AP]"):
+        return body
+    project = _compact_project_label(item, cwd)
+    lane = str(item.get("lane") or "route").strip().lower()
+    lane = _THREAD_TITLE_RE.sub("", lane)[:12] or "route"
+    ledger_id = str(item.get("id") or "").strip()[:24] or "L-0000"
+    # 没有账本题名时不用正文首句冒充标题：正文可能只是一句补充说明。
+    title = str(item.get("title") or item.get("detail") or "自动挡任务").strip()
+    title = " ".join(title.split())[:56] or "自动挡任务"
+    return "[AP][%s][%s] %s · %s\n\n%s" % (project, lane, ledger_id, title, body)
 
 
 def _append_native_route(ledger_id, result, status):
@@ -1223,8 +2860,18 @@ def _acceptance_board():
         if r.get("id"):
             acc_latest[r["id"]] = r
     acc = list(acc_latest.values())
-    human = [r for r in acc
-             if r.get("needs_human") and r.get("status") in ("todo", "wip", "blocked")]
+    # 验收管家必须先自己跑完一遍，才有资格来敲用户的门。判据就是 evidence：
+    # 没有机器自验证据的人工验收项，先留在「待自验」，不进「需要你验收」。
+    # 否则登记一条 needs_human=true 就能把活直接推给用户，等于让用户当第一道测试。
+    human_pending = [r for r in acc
+                     if r.get("needs_human") and r.get("status") in ("todo", "wip", "blocked")]
+    pre = _pre_acceptance_summary()
+    # 有单项 evidence 仍不代表整项产品已经可交付。只有产品级预验收四类检查
+    # 全部 ready，才把人工验收送进用户台；否则用户仍然是第一道测试。
+    evidence_ready = [r for r in human_pending if str(r.get("evidence") or "").strip()]
+    human = evidence_ready if pre.get("notify_user") else []
+    self_check = [r for r in human_pending if not str(r.get("evidence") or "").strip()]
+    pre_blocked = evidence_ready if not pre.get("notify_user") else []
     machine = [r for r in acc if r.get("status") == "verified" and not r.get("needs_human")]
     human_done = [r for r in acc if r.get("status") == "verified" and r.get("needs_human")]
 
@@ -1238,6 +2885,8 @@ def _acceptance_board():
     def acc_brief(r):
         return {"id": r.get("id"), "title": r.get("title", ""), "level": r.get("level"),
                 "status": r.get("status"), "steps": r.get("steps") or "", "lane": r.get("lane"),
+                "evidence": r.get("evidence") or "",
+                "screenshots": r.get("screenshots") or [],
                 "project_id": r.get("project_id"), "route_id": r.get("route_id"),
                 "work_item_id": r.get("work_item_id"),
                 "source_thread_id": r.get("source_thread_id") or r.get("thread_id")}
@@ -1247,10 +2896,91 @@ def _acceptance_board():
         "todo": [brief(r) for r in todo[:8]],
         "todo_count": len(todo),
         "human": [acc_brief(r) for r in human[:8]],
+        "self_check": [acc_brief(r) for r in self_check[:8]],
+        "self_check_count": len(self_check),
+        "pre_acceptance": pre,
+        "pre_acceptance_blocked": [acc_brief(r) for r in pre_blocked[:8]],
+        "pre_acceptance_blocked_count": len(pre_blocked),
         "machine": [acc_brief(r) for r in machine[:8]],
         "human_done_count": len(human_done),
         "machine_count": len(machine),
     }
+
+
+def _work_rows(project_name, limit=40):
+    """工单状态表：一行一个未决工作项，串起「来源 → 项目 → 泳道 → 分支 → stage → 证据」。
+
+    stage 只由 `ops/stage_table.py` 那一张表算，面板照抄，不许再各算一套。
+    没有的证据字段留空，不用编的字符串填空。
+    """
+    import stage_table  # noqa: E402  只读纯函数，无副作用
+    import acceptance_criteria_compiler  # noqa: E402  只读纯函数，无副作用
+
+    latest = {}
+    for r in _read_jsonl(_truth_dir() / "ledger.jsonl"):
+        if r.get("id"):
+            latest[r["id"]] = r
+    acc_latest = {}
+    for r in _read_jsonl(_truth_dir() / "acceptance.jsonl"):
+        if r.get("id"):
+            acc_latest[r["id"]] = r
+    bindings = _native_route_map()
+
+    def evidence_text(rec, binding):
+        ev = rec.get("evidence")
+        if isinstance(ev, list) and ev:
+            text = str(ev[0])
+        else:
+            text = ev if isinstance(ev, str) else ""
+        text = " ".join(text.split())
+        if not text and binding:
+            tid = binding.get("thread_id")
+            text = ("Codex window " + str(tid)) if tid else ""
+        return text[:160]
+
+    rows = []
+    for rec in latest.values():
+        if rec.get("status") not in ("open", "doing", "todo", "wip", "blocked"):
+            continue
+        stage = stage_table.item_stage(rec.get("status"))
+        binding = bindings.get(rec.get("id"), {})
+        rows.append({
+            "id": rec.get("id"),
+            "title": rec.get("title") or rec.get("detail") or "",
+            "kind": rec.get("kind"),
+            "source": rec.get("source") or "ledger",
+            "project": rec.get("project_id") or project_name,
+            "lane": rec.get("lane"),
+            "branch": rec.get("branch") or rec.get("lane"),
+            "stage": stage,
+            "stage_label": stage_table.item_stage_label(stage),
+            "evidence": evidence_text(rec, binding),
+            "acceptance_summary": acceptance_criteria_compiler.summary_label(
+                rec.get("acceptance_plan")),
+        })
+    for rec in acc_latest.values():
+        if not (rec.get("needs_human") and rec.get("status") in ("todo", "wip", "blocked")):
+            continue
+        stage = stage_table.item_stage(rec.get("status"), needs_human=True)
+        rows.append({
+            "id": rec.get("id"),
+            "title": rec.get("title") or "",
+            "kind": "acceptance",
+            "source": rec.get("source") or "acceptance",
+            "project": rec.get("project_id") or project_name,
+            "lane": rec.get("lane"),
+            "branch": rec.get("lane"),
+            "stage": stage,
+            "stage_label": stage_table.item_stage_label(stage),
+            "evidence": evidence_text(rec, None),
+            "acceptance_summary": acceptance_criteria_compiler.summary_label(
+                rec.get("acceptance_plan")),
+        })
+    # 「要人拍板」的排前面，其次进行中，再次待处理；同组按 id。
+    prio = {"person/review": 0, stage_table.BUCKET_DOING: 1,
+            stage_table.BUCKET_STUCK: 1, stage_table.BUCKET_TODO: 2}
+    rows.sort(key=lambda r: (prio.get(r["stage"], 3), r.get("id") or ""))
+    return rows[:limit]
 
 
 def _mainline_summary(limit=6):
@@ -1277,7 +3007,9 @@ def _mainline_summary(limit=6):
     doc = base / "docs" / "PRODUCT_MAINLINE.md"
     return {
         "product": ml.get("product"),
-        "one_liner": ml.get("one_liner"),
+        "one_liner": _goal_text(ml)[0],
+        "auto_goal": _goal_text(ml)[2],
+        "goal_override": _goal_text(ml)[1],
         "stage": ml.get("stage"),
         "north_star": ml.get("north_star"),
         "focus": (ml.get("current_focus") or [])[:4],
@@ -1346,6 +3078,24 @@ def _product_state(limit=25):
     data = _json_file(_truth_dir() / "product_state.json")
     modules = data.get("modules") if isinstance(data.get("modules"), list) else []
     return {"updated": data.get("updated"), "count": len(modules), "modules": modules[:limit]}
+
+
+def _answer_needed_count():
+    """判不清归属、还没人工复核指派的投稿条数。
+
+    这些需求没进任何项目账本，只在待路由箱里——面板必须让它们露面，否则等于丢了。
+    已复核并写进目标项目的记录留原始凭证不删，但不再占用用户注意力；同一句诉求
+    反复投递也只算一项。取不到回 None，绝不成 0：面板要显示「取不到」，
+    不能把失明说成没有待复核项。
+    """
+    try:
+        import project_router
+        path = project_router.routing_inbox_path()
+        if not path.exists():
+            return 0
+        return len(project_router.pending_routing_records(path))
+    except Exception:
+        return None
 
 
 def _active_judgments(limit=12):
@@ -1447,13 +3197,17 @@ def _native_status():
     probe = codex_native.last_probe()
     state["last_probe"] = probe
     if probe is None:
-        state["label"] = ("原生直连：未自检（点「原生自检」跑一次）"
-                          if state.get("socket_present") else "原生直连：Codex 未运行")
+        if state.get("socket_present"):
+            state["label"] = "原生直连：未自检（点「原生自检」跑一次）"
+        else:
+            state["label"] = "原生直连：未找到桌面控制 socket（只读历史，不能派活）"
     elif probe.get("connected"):
         state["label"] = "原生直连：已连通，可派活到 Codex 窗口"
     else:
         if probe.get("blocked_by") == "remote-control-chatgpt-pairing":
             state["label"] = "原生直连：需 ChatGPT 登录/配对后才能派活"
+        elif not state.get("socket_present"):
+            state["label"] = "原生直连：未找到桌面控制 socket（只读历史，不能派活）"
         else:
             state["label"] = "原生直连：不可派活，只能只读历史"
     return state
@@ -1466,6 +3220,7 @@ def _status_payload(fast=True):
     health = binding_health()
     if health.get("status") == "broken":
         line = binding_line(health)
+        recovery = binding_recovery_action(health)
         payload = {
             "ok": False,
             "generated_at": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
@@ -1476,10 +3231,11 @@ def _status_payload(fast=True):
             "error": line,
             "state": "binding_broken",
             "state_label": "安装绑定失效，自动挡不可用",
-            "doing": "没有在动任何项目：当前绑定的状态根不是一个可用的项目账本",
+            "doing": recovery["doing"],
             "why": line,
-            "recent": "需求不会被可靠落账；这不是「没有待办」，是自动挡没接上项目",
-            "need_action": "重跑 ./install.sh <真实 git 仓库根目录>；先不要继续提需求",
+            "recent": recovery["recent"],
+            "need_action": recovery["need_action"],
+            "need_action_detail": recovery["need_action_detail"],
             "project": {
                 "path": health.get("repo"),
                 "name": Path(health.get("repo")).name if health.get("repo") else None,
@@ -1523,7 +3279,40 @@ def _status_payload(fast=True):
             "judgments": [],
             "last_verification": None,
             "closure_rate": _closure_rate_summary(),
+            "project_health": {
+                "status": "unknown",
+                "level": "unknown",
+                "headline": "项目健康取不到：安装绑定失效",
+                "layers": [],
+                "signals": {},
+            },
+            "route_health": {
+                "status": "ok",
+                "level": "unknown",
+                "headline": "路线与效能判据取不到：安装绑定失效",
+                "unknown": ["安装绑定失效"],
+                "reasons": [],
+                "action": "none",
+            },
+            "global_routing": {
+                "status": "unknown",
+                "count": None,
+                "items": [],
+                "projects": [],
+                "error": "安装绑定失效",
+                "text": "全局待路由箱取不到：安装绑定失效",
+            },
+            "runtime_freshness": {
+                "status": "ok",
+                "level": "unknown",
+                "headline": "运行态判据取不到：安装绑定失效",
+                "unknown": ["安装绑定失效"],
+                "reasons": [],
+                "action": "none",
+            },
             "mainline": {},
+            "project_goal": _project_goal_payload(),
+            "model_routes": _model_routes_read_payload(),
             "route": {},
             "roadmap": [],
             "project_folders": [],
@@ -1531,9 +3320,22 @@ def _status_payload(fast=True):
             "todo_items": [],
             "todo_count": None,
             "human_acceptance": [],
+            "pre_acceptance": {"status": "unknown", "label": "验收管家：安装绑定失效，不通知你验收",
+                                "checks": [], "categories": [], "items": [], "passed": 0,
+                                "failed": 0, "unknown": 92, "not_applicable": 0,
+                                "total": 92, "notify_user": False},
+            "pre_acceptance_blocked": [],
+            "pre_acceptance_blocked_count": None,
             "machine_verified": [],
             "human_accepted_count": None,
             "binding": health,
+            "stewards": _steward_health({}),
+            "autonomy": _autonomy_summary({}),
+            "pm_briefing": _pm_briefing_summary({"blocked": {}}),
+            "authorized_followups": _authorized_followup_summary(),
+            "context_archive": _context_archive_summary(),
+            "relationship_goals": _relationship_goals_summary(),
+            "outcome_score": _outcome_score_summary(),
         }
         payload["__text__"] = (
             "自动挡 · 安装绑定失效\n"
@@ -1544,8 +3346,10 @@ def _status_payload(fast=True):
         )
         return payload
     job_running, pid, daemon_project = _daemon_live()
-    current_project = str(Path(os.environ.get("KG_REPO") or REPO).expanduser().resolve())
+    current_project = str(Path(os.environ.get("KG_REPO") or _fallback_repo()).expanduser().resolve())
     live = bool(job_running and daemon_project == current_project)
+    daemon_enabled = bool(ctrl.get("daemon_enabled", True))
+    daemon_problem, daemon_headline, daemon_detail = _daemon_liveness_action(daemon_enabled)
     st = _daemon_state() if live else {}
     summary = st.get("last_summary") or {}
     board = _acceptance_board()
@@ -1557,34 +3361,69 @@ def _status_payload(fast=True):
     enabled = bool(ctrl.get("enabled", True))
     lifecycle = control_state.lifecycle_status(ctrl)
 
+    repo = os.environ.get("KG_REPO") or str(_fallback_repo())
+    try:
+        autonomy = project_autonomy.summary(repo)
+    except Exception as exc:
+        autonomy = {"configured": True, "mode": "paused",
+                     "reason": "项目运行状态读取失败：%s" % exc}
+
     exec_now = _running_exec() if live else None
-    if ctrl.get("error"):
-        state_key, state_label = "error", "状态异常，已安全暂停"
-    elif not enabled:
-        state_key, state_label = "off", "自动挡已关闭，Codex 已恢复原生状态"
-    elif paused:
-        state_key, state_label = "paused", "已暂停"
-    elif exec_now:
-        state_key, state_label = "working", "正在自动实现一条需求"
-    elif failures:
-        state_key, state_label = "blocked", "有分支需要你拍板"
-    elif board["human"]:
-        state_key, state_label = "blocked", "需要你验收"
-    elif not live:
-        state_key, state_label = "session_only", (
-            "当前项目未连接常驻守护"
-            if job_running and daemon_project and daemon_project != current_project
-            else "仅会话内运行（常驻未开）"
-        )
-    elif summary.get("clean") or summary.get("merged"):
-        state_key, state_label = "working", "正在检查可合入的分支"
-    else:
-        state_key, state_label = "idle", "运行中，暂无待办"
+
+    # 「现在处在哪一步」只由 stage_table 里那一张 first-match-wins 表说了算。
+    # 面板的 body.s-*、state_label、四个计数格子全部来自这一次判定；CLI / doctor
+    # 想要同一句话也调同一个函数，不再各写一条 if 链。
+    import stage_table  # noqa: E402  只读纯函数，无副作用
+    # 「需要你拍板」= 真的合不进去、必须人定的那些（原判定只用 land failures）。
+    # resolve / port 那两条队列是**机器自己在推**的，把它们也算成「要你拍板」会把
+    # 正常现场抬成警报——这里保持原语义，不动。
+    blocked_n = len(failures)
+    # 面板第 4 格「卡住」沿用原口径：failures + resolve + exec（port 仍只进明细面板）。
+    # `overlap_hold` 是排队让路，不是卡住：它在等前一条落地，下一拍就会重新判。
+    # 把它算进「卡住」会让正常调度把首屏抬成报警，用户白看一次不需要他处理的事。
+    exec_blocked_all = dict(st.get("exec_blocked") or {})
+    overlap_holds = {k: v for k, v in exec_blocked_all.items()
+                     if isinstance(v, dict) and v.get("reason") == "overlap_hold"}
+    exec_blocked_stuck = {k: v for k, v in exec_blocked_all.items()
+                          if k not in overlap_holds}
+    stuck_n = len(failures) + len(blocked) + len(exec_blocked_stuck)
+    review_n = len(board["human"])
+    global_routing = _global_routing_summary()
+    stage = stage_table.panel_stage({
+        "error": ctrl.get("error"),
+        "enabled": enabled,
+        "paused": paused,
+        "exec_running": bool(exec_now),
+        "blocked_count": blocked_n,
+        "review_count": review_n,
+        "answer_count": global_routing.get("count"),
+        "daemon_live": bool(live),
+        "daemon_other_project": bool(
+            job_running and daemon_project and daemon_project != current_project),
+        "daemon_problem": bool(daemon_problem),
+        "queued_count": (1 if (summary.get("clean") or summary.get("merged")) else 0),
+    })
+    state_key, state_label = stage["ui_state"], stage["label"]
+    counts = stage_table.stage_counts(
+        doing=len(board["doing"]), todo=board["todo_count"],
+        review=review_n, stuck=stuck_n, exec_running=bool(exec_now))
 
     # 大白话的「正在做什么 / 为什么 / 最近做了什么 / 需要你做什么」。
     if not enabled:
         doing = "自动挡已关闭；Codex 原生会话、项目与工作区保持不变"
         why = "总开关关闭后不再接收或启动自动挡工作"
+    elif autonomy.get("configured") and autonomy.get("mode") == "waiting_human":
+        doing = "项目已停在需要你确认的位置，没有启动新的工作"
+        why = autonomy.get("reason") or "这一步涉及产品方向、发布、删除数据或人工验收"
+    elif autonomy.get("configured") and autonomy.get("mode") == "paused":
+        doing = "项目暂停中，没有启动新的 worker"
+        why = autonomy.get("reason") or "项目自主运行被暂停；已有现场会保留"
+    elif autonomy.get("configured") and autonomy.get("mode") == "enabled":
+        doing = "项目已登记，但还没有开始持续推进"
+        why = "把项目切到“运行”后，自动挡才会持续规划、派活、验收和合并"
+    elif autonomy.get("configured") and autonomy.get("mode") == "disabled":
+        doing = "项目自主运行已关闭，没有启动新的 worker"
+        why = autonomy.get("reason") or "重新启用后才会恢复项目级运行授权"
     elif paused:
         doing = "暂停中，没有在动任何分支"
         why = "你按了暂停。恢复后它才会继续检查、合入"
@@ -1610,8 +3449,8 @@ def _status_payload(fast=True):
         doing = f"正在处理 {len(rtasks)} 条冲突，拆成可执行任务后逐条收口"
         why = "冲突不丢给你逐条裁决，先自动拆成任务，解完再走同一道门禁"
     elif job_running and daemon_project and daemon_project != current_project:
-        doing = "后台守护正在服务另一个项目；当前项目的任务与进度不会混入它的队列"
-        why = "常驻守护按项目绑定，面板只读取当前项目自己的账本"
+        doing = "当前项目待命"
+        why = "另一个项目正在推进；完整说明见最上方的提醒。"
     else:
         doing = "已检查一轮，当前没有能安全自动合入的分支"
         why = "和 main 冲突的、或门禁没过的，不会被自动合，等你处理"
@@ -1623,12 +3462,25 @@ def _status_payload(fast=True):
     else:
         recent = "还没有自动合入过分支"
 
+    need_action_detail = ""
     if not enabled:
         need_action = "需要继续使用自动挡时，重新开启总开关"
+    elif daemon_problem:
+        # 常驻静默死亡排最前：开关全绿而进程不在，自动挡一步都不会自己走。
+        # 它必须盖过「等验收」这类正常待办——那些事项在「需要你介入」卡里仍然列着，
+        # 但用户首先该知道的是「自动」这部分根本没在跑。
+        need_action = daemon_headline or daemon_problem
+        need_action_detail = daemon_detail or daemon_problem
     elif failures:
         need_action = f"需要你拍板：{failures[0]['target']}（{failures[0]['kind']}）"
     elif board["human"]:
         need_action = f"需要你验收：{board['human'][0].get('title') or '请打开面板查看验收步骤'}"
+    elif global_routing.get("status") == "ok" and int(global_routing.get("count") or 0) > 0:
+        need_action = f"需要你复核：全局待路由 {global_routing['count']} 条判不清归属的需求"
+        need_action_detail = (
+            "这些原始投稿没有进任何项目账本。确认指派只会追加目标项目 inbox 和复核凭证，"
+            "原始待路由记录不删不改；不确认就继续留在这条提醒里。"
+        )
     elif ctrl.get("error"):
         need_action = "控制文件异常，去高级面板看一眼或恢复默认"
     else:
@@ -1641,6 +3493,7 @@ def _status_payload(fast=True):
         "paused": paused,
         "enabled": enabled,
         "lifecycle": lifecycle,
+        "project_autonomy": autonomy,
         "error": ctrl.get("error"),
         "state": state_key,
         "state_label": state_label,
@@ -1652,6 +3505,7 @@ def _status_payload(fast=True):
         "why": why,
         "recent": recent,
         "need_action": need_action,
+        "need_action_detail": need_action_detail,
         "recent_completed": _recent_done(last, 5),
         "switches": {
             "auto_land": bool(ctrl.get("auto_land", True)),
@@ -1667,6 +3521,7 @@ def _status_payload(fast=True):
             "project": daemon_project,
             "last_cycle": st.get("last_cycle_iso"),
             "interval_min": st.get("interval_min"),
+            "problem": daemon_problem,
         },
         "native": _native_status(),
         "counters": {
@@ -1691,7 +3546,11 @@ def _status_payload(fast=True):
             "port": [{"branch": b, "reason": (v or {}).get("reason")}
                      for b, v in list(port_blocked.items())[:20]],
             "exec": [{"id": k, "reason": (v or {}).get("reason")}
-                     for k, v in list((st.get("exec_blocked") or {}).items())[:20]],
+                     for k, v in list(exec_blocked_stuck.items())[:20]],
+            "exec_waiting": [{"id": k, "reason": (v or {}).get("reason"),
+                              "holders": (v or {}).get("holders") or [],
+                              "files": (v or {}).get("files") or []}
+                             for k, v in list(overlap_holds.items())[:20]],
         },
         "resolve_tasks": rtasks[:20],
         "events": control_state.read_events(30),
@@ -1699,7 +3558,49 @@ def _status_payload(fast=True):
         "judgments": _active_judgments(),
         "last_verification": _last_verification(),
         "closure_rate": _closure_rate_summary(),
+        "harness_health": _harness_health(),
+        # 全局项目健康：项目真相 / 执行流动 / 验收三层。与 harness_health 分开。
+        "project_health": _project_health_summary({
+            "switches": {
+                "auto_exec": bool(ctrl.get("auto_exec", False)),
+            },
+            "blocked": {
+                "exec": [{"id": k, "reason": (v or {}).get("reason")}
+                         for k, v in list(exec_blocked_stuck.items())[:20]],
+                "exec_waiting": list(overlap_holds),
+                "failures": failures,
+                "resolve": list(blocked),
+            },
+        }),
+        # PM 简报：只读聚合「预期磨到哪、谁给谁让路、哪条该追进度」。
+        # 与项目健康同源运行面数据，但不新增台账、不派活、不自动追问。
+        "pm_briefing": _pm_briefing_summary({
+            "blocked": {
+                "exec": [{"id": k, "reason": (v or {}).get("reason")}
+                         for k, v in list(exec_blocked_stuck.items())[:20]],
+                "exec_waiting": list(overlap_holds),
+                "failures": failures,
+                "resolve": list(blocked),
+            },
+        }),
+        # 追问授权账本与 PM 候选分开：候选只读，授权逐项显式，daemon 再校验后投递。
+        "authorized_followups": _authorized_followup_summary(),
+        # 关系层：跨项目长期目标是显式账本，不属于某个项目真相；这里只读摘要，
+        # 不把目标自动派给 worker，也不把「需要人」变成自动追问。
+        "relationship_goals": _relationship_goals_summary(),
+        "outcome_score": _outcome_score_summary(),
+        # 体验契约必须进入面板投影；只写 docs/experience 不算驱动 UI。
+        "experience": _experience_summary(),
+        # 最终面板仍在重设计：renderer contract 是新旧面板共同的消费者边界。
+        "renderer_contract": _renderer_contract_summary(),
+        "harness_tune": _harness_tune_summary(),
+        "constraint_candidates": _constraint_candidates_summary(),
+        "context_archive": _context_archive_summary(),
+        "acceptance_criteria": _acceptance_criteria_summary(),
+        "autonomy": _autonomy_summary(st),
         "mainline": _mainline_summary(),
+        "project_goal": _project_goal_payload(),
+        "model_routes": _model_routes_read_payload(),
         # fast=True 是面板/开关那条路：只读缓存，不连宿主，绝不因此变慢。
         "route": _route_summary(timeout=0.0 if fast else None),
         "roadmap": _roadmap(),
@@ -1708,11 +3609,50 @@ def _status_payload(fast=True):
         "todo_items": board["todo"],
         "todo_count": board["todo_count"],
         "human_acceptance": board["human"],
+        "pre_acceptance": board["pre_acceptance"],
+        "pre_acceptance_blocked": board["pre_acceptance_blocked"],
+        "pre_acceptance_blocked_count": board["pre_acceptance_blocked_count"],
+        # 「还没自验完的人工验收项」：先自己跑一遍，再拿来打扰用户。
+        "self_check_acceptance": board["self_check"],
+        "self_check_count": board["self_check_count"],
         "machine_verified": board["machine"],
         "human_accepted_count": board["human_done_count"],
+        # 全局待路由箱是跨项目的，不属于当前绑定项目；状态摘要与面板复核区同源。
+        "global_routing": global_routing,
+        # stage_table 的同一个结论：面板拿它填格子与状态，不必再自己算一遍。
+        "stage": stage["stage"],
+        "stage_owner": stage["owner"],
+        "counts": counts,
+        # 工单状态表：控制层把「来源 → 项目 → 泳道 → 分支 → stage → 证据」拼好，
+        # 面板只渲染，不再自己算 stage（唯一判据仍是 ops/stage_table.py）。
+        "work_rows": _work_rows(Path(current_project).name),
     }
+    # 路线与效能是状态管家的内部只读检测器，不新增管家、不新增卡片。
+    payload["route_health"] = _route_health_summary(payload, st)
+    # 源码 / 已装版本 / 运行代码是否同一代，仍是状态管家内部判据。只提示
+    # 受控换代或重载，绝不自动重启、改配置、派工单。
+    payload["runtime_freshness"] = _runtime_freshness_summary(health)
+    # 七管家健康条 + 全局项目健康：一眼看出哪个管家断了、项目整体是否还健康。
+    # 必须等 payload 构造完再算——判据全来自上面这些字段，不能引用还在构造的自己。
+    payload["stewards"] = _steward_health(payload)
     payload["__text__"] = _status_text(payload)
     return payload
+
+
+def _daemon_switch_label(enabled, daemon):
+    """持续运行这一格反映「是不是真在跑」，不是照念配置位。
+
+    2026-11-11 实测：control.json 写着 daemon_enabled=true，launchd 里那个 job 根本
+    不存在、ps 里没有 central_daemon，状态面却仍打印「持续运行=开」。用户看到的是
+    「开着」，实际一步没动 —— 这正是「感觉不到增益」的机械根因。
+
+    三态：关 / 开 / 开但没在跑。没在跑时点明「没进程接活」，让配置位和现实分开。
+    """
+    if not enabled:
+        return "关"
+    if (daemon or {}).get("live"):
+        return "开"
+    return "开（但没进程接活）"
 
 
 def _status_text(payload):
@@ -1726,22 +3666,38 @@ def _status_text(payload):
         payload["need_action"],
         "",
         _closure_rate_line(payload.get("closure_rate")),
-        "开关：自动合入=%s  自动拆冲突=%s  自动移植=%s  后台常驻=%s"
-        % ("开" if sw["auto_land"] else "关",
+        # 自动实现排在最前：它是「需求会不会被真的写出来」这一格。少了它，
+        # 一行全绿却一步没实现——和「守护没在跑却显示开着」是同一个坑。
+        "开关：自动实现=%s  自动合入=%s  自动拆冲突=%s  自动移植=%s  持续运行=%s"
+        % ("开" if sw["auto_exec"] else "关（只记账，不实现）",
+           "开" if sw["auto_land"] else "关",
            "开" if sw["auto_resolve"] else "关",
            "开" if sw["auto_port"] else "关",
-           "开" if sw["daemon_enabled"] else "关"),
+           _daemon_switch_label(sw.get("daemon_enabled"),
+                                payload.get("daemon"))),
         "队列：可合 %s · 已合待回收 %s · 冲突 %s"
         % (q.get("clean"), q.get("merged"), q.get("conflict")),
         "累计：收到反馈 %s 条 · 自动合入 %s 个 · 拆解冲突 %s 条"
         % (payload["counters"]["received"], payload["counters"]["landed"],
            payload["counters"]["resolved"]),
     ]
+    _dp = (payload.get("daemon") or {}).get("problem")
+    if _dp:
+        # 静默死亡排在最前：开关全绿而进程不在，是用户最容易被骗的一格。
+        lines.append("常驻守护：" + _dp.split("：", 1)[-1])
     en = payload.get("exec_now")
     if en:
         _m = int((en.get("elapsed_sec") or 0) // 60)
         lines.append("执行中：%s %s（已 %d 分钟，独立工作区改代码，自测通过后自动合入）"
                      % (en.get("id") or "", en.get("title") or "", _m))
+    rh = payload.get("route_health") or {}
+    if rh.get("level") in ("attention", "unknown"):
+        lines.append("路线与效能：%s（仅提复核，不自动纠偏）"
+                     % (rh.get("headline") or "取不到"))
+    rf = payload.get("runtime_freshness") or {}
+    if rf.get("level") in ("attention", "unknown"):
+        lines.append("运行态新鲜度：%s（只提示受控换代，不自动重启）"
+                     % (rf.get("headline") or "取不到"))
     ps = payload.get("product_state") or {}
     if ps.get("count"):
         lines.append("产品状态：已记录 %s 个模块行为（最后更新 %s）"
@@ -1806,7 +3762,7 @@ def control_action(action, enabled=None):
             return control_state.mutation_guard(), 2
         if control_state.is_paused():
             return "当前处于暂停中，不会偷偷跑一轮。先恢复运行再试。", 2
-        daemon = OPS_DIR / "central_daemon.py"
+        daemon = _live_ops() / "central_daemon.py"
         control_state.append_event("run_once")
         out, rc = _run([str(daemon), "--once"], timeout=2400)
         return _with_status("已跑完一轮：\n" + out), rc
@@ -1825,7 +3781,7 @@ def control_action(action, enabled=None):
     if action in ("enable_daemon", "disable_daemon"):
         if not control_state.is_enabled():
             return control_state.mutation_guard(), 2
-        daemon = OPS_DIR / "central_daemon.py"
+        daemon = _live_ops() / "central_daemon.py"
         want = action == "enable_daemon"
         out, rc = _run([str(daemon), "--install" if want else "--uninstall"], timeout=120)
         if rc == 0:
@@ -1833,6 +3789,32 @@ def control_action(action, enabled=None):
             control_state.append_event("daemon", enabled=want)
         return _with_status(out or ("已%s常驻" % ("开启" if want else "关闭"))), rc
     return "未知 action：%s" % action, 2
+
+
+def project_autonomy_action(action, reason=""):
+    modes = {"enable": "enabled", "run": "running", "pause": "paused",
+             "wait": "waiting_human", "disable": "disabled"}
+    if action not in modes:
+        return "project_autonomy_control 需要 enable/run/pause/wait/disable", 2
+    repo = os.environ.get("KG_REPO") or str(REPO)
+    if action == "disable":
+        reason = reason or "项目自主运行已关闭"
+    elif action == "run":
+        reason = reason or "用户已授权项目持续推进"
+    elif action == "pause":
+        reason = reason or "用户已暂停项目自主运行"
+    elif action == "wait":
+        reason = reason or "等待用户确认"
+    try:
+        state = project_autonomy.set_mode(repo, modes[action], reason)
+        control_state.append_event("project_autonomy", project=state["project"],
+                                   mode=state["mode"], reason=state["reason"])
+        return _with_status("当前项目已%s。" % {
+            "disabled": "关闭自主运行", "enabled": "启用但未运行",
+            "running": "开始持续运行", "paused": "暂停",
+            "waiting_human": "停在等待确认"}[state["mode"]]), 0
+    except (OSError, ValueError) as exc:
+        return "项目自主运行状态未更新：%s" % exc, 2
 
 
 def _settings_values():
@@ -1882,17 +3864,74 @@ def _settings_update(set_values):
     return {"values": values, "__text__": "设置已更新：" + desc}, 0
 
 
+STALE_BINDING_DIAGNOSTIC_TOOLS = {"autopilot_status", "render_autopilot_panel"}
+
+
+def _stale_binding_guard(name):
+    """陈旧 MCP 进程不许再返回任何项目态，避免状态自相矛盾。
+
+    2026-11-24 现场实测：旧版本缓存目录被升级删掉后，`autopilot_status` 已经会
+    fail-closed 报 binding_broken，但其它工具仍从旧进程残留的 KG_REPO/KG_TRUNK
+    读旧账本：`project_autonomy_status` 报旧项目、`resolve_list` 报 4 条陈旧 resolve，
+    而显式 KG_REPO 的 CLI 已经为空。用户看到的是两套互相打架的真相。
+
+    这里把「正在跑的代码已被删除」变成所有普通工具的统一 fail-closed；只保留
+    状态诊断与打开面板两个出口，让人能看到故障原因和恢复动作。
+    非 stale 的绑定失效仍走原来的按工具 guard，不在这里扩大拦截面。
+    """
+    health = binding_health()
+    if not health.get("stale"):
+        return None
+    recovery = binding_recovery_action(health)
+    line = binding_line(health)
+    return {
+        "ok": False,
+        "code": "AUTOPILOT_BINDING_BROKEN",
+        "state": "binding_broken",
+        "state_label": "安装绑定失效，自动挡不可用",
+        "tool": name,
+        "doing": recovery["doing"],
+        "why": line,
+        "error": line,
+        "recent": recovery["recent"],
+        "need_action": recovery["need_action"],
+        "need_action_detail": recovery["need_action_detail"],
+        "__text__": (
+            "没有执行 %s：%s。%s" % (name, line, recovery["need_action"])),
+    }, 2
+
+
 def call_tool(name, args):
     args = args or {}
+    # 2026-11-24 现场：插件还绑在旧脏 worktree，会话 cwd 已是同一仓库里的干净
+    # 状态根。旧路由把它们当成同一个项目，captured 需求会写进旧账本；这里在写入
+    # 之前 fail-closed，让人先重新绑定，而不是等用户发现需求不见了。
+    if name in {"capture_request", "intake_request", "route_preview"}:
+        drift_guard = binding_drift_guard(name, (args.get("cwd") or "").strip())
+        if drift_guard:
+            return drift_guard, 2
+    if name not in STALE_BINDING_DIAGNOSTIC_TOOLS:
+        stale_guard = _stale_binding_guard(name)
+        if stale_guard:
+            return stale_guard
     read_only_tools = {
         "project_status", "next_actions", "product_state", "distill_review",
         "suggest_branch", "resolve_list", "resolve_plan", "generate_context",
         "dashboard", "autopilot_status", "render_autopilot_panel",
-        "autopilot_settings_read", "codex_native_threads", "codex_native_probe",
+        "autopilot_settings_read", "project_goal_read", "model_routes_read",
+        "codex_native_threads", "codex_native_probe",
+        "harness_tune_list", "constraint_candidates_list", "context_archive",
+        "acceptance_criteria_list", "generate_acceptance_scope", "route_preview",
+        "followup_list",
+        "routing_review_list", "pm_research_status", "pm_execution_gate",
     }
+    # 预演不写盘，但确认指派是可写动作；因此它走自己的显式 guard，不能塞进
+    # 上面的 read_only_tools，也不能让通用 guard 连预演一起拦掉。
+    explicit_guard_tools = {"routing_review_assign"}
     control_tools = {
         "autopilot_control", "autopilot_run_once",
         "autopilot_settings_update",
+        "project_goal_update", "model_routes_update",
     }
     native_mutation_tools = {
         "codex_native_create_section", "codex_native_start_thread",
@@ -1910,14 +3949,16 @@ def call_tool(name, args):
             result, error = codex_native.start_thread(cwd, args.get("section_id"))
         elif name == "codex_native_dispatch_task":
             ledger_id = (args.get("ledger_id") or "").strip()
-            if not _ledger_item(ledger_id):
+            item = _ledger_item(ledger_id)
+            if not item:
                 return {
                     "code": "AUTOPILOT_LEDGER_ITEM_NOT_DISPATCHABLE",
                     "message": "只能给自动挡台账中仍未收口的问题派活。",
                 }, 2
+            cwd = (args.get("cwd") or "").strip()
             result, error = codex_native.dispatch_task(
-                (args.get("cwd") or "").strip(),
-                args.get("prompt"),
+                cwd,
+                _native_thread_prompt(item, args.get("prompt"), cwd),
                 args.get("section_id"),
                 auto_section=_auto_section_name(),
             )
@@ -1957,7 +3998,7 @@ def call_tool(name, args):
             return {"code": "CODEX_NATIVE_UNAVAILABLE", "message": error}, 2
         control_state.append_event("codex_native", action=name, result=result)
         return result, 0
-    if name not in read_only_tools | control_tools:
+    if name not in read_only_tools | explicit_guard_tools | control_tools:
         guard = control_state.mutation_guard()
         if guard:
             return guard, 2
@@ -1968,9 +4009,9 @@ def call_tool(name, args):
     if name == "codex_native_probe":
         # 自检是诊断动作：不碰任务、不碰账本，所以即使总开关关着也允许跑，
         # 否则用户没法在「关着」的时候判断到底是不是权限/环境的问题。
-        result = codex_native.probe()
+        result = codex_native.probe(repair=bool(args.get("repair")))
         codex_native.record_probe(result)
-        return result
+        return result, 0
     if name == "capture_request":
         guard = control_state.mutation_guard()
         if guard:
@@ -1979,8 +4020,12 @@ def call_tool(name, args):
         if not text:
             return "capture_request 需要 text", 2
         files = args.get("files") or []
+        declared_kind = args.get("kind") or "unknown"
+        effective_kind = _infer_experience_kind(text, files, declared_kind)
         env = {"KG_INBOX_FILES": ":".join(files) if files else None,
-               "KG_INBOX_KIND": args.get("kind") or "unknown"}
+               "KG_INBOX_KIND": effective_kind,
+               "KG_INBOX_CWD": (args.get("cwd") or "").strip() or None,
+               "KG_INBOX_PROJECT": (args.get("project") or "").strip() or None}
         return kgctl("inbox", text, extra_env=env)
     if name == "sync_control_plane":
         guard = control_state.mutation_guard()
@@ -1992,6 +4037,40 @@ def call_tool(name, args):
         if guard:
             return guard, 2
         return kgctl("route", *(["--go"] if args.get("confirm") else []))
+    if name == "routing_review_list":
+        summary = _global_routing_summary()
+        return {"status": summary["status"], "count": summary["count"],
+                "items": summary["items"], "projects": summary["projects"],
+                "path": summary.get("path"), "error": summary.get("error"),
+                "__text__": summary["text"]}, 0
+    if name == "routing_review_assign":
+        fingerprint = str(args.get("fingerprint") or "").strip()
+        project = str(args.get("project") or "").strip()
+        reason = str(args.get("reason") or "").strip()
+        if not fingerprint or not project:
+            return {"code": "ROUTING_REVIEW_FIELDS_REQUIRED",
+                    "message": "指派必须同时给出 fingerprint 和 project；"
+                               "先用 routing_review_list 看指纹。",
+                    "__text__": "指派缺少指纹或项目；没有写任何账本。"}, 2
+        confirmed = bool(args.get("confirm"))
+        argv = ["route-inbox", "--fingerprint", fingerprint,
+                "--project", project, "--reason",
+                reason or "面板复核确认归属", "--json"]
+        if confirmed:
+            guard = control_state.mutation_guard()
+            if guard:
+                return guard, 2
+            argv.append("--go")
+        raw, code = kgctl(*argv)
+        data = _json_line(raw)
+        if code == 0 and isinstance(data, dict):
+            written = bool(data.get("written"))
+            return {**data,
+                    "__text__": ("已追加复核凭证；原待路由记录未删未改。"
+                                 if written else
+                                 "预演完成，未写任何账本；确认后才追加。")}, 0
+        return {"code": "ROUTING_REVIEW_ASSIGN_FAILED",
+                "message": raw, "__text__": "指派未完成：" + str(raw)[:300]}, code or 2
     if name == "next_actions":
         return truthctl("next")
     if name == "product_state":
@@ -2015,12 +4094,32 @@ def call_tool(name, args):
         return truthctl("distill", "add", statement, extra_env=env)
     if name == "synthesize_mainline":
         return truthctl("synthesize")
+    if name == "constraints_add":
+        statement = (args.get("statement") or "").strip()
+        if not statement:
+            return "constraints_add 需要 statement", 2
+        env = {"KG_CONSTRAINT_KIND": args.get("kind") or None,
+               "KG_CONSTRAINT_SCOPE": args.get("scope") or None,
+               "KG_CONSTRAINT_ENFORCEABLE": args.get("enforceable") or None,
+               "KG_CONSTRAINT_CMD": args.get("cmd") or None,
+               "KG_CONSTRAINT_CWD": args.get("cwd") or None,
+               "KG_CONSTRAINT_POLICY": args.get("policy_version") or None,
+               "KG_CONSTRAINT_SUPERSEDES": args.get("supersedes") or None}
+        return truthctl("constraints", "add", statement, extra_env=env)
+    if name == "constraints_list":
+        argv = ["constraints"]
+        files = args.get("files") or []
+        if files:
+            argv += ["--files", ":".join(files)]
+        return truthctl(*argv)
     if name == "close_item":
         rid = (args.get("id") or "").strip()
         if not rid:
             return "close_item 需要 id（如 L-0003）", 2
         env = {"KG_TRUTH_COMMIT": args.get("commit") or None,
                "KG_TRUTH_EVIDENCE": args.get("evidence") or None}
+        if args.get("confirm_human"):
+            env["KG_TRUTH_HUMAN_CONFIRMED"] = "1"
         return truthctl("close", rid, args.get("note") or "", extra_env=env)
     if name in ("register_acceptance", "accept_item"):
         title = (args.get("title") or "").strip()
@@ -2033,15 +4132,302 @@ def call_tool(name, args):
                "KG_TRUTH_LEVEL": args.get("level") or None,
                "KG_TRUTH_LANE": args.get("lane") or None,
                "KG_TRUTH_STATUS": args.get("status") or None,
-               "KG_TRUTH_EVIDENCE": args.get("evidence") or None}
+               "KG_TRUTH_EVIDENCE": args.get("evidence") or None,
+               "KG_TRUTH_DOMAIN": args.get("domain") or None,
+               "KG_TRUTH_CRITERION": args.get("criterion") or None,
+               "KG_TRUTH_STANDARD": args.get("standard") or None,
+               "KG_TRUTH_APPLICABLE": ("true" if args.get("applicable") is True else
+                                        "false" if args.get("applicable") is False else None),
+               "KG_TRUTH_CONTRACT_VERSION": args.get("contract_version") or None,
+               "KG_TRUTH_SHOTS": _screenshots_env(args.get("screenshots"))}
         return truthctl(*argv, extra_env=env)
+    if name == "resolve_acceptance":
+        rid = (args.get("id") or "").strip()
+        status = (args.get("status") or "").strip()
+        if not rid:
+            return "resolve_acceptance 需要 id（如 A-0030）", 2
+        if status not in ("todo", "wip", "blocked", "verified", "void"):
+            return "resolve_acceptance 需要 status（todo/wip/blocked/verified/void）", 2
+        argv = ["accept", "--id", rid, "--status", status]
+        if args.get("note"):
+            argv += ["--note", args["note"]]
+        env = {"KG_TRUTH_EVIDENCE": args.get("evidence") or None,
+               "KG_TRUTH_SHOTS": _screenshots_env(args.get("screenshots")),
+               "KG_TRUTH_SOURCE": "user"}
+        return truthctl(*argv, extra_env=env)
+    if name == "capture_acceptance_screenshot":
+        # 这是人点按钮后才允许进来的动作。confirm 不是装饰：模型/守护/探针
+        # 即使拿到的工具参数里没有它，也不能借这条链路调系统截图器。
+        if not bool(args.get("confirm")):
+            return {"code": "SCREENSHOT_CONFIRM_REQUIRED",
+                    "message": "补图必须由人点按钮触发；请带 confirm=true。"}, 2
+        rid = (args.get("id") or "").strip()
+        if not rid:
+            return {"code": "SCREENSHOT_ID_REQUIRED",
+                    "message": "capture_acceptance_screenshot 需要验收 id（如 A-0030）。"}, 2
+        record = _acceptance_record(rid)
+        if record is None:
+            return {"code": "SCREENSHOT_ACCEPTANCE_NOT_FOUND",
+                    "message": "验收台账里没有 %s；先登记验收项。" % rid}, 2
+        if not _capture_ready_acceptance(record):
+            return {"code": "SCREENSHOT_NOT_HUMAN_READY",
+                    "message": "这条还没到人工复核：必须有机器自验证据且仍待人工确认；"
+                               "截图不能代替自验。"}, 2
+        try:
+            import acceptance_screenshot
+            shot = acceptance_screenshot.capture(rid)
+        except Exception as exc:
+            return {"code": "SCREENSHOT_CAPTURE_FAILED",
+                    "message": "截图失败：%s" % exc}, 2
+        if shot.get("error"):
+            return {"code": "SCREENSHOT_CAPTURE_FAILED",
+                    "message": shot["error"]}, 2
+        status = record.get("status") or "todo"
+        out, code = truthctl(
+            "accept", "--id", rid, "--status", status,
+            extra_env={"KG_TRUTH_SHOTS": shot["path"],
+                       "KG_TRUTH_SOURCE": "panel-screenshot"})
+        if code != 0:
+            return {"code": "SCREENSHOT_APPEND_FAILED",
+                    "message": "截图已生成，但没写进验收台账：%s" % out}, 2
+        control_state.append_event("acceptance_screenshot", id=rid, path=shot["path"])
+        return {"__text__": "已给 %s 补上复核截图；验收状态仍是 %s，没有替你收口。" % (rid, status),
+                "id": rid, "path": shot["path"], "status": status}, 0
     if name == "reopen_item":
         rid = (args.get("id") or "").strip()
         if not rid:
             return "reopen_item 需要 id（如 L-0003）", 2
         return truthctl("open", rid, args.get("reason") or "")
+    if name in ("harness_tune_list", "harness_tune_apply", "harness_tune_rollback"):
+        import harness_tune
+        if name == "harness_tune_list":
+            pending = harness_tune.pending()
+            if not pending:
+                return ("状态管家：当前没有待你点头的 harness 调整。（config.toml 一个字都没动）",
+                        0)
+            return harness_tune.human(), 0
+        rid = (args.get("id") or "").strip()
+        if not rid:
+            return f"{name} 需要 id（如 T-0001）", 2
+        if name == "harness_tune_apply":
+            # confirm 就是「人已明确同意」的语义；不给就一律拒绝，绝不自动改配置。
+            res = harness_tune.apply(rid, confirm=bool(args.get("confirm")))
+        else:
+            res = harness_tune.rollback(rid)
+        return json.dumps(res, ensure_ascii=False, indent=1), (
+            0 if res.get("status") != "error" else 2)
+    if name == "context_archive":
+        import context_archive
+        data = context_archive.collect()
+        return context_archive.human(data), (0 if data.get("status") == "ok" else 1)
+    if name in ("constraint_candidates_list", "constraint_candidate_promote",
+                "constraint_candidate_dismiss"):
+        import constraint_candidates
+        if name == "constraint_candidates_list":
+            rows = constraint_candidates.pending()
+            if not rows:
+                return ("上下文管家：当前没有待你确认的约束候选。"
+                        "（生效约束台账一个字都没动）", 0)
+            return constraint_candidates.human(), 0
+        cid = (args.get("id") or "").strip()
+        if not cid:
+            return f"{name} 需要 id（如 CC-0001）", 2
+        if name == "constraint_candidate_promote":
+            # confirm 就是「人已明确同意」的语义；不给就一律拒绝，绝不自动写生效约束。
+            if not bool(args.get("confirm")):
+                return ("升成生效约束必须由人明确点头：请带 confirm=true（或直接在面板上点同意）。"
+                        "候选本身不影响任何门禁。", 2)
+            res = constraint_candidates.promote(cid)
+        else:
+            res = constraint_candidates.dismiss(cid, args.get("reason") or "")
+        return json.dumps(res, ensure_ascii=False, indent=1), (
+            0 if res.get("status") != "error" else 2)
+    if name in ("acceptance_criteria_list", "acceptance_criteria_promote",
+                "acceptance_criteria_dismiss"):
+        import acceptance_criteria
+        if name == "acceptance_criteria_list":
+            rows = acceptance_criteria.pending()
+            if not rows:
+                return ("验收管家：当前没有待确认的验收标准候选。"
+                        "（验收台账一个字都没动）", 0)
+            return acceptance_criteria.human(), 0
+        cid = (args.get("id") or "").strip()
+        if not cid:
+            return f"{name} 需要 id（如 AC-0001）", 2
+        if name == "acceptance_criteria_promote":
+            # confirm 就是「人已明确同意」的语义；不点头绝不登记验收项，
+            # 更不会把候选直接标成 verified 或塞进「需要你验收」。
+            if not bool(args.get("confirm")):
+                return ("登记验收项必须由人明确点头：请带 confirm=true（或直接在面板上点确认）。"
+                        "候选本身不写验收台账，也不伪造证据。", 2)
+            res = acceptance_criteria.promote(
+                cid, confirm=True,
+                needs_human=args.get("needs_human"),
+                steps=args.get("steps") or "", level=args.get("level") or "")
+        else:
+            res = acceptance_criteria.dismiss(cid, args.get("reason") or "")
+        return json.dumps(res, ensure_ascii=False, indent=1), (
+            0 if res.get("status") != "error" else 2)
+    if name == "generate_acceptance_scope":
+        import dynamic_acceptance_scope
+        result = dynamic_acceptance_scope.generate_scope(
+            text=args.get("text") or "",
+            kind=args.get("kind") or "",
+            files=args.get("files") or [],
+            product_shape=args.get("product_shape") or [],
+            delivery_goal=args.get("delivery_goal") or "acceptance_ready",
+            explicit_impacts=args.get("impacts") or [],
+        )
+        if not bool(args.get("confirm")):
+            return {**result, "persisted": False,
+                    "__text__": "验收范围仅预览，未写入项目台账；确认后再落盘。"}, 0
+        guard = control_state.mutation_guard()
+        if guard:
+            return guard, 2
+        try:
+            repo = resolve_project(project=args.get("project"), cwd=args.get("cwd"),
+                                   bound=os.environ.get("KG_REPO"))
+        except RequestContextError as exc:
+            return {"code": "ACCEPTANCE_SCOPE_PROJECT_REQUIRED", "message": str(exc),
+                    "persisted": False}, 2
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(repo), "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                result["expected_version"] = (proc.stdout or "").strip()
+            else:
+                result["expected_version"] = ""
+        except (OSError, subprocess.TimeoutExpired):
+            result["expected_version"] = ""
+        path = repo / "ops" / "truth" / "acceptance_scope.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8")
+        return {**result, "persisted": True, "path": str(path),
+                "__text__": f"动态验收范围已写入 {path}"}, 0
+    if name in ("followup_authorize", "followup_cancel", "followup_list"):
+        import authorized_followup as followup
+        root = Path(os.environ.get("KG_REPO") or _fallback_repo())
+        if name == "followup_list":
+            return followup.summary(root), 0
+        if name == "followup_authorize":
+            if not bool(args.get("confirm")):
+                return {"code": "FOLLOWUP_CONFIRM_REQUIRED",
+                        "message": "逐项追问必须由人明确点头：请带 confirm=true；候选本身不会发消息。"}, 2
+            try:
+                res = followup.approve({
+                    "ticket_id": args.get("ticket_id"),
+                    "thread_id": args.get("thread_id"),
+                    "prompt": args.get("prompt"),
+                    "reason": args.get("reason"),
+                    "authorization": "explicit",
+                    "effect": "reversible",
+                    "source": "panel",
+                }, root)
+            except followup.AuthorizationError as exc:
+                return {"code": "FOLLOWUP_AUTHORIZATION_REJECTED", "message": str(exc)}, 2
+            return {"__text__": "已登记这条追问授权；后台发送前还会再校验一次窗口和工作项。",
+                    **res}, 0
+        try:
+            res = followup.cancel(
+                (args.get("request_id") or "").strip(),
+                args.get("reason"),
+                root,
+            )
+        except followup.AuthorizationError as exc:
+            return {"code": "FOLLOWUP_CANCEL_REJECTED", "message": str(exc)}, 2
+        return {"__text__": "已撤销未发送的追问授权；历史授权记录保留。", **res}, 0
+    if name in {"pm_research_status", "pm_execution_gate", "pm_research_request",
+                "pm_research_evidence", "pm_research_option", "pm_product_decide"}:
+        import pm_decision
+        import research
+        root = Path(os.environ.get("KG_REPO") or _fallback_repo())
+        try:
+            if name == "pm_research_status":
+                rid = (args.get("research_id") or "").strip()
+                result = (pm_decision.brief(root) if not rid else {
+                    "research": research.summary(root, rid),
+                    "recommendation": pm_decision.recommendation(root, rid),
+                    "gate": pm_decision.execution_gate(root, research_id=rid),
+                })
+                return result, 0
+            if name == "pm_execution_gate":
+                return pm_decision.execution_gate(
+                    root, intent_id=args.get("intent_id"), research_id=args.get("research_id")), 0
+            if name == "pm_research_request":
+                result = research.create_request(
+                    root, intent_id=args.get("intent_id"), question=args.get("question"),
+                    scope=args.get("scope") or [], research_level=args.get("research_level") or "L2",
+                    risk_level=args.get("risk_level") or "medium", source="mcp")
+                return result, 0
+            if name == "pm_research_evidence":
+                result = research.add_evidence(
+                    root, research_id=args.get("research_id"), source_url=args.get("source_url"),
+                    source_kind=args.get("source_kind") or "unknown", title=args.get("title") or "",
+                    claims=args.get("claims") or [], license_status=args.get("license_status") or "unknown",
+                    maintenance_signal=args.get("maintenance_signal") or "unknown",
+                    relevance=args.get("relevance") or "unknown", confidence=args.get("confidence") or "unknown",
+                    notes=args.get("notes") or "", source="mcp")
+                return result, 0
+            if name == "pm_research_option":
+                result = research.add_option(
+                    root, research_id=args.get("research_id"), name=args.get("name"),
+                    disposition=args.get("disposition") or "adapt", rationale=args.get("rationale") or "",
+                    capabilities=args.get("capabilities") or [], gaps=args.get("gaps") or [],
+                    license_status=args.get("license_status") or "unknown",
+                    confidence=args.get("confidence") or "unknown", selected=bool(args.get("selected")),
+                    source="mcp")
+                return result, 0
+            recommendation = pm_decision.recommendation(
+                root, args.get("research_id"))
+            needs_confirmation = recommendation.get("approval_mode") == "user_required"
+            if needs_confirmation and not bool(args.get("confirm")):
+                return {"code": "PM_DECISION_CONFIRM_REQUIRED",
+                        "message": "产品决策需要 confirm=true；未确认不能进入施工。"}, 2
+            result = pm_decision.decide(
+                root, research_id=args.get("research_id"), choice=args.get("choice"),
+                selected_option=args.get("selected_option") or "", why=args.get("why") or "",
+                alternatives=args.get("alternatives") or [], approved=bool(args.get("confirm")), source="mcp")
+            return result, 0
+        except (TypeError, ValueError) as exc:
+            return {"code": "PM_RESEARCH_INVALID", "message": str(exc)}, 2
     if name == "suggest_branch":
         return kgctl("suggest")
+    if name == "route_preview":
+        text = (args.get("text") or "").strip()
+        if not text:
+            return "route_preview 需要 text", 2
+        files = args.get("files") or []
+        env = {"KG_INBOX_FILES": ":".join(files) if files else None,
+               "KG_INBOX_CWD": (args.get("cwd") or "").strip() or None,
+               "KG_INBOX_PROJECT": (args.get("project") or "").strip() or None}
+        raw, code = kgctl("route-preview", text, extra_env=env)
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            return {"decision": "unknown", "project": None,
+                    "__text__": "落点取不到；不会假装正常", "detail": raw}, 2
+        decision = data.get("decision")
+        project = data.get("project")
+        reasons = [str(r) for r in (data.get("reasons") or []) if r]
+        if decision == "resolved" and project:
+            message = "将落到：" + str(project)
+        elif decision == "ambiguous":
+            message = "判不清落点；提交会进全局待路由箱，请在原话里点名项目"
+        elif decision == "none":
+            if project:
+                message = ("默认落到当前绑定项目：" + str(project) +
+                           "；如不是，请在原话里点名项目")
+            else:
+                message = "落点判不清：没有可用线索；请点名项目"
+        else:
+            message = "落点取不到；不会假装正常"
+        result = dict(data)
+        result["__text__"] = message
+        if reasons:
+            result["reasons"] = reasons
+        return result, (0 if code == 0 else 2)
     if name == "intake_request":
         guard = control_state.mutation_guard()
         if guard:
@@ -2050,9 +4436,68 @@ def call_tool(name, args):
         if not text:
             return "intake_request 需要 text", 2
         files = args.get("files") or []
+        declared_kind = args.get("kind") or "unknown"
+        effective_kind = _infer_experience_kind(text, files, declared_kind)
         env = {"KG_INBOX_FILES": ":".join(files) if files else None,
-               "KG_INBOX_KIND": args.get("kind") or "unknown"}
-        return kgctl("intake", text, extra_env=env)
+               "KG_INBOX_KIND": effective_kind,
+               "KG_INBOX_CWD": (args.get("cwd") or "").strip() or None,
+               "KG_INBOX_PROJECT": (args.get("project") or "").strip() or None}
+        # 统一入口先生成本次最小充分验收范围。预览不写盘；只有显式
+        # confirm_scope=true 才成为 pre_acceptance 的活动范围。
+        import dynamic_acceptance_scope
+        scope = dynamic_acceptance_scope.generate_scope(
+            text=text, kind=effective_kind, files=files,
+            product_shape=args.get("product_shape") or [],
+            delivery_goal=args.get("delivery_goal") or "acceptance_ready",
+            explicit_impacts=args.get("impacts") or [],
+        )
+        experience_required = effective_kind in ("visual", "ux") or bool(
+            {"ui", "interaction"} & set(scope.get("impact_tags") or []))
+        intake_result, intake_code = kgctl("intake", text, extra_env=env)
+        result = {"intake": intake_result, "acceptance_scope_preview": scope,
+                  "declared_kind": declared_kind,
+                  "effective_kind": effective_kind,
+                  "experience_contract": {
+                      "required": experience_required,
+                      "status": "required" if experience_required else "not_applicable",
+                      "obligation": (
+                          "视觉/体验任务必须声明 Experience Contract；"
+                          "上线前需真实浏览器机器证据与用户人工验收，"
+                          "不能用 exit 0 或模型自评替代最后一票。"
+                          if experience_required else
+                          "当前任务未识别为视觉/体验变更；如触及界面仍需显式声明体验契约。"),
+                  },
+                  "scope_persisted": False,
+                  "__text__": "需求已进入统一入口；动态验收范围仅生成预览，尚未作为本次活动门禁。"}
+        if intake_code != 0:
+            result["__text__"] = "需求入口处理未完成；动态验收范围仍只是预览，未写入项目。"
+            return result, intake_code
+        if not bool(args.get("confirm_scope")):
+            return result, 0
+        try:
+            repo = resolve_project(project=args.get("project"), cwd=args.get("cwd"),
+                                   bound=os.environ.get("KG_REPO"))
+        except RequestContextError as exc:
+            result["scope_error"] = str(exc)
+            result["__text__"] = "需求已进入入口，但无法确认验收范围归属；未写入任何项目。"
+            return result, 2
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(repo), "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=5)
+            expected_version = (proc.stdout or "").strip() if proc.returncode == 0 else ""
+        except (OSError, subprocess.TimeoutExpired):
+            expected_version = ""
+        result["acceptance_scope_preview"]["expected_version"] = expected_version
+        scope["expected_version"] = expected_version
+        path = repo / "ops" / "truth" / "acceptance_scope.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(scope, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8")
+        result["scope_persisted"] = True
+        result["scope_path"] = str(path)
+        result["__text__"] = "需求已进入统一入口；动态验收范围已确认并写入目标项目。"
+        return result, 0
     if name == "convergence_plan":
         argv = ["converge"]
         if args.get("confirm"):
@@ -2093,6 +4538,20 @@ def call_tool(name, args):
         return kgctl("dash", *(["--open"] if args.get("open") else []))
     if name == "autopilot_status":
         return _status_payload(fast=True), 0
+    if name == "project_autonomy_status":
+        repo = os.environ.get("KG_REPO") or str(REPO)
+        try:
+            payload = project_autonomy.summary(repo)
+            payload["__text__"] = (
+                "项目自主运行：%s；排队 %d，运行中 %d，阻塞 %d，等待确认 %d，已完成 %d"
+                % (payload.get("mode"), payload["counts"].get("queued", 0),
+                   payload["counts"].get("running", 0), payload["counts"].get("blocked", 0),
+                   payload["counts"].get("waiting_human", 0), payload["counts"].get("done", 0)))
+            return payload, 0
+        except Exception as exc:
+            return "项目自主运行状态读取失败：%s" % exc, 2
+    if name == "project_autonomy_control":
+        return project_autonomy_action(args.get("action"), args.get("reason") or "")
     if name == "autopilot_control":
         return control_action(args.get("action"), args.get("enabled"))
     if name == "autopilot_run_once":
@@ -2101,6 +4560,18 @@ def call_tool(name, args):
         return _settings_read_payload(), 0
     if name == "autopilot_settings_update":
         return _settings_update(args.get("set") or {})
+    if name == "project_goal_read":
+        return _project_goal_payload(), 0
+    if name == "project_goal_update":
+        if not bool(args.get("confirm")):
+            return "更新项目目标需要 confirm=true。", 2
+        return _project_goal_update(args.get("goal"), args.get("project_path"))
+    if name == "model_routes_read":
+        return _model_routes_read_payload(), 0
+    if name == "model_routes_update":
+        if not bool(args.get("confirm")):
+            return "更新任务模型需要 confirm=true。", 2
+        return _model_routes_update(args.get("routes"))
     if name == "render_autopilot_panel":
         panel = _panel_html_path()
         if panel is None:
@@ -2165,9 +4636,9 @@ def handle(msg):
                 "会把它和「当前在做什么 / 还差什么 / 可验收项」一起返回。用户只想提一次"
                 "：收到零散需求就用 intake_request 收口，系统自己负责归类、落账、推进到"
                 "验收，不要把「该放哪个对话/分支/角色」反过来问用户。"
-                "用户问“自动挡在哪看 / 怎么用 / 现在开着吗 / 做了什么”时，调用 "
+                "用户问“Codex Autopilot 在哪看 / 怎么用 / 现在开着吗 / 做了什么”时，调用 "
                 "render_autopilot_panel 打开面板（含小白说明与开关）；要看纯文本状态用 "
-                "autopilot_status；要暂停/恢复/开关自动动作或后台常驻用 autopilot_control。"
+                "autopilot_status；要暂停/恢复/开关自动动作或持续运行用 autopilot_control。"
             ),
         })
         return
@@ -2179,8 +4650,8 @@ def handle(msg):
     if method == "resources/list":
         _result(rid, {"resources": [{
             "uri": PANEL_URI,
-            "name": "Codex 自动挡面板",
-            "description": "自动挡的状态面板：怎么用、正在做什么、为什么、替你完成了什么、要不要你拍板、可暂停与开关。",
+            "name": "Codex Autopilot 面板",
+            "description": "Codex Autopilot 的状态面板：正在做什么、需要你决定什么、已经闭环了什么，以及可暂停与开关。",
             "mimeType": "text/html;profile=mcp-app",
         }]})
         return

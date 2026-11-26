@@ -3,21 +3,21 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Codex 自动挡</title>
+<title>Codex Autopilot</title>
 <style>
   :root{
-    /* 主题：优先读宿主（Codex）注入的 CSS 变量，取不到才回落到自带浅色。
-       面板因此和 Codex 同底色、同字色、同描边、同圆角，不再是一块风格
-       独立的外挂网页；在普通浏览器里也有一套完整的兜底。 */
-    --bg:var(--color-background-secondary,#F3F4F8);
-    --surface:var(--color-background-primary,#FFFFFF);
-    --surface-2:var(--color-background-secondary,#F8F9FC);
-    --surface-3:var(--color-background-tertiary,#EDEFF5);
-    --ink:var(--color-text-primary,#111420);
-    --ink-2:var(--color-text-secondary,#4C5464);
-    --ink-3:var(--color-text-tertiary,#737B8C);
-    --line:var(--color-border-primary,#E6E9F0);
-    --line-2:var(--color-border-subtle,#EEF1F6);
+    /* 主题：先读 @openai/apps-sdk-ui / Codex 宿主注入的官方语义 token，
+       再读旧宿主变量，最后才是独立浏览器里的兜底色。这样插件在宿主里
+       跟原生容器同一套底色、字色和描边，离开宿主也不会变成一块黑底外挂。 */
+    --bg:var(--color-surface-secondary,var(--color-background-secondary-soft,var(--color-background-secondary,#F9F9F9)));
+    --surface:var(--color-surface,var(--color-background-primary-surface,var(--color-background-primary,#FFFFFF)));
+    --surface-2:var(--color-surface-secondary,var(--color-background-secondary-soft,var(--color-background-secondary,#F9F9F9)));
+    --surface-3:var(--color-surface-tertiary,var(--color-background-primary-soft,var(--color-background-tertiary,#F3F3F3)));
+    --ink:var(--color-text,var(--color-text-primary,var(--color-text,#0D0D0D)));
+    --ink-2:var(--color-text-secondary,#5D5D5D);
+    --ink-3:var(--color-text-tertiary,#8F8F8F);
+    --line:var(--color-border,var(--color-border-primary-outline,var(--color-border-primary,#E5E5E5)));
+    --line-2:var(--color-border-subtle,#F0F0F0);
 
     /* brand · OpenAI 绿 */
     --brand-50:#E9F6F2;
@@ -30,18 +30,17 @@
     --brand-700:#0E8266;
     --brand-800:#0C654F;
     --brand:var(--brand-600);
-    --brand-mark-a:#35A88A; --brand-mark-b:#0C654F;
 
     /* semantic · 同样优先宿主语义色 */
-    --ok:var(--color-text-success,#0E7A57);
-    --ok-soft:var(--color-background-success,#E7F4EE);
-    --ok-line:var(--color-border-success,#CDE8DD);
-    --warn:var(--color-text-warning,#8F5F0B);
-    --warn-soft:var(--color-background-warning,#FAF2E1);
-    --warn-line:var(--color-border-warning,#EFDDBB);
-    --err:var(--color-text-danger,#B93A31);
-    --err-soft:var(--color-background-danger,#FAEBE9);
-    --err-line:var(--color-border-danger,#F0D1CD);
+    --ok:var(--color-text-success,var(--green-700,#00692A));
+    --ok-soft:var(--color-background-success-soft,var(--green-25,#EDFAF2));
+    --ok-line:var(--color-border-success-surface,var(--color-border-success,#CDE8DD));
+    --warn:var(--color-text-warning-outline,var(--color-text-warning,var(--orange-500,#E25507)));
+    --warn-soft:var(--color-background-warning-soft,var(--orange-25,#FFF5F0));
+    --warn-line:var(--color-border-warning-surface,var(--color-border-warning,var(--orange-a25,#FFE7D9)));
+    --err:var(--color-text-danger,var(--red-700,#911E1B));
+    --err-soft:var(--color-background-danger-soft,var(--red-25,#FFF0F0));
+    --err-line:var(--color-border-danger-surface,var(--color-border-danger,var(--red-a25,#FFD9D9)));
     --neutral:var(--color-text-secondary,#69707E);
     --neutral-soft:var(--surface-3);
     --neutral-line:var(--line);
@@ -62,6 +61,8 @@
   body.s-blocked,body.s-session_only{--acc:var(--warn);--accsoft:var(--warn-soft);--accline:var(--warn-line)}
   body.s-error{--acc:var(--err);--accsoft:var(--err-soft);--accline:var(--err-line)}
   body.s-idle{--acc:var(--ok);--accsoft:var(--ok-soft);--accline:var(--ok-line)}
+  body.s-enabled,body.s-waiting_human{--acc:var(--warn);--accsoft:var(--warn-soft);--accline:var(--warn-line)}
+  body.s-disabled{--acc:var(--ink-3);--accsoft:var(--surface-2);--accline:var(--line)}
   .wrap{max-width:780px;margin:0 auto;padding:18px 16px 34px}
   svg{display:block}
   button{font-family:inherit}
@@ -69,8 +70,6 @@
 
   /* ---- header ---- */
   .hdr{display:flex;align-items:center;gap:12px;margin-bottom:14px}
-  .brand{width:34px;height:34px;border-radius:11px;background:linear-gradient(150deg,var(--brand-mark-a),var(--brand-mark-b));display:grid;place-items:center;flex:0 0 auto;box-shadow:0 1px 2px rgba(51,58,132,.30),inset 0 1px 0 rgba(255,255,255,.22)}
-  .brand svg{width:18px;height:18px}
   .hdr-tx{flex:1 1 auto;min-width:0}
   .hdr-title{font-size:16px;font-weight:650;letter-spacing:0;color:var(--ink)}
   .hdr-sub{font-size:12.5px;color:var(--ink-3);margin-top:1px}
@@ -98,6 +97,48 @@
   .northstar .ns-d{font-size:11.5px;color:var(--ink-3);margin-left:auto;font-variant-numeric:tabular-nums}
   .northstar.unknown .ns-v{color:var(--ink-2);font-weight:500}
   .northstar.missing{opacity:.6}
+
+  /* ---- 首屏三问 ---- */
+  .q{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px 13px;margin-bottom:11px;box-shadow:var(--shadow-1)}
+  .qhead{display:flex;align-items:center;gap:9px;margin-bottom:11px}
+  .qhead .qn{width:20px;height:20px;border-radius:50%;background:var(--surface-3);color:var(--ink-3);display:grid;place-items:center;font-size:11px;font-weight:700;flex:0 0 auto;font-variant-numeric:tabular-nums}
+  .qhead h2{margin:0;font-size:14px;font-weight:650;color:var(--ink)}
+  .qhead .qstate{margin-left:auto;font-size:11.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .q .alert{margin-bottom:10px}
+  .q .hero,.q .card{box-shadow:none;border-radius:var(--r-sm);margin-bottom:0}
+  .q .card[hidden]{display:none}
+  .q .card .chead{margin-bottom:10px}
+  .q .card + .card,.q .northstar,.q .sysline{margin-top:10px}
+  .sysline{font-size:11.5px;color:var(--ink-3);line-height:1.6;overflow-wrap:anywhere}
+  .need-evidence[hidden]{display:none}
+  /* 管家健康条：颜色点是默认信息，名称与解释只在悬停/展开时出现。
+     attention 才用警告色；off 是用户自己关的，用中性灰，不冒充故障。 */
+  .stewards{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);display:flex;align-items:center;gap:8px}
+  .exp-contract{margin-top:10px;padding:8px 10px;border:1px solid var(--line-2);border-left:2px solid var(--brand-200);border-radius:var(--r-xs);background:var(--surface-2);font-size:11.5px;line-height:1.55;color:var(--ink-2)}
+  .exp-contract[hidden]{display:none}
+  .exp-contract strong{color:var(--ink);font-weight:650}
+  .exp-contract .exp-meta{margin-top:3px;color:var(--ink-3);font-size:11px;overflow-wrap:anywhere}
+  .steward-summary{font-size:11px;color:var(--ink-3);white-space:nowrap}
+  .steward-strip{display:flex;align-items:center;gap:3px}
+  .steward{position:relative;width:28px;height:28px;padding:0;border:0;border-radius:50%;background:transparent;display:grid;place-items:center;cursor:pointer}
+  .steward:hover,.steward:focus-visible{background:var(--surface-3)}
+  .steward .sdot{display:block;width:9px;height:9px;border-radius:50%;background:var(--ink-3);opacity:.55;box-shadow:0 0 0 2px transparent;transition:box-shadow .15s,transform .15s}
+  .steward:hover .sdot,.steward:focus-visible .sdot{transform:scale(1.12);box-shadow:0 0 0 2px var(--surface),0 0 0 3px var(--line)}
+  .steward.s-ok .sdot{background:var(--ok);opacity:.9}
+  .steward.s-attention .sdot{background:var(--warn);opacity:1}
+  .steward.s-off .sdot{background:var(--ink-3);opacity:.48}
+  .steward.s-unknown .sdot{background:var(--ink-3);opacity:.38}
+  .steward-detail{margin-top:9px;padding:11px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2);font-size:12px;color:var(--ink-2)}
+  .steward-detail[hidden]{display:none}
+  .steward-detail-status{color:var(--ink-2);line-height:1.5}
+  .steward-detail-recent{margin-top:9px;padding-top:8px;border-top:1px solid var(--line-2)}
+  .steward-detail-recent strong{display:block;color:var(--ink);font-weight:600;margin-bottom:4px}
+  .steward-detail-recent ul{margin:0;padding-left:17px}
+  .steward-detail-recent li{margin:2px 0;overflow-wrap:anywhere}
+  .steward-history{margin-top:8px;border-top:1px solid var(--line-2);padding-top:7px}
+  .steward-history summary{cursor:pointer;color:var(--ink-2);font-size:11.5px}
+  .steward-history ul{margin-top:6px}
+
   .hero-bar{height:3px;border-radius:999px;background:var(--surface-3);margin-top:13px;overflow:hidden}
   .hero-bar span{display:block;height:100%;width:34%;border-radius:999px;background:var(--acc);opacity:0}
   body.s-working .hero-bar span{opacity:1;animation:slide 1.7s ease-in-out infinite}
@@ -143,25 +184,48 @@
   .orientation-note{margin-top:12px;padding-top:11px;border-top:1px solid var(--line-2);font-size:12px;color:var(--ink-2)}
   .orientation-note b{color:var(--ink);font-weight:650}
   .folders{display:grid;gap:9px}
-  .folder{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2);overflow:hidden}
+  .folder{border:1px solid var(--line);border-radius:var(--r-sm);background:var(--surface-2);overflow:hidden;box-shadow:var(--shadow-1)}
   .folder.active{border-color:var(--brand-200);background:var(--brand-50)}
-  .folder-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start;padding:11px 13px}
-  .folder-title{font-size:13px;font-weight:650;color:var(--ink);overflow-wrap:anywhere}
-  .folder-meta{margin-top:3px;color:var(--ink-3);font-size:11.5px;overflow-wrap:anywhere}
+  .folder>summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr) auto 10px;gap:10px;align-items:start;padding:13px 13px;min-height:44px;transition-property:background-color;transition-duration:150ms;transition-timing-function:ease-out}
+  .folder>summary::-webkit-details-marker{display:none}
+  .folder>summary:hover{background:var(--surface)}
+  .folder>summary:focus-visible{outline:2px solid var(--brand-200);outline-offset:-2px}
+  .folder-chevron{width:6px;height:6px;margin-top:7px;border-right:1.5px solid var(--ink-3);border-bottom:1.5px solid var(--ink-3);transform:rotate(45deg);transition:transform .15s ease}
+  .folder[open] .folder-chevron{transform:rotate(225deg);margin-top:9px}
+  .folder-body{padding:0 13px 13px;background:var(--surface-2)}
+  .folder-title{font-size:13px;font-weight:650;color:var(--ink);overflow-wrap:anywhere;text-wrap:balance}
+  .folder-goal{margin-top:4px;color:var(--ink-2);font-size:12px;line-height:1.45;overflow-wrap:anywhere;text-wrap:pretty;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .folder-source{margin-top:4px;color:var(--ink-3);font-size:11px;overflow-wrap:anywhere}
   .folder-source b{color:var(--ink-2);font-weight:600}
   .folder-error{margin-top:6px;color:var(--warn);font-size:11.5px;overflow-wrap:anywhere}
   .folder-step{margin-top:5px;color:var(--brand-700);font-size:12px;font-weight:600;overflow-wrap:anywhere}
   .folder-stats{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end}
-  .fstat{font-size:10.5px;border-radius:999px;padding:2px 8px;background:var(--surface);border:1px solid var(--line);color:var(--ink-3);white-space:nowrap}
+  .fstat{font-size:10.5px;border-radius:999px;padding:3px 8px;background:var(--surface);border:1px solid var(--line);color:var(--ink-3);white-space:nowrap;font-variant-numeric:tabular-nums}
   .fstat.warn{background:var(--warn-soft);border-color:var(--warn-line);color:var(--warn)}
   .fstat.live{background:var(--brand-50);border-color:var(--brand-100);color:var(--brand-700)}
-  .folder-work{border-top:1px solid var(--line-2);background:var(--surface)}
-  .folder-work-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px;align-items:baseline;padding:7px 13px;border-bottom:1px solid var(--line-2);font-size:11.5px}
-  .folder-work-row:last-child{border-bottom:0}
+  .folder-work{background:var(--surface);border-radius:9px;padding:4px 10px;margin-top:3px}
+  .folder-work-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:baseline;padding:7px 0;font-size:11.5px}
+  .folder-work-row+.folder-work-row{border-top:1px solid var(--line-2)}
   .folder-work-row .id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink-3);font-size:10.5px}
   .folder-work-row .name{min-width:0;color:var(--ink-2);overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .folder-work-row .state{color:var(--ink-3);white-space:nowrap}
+  .folder-goal-editor{margin-top:9px;padding:9px 10px;background:var(--surface);border:1px solid var(--line);border-radius:9px}
+  .folder-goal-editor label{display:block;font-size:11.5px;color:var(--ink-3);margin-bottom:5px}
+  .folder-goal-editor textarea{width:100%;min-height:54px;resize:vertical;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink);font:inherit;font-size:12.5px;padding:7px 9px}
+  .folder-goal-actions{display:flex;gap:8px;align-items:center;margin-top:7px}
+  .folder-goal-actions .btn{padding:5px 11px;font-size:12px}
+  .folder-edit-goal{margin-top:9px;padding:4px 10px;font-size:11.5px}
+  .model-route-row{display:grid;grid-template-columns:92px minmax(0,1fr) 112px;gap:9px;align-items:center;padding:9px 0;border-top:1px solid var(--line-2)}
+  .model-route-row:first-child{border-top:0}
+  .model-route-row .mr-label{font-size:12.5px;font-weight:650;color:var(--ink)}
+  .model-route-row .mr-label span{display:block;font-size:11px;font-weight:400;color:var(--ink-3);margin-top:1px;line-height:1.35}
+  .model-route-row input,.model-route-row select{min-width:0;width:100%;height:32px;border:1px solid var(--line);border-radius:8px;background:var(--surface-2);color:var(--ink);font:inherit;font-size:12px;padding:0 9px}
+  .model-route-actions{display:flex;gap:10px;align-items:center;margin-top:10px;border-top:1px solid var(--line-2);padding-top:10px}
+  .model-route-actions .tiny{flex:1 1 auto;min-width:0}
+  @media (max-width:440px){
+    .model-route-row{grid-template-columns:1fr 1fr}
+    .model-route-row .mr-label{grid-column:1 / -1}
+  }
   .lane-group{margin-top:10px}
   .lane-head{display:flex;align-items:baseline;gap:7px;margin:0 0 6px;color:var(--ink-3);font-size:11px;font-weight:650}
   .lane-head span{font-weight:500}
@@ -179,6 +243,7 @@
     .triple{grid-template-columns:1fr}
     .orientation{padding:13px}
   }
+
   .stages{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
   .stage{border-radius:var(--r-xs);padding:11px 12px;background:var(--surface-2);border:1px solid var(--line)}
   .stage .n{font-size:23px;font-weight:700;line-height:1.1;letter-spacing:-.01em;font-variant-numeric:tabular-nums;color:var(--ink-3);transition:color .2s}
@@ -209,6 +274,19 @@
   .route-group:last-child{border-bottom:0}
   .route-group .t{font-size:12px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
   .tiny{font-size:11.5px;color:var(--ink-3)}
+
+  /* ---- 工单状态表：来源 → 项目 → 泳道 → 分支 → stage → 证据 ---- */
+  .wt{list-style:none;margin:0;padding:0}
+  .wt li{padding:9px 0;border-bottom:1px solid var(--line-2)}
+  .wt li:last-child{border-bottom:0}
+  .wt .t{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+  .wt .wid{font-size:10.5px;color:var(--ink-3);font-variant-numeric:tabular-nums;flex:0 0 auto}
+  .wt .stl{margin-left:auto;font-size:10.5px;font-weight:650;border-radius:999px;padding:2px 9px;background:var(--neutral-soft);color:var(--neutral);white-space:nowrap;flex:0 0 auto}
+  .wt .stl.doing{background:var(--brand-50);color:var(--brand-700)}
+  .wt .stl.review{background:var(--warn-soft);color:var(--warn)}
+  .wt .stl.stuck{background:var(--err-soft);color:var(--err)}
+  .wt .d{margin-top:4px;color:var(--ink-3);font-size:11.5px;overflow-wrap:anywhere}
+  .wt .ev{margin-top:3px;color:var(--ink-3);font-size:11.5px;opacity:.86;overflow-wrap:anywhere}
 
   /* ---- chips ---- */
   .chips{display:flex;flex-wrap:wrap;gap:7px}
@@ -256,17 +334,38 @@
   .acc ol{margin:7px 0 0;padding-left:20px;font-size:12.5px;color:var(--ink-2)}
   .acc ol li{padding:2px 0}
   .accnote{margin-top:10px;font-size:11.5px;color:var(--ink-3)}
+  .accact{margin-top:10px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;border-top:1px solid var(--line-2);padding-top:10px}
+  .accmsg{font-size:11.5px;color:var(--ink-3);flex:1 1 210px;min-width:0;line-height:1.5}
+  .accact .btn{padding:6px 13px;font-size:12.5px;border-radius:8px;flex:0 0 auto}
+  .accbtns{display:flex;gap:8px;align-items:center;flex:0 0 auto}
   .accfold{margin-top:12px;border-top:1px solid var(--line-2)}
   .accfold>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;padding:12px 0 2px;font-size:12px;font-weight:600;color:var(--ink-3)}
   .accfold>summary::-webkit-details-marker{display:none}
   .accfold>summary::after{content:"";margin-left:auto;width:7px;height:7px;border-right:1.6px solid var(--ink-3);border-bottom:1.6px solid var(--ink-3);transform:rotate(45deg) translateY(-2px);transition:transform .15s}
   .accfold[open]>summary::after{transform:rotate(-135deg) translateY(-2px)}
   .accfold .foldbody{padding:6px 0 0}
+  .pre-acceptance{border:1px solid var(--line-2);border-left:3px solid var(--brand-500);border-radius:var(--r-sm);padding:11px 13px;margin-bottom:14px;background:var(--surface-2)}
+  .pre-acceptance.ready{border-left-color:var(--ok)}
+  .pre-acceptance.blocked{border-left-color:var(--err)}
+  .pre-acceptance.unknown{border-left-color:var(--warn)}
+  .pre-summary{font-size:12px;color:var(--ink-2);margin:0 0 8px;line-height:1.5}
+  .pre-detail{display:grid;gap:5px}
+  .pre-row{display:flex;gap:8px;align-items:baseline;font-size:11.5px;color:var(--ink-3);line-height:1.45}
+  .pre-row b{color:var(--ink);font-weight:600;flex:0 0 auto}
+  .pre-row.failed,.pre-row.unknown{align-items:flex-start;flex-wrap:wrap}
+  .pre-row .pre-id{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:10px;color:var(--ink-3);min-width:48px}
+  .pre-row .pre-body{min-width:0;flex:1 1 220px}
+  .pre-row .pre-reason{display:block;width:100%;padding-left:56px;color:var(--err);font-size:11px}
+  .pre-row .pre-condition{display:block;width:100%;padding-left:56px;color:var(--ink-3);font-size:10.5px}
 
   /* lists (advanced + shared) */
   .list{margin:0;padding:0;list-style:none}
   .list li{padding:8px 0;border-bottom:1px solid var(--line-2);font-size:12.5px;display:flex;gap:8px;align-items:baseline}
   .list li:last-child{border-bottom:0}
+  /* 卡点行要带一条「下一步动作」。动作行是块级子元素，行本身必须能换行，
+     否则它会被当成第三个 flex item 挤在 tag/正文之间，视觉上错位。 */
+  .list li.blkitem{flex-wrap:wrap;align-items:flex-start}
+  .list li.blkitem>.accact{flex:1 1 100%;margin-top:2px}
   .tag{font-size:10.5px;border-radius:6px;padding:2px 8px;background:var(--brand-50);color:var(--brand-700);white-space:nowrap;font-weight:650;flex:0 0 auto;line-height:1.5}
   .tag.warn{background:var(--warn-soft);color:var(--warn)}
   .tag.err{background:var(--err-soft);color:var(--err)}
@@ -310,6 +409,7 @@
   .intake textarea:focus{outline:2px solid var(--brand-500);outline-offset:1px}
   .intake-actions{display:flex;align-items:center;gap:10px;margin-top:8px}
   .intake-actions .btn{border-radius:8px}
+  .intake-route{font-size:11.5px;line-height:1.45;color:var(--ink-3);margin-top:6px;min-height:16px;overflow-wrap:anywhere}
   .nativeline{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
   .projline{margin-top:8px;overflow-wrap:anywhere}
   .nativeline #nativeState{font-size:12.5px;color:var(--ink-2);line-height:1.5}
@@ -319,6 +419,56 @@
   .overview-detail>summary{list-style:none;cursor:pointer;padding:11px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:13px;font-weight:600;color:var(--ink)}
   .overview-detail>summary::-webkit-details-marker{display:none}
   .overview-detail[open]>summary{margin-bottom:12px}
+  .autonomy{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:14px 18px;margin-bottom:11px;box-shadow:var(--shadow-1)}
+  .autonomy-head{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+  .autonomy-title{font-size:13.5px;font-weight:650}
+  .autonomy-mode{font-size:11.5px;color:var(--ink-3)}
+  .autonomy-copy{margin-top:5px;color:var(--ink-2);font-size:12.5px}
+  .autonomy-stats{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;color:var(--ink-3);font-size:11.5px}
+  .autonomy-stats b{color:var(--ink);font-weight:650;margin-right:3px}
+  .autonomy-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}
+  .autonomy-actions .btn{padding:6px 10px;font-size:12px}
+
+  /* ---- Codex Autopilot project brief ---- */
+  .brand-kicker{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:700}
+  .project-overview{display:grid;grid-template-columns:152px minmax(0,1fr);gap:20px;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:18px;margin-bottom:11px;box-shadow:var(--shadow-2)}
+  .progress-ring{--progress:0%;width:128px;height:128px;border-radius:50%;display:grid;place-items:center;background:conic-gradient(var(--brand-600) var(--progress),var(--surface-3) 0);position:relative;margin:auto}
+  .progress-ring::after{content:"";position:absolute;inset:9px;border-radius:50%;background:var(--surface)}
+  .progress-ring .ring-value{position:relative;z-index:1;text-align:center;line-height:1}
+  .ring-value strong{display:block;font-size:27px;font-weight:720;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .ring-value span{display:block;margin-top:7px;font-size:10.5px;color:var(--ink-3)}
+  .overview-copy{min-width:0}
+  .overview-copy h1{font-size:19px;line-height:1.25;margin:4px 0 5px;font-weight:700;color:var(--ink)}
+  .overview-copy .lede{font-size:13px;color:var(--ink-2);line-height:1.5;margin:0;overflow-wrap:anywhere}
+  .overview-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:15px}
+  .overview-metric{min-width:0;border-top:1px solid var(--line-2);padding-top:8px}
+  .overview-metric strong{display:block;font-size:15px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums}
+  .overview-metric span{display:block;margin-top:2px;font-size:10.5px;color:var(--ink-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .attention{display:flex;gap:9px;align-items:flex-start;margin-top:14px;padding:10px 11px;border-left:3px solid var(--warn);background:var(--warn-soft);border-radius:var(--r-xs)}
+  .attention[hidden]{display:none}
+  .attention .attention-dot{width:8px;height:8px;border-radius:50%;background:var(--warn);margin-top:5px;flex:0 0 auto}
+  .attention strong{display:block;font-size:12px;color:var(--warn);font-weight:700}
+  .attention span{display:block;margin-top:2px;font-size:11.5px;color:var(--ink-2);line-height:1.4;overflow-wrap:anywhere}
+  .map-card{padding:16px 18px 13px}
+  .map-head{display:flex;align-items:baseline;gap:9px;margin-bottom:13px}
+  .map-head h2{margin:0;font-size:15px;font-weight:680}
+  .map-head .map-meta{margin-left:auto;color:var(--ink-3);font-size:11px;font-variant-numeric:tabular-nums}
+  .map-summary{height:6px;border-radius:99px;background:var(--surface-3);overflow:hidden;margin-bottom:14px}
+  .map-summary span{display:block;height:100%;border-radius:99px;background:var(--brand-600);transition:width .45s ease}
+  .project-card{border-top:1px solid var(--line-2);padding:13px 0 2px}
+  .project-card:first-child{border-top:0;padding-top:0}
+  .project-card-head{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:9px;align-items:center}
+  .project-card-dot{width:9px;height:9px;border-radius:50%;background:var(--neutral);box-shadow:0 0 0 3px var(--neutral-soft)}
+  .project-card-dot.done{background:var(--ok);box-shadow:0 0 0 3px var(--ok-soft)}
+  .project-card-dot.doing{background:var(--brand-600);box-shadow:0 0 0 3px var(--brand-50)}
+  .project-card-title{min-width:0;font-size:13px;font-weight:650;color:var(--ink);overflow-wrap:anywhere}
+  .project-card-state{font-size:11px;color:var(--ink-3);white-space:nowrap}
+  .project-card-bar{height:4px;border-radius:99px;background:var(--surface-3);margin:9px 0 7px 19px;overflow:hidden}
+  .project-card-bar span{display:block;height:100%;border-radius:99px;background:var(--brand-500)}
+  .project-card.done .project-card-bar span{background:var(--ok)}
+  .project-card-foot{display:flex;gap:8px;justify-content:space-between;margin-left:19px;font-size:11px;color:var(--ink-3)}
+  .project-card-foot .detail{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .project-card-foot .percent{font-variant-numeric:tabular-nums;color:var(--ink-2);font-weight:650;white-space:nowrap}
 
   /* switches */
   .switchrow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line-2)}
@@ -346,83 +496,394 @@
     .chip b{max-width:56vw}
     .toast{text-align:left;flex-basis:100%}
   }
+
+  /* ---- final native surface: one quiet Codex control plane --------------
+     One visual layer owns the user-facing hierarchy. Data-specific classes
+     above remain intact so the MCP renderer contract and existing checks do
+     not change. The page follows the approved reading order: identity and
+     global control, a real human action when present, one active project
+     surface, then folded configuration and evidence. */
+  :root{
+    --r:var(--radius-md,8px);
+    --r-sm:var(--radius-sm,6px);
+    --r-xs:var(--radius-xs,4px);
+    --shadow-1:none;
+    --shadow-2:none;
+    --space-1:calc(var(--spacing,4px) * 1);
+    --space-2:calc(var(--spacing,4px) * 2);
+    --space-3:calc(var(--spacing,4px) * 3);
+    --space-4:calc(var(--spacing,4px) * 4);
+  }
+  html,body{overflow-x:hidden}
+  body{background:var(--bg);font-size:13px;line-height:1.5}
+  .wrap{display:flex;flex-direction:column;max-width:720px;margin:0 auto;padding:calc(var(--spacing,4px)*5) calc(var(--spacing,4px)*5) calc(var(--spacing,4px)*8)}
+  .hdr{order:1;display:flex;align-items:center;gap:12px;margin:0 0 calc(var(--spacing,4px)*4)}
+  .hdr-tx{flex:1 1 auto;min-width:0}
+  .hdr-title{font-size:16px;line-height:1.3;font-weight:600;color:var(--ink)}
+  .hdr-sub{display:none}
+  .hdr-act{display:flex;gap:2px;flex:0 0 auto}
+  .iconbtn{width:32px;height:32px;border:0;border-radius:var(--r-sm);background:transparent;box-shadow:none;color:var(--ink-2)}
+  .iconbtn svg{width:16px;height:16px}
+  .iconbtn:hover,.iconbtn:focus-visible{background:var(--surface-3);color:var(--ink)}
+  .iconbtn:focus-visible{outline:2px solid var(--brand-500);outline-offset:2px}
+  body.adv .iconbtn.adv{background:var(--surface-3);border:0;color:var(--ink)}
+
+  /* Global control is one quiet row, not a framed card. */
+  .global-control{order:2;margin:0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  .global-control .switchrow{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:36px;padding:0 2px;border:0}
+  .global-control .switchrow>div{min-width:0}
+  .global-control .switchrow .t{font-size:12px;line-height:1.3;font-weight:500;color:var(--ink-2)}
+  .global-control .switchrow .d{font-size:11.5px;line-height:1.35;margin-top:2px;color:var(--ink-3)}
+  .global-control .switchrow .d::before{content:"全局 · "}
+  .global-control .projline{display:none}
+  .sw{position:relative;width:36px;height:20px;border:0;border-radius:999px;background:var(--line);cursor:pointer;flex:0 0 auto;transition:background .15s}
+  .sw::after{content:"";position:absolute;top:3px;left:3px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.16);transition:left .15s}
+  .sw.on{background:var(--brand)}
+  .sw.on::after{left:19px}
+  .sw:disabled{opacity:.5;cursor:default}
+
+  /* A real user action is visible; silence is the default when nobody is needed. */
+  #q1{order:3;margin:0 0 10px;padding:0;background:transparent;border:0;border-radius:0}
+  #q1:not(.has-need){display:none}
+  #q1 .qhead{display:none}
+  #q1 .alert{display:flex;align-items:flex-start;min-height:28px;margin:0;padding:6px 0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  #q1 .alert .al-ic{display:none}
+  #q1 .alert .al-tx{font-size:var(--font-text-sm-size,13px);line-height:var(--font-text-sm-line-height,20px);font-weight:500;color:var(--ink)}
+  #q1 .alert.lv-warn{background:transparent;color:var(--ink)}
+  #q1>#globalRoutingFold,#q1>#needEvidenceFold{display:block;margin:calc(var(--spacing,4px)*1) 0 0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  #q1>#globalRoutingFold[hidden],#q1>#needEvidenceFold[hidden]{display:none}
+  #q1>#globalRoutingFold summary,#q1>#needEvidenceFold summary{display:none}
+  #q1>#globalRoutingFold summary::after,#q1>#needEvidenceFold summary::after{display:none}
+  #q1>#globalRoutingFold .foldbody,#q1>#needEvidenceFold .foldbody{padding:8px 0 0}
+
+  /* The active project is the only primary filled surface. */
+  .active-project-shell{order:4;display:block;margin:0;border:0;border-radius:0;background:var(--surface);box-shadow:none;overflow:hidden}
+  #projectOverview,#q2,#mapCard{border-bottom:1px solid var(--line-2)}
+  .active-project-shell>#projectOverview{padding:calc(var(--spacing,4px)*4) calc(var(--spacing,4px)*4) calc(var(--spacing,4px)*3)}
+  .active-project-shell>#q2{padding:calc(var(--spacing,4px)*3) calc(var(--spacing,4px)*4)}
+  .active-project-shell>#mapCard{padding:calc(var(--spacing,4px)*3) calc(var(--spacing,4px)*4)}
+  .active-project-shell>#q3{padding:calc(var(--spacing,4px)*3) calc(var(--spacing,4px)*4) calc(var(--spacing,4px)*4);border-top:0}
+  .active-project-shell>#projectOverview,.active-project-shell>#q2,.active-project-shell>#mapCard,.active-project-shell>#q3{display:block;margin:0;border-radius:0;background:transparent;box-shadow:none}
+  .active-project-shell>.active-project-autonomy{display:block;margin:0;padding:calc(var(--spacing,4px)*2) calc(var(--spacing,4px)*4) calc(var(--spacing,4px)*4);border-top:0}
+  .active-project-shell>.active-project-autonomy>summary{display:none}
+  .active-project-shell>.active-project-autonomy>summary::-webkit-details-marker{display:none}
+  .active-project-shell>.active-project-autonomy>summary::after{content:"";margin-left:auto;width:6px;height:6px;border-right:1.5px solid var(--ink-3);border-bottom:1.5px solid var(--ink-3);transform:rotate(45deg) translateY(-1px)}
+  .active-project-shell>.active-project-autonomy[open]>summary::after{transform:rotate(225deg) translateY(-1px)}
+  .active-project-shell>.active-project-autonomy #autonomyCard{display:block;margin:0;padding:10px 0 0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  .active-project-shell>.active-project-autonomy #autonomyCard .autonomy-stats{display:none}
+  .active-project-shell>.active-project-autonomy .autonomy-head{display:none}
+  .active-project-shell>.active-project-autonomy .autonomy-copy{margin:0;font-size:11.5px;color:var(--ink-3)}
+  .active-project-shell>.active-project-autonomy .autonomy-actions{margin-top:8px}
+
+  #projectOverview .progress-ring,#projectOverview .attention,#projectOverview .brand-kicker,#projectOverview .lede{display:none}
+  #projectOverview .overview-copy{display:block;min-width:0}
+  #projectOverview .overview-copy::before{content:"当前项目";display:block;margin-bottom:3px;color:var(--ink-3);font-size:11px;line-height:1.2}
+  #projectOverview .overview-copy h1{display:block;margin:0;font-size:17px;line-height:1.35;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+  #projectOverview .project-goal{display:block;margin:6px 0 0;max-width:58ch;color:var(--ink-2);font-size:12.5px;line-height:1.55;font-weight:400;overflow-wrap:anywhere}
+  #projectOverview .overview-metrics{display:none}
+  #projectOverview .overview-progress{display:none}
+
+  #q2 .qhead,#q2 .hero-top{display:none}
+  #q2 .hero{padding:0;margin:0;border:0;border-radius:0;background:transparent}
+  #q2 .triple{display:block;margin:12px 0 0;padding:0;border:0}
+  #q2 .triple .cell{min-width:0;border:0;border-radius:0;background:transparent;padding:0}
+  #q2 .triple .cell .k{display:none}
+  #q2 .triple .cell .v,#q2 .triple .cell.work .v{margin:0;font-size:12.5px;line-height:1.55;font-weight:400;color:var(--ink-2);overflow-wrap:anywhere}
+  #q2 .triple .cell .v::before{content:"状态 · ";color:var(--ink-3)}
+  #q2 .triple .cell.work .v::before{content:"正在做 · ";color:var(--ink-3)}
+  #q2 .triple .cell:last-child .v{display:none}
+  #q2 .hero-bar,#q2 .execnow,#q2>#sysLine,#q2>#autonomyLine,#q2>#systemEvidenceFold{display:none}
+
+  /* Steward health is the click target; the dot is the quiet status signal. */
+  #q2 .stewards{display:flex;align-items:center;gap:8px;margin:12px 0 0;padding:0;border-top:0}
+  #q2 .steward-summary{display:none}
+  #q2 .steward-strip{display:flex;flex-wrap:wrap;align-items:center;gap:5px 12px}
+  #q2 .steward{width:auto;min-height:18px;padding:0;border:0;border-radius:0;background:transparent;display:inline-flex;align-items:center;gap:5px;cursor:pointer;color:var(--ink-2);font:inherit;font-size:11.5px;line-height:1.5}
+  #q2 .steward-label{max-width:none;overflow:visible;text-overflow:clip;white-space:nowrap}
+  #q2 .steward:hover,#q2 .steward:focus-visible{background:var(--surface-3);color:var(--ink)}
+  #q2 .steward .sdot{display:block;width:7px;height:7px;border-radius:50%;background:var(--ink-3);opacity:.5;transition:transform .15s}
+  #q2 .steward:hover .sdot,#q2 .steward:focus-visible .sdot{transform:scale(1.15)}
+  #q2 .steward.s-ok .sdot{background:var(--ok);opacity:.9}
+  #q2 .steward.s-attention .sdot{background:var(--warn);opacity:1}
+  #q2 .steward.s-off .sdot{background:var(--ink-3);opacity:.45}
+  #q2 .steward.s-unknown .sdot{background:var(--ink-3);opacity:.35}
+  #q2 .steward-detail{margin-top:8px;padding:9px 10px;border:0;border-radius:var(--r-sm);background:var(--surface-2);font-size:11.5px;color:var(--ink-2)}
+  #q2 .steward-detail-status{line-height:1.5}
+  #q2 .steward-detail-recent{margin-top:9px}
+  #q2 .steward-detail-recent strong{display:block;margin-bottom:4px;font-size:11.5px;font-weight:600;color:var(--ink)}
+  #q2 .steward-detail-recent ul,#q2 .steward-history ul{margin:0;padding-left:16px}
+  #q2 .steward-detail-recent li,#q2 .steward-history li{margin:2px 0;overflow-wrap:anywhere}
+  #q2 .steward-history{margin-top:8px;padding-top:8px;border-top:1px solid var(--line-2)}
+  #q2 .steward-history summary{cursor:pointer;font-size:11px;color:var(--ink-3)}
+
+  /* A compact roadmap shows one count line, one current step and an optional fold. */
+  #mapCard .map-head{display:flex;align-items:baseline;gap:calc(var(--spacing,4px)*2);margin:0 0 calc(var(--spacing,4px)*1)}
+  #mapCard .map-head h2{font-size:0;color:transparent}
+  #mapCard .map-head h2::after{content:"实施进度";font-size:11.5px;font-weight:500;color:var(--ink-3)}
+  #mapCard .map-meta{font-size:var(--font-text-xs-size,12px);color:var(--ink-3);font-variant-numeric:tabular-nums}
+  #mapCard .map-summary{display:none}
+  #mapCard .map-now{display:flex;align-items:baseline;gap:calc(var(--spacing,4px)*2);margin:0;font-size:var(--font-text-sm-size,14px);line-height:var(--font-text-sm-line-height,20px)}
+  #mapCard .map-now-label{font-size:0}
+  #mapCard .map-now-label::after{content:"当前";font-size:var(--font-text-xs-size,12px);color:var(--color-text-tertiary,var(--ink-3))}
+  #mapCard .map-now-value{min-width:0;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+  #mapCard .map-detail{margin-top:4px}
+  #mapCard .map-detail>summary{display:none}
+  #mapCard .map-detail>summary::-webkit-details-marker{display:none}
+  #mapCard .map-detail>summary::after{content:"";margin-left:auto;width:6px;height:6px;border-right:1.5px solid var(--ink-3);border-bottom:1.5px solid var(--ink-3);transform:rotate(45deg) translateY(-1px)}
+  #mapCard .map-detail[open]>summary::after{transform:rotate(225deg) translateY(-1px)}
+  #mapCard .project-card{border-top:0;padding:0}
+  #mapCard .project-card+.project-card{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-2)}
+  #mapCard .project-card-bar{margin:7px 0 5px 19px;height:3px}
+  #mapCard .project-card-foot{margin-left:19px;font-size:10.5px}
+  #mapCard .project-card-title{font-size:12px}
+  #mapCard .project-card-state{font-size:10.5px}
+
+  #q3{background:transparent}
+  #q3 .qhead{display:flex;align-items:baseline;gap:calc(var(--spacing,4px)*2);margin:0 0 calc(var(--spacing,4px)*1)}
+  #q3 .qhead .qn{display:none}
+  #q3 .qhead h2{font-size:0;color:transparent}
+  #q3 .qhead{display:none}
+  #q3 .qhead .qstate{display:none}
+  #q3 .northstar{display:none}
+  #q3 #recentCard .chead{display:flex;align-items:baseline;gap:8px;margin:0 0 5px}
+  #q3 #recentCard .chead h2{font-size:11.5px;font-weight:500;color:var(--ink-3)}
+  #q3 #recentCard .chead .count{font-size:10.5px;color:var(--ink-3)}
+  #q3 #recentCard{padding:0;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  #q3 #recentCard .list li{display:block;max-width:100%;padding:3px 0;border:0;font-size:11.5px;line-height:1.4;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #q3 #recentCard .list li:nth-child(n+4){display:none}
+  #q3 #recentCard .list:after{display:none}
+
+  /* Other projects are flat filled surfaces, one compact summary each. */
+  #folderCard{order:5;margin:16px 0 0;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  #folderCard>.chead{display:flex;align-items:baseline;gap:8px;margin:0;padding:0 0 7px}
+  #folderCard>.chead h2{font-size:12px;font-weight:600;color:var(--ink-2)}
+  #folderCard>.chead .count{padding:0;background:transparent;font-size:10.5px;color:var(--ink-3)}
+  #folderCard .folders{display:grid;gap:6px}
+  #folderCard .folder{display:block;border:0;border-radius:var(--r);background:var(--surface-2);box-shadow:none}
+  #folderCard .folder>summary{display:grid;grid-template-columns:minmax(0,1fr) auto 10px;gap:10px;align-items:start;min-height:48px;padding:10px 12px}
+  #folderCard .folder>summary:hover{background:var(--surface-3)}
+  #folderCard .folder-title{font-size:12.5px;line-height:1.35;font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+  #folderCard .folder-goal{display:block;margin-top:2px;font-size:10.5px;line-height:1.35;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #folderCard .folder-step{display:none}
+  #folderCard .folder-stats{display:flex;gap:6px;justify-content:flex-end;font-size:10px;color:var(--ink-3)}
+  #folderCard .fstat{border:0;border-radius:0;padding:0;background:transparent;font-size:10px}
+  #folderCard .fstat.warn{background:transparent;color:var(--warn)}
+  #folderCard .fstat.live{background:transparent;color:var(--ink-3)}
+  #folderCard .folder-progress{display:flex;align-items:center;gap:7px;margin-top:6px}
+  #folderCard .folder-progress-bar{height:3px;flex:1;min-width:32px;border-radius:999px;background:var(--surface-3);overflow:hidden}
+  #folderCard .folder-progress-bar span{display:block;height:100%;border-radius:inherit;background:var(--brand-500)}
+  #folderCard .folder-progress-value{font-size:10px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+  #folderCard .folder-body{padding:0 12px 12px;background:var(--surface-2)}
+  #folderCard .folder-goal-editor{display:grid;gap:8px}
+  #folderCard .folder-goal-editor[hidden]{display:none}
+  #folderCard .folder-work{margin-top:8px;padding:4px 10px;border-radius:var(--r-sm);background:var(--surface)}
+  #folderCard .folder-goal-editor{margin-top:8px;padding:10px;border:0;border-radius:var(--r-sm);background:var(--surface)}
+  #folderCard:not(:has(details.folder)){display:none}
+
+  /* Configuration and evidence are discoverable below the default first screen. */
+  #needEvidenceFold,#acceptCard,#routeOverview,.overview-detail,#advanced,#guide,.ctrl{order:9;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none}
+  #needEvidenceFold{margin-top:0}
+  #acceptCard,.overview-detail{margin-top:calc(var(--spacing,4px)*4);border-top:0}
+  #needEvidenceFold[hidden],#q1>#needEvidenceFold[hidden]{display:none !important}
+  #needEvidenceFold>summary{display:none}
+  #needEvidenceFold>summary,#acceptCard .chead,.overview-detail>summary{font-size:12px;color:var(--ink-2)}
+  #acceptCard{display:none}
+  body.has-accept #acceptCard{display:block}
+  #routeOverview{display:none}
+  body.adv #routeOverview{display:block}
+  #guide,.ctrl{display:none}
+  body.adv #guide{display:block}
+  body.adv .ctrl{display:flex}
+  #advanced{display:none}
+  body.adv #advanced{display:block}
+  #advanced>details.fold{background:transparent;border:0;border-top:1px solid var(--line-2);border-radius:0;box-shadow:none}
+  #advanced>details.fold>summary{display:flex;align-items:center;list-style:none;padding:12px 0;font-size:12px;font-weight:500;color:var(--ink-2)}
+  #advanced>details.fold>summary::-webkit-details-marker{display:none}
+  #advanced>details.fold>summary::after{content:"";margin-left:auto;width:6px;height:6px;border-right:1.5px solid var(--ink-3);border-bottom:1.5px solid var(--ink-3);transform:rotate(45deg) translateY(-1px)}
+  #advanced>details.fold[open]>summary::after{transform:rotate(225deg) translateY(-1px)}
+  #advanced .foldbody{padding:0 0 14px}
+  .card{border:1px solid var(--line-2);border-radius:var(--r);box-shadow:none}
+  .btn{border-radius:var(--r-sm);box-shadow:none;padding:7px 12px;font-size:12px}
+  .overview-detail{margin-top:0;display:none}
+  body.adv .overview-detail{display:block;margin-top:calc(var(--spacing,4px)*4)}
+  .foot{order:10;margin-top:calc(var(--spacing,4px)*4);font-size:var(--font-text-xs-size,12px);color:var(--color-text-tertiary,var(--ink-3));text-align:center}
+
+  @media(max-width:520px){
+    .wrap{padding:calc(var(--spacing,4px)*4) calc(var(--spacing,4px)*3) calc(var(--spacing,4px)*8)}
+    #q2 .triple{grid-template-columns:1fr;gap:calc(var(--spacing,4px)*2)}
+    #q2 .steward-strip{gap:5px 10px}
+    #q2 .triple .cell{display:grid;grid-template-columns:80px minmax(0,1fr);gap:8px;align-items:baseline}
+    #q2 .triple .cell .v{margin-top:0}
+    #folderCard .folder>summary{grid-template-columns:minmax(0,1fr) 10px}
+    #folderCard .folder-stats{grid-column:1/-1;justify-content:flex-start;margin-top:-4px}
+  }
+  @media(prefers-reduced-motion:reduce){
+    *,*::before,*::after{scroll-behavior:auto;animation-duration:.01ms;animation-iteration-count:1;transition-duration:.01ms}
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
 
   <header class="hdr">
-    <span class="brand" aria-hidden="true">
-      <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" stroke="#fff"><path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12z"/></svg>
-    </span>
     <div class="hdr-tx">
-      <div class="hdr-title">自动挡</div>
+      <div class="hdr-title">Codex Autopilot</div>
       <div class="hdr-sub" id="subtitle">正在读取状态…</div>
     </div>
     <div class="hdr-act">
       <button class="iconbtn" id="refresh" aria-label="刷新" title="刷新状态">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg>
       </button>
-      <button class="iconbtn adv" id="advBtn" aria-label="高级设置" title="高级设置">
+      <button class="iconbtn adv" id="advBtn" aria-label="任务模型与推理" title="任务模型与推理">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2v.3a2 2 0 1 1-4 0v-.2a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3.4 15a2 2 0 0 1 0-4h.2A1.7 1.7 0 0 0 4.8 8.1l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10.5 4.1V3.8a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0 1.2 2.9h.3a2 2 0 1 1 0 4z"/></svg>
       </button>
     </div>
   </header>
 
-  <section class="card" style="padding:11px 14px;margin-bottom:10px">
-    <div class="switchrow" style="padding:0;border:0">
-      <div><div class="t">Codex 自动挡</div><div class="d" id="masterState">正在读取状态…</div></div>
-      <button class="sw" id="masterToggle" aria-label="启用或关闭 Codex 自动挡" aria-pressed="true"></button>
+  <section class="q" id="q1">
+    <div class="qhead"><span class="qn">1</span><h2>需要你的决定</h2><span class="qstate" id="q1State"></span></div>
+    <div class="alert lv-ok" id="need">
+      <span class="al-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/></svg></span>
+      <span class="al-tx" id="needText">读取中…</span>
     </div>
-    <div class="d projline" id="projectLine">绑定项目：读取中…</div>
   </section>
 
-  <section class="hero">
-    <div class="hero-top">
-      <span class="pulse"></span>
-      <span class="hero-state" id="stateLabel">读取中</span>
-      <span class="hero-time" id="statusTime"></span>
-    </div>
-    <div class="triple" aria-label="一眼三问">
-      <div class="cell">
-        <span class="k">① 现在是什么状态</span>
-        <span class="v" id="focusStatus">读取中…</span>
+  <section class="q" id="q2">
+    <div class="qhead"><span class="qn">2</span><h2>系统在干对的事吗？</h2><span class="qstate" id="q2State"></span></div>
+    <section class="hero">
+      <div class="hero-top">
+        <span class="pulse"></span>
+        <span class="hero-state" id="stateLabel">读取中</span>
+        <span class="hero-time" id="statusTime"></span>
       </div>
-      <div class="cell work">
-        <span class="k">② 现在在干嘛</span>
-        <span class="v" id="focusDoing">读取中…</span>
+      <div class="triple" aria-label="当前状态与进度">
+        <div class="cell">
+          <span class="k">现在是什么状态</span>
+          <span class="v" id="focusStatus">读取中…</span>
+        </div>
+        <div class="cell work">
+          <span class="k">现在在干嘛</span>
+          <span class="v" id="focusDoing">读取中…</span>
+        </div>
+        <div class="cell">
+          <span class="k">现在在哪个步骤</span>
+          <span class="v" id="focusStep">读取中…</span>
+        </div>
       </div>
-      <div class="cell">
-        <span class="k">③ 现在在哪个步骤</span>
-        <span class="v" id="focusStep">读取中…</span>
+      <div class="hero-bar" aria-hidden="true"><span></span></div>
+      <div class="execnow" id="execNow" hidden><span class="edot"></span><span class="etx" id="execNowText"></span></div>
+    </section>
+    <div class="sysline" id="sysLine">正在读取常驻与调度…</div>
+    <div class="stewards" id="stewardBar" aria-label="管家健康状态"></div>
+    <div class="steward-detail" id="stewardDetail" hidden aria-live="polite"></div>
+    <div class="sysline" id="autonomyLine" hidden></div>
+    <details class="card fold engineering-detail" id="systemEvidenceFold">
+      <summary>系统为什么这么判断</summary>
+      <div class="foldbody">
+        <div class="sysline" id="systemDetail">正在读取运行指标…</div>
+        <div class="exp-contract" id="experienceContract" hidden aria-label="体验契约投影">
+          <strong id="experienceHeadline">体验契约读取中</strong>
+          <div class="exp-meta" id="experienceMeta"></div>
+        </div>
+        <div class="exp-contract" id="rendererContract" hidden data-renderer-mode="interim" aria-label="面板渲染契约">
+          <strong id="rendererHeadline">面板渲染契约读取中</strong>
+          <div class="exp-meta" id="rendererMeta"></div>
+        </div>
       </div>
-    </div>
+    </details>
+    <details class="card fold" id="globalRoutingFold" hidden>
+      <summary id="globalRoutingSummary">全局待路由</summary>
+      <div class="foldbody"><div id="globalRoutingBox"></div></div>
+    </details>
+  </section>
+
+  <section class="q" id="q3">
+    <div class="qhead"><span class="qn">3</span><h2>它替我完成了什么？</h2><span class="qstate" id="q3State"></span></div>
     <div class="northstar missing" id="northStar">
       <span class="ns-k">首问闭环率</span>
       <span class="ns-v" id="nsValue">取不到</span>
       <span class="ns-d" id="nsDetail"></span>
     </div>
-    <div class="hero-bar" aria-hidden="true"><span></span></div>
-    <div class="execnow" id="execNow" hidden><span class="edot"></span><span class="etx" id="execNowText"></span></div>
+    <section class="card" id="recentCard">
+      <div class="chead"><h2>最近收口</h2><span class="count" id="recentNote"></span></div>
+      <div id="recentBox"></div>
+    </section>
   </section>
 
-  <div class="alert lv-ok" id="need">
-    <span class="al-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.5 2.5 2.5 5-5.5"/></svg></span>
-    <span class="al-tx">读取中…</span>
-  </div>
+  <section class="card global-control">
+    <div class="switchrow" style="padding:0;border:0">
+      <div><div class="t">Autopilot</div><div class="d" id="masterState">正在读取状态…</div></div>
+      <button class="sw" id="masterToggle" aria-label="启用或关闭 Codex Autopilot" aria-pressed="true"></button>
+    </div>
+    <div class="d projline" id="projectLine">绑定项目：读取中…</div>
+  </section>
 
-  <section class="intake">
-    <label for="intakeText">把问题交给自动挡</label>
-    <textarea id="intakeText" placeholder="说说你发现的问题或想完成的事"></textarea>
-    <div class="intake-actions">
-      <button class="btn primary" id="intakeSubmit">提交任务</button>
-      <span class="intake-state" id="intakeState" role="status" aria-live="polite"></span>
+  <section class="card project-section" id="folderCard">
+    <div class="chead"><h2>项目</h2><span class="count" id="folderNote"></span></div>
+    <div class="folders" id="folderBox"></div>
+  </section>
+  <section class="project-overview" id="projectOverview" aria-label="项目总览">
+    <div class="progress-ring" id="overallRing" style="--progress:0%">
+      <div class="ring-value"><strong id="overallPercent">—</strong><span>整体进度</span></div>
+    </div>
+    <div class="overview-copy">
+      <div class="brand-kicker">PROJECT BRIEF</div>
+      <h1 id="overviewTitle">正在读取项目</h1>
+      <p class="lede" id="overviewLede">正在整理当前项目的真实进展。</p>
+      <p class="project-goal" id="overviewGoal">正在读取项目目标。</p>
+      <div class="overview-metrics">
+        <div class="overview-metric"><strong id="metricDone">0</strong><span>已完成</span></div>
+        <div class="overview-metric"><strong id="metricDoing">0</strong><span>进行中</span></div>
+        <div class="overview-metric"><strong id="metricRest">0</strong><span>待推进</span></div>
+      </div>
+      <div class="overview-progress" aria-label="总体进度"></div>
+      <div class="attention" id="attentionBox" hidden>
+        <span class="attention-dot"></span><div><strong id="attentionTitle">建议先关注</strong><span id="attentionText"></span></div>
+      </div>
     </div>
   </section>
 
-  <section class="card" id="folderCard">
-    <div class="chead"><h2>项目文件夹</h2><span class="count" id="folderNote"></span></div>
-    <div class="folders" id="folderBox"></div>
+  <section class="card map-card" id="mapCard">
+    <div class="map-head"><h2>施工地图</h2><span class="map-meta" id="mapMeta">正在计算</span></div>
+    <div class="map-summary"><span id="mapFill" style="width:0%"></span></div>
+    <div class="map-now"><span class="map-now-label">当前工程项</span><span class="map-now-value" id="mapNow">正在读取</span></div>
+    <details class="map-detail">
+      <summary><span class="map-detail-label">查看全部工程项</span><span id="mapDetailCount"></span></summary>
+      <div id="mapBox"><div class="empty">正在读取路线。</div></div>
+    </details>
+  </section>
+
+    <details class="card fold need-evidence" id="needEvidenceFold">
+      <summary>当前提醒的工程详情</summary>
+      <div class="foldbody"><div id="needEvidenceBox"></div></div>
+    </details>
+  <section class="autonomy" id="autonomyCard">
+    <div class="autonomy-head">
+      <span class="autonomy-title">项目自主运行</span>
+      <span class="autonomy-mode" id="autonomyMode">读取中</span>
+    </div>
+    <div class="autonomy-copy" id="autonomyCopy">项目级授权决定 Autopilot 是否会在你不盯着时继续推进。</div>
+    <div class="autonomy-stats">
+      <span><b id="autonomyQueued">0</b>待派</span>
+      <span><b id="autonomyRunning">0</b>运行中</span>
+      <span><b id="autonomyBlocked">0</b>卡住</span>
+      <span><b id="autonomyWaiting">0</b>待确认</span>
+    </div>
+    <div class="autonomy-actions">
+      <button class="btn primary" data-autonomy-action="run" id="autonomyRun">开始运行</button>
+      <button class="btn danger" data-autonomy-action="pause" id="autonomyPause">暂停项目</button>
+      <button class="btn" data-autonomy-action="enable" id="autonomyEnable">仅启用</button>
+    </div>
+  </section>
+
+  <section class="card" id="acceptCard">
+    <section class="pre-acceptance" id="preAcceptance" aria-live="polite">
+      <div class="chead"><h2>交付前自检</h2><span class="count" id="preAcceptanceCount">—</span></div>
+      <p class="pre-summary" id="preAcceptanceLabel">正在读取验收管家的自检结论</p>
+      <div class="pre-detail" id="preAcceptanceDetail"></div>
+    </section>
+    <div class="chead"><h2>需要你验收</h2><span class="count" id="accNote"></span></div>
+    <div id="acceptBox"></div>
   </section>
 
   <section class="orientation" id="routeOverview">
@@ -457,18 +918,9 @@
     <div class="orientation-note" id="orientationNote">正在读取当前路线…</div>
   </section>
 
-  <section class="card" id="acceptCard">
-    <div class="chead"><h2>需要你介入</h2><span class="count" id="accNote"></span></div>
-    <div id="acceptBox"></div>
-  </section>
-
-  <section class="card" id="recentCard">
-    <div class="chead"><h2>最近收口</h2><span class="count" id="recentNote"></span></div>
-    <div id="recentBox"></div>
-  </section>
-
   <details class="overview-detail">
-    <summary>工程详情与证据</summary>
+    <summary>验收证据与 Codex 工作区</summary>
+    <div class="sysline" id="autonomyAudit" hidden></div>
     <section class="track">
       <div class="stages">
         <div class="stage" id="stageTodo"><div class="n" id="stTodo">0</div><div class="l">待处理</div></div>
@@ -487,11 +939,15 @@
       <div class="chead"><h2>全部工作项</h2><span class="count" id="workCount"></span></div>
       <div class="meta" id="workContext" style="margin-top:-5px;margin-bottom:10px"></div>
       <div id="progressBox"></div>
+      <details class="fold" style="margin-top:12px" id="workTableFold">
+        <summary>每一条的来龙去脉（来源 · 泳道 · 分支 · 到哪一步 · 证据）</summary>
+        <div class="foldbody"><div id="workTableBox"></div></div>
+      </details>
     </section>
 
     <section class="card">
       <div class="chead"><h2>任务路线</h2><span class="count">Codex 原生工作区</span></div>
-      <div class="route-summary" id="routeSummary">任务由自动挡账本、泳道分支和 worktree 关联；Codex thread 的实时列表由宿主提供时再显示。</div>
+      <div class="route-summary" id="routeSummary">任务由项目账本、工作区和 Codex 原生会话共同推进；Codex thread 的实时列表由宿主提供时再显示。</div>
       <div class="nativeline">
         <span id="nativeState">原生直连：正在读取…</span>
         <button class="btn" id="nativeProbe" type="button">原生自检</button>
@@ -523,7 +979,7 @@
     <div class="foldbody">
       <ol class="steps">
         <li><span class="stepn">1</span><div>把看到的零散问题<b>原样说出来</b>就行——视觉不对、体验别扭、冒出一个 bug，可以一起丢过来。</div></li>
-        <li><span class="stepn">2</span><div>自动挡负责<b>归类、记录、追踪</b>，并把和主线不冲突、检查通过的改动<b>自己合好</b>。</div></li>
+        <li><span class="stepn">2</span><div>Autopilot 负责<b>归类、记录、追踪</b>，并把和主线不冲突、检查通过的改动<b>自己合好</b>。</div></li>
         <li><span class="stepn">3</span><div>只有<b>改产品方向、删数据、发布</b>这类要拍板的事，它才会停下来问你。</div></li>
       </ol>
       <div class="callout">
@@ -534,6 +990,32 @@
   </details>
 
   <div id="advanced">
+    <details class="card fold">
+      <summary>交给 Autopilot</summary>
+      <div class="foldbody">
+        <section class="intake">
+          <label for="intakeText">写给 Autopilot 的一句话</label>
+          <textarea id="intakeText" placeholder="说说你发现的问题或想完成的事"></textarea>
+          <div class="intake-route" id="intakeRoute" role="status" aria-live="polite">写一句话后显示它会落到哪个项目</div>
+          <div class="intake-actions">
+            <button class="btn primary" id="intakeSubmit">提交任务</button>
+            <span class="intake-state" id="intakeState" role="status" aria-live="polite"></span>
+          </div>
+        </section>
+      </div>
+    </details>
+
+    <details class="card fold" id="modelRoutesFold">
+      <summary>任务模型与推理</summary>
+      <div class="foldbody">
+        <div id="modelRoutesBox"><div class="empty">正在读取任务模型配置。</div></div>
+        <div class="model-route-actions">
+          <button class="btn primary" id="modelRoutesSave" type="button">保存任务模型</button>
+          <span class="tiny">留空表示沿用项目现有模型通道；推理程度只影响这里配置的等级。</span>
+        </div>
+      </div>
+    </details>
+
     <details class="card fold" open>
       <summary>自动动作</summary>
       <div class="foldbody">
@@ -554,17 +1036,17 @@
           <button class="sw" data-key="auto_exec" aria-label="自动实现需求"></button>
         </div>
         <div class="switchrow">
-          <div><div class="t">后台常驻</div><div class="d">关掉 Codex 也按节奏推进，无需一直开着对话</div></div>
-          <button class="sw" data-key="daemon_enabled" aria-label="后台常驻"></button>
+          <div><div class="t">持续运行</div><div class="d">即使暂时离开 Codex，项目也会按已授权的规则继续推进</div></div>
+          <button class="sw" data-key="daemon_enabled" aria-label="持续运行"></button>
         </div>
       </div>
     </details>
 
     <details class="card fold">
-      <summary>运行信息</summary>
+      <summary>运行状态</summary>
       <div class="foldbody">
         <div class="grid2">
-          <div class="kv"><div class="l">后台常驻进程</div><div class="v" id="daemonLive">—</div></div>
+          <div class="kv"><div class="l">持续运行状态</div><div class="v" id="daemonLive">—</div></div>
           <div class="kv"><div class="l">上一轮时间</div><div class="v" id="lastCycle">—</div></div>
           <div class="kv"><div class="l">可合入队列</div><div class="v" id="qClean">—</div></div>
           <div class="kv"><div class="l">已合待回收</div><div class="v" id="qMerged">—</div></div>
@@ -572,6 +1054,26 @@
           <div class="kv"><div class="l">移植暂缓</div><div class="v" id="qPorted">—</div></div>
         </div>
       </div>
+    </details>
+
+    <details class="card fold" id="pmBriefingFold">
+      <summary>PM 简报 · 预期、让路与追问候选</summary>
+      <div class="foldbody"><div id="pmBriefingBox"></div></div>
+    </details>
+
+    <details class="card fold" id="contextArchiveFold">
+      <summary>上下文档案 · 自动收录与确认去向</summary>
+      <div class="foldbody"><div id="contextArchiveBox"></div></div>
+    </details>
+
+    <details class="card fold" id="relationshipGoalsFold">
+      <summary>关系目标 · 跨项目长期目标</summary>
+      <div class="foldbody"><div id="relationshipGoalsBox"></div></div>
+    </details>
+
+    <details class="card fold" id="outcomeScoreFold">
+      <summary>结果代理分 · 用户结果有没有变好</summary>
+      <div class="foldbody"><div id="outcomeScoreBox"></div></div>
     </details>
 
     <details class="card fold">
@@ -590,17 +1092,17 @@
     </details>
 
     <details class="card fold">
-      <summary>最近一次自验证 · 真跑真写真拦</summary>
+      <summary>验收台账 · 最近一次自验证</summary>
       <div class="foldbody"><div id="verifyBox"></div></div>
     </details>
 
     <details class="card fold">
-      <summary>需要你拍板 / 异常</summary>
+      <summary>需要你验收 / 拍板 / 异常</summary>
       <div class="foldbody"><ul class="list" id="blockedList"></ul></div>
     </details>
 
     <details class="card fold">
-      <summary>最近发生了什么</summary>
+      <summary>执行记录</summary>
       <div class="foldbody">
         <ul class="list" id="eventList"></ul>
         <p class="tiny" style="margin-top:10px">完整日志：<span id="logPath">~/.codex-autopilot/daemon.log</span></p>
@@ -609,7 +1111,7 @@
     </details>
   </div>
 
-  <div class="foot">你平时打字的那个 Codex 输入框，就是总输入框——零散问题直接说，其余交给自动挡。</div>
+  <div class="foot" hidden></div>
 </div>
 
 <script>
@@ -619,6 +1121,7 @@
   var nextId = 1;
   var state = null;
   var loadError = null;
+  var mcpInitialized = false;
   if (/[?&]adv=1/.test(location.search)) document.body.classList.add("adv");
 
   function request(method, params){
@@ -626,6 +1129,27 @@
     try { window.parent.postMessage({jsonrpc:"2.0", id:id, method:method, params:params||{}}, "*"); }
     catch(e){}
     return new Promise(function(resolve, reject){ pending[id] = {resolve:resolve, reject:reject}; });
+  }
+
+  function notify(method, params){
+    try { window.parent.postMessage({jsonrpc:"2.0", method:method, params:params||{}}, "*"); }
+    catch(e){}
+  }
+
+  function initializeMcpApp(){
+    if (mcpInitialized) return Promise.resolve(null);
+    mcpInitialized = true;
+    return request("ui/initialize", {
+      appInfo: {name: "codex-autopilot-panel", version: "0.6.0"},
+      appCapabilities: {},
+      protocolVersion: "2025-11-21"
+    }).then(function(result){
+      notify("ui/notifications/initialized", {});
+      return result;
+    }, function(error){
+      mcpInitialized = false;
+      throw error;
+    });
   }
 
   window.addEventListener("message", function(ev){
@@ -659,6 +1183,10 @@
     });
   }
 
+  function currentCwd(){
+    return (state && state.project && state.project.path) || undefined;
+  }
+
   function loadStatus(fast){
     return callTool("autopilot_status", {fast: fast !== false}).then(function(sc){
       if (sc && sc.state) { state = sc; loadError = null; render(state); }
@@ -674,7 +1202,7 @@
     var reason = loadError || "状态服务没有响应";
     document.body.className = "s-error";
     setText("stateLabel", "读不到状态");
-    setText("subtitle", "自动挡面板读不到当前状态");
+    setText("subtitle", "Autopilot 面板读不到当前状态");
     setText("statusTime", "更新失败");
     setText("projectLine", "绑定项目：读不到");
     setText("focusStatus", "读不到");
@@ -692,13 +1220,16 @@
     if (box) {
       box.className = "alert lv-err";
       var icn = box.querySelector(".al-ic"); if (icn) icn.innerHTML = IC_WARN;
-      var tx = box.querySelector(".al-tx"); if (tx) tx.textContent = "读不到自动挡状态：" + reason;
+      var tx = box.querySelector(".al-tx"); if (tx) tx.textContent = "读不到 Autopilot 状态：" + reason;
     }
+    var routingFold = el("globalRoutingFold"); if (routingFold) routingFold.hidden = true;
     var en = el("execNow"); if (en) en.hidden = true;
   }
 
   function el(id){ return document.getElementById(id); }
   function setText(id, v){ var n = el(id); if(n) n.textContent = (v===undefined||v===null||v==="")?"—":v; }
+  function escapeHtml(v){ return String(v == null ? "" : v).replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;"); }
   function num(id, v){ var n = el(id); if(n) n.textContent = (v==null)?"0":String(v); }
 
   function fmtTime(iso){
@@ -717,23 +1248,101 @@
   function setAlert(s){
     var box = el("need"); if(!box) return;
     var lv = "lv-brand", ic = IC_INFO;
-    var txt = s.need_action || "—";
+    var txt = String(s.need_action || "—");
+    var detail = s.need_action_detail || "";
     var quiet = /不需要|无需|不用你/.test(txt);
+    var servingOther = /服务别的项目|服务另一个项目/.test(txt);
+    var human = (s.human_acceptance || []).length;
+    if (servingOther) {
+      txt = "系统在服务另一个项目，这个项目暂时不需要你操作";
+    } else if (human) {
+      txt = "有 " + human + " 项等你验收";
+    } else if (/拍板|需要你决定|产品方向|删数据|发布/.test(txt)) {
+      txt = "有 1 项需要你拍板";
+    } else if (!quiet && s.global_routing && s.global_routing.status === "ok"
+               && Number(s.global_routing.count || 0) > 0) {
+      txt = "有 " + Number(s.global_routing.count) + " 条需求需要你指定项目";
+    } else if (/需要你复核/.test(txt)) {
+      txt = "有需求需要你指定项目";
+    } else if (quiet) {
+      txt = "当前无需操作";
+    }
     if (s.state === "error") { lv = "lv-err"; ic = IC_WARN; }
     else if (s.state === "blocked") { lv = "lv-warn"; ic = IC_WARN; }
-    else if (quiet) { lv = "lv-ok"; ic = IC_OK; }
+    else if (quiet || servingOther) { lv = "lv-ok"; ic = IC_OK; }
     box.className = "alert " + lv;
     var icn = box.querySelector(".al-ic"); if (icn) icn.innerHTML = ic;
     var tx = box.querySelector(".al-tx"); if (tx) tx.textContent = txt;
+    if (txt) box.title = detail || txt;
+    box.setAttribute("aria-label", detail ? (txt + "。详情：" + detail) : txt);
+    renderNeedEvidence(detail);
+  }
+
+  // 工程路径、PID、修复命令只进折叠区和可访问属性；首屏保留用户结论。
+  function renderNeedEvidence(detail){
+    var fold = el("needEvidenceFold"); if (!fold) return;
+    var box = el("needEvidenceBox");
+    var hasDetail = !!String(detail || "").trim();
+    if (box) box.textContent = hasDetail ? detail : "";
+    fold.hidden = !hasDetail;
+  }
+
+  function ensureActiveProjectShell(){
+    if (el("activeProjectShell")) return;
+    var overview = el("projectOverview");
+    var current = el("q2");
+    var map = el("mapCard");
+    var recent = el("q3");
+    var autonomy = el("autonomyCard");
+    var folder = el("folderCard");
+    var routing = el("globalRoutingFold");
+    var firstQuestion = el("q1");
+    if (!overview || !current || !map || !recent || !folder) return;
+    if (routing && firstQuestion && routing.parentNode !== firstQuestion) firstQuestion.appendChild(routing);
+    var shell = document.createElement("section");
+    shell.id = "activeProjectShell";
+    shell.className = "active-project-shell";
+    shell.setAttribute("aria-label", "当前项目");
+    folder.parentNode.insertBefore(shell, folder);
+    shell.appendChild(overview);
+    shell.appendChild(current);
+    shell.appendChild(map);
+    shell.appendChild(recent);
+    if (autonomy) {
+      var autonomyFold = document.createElement("details");
+      autonomyFold.id = "autonomyFold";
+      autonomyFold.className = "active-project-autonomy";
+      var autonomySummary = document.createElement("summary");
+      autonomySummary.textContent = "项目自主运行";
+      autonomyFold.appendChild(autonomySummary);
+      autonomyFold.appendChild(autonomy);
+      shell.appendChild(autonomyFold);
+    }
+    if (routing && firstQuestion && !routing.dataset.bound) {
+      var alert = firstQuestion.querySelector(".alert");
+      if (alert) {
+        alert.style.cursor = "pointer";
+        alert.title = "点击查看待路由详情";
+        alert.addEventListener("click", function(){
+          routing.hidden = !routing.hidden;
+        });
+      }
+      routing.dataset.bound = "true";
+    }
   }
 
   function render(s){
+    ensureActiveProjectShell();
     var wasAdv = document.body.classList.contains("adv");
-    document.body.className = "s-" + (s.state || "idle") + (wasAdv ? " adv" : "");
+    document.body.className = "s-" + (s.state || "idle")
+      + (wasAdv ? " adv" : "")
+      + ((s.human_acceptance || []).length ? " has-accept" : "");
     setText("stateLabel", s.state_label);
     setText("statusTime", "更新于 " + fmtTime(s.generated_at));
     renderNorthStar(s.closure_rate);
     setAlert(s);
+    renderGlobalRouting(s.global_routing);
+    renderAutonomy(s.project_autonomy || {});
     renderExecNow(s.exec_now);
     var c = s.counters || {};
     num("cReceived", c.received); num("cLanded", c.landed); num("cResolved", c.resolved);
@@ -742,30 +1351,36 @@
     var todoCount = s.todo_count || 0;
     var humanAcc = s.human_acceptance || [];
     var bl = s.blocked || {};
-    var doingN = doingItems.length + (s.exec_now ? 1 : 0);
-    var stuckN = (bl.failures ? bl.failures.length : 0) + (bl.resolve ? bl.resolve.length : 0) + (bl.exec ? bl.exec.length : 0);
-    num("stTodo", todoCount); num("stDoing", doingN); num("stReview", humanAcc.length); num("stStuck", stuckN);
-    el("stageTodo").className = "stage" + (todoCount > 0 ? " que" : "");
+    // 四个格子只在后台算一次（stage_table），面板照抄。宿主没给 counts
+    // （例如安装绑定失效那条极简 payload）才退回本地现算，保证不会显示成 0。
+    var cnt = s.counts || {};
+    var doingN = (cnt.doing != null) ? cnt.doing : doingItems.length + (s.exec_now ? 1 : 0);
+    var todoN = (cnt.todo != null) ? cnt.todo : todoCount;
+    var reviewN = (cnt.review != null) ? cnt.review : humanAcc.length;
+    var stuckN = (cnt.stuck != null) ? cnt.stuck
+      : (bl.failures ? bl.failures.length : 0) + (bl.resolve ? bl.resolve.length : 0) + (bl.exec ? bl.exec.length : 0);
+    num("stTodo", todoN); num("stDoing", doingN); num("stReview", reviewN); num("stStuck", stuckN);
+    el("stageTodo").className = "stage" + (todoN > 0 ? " que" : "");
     el("stageDoing").className = "stage" + (doingN > 0 ? " live" : "");
-    el("stageReview").className = "stage" + (humanAcc.length > 0 ? " rev" : "");
+    el("stageReview").className = "stage" + (reviewN > 0 ? " rev" : "");
     el("stageStuck").className = "stage" + (stuckN > 0 ? " hot" : "");
 
     var pb = el("pauseBtn");
     if (s.paused) { pb.innerHTML = IC_PLAY + "<span>恢复运行</span>"; pb.className = "btn primary"; }
     else { pb.innerHTML = IC_PAUSE + "<span>暂停</span>"; pb.className = "btn danger"; }
     if (s.error) { el("subtitle").textContent = s.error; }
-    else if (!s.enabled) { el("subtitle").textContent = "自动挡已关闭，Codex 保持原生状态"; }
-    else { el("subtitle").textContent = s.paused ? "已暂停，不再推进新工作" : "零散问题直接说，其余我来"; }
+    else if (!s.enabled) { el("subtitle").textContent = "Autopilot 已关闭，Codex 保持原生状态"; }
+    else { el("subtitle").textContent = s.paused ? "已暂停，不再推进新工作" : "项目进度会在这里汇总"; }
     var master = el("masterToggle");
     master.classList.toggle("on", !!s.enabled);
     master.setAttribute("aria-pressed", s.enabled ? "true" : "false");
     master.disabled = !!s.error;
     setText("masterState", s.error || (!s.enabled ? "已关闭 · Codex 原生功能不受影响" :
-      (s.lifecycle === "draining" ? "暂停推进 · 当前安全操作可收尾" : "正在运行")));
+      (s.lifecycle === "draining" ? "已暂停 · 当前安全操作可收尾" : "已启用")));
     var proj = s.project || {};
     var pl = el("projectLine");
     if (pl) {
-      pl.textContent = "绑定项目：" + (proj.name || "未绑定") + (proj.path ? "（" + proj.path + "）" : "");
+      pl.textContent = "绑定项目：" + (proj.name || "未绑定");
       pl.title = proj.path || "";
     }
     var ml = s.mainline || {};
@@ -773,6 +1388,8 @@
     var activeRoad = road.filter(function(r){ return r.status === "doing"; })[0]
       || road.filter(function(r){ return r.status === "next"; })[0];
     setFocusAnswers(s, activeRoad);
+    renderExperience(s.experience);
+    renderRendererContract(s.renderer_contract);
     el("runBtn").disabled = !s.enabled || !!s.paused;
     el("pauseBtn").disabled = !s.enabled;
     renderNative(s);
@@ -781,6 +1398,8 @@
     var sws = document.querySelectorAll(".sw");
     for (var i=0;i<sws.length;i++){
       var k = sws[i].getAttribute("data-key");
+      // 全局 Autopilot 开关由 s.enabled 单独渲染；不要让项目级开关循环覆盖它。
+      if (!k) continue;
       sws[i].classList.toggle("on", !!sw[k]);
       sws[i].setAttribute("aria-pressed", sw[k] ? "true" : "false");
     }
@@ -797,50 +1416,943 @@
     renderProduct(s.product_state || {});
     renderJudgments(s.judgments || []);
     renderVerify(s.last_verification);
+    renderPreAcceptance(s.pre_acceptance || {});
     renderRoadmap(s.roadmap || [], s.mainline || {});
+    renderProjectOverview(s);
+    renderProjectMap(s.roadmap || [], s);
     renderFolders(s.project_folders || {}, s);
+    renderModelRoutes(s.model_routes);
     renderOrientation(s);
     renderAcceptance(humanAcc, s.machine_verified || []);
+    renderPmBriefing(s.pm_briefing, s.authorized_followups);
+    renderContextArchive(s.context_archive);
+    renderRelationshipGoals(s.relationship_goals);
+    renderOutcomeScore(s.outcome_score);
     renderRecent(s.recent_completed || []);
+    renderThreeQuestions(s, humanAcc, doingItems, stuckN);
     renderProgress(doingItems, s.todo_items || [], todoCount);
+    renderWorkTable(s.work_rows || []);
     renderRoute(s.route || {});
     renderMainline(s.mainline || {});
     var intakeButton = el("intakeSubmit");
     if (intakeButton) intakeButton.disabled = !s.enabled || !!s.error;
   }
 
+  function renderExperience(exp){
+    var box = el("experienceContract");
+    if (!box) return;
+    exp = exp || {};
+    box.hidden = false;
+    setText("experienceHeadline", exp.headline || "体验契约取不到，首屏不冒充已按契约验收");
+    var order = (exp.attention_order || []).join(" -> ");
+    var states = (exp.states || []).join(" / ");
+    var machine = (exp.machine_checks || []).join("、");
+    var human = (exp.human_checks || []).join("、");
+    setText("experienceMeta", "注意力：" + (order || "取不到") +
+      " · 状态：" + (states || "取不到") +
+      " · 机器门禁：" + (machine || "取不到") +
+      " · 人工复核：" + (human || "取不到"));
+    box.setAttribute("data-status", exp.status || "unknown");
+  }
+
+  function renderRendererContract(rc){
+    var box = el("rendererContract");
+    if (!box) return;
+    rc = rc || {};
+    box.hidden = false;
+    box.setAttribute("data-status", rc.status || "unknown");
+    box.setAttribute("data-renderer-mode", rc.mode || "unknown");
+    setText("rendererHeadline", rc.headline || "面板渲染契约取不到，当前界面不冒充最终设计");
+    var order = (rc.attention_order || []).join(" -> ");
+    var states = (rc.states || []).join(" / ");
+    var official = rc.official_ui_reuse || {};
+    setText("rendererMeta", "当前模式：" + (rc.mode || "取不到") +
+      " · 最终视觉已定稿：" + (rc.final_visual_approved === true ? "是" : "否") +
+      " · 官方 UI 复用：" + (official.status || "取不到") +
+      " · 注意力：" + (order || "取不到") +
+      " · 状态：" + (states || "取不到"));
+  }
+
+  function renderPreAcceptance(pre){
+    var node = el("preAcceptance");
+    if (!node) return;
+    var checks = pre.checks || [];
+    node.className = "pre-acceptance " + (pre.status || "unknown");
+    var scope = pre.scope || {};
+    var selected = scope.selected_checks || [];
+    var unmapped = scope.unmapped_risks || [];
+    var scopeNote = selected.length
+      ? "本次验收范围：" + selected.join("、")
+      : (scope.status === "legacy-default" ? "本次使用完整验收标准" : "本次没有已确认的适用验收范围");
+    if (unmapped.length) scopeNote += " · 尚无专项门禁：" + unmapped.join("；");
+    setText("preAcceptanceLabel", (pre.label || "交付前预验收状态取不到") + " · " + scopeNote);
+    setText("preAcceptanceCount", (pre.passed == null ? "—" : pre.passed + "/" + (pre.total || 0)) +
+      (pre.failed != null ? " · 失败 " + pre.failed : "") +
+      (pre.unknown != null ? " · 未知 " + pre.unknown : ""));
+    var detail = el("preAcceptanceDetail");
+    if (detail) {
+      var items = pre.items || checks;
+      detail.innerHTML = items.map(function(c){
+        var state = c.state === "pass" ? "已通过" : (c.state === "not_applicable" ? "不适用" :
+          (c.state === "fail" || c.state === "blocked" ? "未通过" : "证据不足"));
+        var bad = c.state !== "pass" && c.state !== "not_applicable";
+        return "<div class=\"pre-row " + (bad ? (c.state === "unknown" ? "unknown" : "failed") : "") + "\">" +
+          "<span class=\"pre-id\">" + escapeHtml(c.id || "—") + "</span>" +
+          "<span class=\"pre-body\"><b>" + escapeHtml(c.title || "预验收项") + "</b> · " +
+          escapeHtml(state) + (c.reason ? " · " + escapeHtml(c.reason) : "") + "</span>" +
+          (bad ? "<span class=\"pre-condition\">通过条件：" + escapeHtml(c.pass_condition || "逐项证据完整且关联当前版本") +
+            "</span><span class=\"pre-reason\">缺失或阻断：" + escapeHtml((c.missing_evidence || []).join(", ") || c.reason || "请返修并重新取证") + "</span>" : "") +
+          "</div>";
+      }).join("");
+    }
+  }
+
+  function roadmapProgress(item){
+    if (!item) return 0;
+    if (typeof item.progress === "number") return Math.max(0, Math.min(100, Math.round(item.progress)));
+    var m = item.milestones || {};
+    var keys = ["defined", "planned", "implemented", "verified", "landed"];
+    var found = keys.filter(function(k){ return typeof m[k] === "boolean"; });
+    if (found.length) return Math.round(found.reduce(function(sum, k){ return sum + (m[k] ? 1 : 0); }, 0) / found.length * 100);
+    return item.status === "done" ? 100 : item.status === "doing" ? 50 : 0;
+  }
+
+  function overallRoadmapProgress(road){
+    if (!road.length) return null;
+    var total = 0, weight = 0;
+    road.forEach(function(item){
+      var w = typeof item.weight === "number" && item.weight > 0 ? item.weight : 1;
+      total += roadmapProgress(item) * w; weight += w;
+    });
+    return weight ? Math.round(total / weight) : null;
+  }
+
+  function renderProjectOverview(s){
+    var road = s.roadmap || [], p = overallRoadmapProgress(road);
+    var ring = el("overallRing"), pct = el("overallPercent");
+    if (ring) {
+      var progressValue = (p == null ? 0 : p) + "%";
+      if (ring.style && typeof ring.style.setProperty === "function") ring.style.setProperty("--progress", progressValue);
+      else if (ring.style) ring.style["--progress"] = progressValue;
+    }
+    var overview = el("projectOverview");
+    if (overview && overview.style) {
+      if (typeof overview.style.setProperty === "function") overview.style.setProperty("--progress", progressValue);
+      else overview.style["--progress"] = progressValue;
+    }
+    if (pct) pct.textContent = p == null ? "—" : p + "%";
+    var project = s.project || {}, ml = s.mainline || {};
+    var overviewName = readableProjectName(project, ml);
+    // 页首表达产品品牌，项目卡表达当前绑定对象；两者不承担同一语义。
+    setText("overviewTitle", overviewName);
+    var current = road.filter(function(x){ return x.status === "doing"; })[0] || road.filter(function(x){ return x.status === "next"; })[0];
+    var human = s.human_acceptance || [], blocked = s.blocked || {};
+    var hasBlock = (blocked.failures || []).length || (blocked.resolve || []).length || (blocked.exec || []).length;
+    var lede = current ? ((current.status === "doing" ? "正在推进" : "下一步是") + "「" + (current.step || "当前路线") + "」") : "Autopilot 正在等待下一条明确的项目工作。";
+    if (s.paused) lede = "Autopilot 已暂停，项目状态保留，恢复后继续推进。";
+    if (!s.enabled) lede = "Autopilot 已关闭，Codex 保持原生状态。";
+    setText("overviewLede", lede);
+    var goal = (ml.goal_override || ml.auto_goal || ml.one_liner || "").trim();
+    // 面板项目的内部主线是一条产品总纲，不是这个项目对用户的工作目标。
+    // 没有人工覆盖时，用项目上下文生成一句可读目标；用户仍可在项目卡内修改。
+    if (!ml.goal_override && /panel-native-surface|panel-design|面板/i.test(String(project.name || ""))) {
+      goal = "把 Codex Autopilot 面板收敛为原生、克制、清晰的多项目控制面。";
+    }
+    setText("overviewGoal", goal || "项目目标尚未明确");
+    var done = road.filter(function(x){ return x.status === "done"; }).length;
+    var doing = road.filter(function(x){ return x.status === "doing"; }).length;
+    var rest = Math.max(0, road.length - done - doing);
+    setText("metricDone", p == null ? "—" : p + "%"); setText("metricDoing", doing); setText("metricRest", rest);
+    var attention = el("attentionBox");
+    if (attention){
+      attention.hidden = !(human.length || hasBlock);
+      setText("attentionTitle", human.length ? "建议先完成验收" : "建议先关注");
+      setText("attentionText", human.length ? (human[0].title || "有一项工作等待验收") : "当前有工作项卡住，展开详情查看原因。");
+    }
+  }
+
+  function userProjectName(name){
+    var s = String(name || "当前项目").trim();
+    // 只清理日期和临时 worktree 后缀，不把真实项目名改成产品品牌。
+    s = s.replace(/-\d{4}-\d{2}-\d{2}(?:-[a-z0-9-]+)?$/i, "");
+    s = s.replace(/-\d{8}-\d{6}$/i, "");
+    s = s.replace(/-\d{8}$/i, "");
+    return s || "当前项目";
+  }
+
+  function readableProjectName(project, mainline, fallback){
+    project = project || {};
+    mainline = mainline || {};
+    var candidates = [
+      project.display_name, project.title, project.product,
+      mainline.product, project.name, project.id
+    ];
+    var shown = "";
+    for (var i = 0; i < candidates.length; i++) {
+      if (candidates[i] == null || String(candidates[i]).trim() === "") continue;
+      shown = userProjectName(candidates[i]);
+      if (shown) break;
+    }
+    if (/^codex-autopilot-native-autopilot$/i.test(shown)) return "Autopilot Core";
+    if (/^codex(?:[ -]自动挡| autopilot)$/i.test(shown)) return "Codex Autopilot";
+    return shown || fallback || "当前项目";
+  }
+
+  function projectListName(project, index){
+    var shown = readableProjectName(project, project && project.mainline, "");
+    if (shown === "当前项目") shown = userProjectName(project && (project.name || project.id) || "");
+    return shown || ("项目 " + String((index || 0) + 1));
+  }
+
+  function renderProjectMap(road, s){
+    var box = el("mapBox"), meta = el("mapMeta"), fill = el("mapFill"), now = el("mapNow"), count = el("mapDetailCount");
+    if (!box) return;
+    box.innerHTML = "";
+    if (!road.length){ box.innerHTML = '<div class="empty">还没有施工地图。Autopilot 会在项目路线明确后显示每个工程项。</div>'; if (meta) meta.textContent = "待拆解"; if (fill) fill.style.width = "0%"; if (now) now.textContent = "等待路线明确"; if (count) count.textContent = ""; return; }
+    var overall = overallRoadmapProgress(road), done = road.filter(function(x){ return x.status === "done"; }).length;
+    if (meta) meta.textContent = done + " / " + road.length + " 项完成" + (overall == null ? "" : " · " + overall + "%");
+    if (fill) fill.style.width = (overall == null ? 0 : overall) + "%";
+    var current = road.filter(function(x){ return x.status === "doing"; })[0] || road.filter(function(x){ return x.status === "next"; })[0] || road[road.length - 1];
+    if (now) now.textContent = current ? (current.step || "未命名工程项") : "等待路线明确";
+    if (count) count.textContent = road.length + " 项";
+    road.forEach(function(item){
+      var progress = roadmapProgress(item), status = item.status || "todo";
+      var row = document.createElement("div"); row.className = "project-card " + (status === "done" ? "done" : status === "doing" ? "doing" : "todo");
+      var head = document.createElement("div"); head.className = "project-card-head";
+      var dot = document.createElement("span"); dot.className = "project-card-dot " + (status === "done" ? "done" : status === "doing" ? "doing" : "");
+      var title = document.createElement("span"); title.className = "project-card-title"; title.textContent = item.step || "未命名工程项";
+      var state = document.createElement("span"); state.className = "project-card-state"; state.textContent = ROAD_LABEL[status] || "未开始";
+      head.appendChild(dot); head.appendChild(title); head.appendChild(state); row.appendChild(head);
+      var bar = document.createElement("div"); bar.className = "project-card-bar";
+      var barFill = document.createElement("span"); barFill.style.width = progress + "%"; bar.appendChild(barFill); row.appendChild(bar);
+      var foot = document.createElement("div"); foot.className = "project-card-foot";
+      var detail = document.createElement("span"); detail.className = "detail"; detail.textContent = item.detail || item.expected || (status === "done" ? "已完成并进入项目主线" : status === "doing" ? "正在推进" : "等待进入施工");
+      var percent = document.createElement("span"); percent.className = "percent"; percent.textContent = progress + "%";
+      foot.appendChild(detail); foot.appendChild(percent); row.appendChild(foot); box.appendChild(row);
+    });
+  }
+
+  // 首屏三问的右侧小字：只说「要不要人、系统忙不忙、最近有没有产出」，
+  // 不重复正文，也不在健康时制造噪音。
+  function renderThreeQuestions(s, human, doing, stuckN){
+    var action = String(s.need_action || "");
+    var actionQuiet = /不需要|无需|不用你/.test(action);
+    // 第一问只承载真实人工动作。普通卡点、守护等待、冲突计数都留在
+    // 系统状态和工程详情里，不能把「后台有事」伪装成「用户要做事」。
+    var humanReview = human.length;
+    var routingCount = s.global_routing && s.global_routing.status === "ok"
+      ? Number(s.global_routing.count || 0) : 0;
+    var decision = /拍板|需要你决定|产品方向|删数据|发布/.test(action);
+    var servingOther = /服务别的项目|服务另一个项目/.test(action);
+    var routing = !actionQuiet && !servingOther
+      && (/复核|待路由|归属|说一句/.test(action) || routingCount > 0);
+    var blockedNeedsHuman = /无法自动|不能自动|需要你处理|人工介入/.test(action);
+    var needAttention = humanReview > 0 || decision || routing || blockedNeedsHuman;
+    var q1State = "不用你";
+    if (humanReview) q1State = "要你验收 · " + humanReview + " 项";
+    else if (decision) q1State = "要你拍板";
+    else if (servingOther) q1State = "当前无需操作";
+    else if (routing) q1State = routingCount
+      ? "要说一句 · " + routingCount + " 条待归属"
+      : "要说一句";
+    else if (blockedNeedsHuman) q1State = "当前无需操作";
+    else if (!actionQuiet) q1State = "不用你";
+    setText("q1State", q1State);
+    var q1 = el("q1"); if (q1) q1.className = "q" + (needAttention ? " has-need" : "");
+
+    var d = s.daemon || {};
+    var busy = doing.length + (s.exec_now ? 1 : 0);
+    setText("q2State", s.error ? "异常" : !s.enabled ? "已关闭" :
+      (s.lifecycle === "draining" ? "收尾中" : busy ? "推进中" : "待命"));
+    var q2 = el("q2"); if (q2) q2.className = "q" + (s.error ? " has-error" : busy ? " is-live" : "");
+
+    var q = s.queue || {};
+    var bits = [];
+    bits.push(d.live ? ("常驻运行中" + (d.pid ? " #" + d.pid : "")) : "常驻未运行");
+    if (d.last_cycle) bits.push("上一轮 " + fmtTime(d.last_cycle));
+    var cleanText = q.clean == null ? "取不到" : q.clean;
+    var conflictText = q.conflict == null ? "取不到" : q.conflict;
+    bits.push("可落盘 " + cleanText + " / 冲突 " + conflictText);
+    if (!s.enabled) bits.push("自动动作已关闭");
+    else if (s.paused) bits.push("已暂停推进");
+    var hh = s.harness_health || {};
+    var healthText = hh.status === "ok"
+      ? (hh.headline || "上下文健康：正常")
+      : ("上下文健康：" + (hh.reason || "取不到"));
+    bits.push(healthText);
+    var sl = el("sysLine");
+    if (sl) {
+      // 首屏只留用户结论：系统现在是否值得信任、要不要行动。
+      // 队列/守护/逐条原因属于工程证据，放进折叠区，不占首屏注意力。
+      sl.textContent = healthText;
+      sl.title = bits.join("；");
+    }
+    var detail = el("systemDetail");
+    if (detail) {
+      detail.textContent = bits.join(" · ");
+      detail.title = (hh.reasons && hh.reasons.length) ? hh.reasons.join("；") : bits.join("；");
+    }
+    // 授权情况：只在这一轮真跑过工序时出现，说明哪些已明确授权、多少还在观察、
+    // 多少等你转正。取不到就明确说取不到，不印「0 条」假装正常。
+    var au = s.autonomy || {};
+    var al = el("autonomyLine");
+    if (al) {
+      if (au.status === "ok" && au.label) {
+        al.textContent = au.label;
+        al.title = "逐条授权来源见验收证据与 Codex 工作区";
+        al.hidden = false;
+      } else if (au.status === "unknown") {
+        al.textContent = au.label || "授权情况：本轮记录取不到";
+        al.title = "逐条授权来源取不到";
+        al.hidden = false;
+      } else {
+        al.textContent = "";
+        al.title = "";
+        al.hidden = true;
+      }
+    }
+    var audit = el("autonomyAudit");
+    if (audit) {
+      var MODE_LABEL = {auto:"自动", propose:"提案", observe:"观察"};
+      var AUTH_LABEL = {explicit:"明确授权", inferred:"系统推断"};
+      var EFFECT_LABEL = {read:"只读", proposal:"提案", reversible:"可逆", destructive:"破坏性"};
+      var STATUS_LABEL = {ok:"完成", skipped:"跳过", proposed:"待转正", errored:"出错", over_budget:"超预算"};
+      var passRows = Array.isArray(au.passes) ? au.passes : [];
+      if (passRows.length) {
+        var lines = passRows.map(function(p) {
+          p = p || {};
+          var mode = MODE_LABEL[p.mode] || p.mode || "取不到";
+          var auth = AUTH_LABEL[p.authorization] || p.authorization || "取不到";
+          var effect = EFFECT_LABEL[p.effect] || p.effect || "取不到";
+          var status = STATUS_LABEL[p.status] || p.status || "取不到";
+          return (p.name || "未命名工序") + " · " + mode + " · 授权来源 " + auth + " · 副作用 " + effect + " · " + status;
+        });
+        audit.textContent = "本轮逐条授权来源：" + lines.join("；");
+        audit.hidden = false;
+      } else if (au.status === "unknown") {
+        audit.textContent = "本轮逐条授权来源：取不到";
+        audit.hidden = false;
+      } else {
+        audit.textContent = "";
+        audit.hidden = true;
+      }
+    }
+    renderStewards(s.stewards);
+
+    var recent = s.recent_completed || [];
+    var cl = s.closure_rate || {};
+    setText("q3State", cl.status === "ok" ? (Number(cl.rate_pct).toFixed(1) + "% 闭环")
+      : (recent.length ? (recent.length + " 项收口") : "暂无产出"));
+  }
+
   var LANE_LABEL = {design:"体验 / 视觉", bug:"Bug", arch:"架构", gate:"门禁", reprocess:"待重排"};
   function laneLabel(lane){ return LANE_LABEL[lane] || lane || "未分泳道"; }
+  // 管家健康条：首屏只显示可点击的颜色点；名称、状态和最近工作在点开后出现。
+  // title / aria-label 保留完整语义，颜色只是扫视入口，不承担唯一的无障碍信息。
+  var STEWARD_STATE = {ok:"正常", attention:"需关注", off:"已关闭", unknown:"取不到"};
+  function renderStewards(st){
+    var box = el("stewardBar"); if (!box) return;
+    box.innerHTML = "";
+    var detail = el("stewardDetail");
+    if (detail){ detail.innerHTML = ""; detail.hidden = true; }
+    var rows = (st && st.rows) || [];
+    if (!rows.length){
+      box.setAttribute("aria-label", "管家健康状态取不到");
+      return;
+    }
+    var strip = document.createElement("div"); strip.className = "steward-strip";
+    rows.forEach(function(r){
+      var li = document.createElement("button");
+      li.type = "button";
+      li.className = "steward s-" + (r.state || "unknown");
+      var full = (r.label || "") + "（" + (STEWARD_STATE[r.state] || (r.state || "取不到")) + "）";
+      li.title = full;
+      li.setAttribute("aria-label", full);
+      li.setAttribute("data-key", r.key || "");
+      var name = document.createElement("span"); name.className = "steward-label";
+      var shortLabel = String(r.label || "未命名责任").split("：")[0];
+      name.textContent = shortLabel || "未命名责任";
+      li.appendChild(name);
+      var dot = document.createElement("span"); dot.className = "sdot";
+      dot.setAttribute("aria-hidden", "true");
+      li.appendChild(dot);
+      li.addEventListener("click", function(){ renderStewardDetail(r); });
+      strip.appendChild(li);
+    });
+    box.appendChild(strip);
+  }
+
+  function renderStewardDetail(row){
+    var detail = el("stewardDetail");
+    if (!detail) return;
+    var state = row.state || "unknown";
+    var status = STEWARD_STATE[state] || "取不到";
+    var description = row.description || row.label || "当前状态取不到";
+    var history = Array.isArray(row.recent_completed) ? row.recent_completed : [];
+    var recent = history.slice(0, 3);
+    var older = history.slice(3);
+    detail.innerHTML = "";
+    var stateText = document.createElement("div");
+    stateText.className = "steward-detail-status";
+    stateText.textContent = status + " · " + description;
+    detail.appendChild(stateText);
+    var recentBox = document.createElement("div");
+    recentBox.className = "steward-detail-recent";
+    var recentTitle = document.createElement("strong"); recentTitle.textContent = "最近完成";
+    recentBox.appendChild(recentTitle);
+    if (recent.length){
+      var list = document.createElement("ul");
+      recent.forEach(function(item){
+        var li = document.createElement("li");
+        li.textContent = typeof item === "string" ? item : (item.title || item.text || "一项工作已完成");
+        list.appendChild(li);
+      });
+      recentBox.appendChild(list);
+    } else {
+      var empty = document.createElement("div"); empty.className = "d";
+      empty.textContent = "暂无可按管家归属确认的记录";
+      recentBox.appendChild(empty);
+    }
+    detail.appendChild(recentBox);
+    if (older.length){
+      var historyFold = document.createElement("details");
+      historyFold.className = "steward-history";
+      var historySummary = document.createElement("summary");
+      historySummary.textContent = "查看更早记录（" + older.length + "）";
+      historyFold.appendChild(historySummary);
+      var olderList = document.createElement("ul");
+      older.forEach(function(item){
+        var li = document.createElement("li");
+        li.textContent = typeof item === "string" ? item : (item.title || item.text || "一项工作已完成");
+        olderList.appendChild(li);
+      });
+      historyFold.appendChild(olderList);
+      detail.appendChild(historyFold);
+    }
+    detail.hidden = false;
+  }
+
+  // 全局待路由箱不属于当前项目，所以只在真有未复核项时出现；0 条不占首屏，
+  // 取不到则明确说取不到。指派默认预演，只有第二个按钮带 confirm=true。
+  function renderGlobalRouting(gr){
+    var fold = el("globalRoutingFold"); if (!fold) return;
+    var box = el("globalRoutingBox");
+    var summary = el("globalRoutingSummary");
+    if (!gr || gr.status === "unknown"){
+      fold.hidden = false;
+      if (summary) summary.textContent = "全局待路由取不到";
+      if (box) {
+        box.innerHTML = "";
+        var warn = document.createElement("div");
+        warn.className = "empty";
+        warn.textContent = (gr && gr.text) || "全局待路由箱取不到；不会当成 0 条。";
+        box.appendChild(warn);
+      }
+      return;
+    }
+    if (gr.status !== "ok" || typeof gr.count !== "number"){
+      fold.hidden = true;
+      return;
+    }
+    if (!gr.count){
+      fold.hidden = true;
+      if (summary) summary.textContent = "全局待路由";
+      if (box) box.innerHTML = "";
+      return;
+    }
+    fold.hidden = false;
+    if (summary) summary.textContent = "查看 " + gr.count + " 条待复核需求";
+    if (!box) return;
+    box.innerHTML = "";
+    var note = document.createElement("div");
+    note.className = "meta";
+    note.textContent = "这些原始投稿没有进任何项目账本。确认只追加目标项目 inbox 和复核凭证，不改原始记录；预演不写任何账本。";
+    box.appendChild(note);
+    (gr.items || []).forEach(function(item){
+      var row = document.createElement("div");
+      row.className = "steward-summary";
+      row.style.marginTop = "10px";
+      var title = document.createElement("div");
+      title.textContent = (item.text || "未命名投稿")
+        + ((item.candidates && item.candidates.length)
+           ? "（候选：" + item.candidates.join("、") + "）" : "");
+      title.title = "指纹 " + (item.fingerprint || "取不到");
+      row.appendChild(title);
+
+      var preferred = (item.candidates || [])[0]
+        || ((gr.projects || [])[0] || {}).name || "";
+      var select = document.createElement("select");
+      select.value = preferred;
+      (gr.projects || []).forEach(function(p){
+        var option = document.createElement("option");
+        option.value = p.name;
+        option.textContent = p.name;
+        select.appendChild(option);
+      });
+      row.appendChild(select);
+
+      var reason = document.createElement("input");
+      reason.type = "text";
+      reason.value = "面板复核确认归属";
+      reason.title = "复核依据会写进 append-only 凭证";
+      row.appendChild(reason);
+
+      [false, true].forEach(function(confirmed){
+        var btn = document.createElement("button");
+        btn.className = confirmed ? "btn primary" : "btn";
+        btn.type = "button";
+        btn.textContent = confirmed ? "确认指派" : "预演指派";
+        btn.addEventListener("click", function(){
+          var project = select.value || preferred;
+          if (!project || !item.fingerprint){
+            toast("这条缺指纹或可选项目，不能指派", "err");
+            return;
+          }
+          btn.disabled = true;
+          var old = btn.textContent;
+          btn.textContent = confirmed ? "正在写入…" : "正在预演…";
+          callTool("routing_review_assign", {
+            fingerprint: item.fingerprint,
+            project: project,
+            reason: reason.value || "面板复核确认归属",
+            confirm: confirmed,
+          }).then(function(res){
+            toast((res && res.__text__) || "已完成", "ok");
+            if (confirmed) return loadStatus(false);
+            return null;
+          }).catch(function(e){
+            toast("操作失败：" + (e && e.message || e), "err");
+          }).then(function(){
+            btn.disabled = false;
+            btn.textContent = old;
+          });
+        });
+        row.appendChild(btn);
+      });
+      box.appendChild(row);
+    });
+  }
+
+  // PM 简报：预期磨到哪、谁给谁让路、哪条该追进度。候选只照抄控制层结论；
+  // 只有人在这里逐项点头才写授权账本，守护发送前还会再校验。取不到就说取不到。
+  function pmCount(value){
+    return (value === undefined || value === null) ? "取不到" : String(value);
+  }
+  function pmRow(list, tagText, text){
+    var li = document.createElement("li");
+    var tag = document.createElement("span"); tag.className = "tag"; tag.textContent = tagText;
+    var grow = document.createElement("span"); grow.className = "grow"; grow.textContent = text;
+    li.appendChild(tag); li.appendChild(grow); list.appendChild(li);
+  }
+  function renderPmBriefing(pb, authSummary){
+    var box = el("pmBriefingBox"); if (!box) return; box.innerHTML = "";
+    if (!pb){
+      box.innerHTML = '<div class="empty">PM 简报取不到；不把不知道当成正常。</div>';
+      return;
+    }
+    var exp = pb.expectations || {};
+    var ac = pb.acceptance_criteria || {};
+    var hold = pb.overlap_holds || {};
+    var follow = pb.follow_up_candidates || {};
+    var closure = pb.closure || {};
+    var auth = authSummary || {};
+    var authCounts = auth.counts || {};
+    var research = pb.research || {};
+    var approvedByTicket = {};
+    ((auth.status === "ok" && auth.items) || []).forEach(function(a){
+      if (a.state === "approved" && a.ticket_id) approvedByTicket[a.ticket_id] = a;
+    });
+    var list = document.createElement("ul"); list.className = "list";
+    var expText = "待确认：" + pmCount(exp.pending_count) + " 条 · 已生效："
+      + pmCount(exp.active_count) + " 条";
+    if (exp.mainline_stage) expText += " · 主线阶段：" + exp.mainline_stage;
+    pmRow(list, "预期", expText);
+    var researchItems = research.items || [];
+    var researchLabel = research.status === "unknown" ? "取不到"
+      : (research.attention_count ? "需要关注" : (research.count ? "有研究记录" : "暂无研究"));
+    var researchText = research.status === "unknown"
+      ? "研究状态取不到，不把不知道当成没有成熟方案。"
+      : researchLabel;
+    if (research.status !== "unknown" && research.count != null) {
+      researchText += " · " + pmCount(research.count) + " 项";
+    }
+    pmRow(list, "PM 判断", researchText);
+    researchItems.slice(0, 2).forEach(function(r){
+      var decision = ({adopt:"复用", adapt:"适配", build:"自建", defer:"暂缓", reject:"不采用"})[r.choice]
+        || ({awaiting_external_research:"等研究", awaiting_approval:"等你确认", decision_needed:"待判断",
+            decision_ready:"可判断", blocked:"受阻"})[r.decision_status]
+        || "研究中";
+      var detail = (r.question || r.research_id || "研究事项") + " · " + decision;
+      if (r.decision_status === "awaiting_approval") detail += " · 需要你确认";
+      else if (r.decision_status === "awaiting_external_research") detail += " · 等待研究证据";
+      pmRow(list, r.research_id || "研究", detail);
+    });
+    var prd = pb.prd_revision || {};
+    var prdText = prd.status === "unknown" ? "PRD 修订状态取不到，不把不知道当成已同步。"
+      : pmCount(prd.attention_count) + " 项待收敛"
+        + (prd.reason ? " · " + prd.reason : " · 当前 PRD 已是最新决策口径");
+    pmRow(list, "PRD 迭代", prdText);
+    (prd.items || []).slice(0, 2).forEach(function(r){
+      var decisionText = ({adopt:"采用", adapt:"适配", defer:"暂缓", reject:"不采用",
+                           ask_user:"等你确认"})[r.decision] || r.status || "待判断";
+      pmRow(list, r.revision_id || "PRD", (r.text || "修订事项") + " · " + decisionText);
+    });
+    var closurePaths = closure.paths || [];
+    pmRow(list, "施工路径", pmCount(closure.status === "unknown" ? null : closurePaths.length)
+      + " 条 · " + (closure.status === "unknown"
+        ? "施工路径取不到，不把不知道当成 0 条。"
+        : "原话到施工、依赖、路线、追问、关闭只做只读投影"));
+    closurePaths.slice(0, 2).forEach(function(r){
+      var w = r.work_item || {};
+      var pkg = w.closure_package || {};
+      pmRow(list, w.id || "施工", (w.title || "未命名施工项")
+        + " · " + (w.status || "unknown")
+        + " · " + (pkg.label || "闭环状态取不到")
+        + " · 文件占地" + (w.occupancy === "unknown" ? "取不到" : "已声明"));
+    });
+    (exp.pending || []).slice(0, 2).forEach(function(r){
+      pmRow(list, "待确认", r.text || r.id || "（无文案）");
+    });
+    var acItems = ac.items || [];
+    pmRow(list, "验收标准", pmCount(ac.status === "ok" ? ac.pending_count : null)
+      + " 条候选 · " + (ac.note || "验收标准候选取不到"));
+    acItems.slice(0, 2).forEach(function(r){
+      pmRow(list, r.id || "候选", (r.needs_human ? "需要人看 · " : "先跑门禁 · ")
+        + (r.text || "（无文案）"));
+    });
+    var holdItems = hold.items || [];
+    pmRow(list, "让路", pmCount(hold.status === "ok" ? holdItems.length : null)
+      + " 条在排队 · " + (hold.note || "让路信号取不到"));
+    holdItems.slice(0, 2).forEach(function(r){
+      var waiting = (r.holders || []).map(function(h){ return h.id || "未知"; }).join("、") || "未知";
+      var files = (r.files || []).join("、") || "无文件线索";
+      pmRow(list, r.id || "排队", (r.title || "工作项") + " 等 " + waiting + " · " + files);
+    });
+    var followItems = follow.items || [];
+    pmRow(list, "追问", pmCount(follow.status === "ok" ? followItems.length : null)
+      + " 条候选 · " + (follow.note || "追问候选取不到"));
+    pmRow(list, "追问授权", pmCount(auth.status === "ok" ? authCounts.approved : null)
+      + " 条待发 · " + (auth.note || "追问授权账本取不到"));
+    followItems.slice(0, 2).forEach(function(r){
+      var li = document.createElement("li");
+      var tag = document.createElement("span"); tag.className = "tag"; tag.textContent = r.id || "候选";
+      var grow = document.createElement("span"); grow.className = "grow";
+      grow.textContent = "空闲 " + pmCount(r.idle_minutes) + " 分钟 · "
+        + (r.thread_id || "无窗口绑定");
+      li.appendChild(tag); li.appendChild(grow);
+      if (r.thread_id && follow.status === "ok") {
+        var ring = document.createElement("span"); ring.className = "accbtns";
+        var authorize = document.createElement("button");
+        authorize.className = "btn"; authorize.type = "button"; authorize.textContent = "授权追问";
+        var prompt = r.suggested_prompt
+          || ("继续处理 " + (r.id || "工作项") + "：回报当前卡点和下一步。");
+        authorize.addEventListener("click", function(){
+          authorize.disabled = true;
+          var was = authorize.textContent; authorize.textContent = "正在登记…";
+          callTool("followup_authorize", {
+            ticket_id: r.id, thread_id: r.thread_id, prompt: prompt,
+            reason: "面板：用户明确同意追问", confirm: true,
+          }).then(function(){
+            toast("已登记逐项授权；发送前还会再校验。", "ok");
+            return loadStatus(false);
+          }).catch(function(e){
+            toast("操作没成功：" + (e && e.message || e), "err");
+            authorize.disabled = false; authorize.textContent = was;
+          });
+        });
+        ring.appendChild(authorize);
+        var approved = approvedByTicket[r.id];
+        if (approved) {
+          var cancel = document.createElement("button");
+          cancel.className = "btn ghost"; cancel.type = "button"; cancel.textContent = "撤销授权";
+          cancel.addEventListener("click", function(){
+            cancel.disabled = true;
+            var was = cancel.textContent; cancel.textContent = "正在撤销…";
+            callTool("followup_cancel", {
+              request_id: approved.request_id,
+              reason: "面板：用户撤销未发送的追问",
+            }).then(function(){
+              toast("已撤销未发送的授权；历史记录保留。", "ok");
+              return loadStatus(false);
+            }).catch(function(e){
+              toast("操作没成功：" + (e && e.message || e), "err");
+              cancel.disabled = false; cancel.textContent = was;
+            });
+          });
+          ring.appendChild(cancel);
+        }
+        li.appendChild(ring);
+      }
+      list.appendChild(li);
+    });
+    box.appendChild(list);
+    var missing = (exp.missing || []).concat(follow.missing || []);
+    if (missing.length){
+      var meta = document.createElement("div"); meta.className = "meta";
+      meta.textContent = "取不到：" + missing.join("、") + "；这些项不计入正常。";
+      box.appendChild(meta);
+    }
+  }
+
+  // 上下文档案：只读展示自动收录、已确认、已驳回和生效记录。确认动作只在
+  // 「需要你拍板 / 异常」区出现，避免同一条候选有两套互相打架的按钮。
+  function renderContextArchive(ca){
+    var box = el("contextArchiveBox"); if (!box) return; box.innerHTML = "";
+    if (!ca || ca.status !== "ok"){
+      var why = (ca && (ca.reason || (ca.unknown || []).join("、")))
+        || "上下文档案取不到";
+      if (why.indexOf("不把不知道当成 0 条") < 0) why += "；不把不知道当成 0 条。";
+      box.innerHTML = '<div class="empty">' + why + '</div>';
+      return;
+    }
+    var list = document.createElement("ul"); list.className = "list";
+    var c = ca.counts || {};
+    pmRow(list, "已收录", "待确认 " + pmCount(c.proposed) + " · 已确认 "
+      + pmCount(c.promoted) + " · 已驳回 " + pmCount(c.dismissed)
+      + " · 生效 " + pmCount(c.active));
+    (ca.items || []).forEach(function(x){
+      var source = x.source === "context_learning"
+        ? "自学习：同一诉求出现 " + pmCount(x.mentions) + " 次 / 跨 "
+          + pmCount(x.threads) + " 个会话"
+        : "入口原话" + ((x.signals && x.signals.length)
+          ? " · 命中 " + x.signals.join("、") : "");
+      var detail = (x.id || "") + " · " + (x.text || x.title || "") + " · " + source;
+      if (x.evidence && x.evidence.length){
+        var ev = x.evidence[0];
+        detail += " · 证据：" + ((ev.thread) ? ev.thread + "：" : "") + (ev.text || "");
+      }
+      if (x.constraint_id) detail += " · 已落成 " + x.constraint_id;
+      if (x.reason) detail += " · 驳回原因：" + x.reason;
+      pmRow(list, x.status === "proposed" ? "待确认"
+        : x.status === "promoted" ? "已确认"
+        : x.status === "dismissed" ? "已驳回" : "生效", detail);
+    });
+    (ca.unknown || []).forEach(function(x){ pmRow(list, "取不到", x); });
+    box.appendChild(list);
+    var meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = ca.note || "自动收录只生成候选，不自动生效。";
+    box.appendChild(meta);
+  }
+
+  // 关系层：只照抄显式登记的目标摘要。它不自动派活，也不把「需要人」变成追问动作。
+  function renderRelationshipGoals(rg){
+    var box = el("relationshipGoalsBox"); if (!box) return; box.innerHTML = "";
+    if (!rg || rg.status !== "ok"){
+      box.innerHTML = '<div class="empty">'
+        + (rg && rg.headline ? rg.headline : "跨项目目标取不到；不把不知道当成 0 条。")
+        + '</div>';
+      return;
+    }
+    var list = document.createElement("ul"); list.className = "list";
+    pmRow(list, "摘要", rg.headline || "跨项目目标摘要取不到");
+    (rg.items || []).slice(0, 5).forEach(function(r){
+      var label = r.id || "目标";
+      var priority = ({high: "高", normal: "普通", low: "低"})[r.priority] || "取不到";
+      var status = ({proposed: "待确认", active: "进行中", waiting_human: "需要人",
+        paused: "暂停", done: "完成"})[r.status] || "取不到";
+      var projects = (r.projects || []).join("、") || "项目取不到";
+      pmRow(list, label, priority + " · " + status + " · " + projects
+        + " · " + (r.title || "无标题"));
+      if (r.north_star){
+        pmRow(list, "北极星", r.north_star);
+      }
+      var links = [];
+      var ledgers = r.linked_ledger || [];
+      var accepts = r.linked_acceptance || [];
+      if (ledgers.length) links.push("工作项 " + ledgers.join("、"));
+      if (accepts.length) links.push("验收 " + accepts.join("、"));
+      if (links.length){
+        pmRow(list, "关联", links.join(" · "));
+      }
+      if (r.source_thread){
+        pmRow(list, "来源窗口", r.source_thread);
+      }
+      if (r.needs_human){
+        pmRow(list, "需要人", r.reason || "原因未写明");
+      }
+      if (r.status === "done" && r.evidence){
+        pmRow(list, "收口证据", r.evidence);
+      }
+    });
+    box.appendChild(list);
+    var meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = rg.note || "关系层只记录显式目标，不自动派活。";
+    box.appendChild(meta);
+  }
+
+  // 结果代理分：只照抄控制层结论。命令跑绿不等于用户结果变好，取不到也不按 0 分算。
+  function renderOutcomeScore(os){
+    var box = el("outcomeScoreBox"); if (!box) return; box.innerHTML = "";
+    if (!os || os.status !== "ok"){
+      box.innerHTML = '<div class="empty">'
+        + (os && os.headline ? os.headline
+           : "结果代理分取不到；不把不知道当成 0 分。")
+        + '</div>';
+      return;
+    }
+    var list = document.createElement("ul"); list.className = "list";
+    pmRow(list, "总分", os.headline || "结果代理分取不到");
+    (os.components || []).forEach(function(c){
+      if (!c || c.status !== "ok"){
+        pmRow(list, c ? c.label : "判据", "取不到，不计分");
+        return;
+      }
+      pmRow(list, c.label, c.score + " 分 · 权重 " + c.weight + "% · " + (c.detail || ""));
+    });
+    box.appendChild(list);
+    var meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = os.note || "这是台账结果代理分；机器命令通过不等于用户结果变好。";
+    box.appendChild(meta);
+  }
+
+  var MODEL_ROUTE_FALLBACK = [
+    {key:"quick", label:"快速处理", description:"小修、门禁、界面来回", model:"", reasoning_effort:"low"},
+    {key:"standard", label:"标准施工", description:"常规实现与验证", model:"", reasoning_effort:"medium"},
+    {key:"deep", label:"深度决策", description:"架构、PRD、取舍判断", model:"", reasoning_effort:"high"},
+  ];
+
+  function renderModelRoutes(routes){
+    var box = el("modelRoutesBox"); if (!box) return;
+    var levels = (routes && routes.levels) || MODEL_ROUTE_FALLBACK;
+    box.innerHTML = "";
+    levels.forEach(function(row){
+      var line = document.createElement("div"); line.className = "model-route-row";
+      line.setAttribute("data-route", row.key || "");
+      var label = document.createElement("div"); label.className = "mr-label";
+      label.textContent = row.label || "";
+      var desc = document.createElement("span"); desc.textContent = row.description || "";
+      label.appendChild(desc);
+      var model = document.createElement("input");
+      model.type = "text";
+      model.id = "modelRoute_" + (row.key || "");
+      model.placeholder = "沿用项目默认";
+      model.value = row.model || "";
+      model.setAttribute("aria-label", (row.label || "任务") + "模型");
+      var effort = document.createElement("select");
+      effort.id = "effortRoute_" + (row.key || "");
+      effort.setAttribute("aria-label", (row.label || "任务") + "推理程度");
+      [["low","低"],["medium","中"],["high","高"]].forEach(function(opt){
+        var o = document.createElement("option"); o.value = opt[0]; o.textContent = opt[1];
+        if (opt[0] === row.reasoning_effort) o.selected = true;
+        effort.appendChild(o);
+      });
+      line.appendChild(label); line.appendChild(model); line.appendChild(effort);
+      box.appendChild(line);
+    });
+  }
+
   function renderFolders(folders, s){
     var box = el("folderBox"); if (!box) return;
     box.innerHTML = "";
-    var list = (folders && folders.folders) || [];
+    var allFolders = (folders && folders.folders) || [];
+    var currentPath = s && s.project && s.project.path;
+    var currentName = readableProjectName(s && s.project, s && s.mainline, "");
+    // 当前项目已经由主卡承载；项目列表只展示其他项目，避免同一目标出现两次。
+    var seenNames = {};
+    var list = allFolders.filter(function(f){
+      if (currentPath && f.path === currentPath) return false;
+      var shownName = projectListName(f, 0);
+      if (currentName && shownName === currentName) return false;
+      if (seenNames[shownName]) return false;
+      seenNames[shownName] = true;
+      return true;
+    });
     var note = el("folderNote");
-    if (note) note.textContent = list.length ? (list.length + " 个项目") : "";
+    var folderCard = el("folderCard");
+    if (folderCard) folderCard.hidden = !list.length;
+    if (note) note.textContent = list.length ? (list.length + " 个其他项目") : "";
     if (!list.length){
-      box.innerHTML = '<div class="empty">还没有项目文件夹。当前绑定项目会作为一个文件夹显示。</div>';
+      box.innerHTML = "";
       return;
     }
-    list.forEach(function(f){
-      var card = document.createElement("div");
+    list.forEach(function(f, index){
+      // 项目卡默认是收起的面性容器：摘要只承担身份、目标、阶段和计数。
+      // 明细、门禁、工程雷达都进展开区，避免多项目并行时首屏变成日志墙。
+      var card = document.createElement("details");
       card.className = "folder" + (f.active ? " active" : "");
-      var head = document.createElement("div"); head.className = "folder-head";
+      card.title = [f.name || f.id || "未命名项目", f.path || ""].filter(Boolean).join(" · ");
+
+      var summary = document.createElement("summary");
       var info = document.createElement("div");
       var title = document.createElement("div"); title.className = "folder-title";
-      title.textContent = f.name || f.id || "未命名项目";
-      var meta = document.createElement("div"); meta.className = "folder-meta";
-      meta.textContent = [f.product || "", f.path || ""].filter(Boolean).join(" · ");
+      title.textContent = projectListName(f, index);
+      var goal = document.createElement("div"); goal.className = "folder-goal";
+      goal.textContent = "当前目标：" + (f.goal_override || f.one_liner || f.stage || "目标待明确");
       var step = document.createElement("div"); step.className = "folder-step";
       step.textContent = "当前步骤：" + (f.current_step || "路线待拆解");
-      var source = document.createElement("div"); source.className = "folder-source";
-      var sourceThread = f.source_thread_id || "";
-      source.textContent = "来源对话 " + (sourceThread ? sourceThread.slice(0, 12) : "未标注来源") +
-        " · 路线 " + (f.current_step || "待拆解");
-      info.appendChild(title); info.appendChild(meta); info.appendChild(step); info.appendChild(source);
+      var folderRoad = Array.isArray(f.roadmap) ? f.roadmap : [];
+      var folderProgress = overallRoadmapProgress(folderRoad);
+      var progress = document.createElement("div"); progress.className = "folder-progress";
+      var progressBar = document.createElement("div"); progressBar.className = "folder-progress-bar";
+      var progressFill = document.createElement("span");
+      progressFill.style.width = (folderProgress == null ? 0 : folderProgress) + "%";
+      progressBar.appendChild(progressFill);
+      var progressValue = document.createElement("span"); progressValue.className = "folder-progress-value";
+      progressValue.textContent = folderProgress == null ? "进度取不到" : folderProgress + "%";
+      progress.appendChild(progressBar); progress.appendChild(progressValue);
+      info.appendChild(title); info.appendChild(goal); info.appendChild(step); info.appendChild(progress);
+
+      var stats = document.createElement("div"); stats.className = "folder-stats";
+      var c = f.counts || {};
+      [["doing", c.doing || 0, "进行"], ["todo", c.todo || 0, "待办"], ["human", c.human || 0, "验收"]].forEach(function(row){
+        if (!row[1] && row[0] !== "doing") return;
+        var tag = document.createElement("span");
+        tag.className = "fstat" + (row[0] === "human" && row[1] ? " warn" : row[0] === "doing" && row[1] ? " live" : "");
+        tag.textContent = row[2] + " " + row[1];
+        stats.appendChild(tag);
+      });
+      var chevron = document.createElement("span");
+      chevron.className = "folder-chevron";
+      chevron.setAttribute("aria-hidden", "true");
+      summary.appendChild(info); summary.appendChild(stats); summary.appendChild(chevron);
+      card.appendChild(summary);
+
+      var body = document.createElement("div"); body.className = "folder-body";
+      var goalId = "goalEdit_" + String(f.id || f.path || f.name || "project").replace(/[^A-Za-z0-9_-]/g, "_");
+      var editBtn = document.createElement("button");
+      editBtn.className = "btn folder-edit-goal";
+      editBtn.type = "button";
+      editBtn.id = goalId + "_edit";
+      editBtn.textContent = "编辑目标";
+      editBtn.addEventListener("click", function(){
+        var wrap = document.getElementById(goalId);
+        if (wrap) wrap.hidden = !wrap.hidden;
+      });
+      body.appendChild(editBtn);
+      var editor = document.createElement("div");
+      editor.className = "folder-goal-editor";
+      editor.id = goalId;
+      editor.hidden = true;
+      var label = document.createElement("label");
+      label.textContent = "项目目标";
+      label.setAttribute("for", goalId + "_input");
+      var input = document.createElement("textarea");
+      input.id = goalId + "_input";
+      input.maxLength = 240;
+      input.value = f.goal_override || f.one_liner || f.stage || "";
+      var actions = document.createElement("div"); actions.className = "folder-goal-actions";
+      var save = document.createElement("button");
+      save.className = "btn primary"; save.type = "button"; save.textContent = "保存目标";
+      save.addEventListener("click", function(){
+        save.disabled = true;
+        callTool("project_goal_update", {project_path: f.path || currentCwd(), goal: input.value, confirm:true})
+          .then(function(){ toast("目标已保存", "ok"); return loadStatus(false); })
+          .catch(function(e){ toast("目标未保存：" + (e && e.message || e), "err"); })
+          .then(function(){ save.disabled = false; });
+      });
+      var cancel = document.createElement("button");
+      cancel.className = "btn"; cancel.type = "button"; cancel.textContent = "取消";
+      cancel.addEventListener("click", function(){
+        input.value = f.goal_override || f.one_liner || f.stage || "";
+        editor.hidden = true;
+      });
+      actions.appendChild(save); actions.appendChild(cancel);
+      editor.appendChild(label); editor.appendChild(input); editor.appendChild(actions);
+      body.appendChild(editor);
       if (f.readable === false){
         var err = document.createElement("div"); err.className = "folder-error";
         err.textContent = "项目账本读不到：" + (f.read_error || "未知原因");
-        info.appendChild(err);
+        body.appendChild(err);
       }
       var gate = f.quality_gate;
       if (gate && gate.status){
@@ -852,14 +2364,14 @@
         gateLine.title = (gate.checks || []).map(function(checkRow){
           return checkRow.label + "：观测 " + String(checkRow.observed) + "/" + String(checkRow.expected);
         }).join("；");
-        info.appendChild(gateLine);
+        body.appendChild(gateLine);
       }
       var radar = f.engineering_radar;
       if (radar && radar.status === "unverified"){
         var radarError = document.createElement("div");
         radarError.className = "folder-error";
         radarError.textContent = "工程进度不可读：" + (radar.detail || "未知原因");
-        info.appendChild(radarError);
+        body.appendChild(radarError);
       } else if (radar && radar.layers) {
         var radarLine = document.createElement("div");
         radarLine.className = "folder-step";
@@ -869,31 +2381,21 @@
           return layer.layer + " " + layer.completion + "%" +
             (layer.blocker ? "：" + layer.blocker : "");
         }).join("\n");
-        info.appendChild(radarLine);
+        body.appendChild(radarLine);
         if ((radar.next_steps || []).length){
           var next = document.createElement("div"); next.className = "folder-source";
           next.textContent = "下一步：" + radar.next_steps[0];
           next.title = radar.next_steps.join("\n");
-          info.appendChild(next);
+          body.appendChild(next);
         }
         if ((radar.blockers || []).length){
           var blocked = document.createElement("div");
           blocked.className = "folder-error";
           blocked.textContent = "卡点：" + radar.blockers[0];
           blocked.title = radar.blockers.join("\n");
-          info.appendChild(blocked);
+          body.appendChild(blocked);
         }
       }
-      var stats = document.createElement("div"); stats.className = "folder-stats";
-      var c = f.counts || {};
-      [["doing", c.doing || 0, "进行"], ["todo", c.todo || 0, "待办"], ["human", c.human || 0, "验收"]].forEach(function(row){
-        if (!row[1] && row[0] !== "doing") return;
-        var tag = document.createElement("span");
-        tag.className = "fstat" + (row[0] === "human" && row[1] ? " warn" : row[0] === "doing" && row[1] ? " live" : "");
-        tag.textContent = row[2] + " " + row[1];
-        stats.appendChild(tag);
-      });
-      head.appendChild(info); head.appendChild(stats); card.appendChild(head);
       var work = document.createElement("div"); work.className = "folder-work";
       // 工作项只在这里展开一次；路线图只负责「现在走到哪一步」，不复制明细。
       var doingRows = (f.doing_items || []).map(function(x){ return {x:x, state:"进行中"}; });
@@ -908,15 +2410,17 @@
       } else {
         rows.slice(0, 4).forEach(function(row){
           var line = document.createElement("div"); line.className = "folder-work-row";
-          var id = document.createElement("span"); id.className = "id"; id.textContent = row.x.id || "";
           var name = document.createElement("span"); name.className = "name";
-          name.textContent = (laneLabel(row.x.lane || row.x.kind)) + " · " + (row.x.title || row.x.detail || "未命名工作项") +
-            (row.x.source_thread_id ? " · 来自对话 " + String(row.x.source_thread_id).slice(0, 12) : "");
+          name.textContent = (laneLabel(row.x.lane || row.x.kind)) + " · " + (row.x.title || row.x.detail || "未命名工作项");
+          line.title = [
+            row.x.id ? "工作项 " + row.x.id : "",
+            row.x.source_thread_id ? "来源对话 " + row.x.source_thread_id : "",
+          ].filter(Boolean).join(" · ");
           var state = document.createElement("span"); state.className = "state"; state.textContent = row.state;
-          line.appendChild(id); line.appendChild(name); line.appendChild(state); work.appendChild(line);
+          line.appendChild(name); line.appendChild(state); work.appendChild(line);
         });
       }
-      card.appendChild(work); box.appendChild(card);
+      body.appendChild(work); card.appendChild(body); box.appendChild(card);
     });
   }
 
@@ -926,12 +2430,15 @@
     var road = s.roadmap || [];
     var current = road.filter(function(r){ return r.status === "doing"; })[0]
       || road.filter(function(r){ return r.status === "next"; })[0];
+    var next = road.filter(function(r){ return r.status === "next"; })[0];
+    if (next === current) next = null;
     var doingItems = s.doing_items || [];
     var todoItems = s.todo_items || [];
     var doing = doingItems.length || (s.exec_now ? 1 : 0);
     var human = (s.human_acceptance || []).length;
     var blocked = s.state === "blocked" || s.state === "error";
     var stage = current ? (current.step || "当前路线") : "路线待拆解";
+    var routeNow = stage + (next ? " · 下一步：" + (next.step || "待拆解") : "");
     var product = ml.product || proj.name || "当前项目";
     var projectName = proj.name || (proj.path ? proj.path.split("/").pop() : "未绑定项目");
     var currentWork = doingItems[0] || s.exec_now || todoItems[0] || null;
@@ -942,12 +2449,13 @@
     var roadNodeLabel = el("hierRoad");
     var workNodeLabel = el("hierWork");
     if (projectNode) { projectNode.textContent = projectName; projectNode.title = proj.path || projectName; }
-    if (roadNodeLabel) { roadNodeLabel.textContent = product + " · " + stage; roadNodeLabel.title = product + " · " + stage; }
+    if (roadNodeLabel) { roadNodeLabel.textContent = product + " · " + routeNow; roadNodeLabel.title = product + " · " + routeNow; }
     if (workNodeLabel) { workNodeLabel.textContent = workTitle; workNodeLabel.title = workTitle; }
     var note = el("orientationNote");
     if (note){
       var action = doing ? "正在推进工作项" : human ? "等待你验收" : blocked ? "卡住，等待处理" : "等待下一条需求";
-      note.textContent = product + " · 当前路线：" + stage + " · " + action + "。";
+      note.textContent = product + " · 当前路线：" + stage +
+        (next ? " · 下一步：" + (next.step || "待拆解") : "") + " · " + action + "。";
     }
     var ids = ["journeyNeed","journeyProduct","journeyRoad","journeyWork","journeyAccept"];
     ids.forEach(function(id){ var n = el(id); if (n) n.className = "journey-step"; });
@@ -973,19 +2481,25 @@
     var blocked = s.blocked || {};
     var hasBlock = (blocked.failures && blocked.failures.length) ||
       (blocked.resolve && blocked.resolve.length) || (blocked.exec && blocked.exec.length);
-    var statusText = (s.enabled === false ? "已关闭" : (s.paused ? "已暂停" : (s.error ? "异常" : "运行中"))) +
-      " · " + (s.state_label || "读取中");
+    var stateBase = s.enabled === false ? "已关闭" : (s.paused ? "已暂停" : (s.error ? "异常" :
+      ((s.exec_now || doingItems.length) ? "运行中" : "待命")));
+    var stateLabel = s.state_label || "读取中";
+    var idleState = stateBase === "待命" || /待命/.test(String(stateLabel));
+    var statusText = idleState ? "待命" : (stateBase === stateLabel ? stateBase : stateBase + " · " + stateLabel);
     if (s.error) statusText = "异常 · " + s.error;
     else if (human.length) statusText = "运行中 · 等你验收";
-    else if (hasBlock) statusText = "运行中 · 有卡点要处理";
+    else if (hasBlock) statusText = (s.exec_now || doingItems.length ? "运行中" : "待命") + " · 有卡点要处理";
     var workText;
     if (human.length) workText = "等待你验收：" + (human[0].title || "人工验收");
     else if (s.exec_now) workText = (s.exec_now.id ? s.exec_now.id + " · " : "") + (s.exec_now.title || "正在自动实现");
     else if (doingItems.length) workText = doingItems[0].title || doingItems[0].detail || "正在处理工作项";
     else if (hasBlock) workText = "等待处理卡点";
-    else workText = "当前没有进行中的工作";
+    // 兜底必须落到控制层算出的权威 doing：它已经处理了「守护绑定别的项目」「已检查
+    // 一轮没有可合分支」「暂停/关闭」这些情况。旧版这里硬写「当前没有进行中的工作」，
+    // 于是 control plane 说了实话、面板却显示空白态 —— 面板渲染门禁实测抓到这条。
+    else workText = (/待命/.test(String(s.doing || "")) ? "等待下一项工作" : (s.doing || "当前没有进行中的工作"));
     var stepText = activeRoad
-      ? (activeRoad.step || "当前路线") + " · " + (activeRoad.status === "doing" ? "进行中" : "下一步")
+      ? (activeRoad.step || "当前路线") + " · " + ((s.exec_now || doingItems.length) ? "进行中" : "待推进")
       : "路线待拆解 · 项目：" + (proj.name || "未绑定");
     setText("focusStatus", statusText);
     setText("focusDoing", workText);
@@ -1009,6 +2523,34 @@
       setText("nsDetail", cr.status === "no_data" ? "还没有需求台账" : "指标算不出来");
       box.title = cr.reason || "闭环率取不到，不能当成 0% 或正常";
     }
+  }
+
+  var AUTONOMY_LABEL = {
+    disabled: "已关闭",
+    enabled: "已启用，尚未运行",
+    running: "运行中",
+    paused: "已暂停",
+    waiting_human: "等待你确认"
+  };
+  function renderAutonomy(a){
+    var mode = a.mode || "enabled";
+    setText("autonomyMode", AUTONOMY_LABEL[mode] || mode);
+    var copy = {
+      enabled: "项目已登记。切到“开始运行”后，Autopilot 才会持续规划、派活、验收和合并。",
+      running: "项目正在持续推进；没有待办时会安静等待，遇到必须由你决定的事会停下来。",
+      paused: a.reason || "项目暂停中；已有 worker 和工作区会保留，不再启动新的工作。",
+      waiting_human: a.reason || "Autopilot 已停在需要你确认的位置。确认后再恢复运行。"
+      ,disabled: a.reason || "项目自主运行已关闭。重新启用后才会恢复项目级授权。"
+    };
+    setText("autonomyCopy", copy[mode] || "项目自主运行状态已更新。");
+    var counts = a.counts || {};
+    num("autonomyQueued", counts.queued); num("autonomyRunning", counts.running);
+    num("autonomyBlocked", counts.blocked); num("autonomyWaiting", counts.waiting_human);
+    var run = el("autonomyRun"), pause = el("autonomyPause"), enable = el("autonomyEnable");
+    if (run) run.disabled = mode === "running";
+    if (pause) pause.disabled = mode === "paused" || mode === "enabled";
+    if (enable) enable.disabled = mode === "enabled";
+    if (run) run.textContent = mode === "waiting_human" ? "确认后运行" : "开始运行";
   }
 
   function renderExecNow(en){
@@ -1212,17 +2754,64 @@
     }
   }
 
+  // 工单状态表：控制层已经按 ops/stage_table.py 那一张表算好每行的 stage，
+  // 面板只负责把「来源 → 项目 → 泳道 → 分支 → stage → 证据」照抄出来，
+  // 不再自己算一遍状态，避免出现「面板说在做、CLI 说没事」两套口径。
+  var WORK_STAGE_CLASS = {
+    "person/review":"review", "doing":"doing", "stuck":"stuck",
+    "todo":"", "review":""
+  };
+  function renderWorkTable(rows){
+    var box = el("workTableBox"); if (!box) return; box.innerHTML = "";
+    var fold = el("workTableFold");
+    rows = rows || [];
+    if (fold) fold.hidden = !rows.length;
+    if (!rows.length) return;
+    var ul = document.createElement("ul"); ul.className = "wt";
+    rows.forEach(function(r){
+      var li = document.createElement("li");
+      var t = document.createElement("div"); t.className = "t";
+      var wid = document.createElement("span"); wid.className = "wid";
+      wid.textContent = r.id || "";
+      var name = document.createElement("span"); name.textContent = r.title || "未命名工作项";
+      var stl = document.createElement("span");
+      stl.className = "stl " + (WORK_STAGE_CLASS[r.stage] || "");
+      stl.textContent = r.stage_label || "待处理";
+      t.appendChild(wid); t.appendChild(name); t.appendChild(stl);
+      li.appendChild(t);
+      var bits = [];
+      if (r.source) bits.push("来源 " + r.source);
+      if (r.project) bits.push("项目 " + r.project);
+      if (r.lane) bits.push("泳道 " + r.lane);
+      if (r.branch && r.branch !== r.lane) bits.push("分支 " + r.branch);
+      var d = document.createElement("div"); d.className = "d";
+      d.textContent = bits.join(" · ");
+      if (bits.length) li.appendChild(d);
+      if (r.evidence){
+        var ev = document.createElement("div"); ev.className = "ev";
+        ev.textContent = "证据：" + r.evidence;
+        li.appendChild(ev);
+      }
+      if (r.acceptance_summary){
+        var acc = document.createElement("div"); acc.className = "ev";
+        acc.textContent = r.acceptance_summary;
+        li.appendChild(acc);
+      }
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+  }
+
   function renderNative(s){
     var box = el("nativeState"); if (!box) return;
     var native = (s && s.native) || {};
     var probe = native.last_probe || null;
-    var text = native.label || (native.socket_present ? "原生直连：未自检" : "原生直连：Codex 未运行");
+    var fallback = native.socket_present ? "原生直连：未自检"
+      : "原生直连：未找到桌面控制 socket（只读历史，不能派活）";
+    var text = native.label || fallback;
     if (probe && probe.at) { text += "（自检于 " + probe.at + "）"; }
     box.textContent = text;
     var tip = (probe && probe.reason) ? probe.reason : "";
-    if (probe && probe.hint && probe.blocked_by === "remote-control-chatgpt-pairing") {
-      tip = (tip ? tip + " " : "") + probe.hint;
-    }
     var btn = el("nativeProbe");
     if (btn) { btn.disabled = false; btn.title = tip || "真跑一次原生直连自检"; }
   }
@@ -1298,14 +2887,53 @@
     var box = el("recentBox"); if (!box) return; box.innerHTML = "";
     var note = el("recentNote");
     list = list || [];
-    if (note) note.textContent = list.length ? (list.length + " 项") : "";
+    if (note) note.textContent = list.length ? ("最近 " + Math.min(list.length, 3) + " 项") : "";
     if (!list.length){
       box.innerHTML = '<div class="empty">还没有收口记录。走完一次「修复 → 验证 → 关闭台账」后会出现在这里。</div>';
       return;
     }
+    function humanText(raw){
+      var s = String(raw || "").trim();
+      s = s.replace(/^[A-Z]+-\d+\s+已收口：\s*/, "").replace(/^已收口：\s*/, "");
+      if (/已合入$/.test(s)) return "已完成并合入";
+      var topicBox = s.match(/^【([^】]+)】/);
+      var topic = topicBox ? topicBox[1] : "";
+      var rest = topicBox ? s.slice(topicBox[0].length) : s;
+      var shortTopic = topic.split("·").pop() || topic;
+      // 最近完成只回答用户得到的结果，不把执行器、路径和环境名搬到首屏。
+      if (/闭环所有预期功能|按职责契约|端到端验收/.test(topic + rest)) return "交付：全链路验收已完成";
+      if (/验收门禁|验收检查|production|security\/|deployment\/|launchd|guard|executor|文件随版本发布完整性/.test(topic + rest)) {
+        if (/production|文件随版本发布完整性/.test(topic + rest)) return "发布：交付文件检查已完成";
+        if (/闭环所有预期|职责契约|端到端/.test(topic + rest)) return "交付：全链路验收已完成";
+        return "验收：交付检查已完成";
+      }
+      if (/面板首屏|首屏只回答/.test(topic + rest)) return "面板：首屏信息层级已收敛";
+      if (/官方设计系统|apps-sdk-ui|MCP Apps|原生 Codex 面板设计/.test(topic + rest)) return "面板：原生风格与信息层级已对齐";
+      if (/防丢失|真相镜像/.test(topic + rest)) return "状态：已同步并可追溯";
+      if (/门禁环境/.test(topic + rest)) return "验证：环境已准备完成";
+      rest = rest.replace(/(?:~|\/Users\/|\/private\/|\/var\/folders\/)[^\s，,；;]+/g, "")
+        .replace(/kgctl\s+land/gi, "落盘")
+        .replace(/progress\.json\s*\/\s*acceptance\.json/gi, "状态台账")
+        .replace(/\bmain\b/gi, "主干")
+        .replace(/\b(?:launchd|guard|executor|security\/[a-z-]+|deployment\/[a-z-]+)\b/gi, "验证项")
+        .replace(/(?:补齐|闭环|专项)?(?:动态产品)?验收门禁(?:专项)?(?:执行器)?/g, "验收检查")
+        .replace(/文件随版本发布完整性/g, "发布文件完整性")
+        .replace(/\s+/g, " ")
+        .replace(/^[：:\s]+|[：:\s]+$/g, "");
+      if (shortTopic && rest) return shortTopic + "：" + rest;
+      if (shortTopic) return shortTopic + "：已完成";
+      return rest.length > 42 ? (rest.slice(0, 42) + "…") : (rest || "一项工作已完成");
+    }
     var ul = document.createElement("ul"); ul.className = "list";
-    list.slice(0,5).forEach(function(text){
+    var seen = {};
+    list.forEach(function(raw){
+      if (ul.children.length >= 3) return;
       var li = document.createElement("li");
+      var text = humanText(raw);
+      if (seen[text]) return;
+      seen[text] = true;
+      li.setAttribute("title", String(raw || ""));
+      li.setAttribute("aria-label", "收口详情：" + String(raw || ""));
       var g = document.createElement("span"); g.className = "grow"; g.textContent = text;
       li.appendChild(g); ul.appendChild(li);
     });
@@ -1317,7 +2945,7 @@
     var note = el("accNote");
     if (note) note.textContent = human.length ? (human.length + " 项") : "";
     if (!human.length){
-      box.innerHTML = '<div class="empty">现在没有需要你亲自验收的项。只有必须人看（审美/手感/真实产品里点一下）的才会出现在这里。</div>';
+      return;
     } else {
       var ul = document.createElement("ul"); ul.className = "acc";
       human.forEach(function(a){
@@ -1335,6 +2963,13 @@
           var hint = document.createElement("div"); hint.className = "accnote"; hint.textContent = "（还没写明复核步骤）";
           li.appendChild(hint);
         }
+        var shots = a.screenshots || [];
+        if (shots.length){
+          var shotLine = document.createElement("div"); shotLine.className = "accnote";
+          shotLine.textContent = "复核截图：" + shots.join(" · ");
+          li.appendChild(shotLine);
+        }
+        li.appendChild(buildAcceptanceAction(a));
         ul.appendChild(li);
       });
       box.appendChild(ul);
@@ -1353,6 +2988,47 @@
       });
       body.appendChild(mu); det.appendChild(sm); det.appendChild(body); box.appendChild(det);
     }
+  }
+
+  // 每条人工验收都要带「下一个动作」，并写清点了会怎样 / 不点会怎样。
+  // 只列复核步骤、不给出口，是这批验收项长期挂着不动的直接原因。
+  function buildAcceptanceAction(a){
+    var row = document.createElement("div"); row.className = "accact";
+    var msg = document.createElement("span"); msg.className = "accmsg";
+    msg.textContent = "补图只追加附件，不会替你收口；确认通过才会把这条从首屏移走；不点就继续留在验收清单里。";
+    var actions = document.createElement("div"); actions.className = "accbtns";
+    var shotBtn = document.createElement("button");
+    shotBtn.className = "btn"; shotBtn.type = "button";
+    shotBtn.textContent = "补一张复核截图";
+    shotBtn.addEventListener("click", function(){
+      if (!a.id) { toast("这条验收缺 id，补不了截图，先补台账", "err"); return; }
+      shotBtn.disabled = true; shotBtn.textContent = "正在打开截图…";
+      callTool("capture_acceptance_screenshot", {id:a.id, confirm:true}).then(function(){
+        toast("已记下复核截图；这条仍等你确认", "ok");
+        return loadStatus(false);
+      }).catch(function(e){
+        toast("补图失败：" + (e && e.message || e), "err");
+        shotBtn.disabled = false; shotBtn.textContent = "补一张复核截图";
+      });
+    });
+    var btn = document.createElement("button");
+    btn.className = "btn primary"; btn.type = "button";
+    btn.textContent = "我确认通过，收口这条";
+    btn.addEventListener("click", function(){
+      if (!a.id) { toast("这条验收缺 id，收口不了，先补台账", "err"); return; }
+      btn.disabled = true; btn.textContent = "正在收口…";
+      callTool("resolve_acceptance",
+               {id:a.id, status:"verified", note:"用户在面板确认通过"}).then(function(){
+        toast("已收口 " + a.id, "ok");
+        return loadStatus(false);
+      }).catch(function(e){
+        toast("收口失败：" + (e && e.message || e), "err");
+        btn.disabled = false; btn.textContent = "我确认通过，收口这条";
+      });
+    });
+    actions.appendChild(shotBtn); actions.appendChild(btn);
+    row.appendChild(msg); row.appendChild(actions);
+    return row;
   }
 
   function renderMainline(ml){
@@ -1389,7 +3065,7 @@
 
   var KIND_LABEL = {
     cycle_done:"完成一轮", pause:"已暂停", resume:"已恢复", run_once:"手动跑了一轮",
-    switch:"切换开关", daemon:"后台常驻变更"
+    switch:"切换开关", daemon:"持续运行变更"
   };
   function renderEvents(events){
     var ul = el("eventList"); if(!ul) return; ul.innerHTML = "";
@@ -1415,7 +3091,7 @@
       return bits.join("，");
     }
     if (e.kind === "switch") return (e.name||"") + " -> " + (e.value ? "开" : "关");
-    if (e.kind === "daemon") return e.enabled ? "已开启后台常驻" : "已关闭后台常驻";
+    if (e.kind === "daemon") return e.enabled ? "已开启持续运行" : "已关闭持续运行";
     return "";
   }
 
@@ -1436,19 +3112,132 @@
     var ul = el("blockedList"); if(!ul) return; ul.innerHTML = "";
     var items = [];
     var f = (s.blocked && s.blocked.failures) || [];
-    f.forEach(function(x){ items.push({tag:"需拍板", cls:"warn", text:x.target + " · " + x.kind}); });
+    f.forEach(function(x){ items.push({tag:"需拍板", cls:"warn", text:x.target + " · " + x.kind,
+      act:"retry", why:"点它会立刻让Autopilot 再检查一轮（不改代码、不动 main）；不点就继续挂着，等下一拍自己重试。"}); });
     var r = (s.blocked && s.blocked.resolve) || [];
-    r.forEach(function(x){ items.push({tag:"冲突暂缓", cls:"", text:x.branch + (x.reason? " · "+x.reason : "")}); });
+    r.forEach(function(x){ items.push({tag:"冲突暂缓", cls:"", text:x.branch + (x.reason? " · "+x.reason : ""),
+      act:"resolve", branch:x.branch,
+      why:"Autopilot 按默认闸门拆不动它。点它会放宽到 16 个冲突文件 / 3000 行，在独立 worktree 里再拆一次，main 和源分支都不动；不点就继续跳过这条。"}); });
     var xe = (s.blocked && s.blocked.exec) || [];
-    xe.forEach(function(x){ items.push({tag:"实现暂缓", cls:"", text:(x.id||"") + (x.reason? " · "+x.reason : "")}); });
-    if (s.error) items.unshift({tag:"异常", cls:"err", text:s.error});
+    xe.forEach(function(x){ items.push({tag:"实现暂缓", cls:"", text:(x.id||"") + (x.reason? " · "+x.reason : ""),
+      act:"retry", why:"点它会立刻让Autopilot 再检查一轮（不改代码、不动 main）；不点就继续挂着，等下一拍自己重试。"}); });
+    // 状态管家提出的 harness 调整卡：改配置会影响你接下来的所有会话，所以它
+    // 绝不自动应用 —— 卡片只列在这里，你点了才改，改前按字节备份、随时可一键回滚。
+    var ht = s.harness_tune || {};
+    (ht.items || []).forEach(function(x){
+      items.push({tag:"待你点头", cls:"warn",
+        text:(x.id||"") + " · " + (x.label||x.key) + "：" + x.old + " → " + x.new,
+        act:"tune", id:x.id, why:(x.why||"") +
+          "；点它会改这一项（改前自动备份，随时可一键回滚）；不点就保持现状，config 一个字都不动。"});
+    });
+    // 上下文管家提出的约束候选：系统按你说的规范性措辞（「绝不/必须/不许/以后都/
+    // 记住」等）自动提名，但**绝不自动生效**。生效后会进落盘门禁，所以只列在这里，
+    // 你点「算」才收进项目规范；点「不算」它就不会再弹回来。
+    var cc = s.constraint_candidates || {};
+    (cc.items || []).forEach(function(x){
+      var scope = (x.scope && x.scope.length) ? x.scope.join("、") : "全局";
+      var sig = (x.signals && x.signals.length) ? x.signals.join("、") : "规范措辞";
+      var src = x.source === "context_learning"
+        ? "自学习：同一诉求出现 " + (x.mentions || 0) + " 次 / 跨 " + (x.threads || 0) + " 个会话；"
+        : "命中信号：" + sig + "；";
+      items.push({tag:"待你确认", cls:"warn",
+        text:(x.id||"") + " · " + (x.text||x.title||""),
+        act:"constraint", id:x.id,
+        why:src + "适用范围：" + scope +
+          "。点「算」会把它收进项目规范，之后落盘门禁与执行者都按它办事；点「不算」这条不再出现，什么都不生效。"});
+    });
+    // 验收管家提出的验收标准候选：先把“怎么算完成”编译成可判定标准，但确认前
+    // 不写验收台账；确认后也只登记验收项，机器项仍要真门禁证据，人工项先自验。
+    var ac = s.acceptance_criteria || {};
+    (ac.items || []).forEach(function(x){
+      var who = x.needs_human ? "需要人看" : "先跑门禁自证";
+      var sig = (x.signals && x.signals.length) ? x.signals.join("、") : "预期信号";
+      items.push({tag:"待你确认", cls:"warn",
+        text:(x.id||"") + " · " + (x.text||x.title||""),
+        act:"acceptance", id:x.id,
+        why:"建议：" + who + "；命中信号：" + sig +
+          "。点「确认成验收项」只登记验收项，不写证据；机器项仍要真门禁，人工项先自验才提醒你。点「不算」这条不再出现，验收台账什么都不写。"});
+    });
+    if (s.error) items.unshift({tag:"异常", cls:"err", text:s.error, act:"retry",
+      why:"点它会立刻让Autopilot 再检查一轮（不改代码、不动 main）；不点就继续停在异常。"});
     if (!items.length){ ul.innerHTML = '<div class="empty">没有需要你决策的，也没有异常。</div>'; return; }
     items.forEach(function(it){
       var li = document.createElement("li");
+      li.className = "blkitem";
       var tag = document.createElement("span"); tag.className = "tag " + (it.cls||""); tag.textContent = it.tag;
       var g = document.createElement("span"); g.className="grow"; g.textContent = it.text;
-      li.appendChild(tag); li.appendChild(g); ul.appendChild(li);
+      li.appendChild(tag); li.appendChild(g);
+      li.appendChild(buildBlockedAction(it));
+      ul.appendChild(li);
     });
+  }
+
+  // 每条卡点都要带「下一个动作」，并写清点了会怎样 / 不点会怎样。
+  // 只列出卡住的东西、不给出口，和验收项当时是同一个毛病：看到了也推不动。
+  function buildBlockedAction(it){
+    var row = document.createElement("div"); row.className = "accact";
+    var msg = document.createElement("span"); msg.className = "accmsg";
+    msg.textContent = it.why || "点它会推进一步；不点就继续挂着。";
+    // 约束候选 / 验收标准候选都有两个方向：确认 / 明确不算。
+    // 其余卡点只有单一出口，照旧一个按钮。
+    if (it.act === "constraint" || it.act === "acceptance"){
+      var yes = document.createElement("button");
+      yes.className = "btn primary"; yes.type = "button"; yes.textContent = "算，收进规范";
+      var no = document.createElement("button");
+      no.className = "btn"; no.type = "button"; no.textContent = "不算";
+      if (it.act === "acceptance") yes.textContent = "确认成验收项";
+      var ring = document.createElement("span");
+      ring.className = "accbtns";
+      ring.appendChild(yes); ring.appendChild(no);
+      yes.addEventListener("click", function(){
+        yes.disabled = true; no.disabled = true; yes.textContent = "正在收…";
+        var call = it.act === "acceptance"
+          ? callTool("acceptance_criteria_promote", {id: it.id, confirm: true})
+          : callTool("constraint_candidate_promote", {id: it.id, confirm: true});
+        call.then(function(){
+          toast(it.act === "acceptance" ? "已登记验收项，证据仍需真跑" : "已收进项目规范，之后按它办事", "ok");
+          return loadStatus(false);
+        })
+          .catch(function(e){ toast("操作没成功：" + (e && e.message || e), "err");
+            yes.disabled = false; no.disabled = false;
+            yes.textContent = it.act === "acceptance" ? "确认成验收项" : "算，收进规范"; });
+      });
+      no.addEventListener("click", function(){
+        yes.disabled = true; no.disabled = true; no.textContent = "正在处理…";
+        var call = it.act === "acceptance"
+          ? callTool("acceptance_criteria_dismiss", {id: it.id, reason: "panel: 用户点了不算"})
+          : callTool("constraint_candidate_dismiss", {id: it.id, reason: "panel: 用户点了不算"});
+        call.then(function(){ toast("这条不算，以后不会再出现", "ok"); return loadStatus(false); })
+          .catch(function(e){ toast("操作没成功：" + (e && e.message || e), "err");
+            yes.disabled = false; no.disabled = false; no.textContent = "不算"; });
+      });
+      row.appendChild(msg); row.appendChild(ring);
+      return row;
+    }
+    var btn = document.createElement("button");
+    btn.className = "btn primary"; btn.type = "button";
+    btn.textContent = it.act === "resolve" ? "放宽闸门再拆一次"
+      : it.act === "tune" ? "同意，改这一项" : "立刻再检查一轮";
+    btn.addEventListener("click", function(){
+      btn.disabled = true;
+      var was = btn.textContent; btn.textContent = "正在处理…";
+      var call = (it.act === "resolve")
+        ? callTool("resolve_start", {branch: it.branch, confirm: true, max_files: 16, max_lines: 3000})
+        : (it.act === "tune")
+          ? callTool("harness_tune_apply", {id: it.id, confirm: true})
+          : callTool("autopilot_run_once", {});
+      call.then(function(){
+        toast(it.act === "resolve" ? ("已按更大闸门重拆 " + (it.branch || ""))
+          : it.act === "tune" ? "已改这一项，可随时一键回滚"
+          : "已跑完一轮", "ok");
+        return loadStatus(false);
+      }).catch(function(e){
+        toast("操作没成功：" + (e && e.message || e), "err");
+        btn.disabled = false; btn.textContent = was;
+      });
+    });
+    row.appendChild(msg); row.appendChild(btn);
+    return row;
   }
 
   function toast(msg, cls){
@@ -1461,7 +3250,7 @@
     this.disabled = true;
     callTool("autopilot_control", {action:target ? "enable" : "disable"}).then(function(sc){
       if (sc && sc.state) { state = sc; render(state); }
-      toast(target ? "自动挡已开启" : "自动挡已关闭", "ok");
+      toast(target ? "Autopilot 已开启" : "Autopilot 已关闭", "ok");
     }).catch(function(e){ toast("操作失败：" + (e && e.message || e), "err"); })
       .then(function(){ el("masterToggle").disabled = false; });
   });
@@ -1495,9 +3284,11 @@
     }
     var button = el("intakeSubmit");
     button.disabled = true;
-    el("intakeState").textContent = "正在加入自动挡任务…";
-    callTool("intake_request", {text:text, kind:"unknown"}).then(function(result){
+    el("intakeState").textContent = "正在加入 Autopilot 任务…";
+    callTool("intake_request", {text:text, kind:"unknown", cwd:currentCwd()}).then(function(result){
       field.value = "";
+      el("intakeRoute").textContent = "写一句话后显示它会落到哪个项目";
+      el("intakeRoute").title = "";
       el("intakeState").textContent = result.__text__ || "已加入任务并开始归类";
       return loadStatus(false);
     }).catch(function(error){
@@ -1511,6 +3302,32 @@
       event.preventDefault();
       el("intakeSubmit").click();
     }
+  });
+  el("intakeText").addEventListener("input", function(){
+    var field = this;
+    var route = el("intakeRoute");
+    clearTimeout(field._routeTimer);
+    var text = field.value.trim();
+    if (!text) {
+      route.textContent = "写一句话后显示它会落到哪个项目";
+      route.title = "";
+      return;
+    }
+    route.textContent = "正在判断落点…";
+    field._routeTimer = setTimeout(function(){
+      var wanted = field.value.trim();
+      callTool("route_preview", {text:wanted, cwd:currentCwd()})
+        .then(function(result){
+          if (field.value.trim() !== wanted) return;
+          route.textContent = result.__text__ || "落点取不到；不会假装正常";
+          route.title = (result.reasons || []).join("\n");
+        })
+        .catch(function(error){
+          if (field.value.trim() !== wanted) return;
+          route.textContent = "落点取不到；不会假装正常";
+          route.title = (error && error.message) || String(error);
+        });
+    }, 250);
   });
 
   Array.prototype.forEach.call(document.querySelectorAll(".sw"), function(sw){
@@ -1529,6 +3346,34 @@
     });
   });
 
+  Array.prototype.forEach.call(document.querySelectorAll("[data-autonomy-action]"), function(btn){
+    btn.addEventListener("click", function(){
+      var action = btn.getAttribute("data-autonomy-action");
+      btn.disabled = true;
+      callTool("project_autonomy_control", {action: action}).then(function(sc){
+        if (sc && sc.state) { state = sc; render(state); }
+        else { return loadStatus(); }
+        toast(action === "run" ? "项目已开始持续运行" : action === "pause" ? "项目已暂停" : "项目已启用", "ok");
+      }).catch(function(e){ toast("操作失败：" + (e && e.message || e), "err"); })
+        .then(function(){ btn.disabled = false; });
+    });
+  });
+
+  var modelRoutesSave = el("modelRoutesSave");
+  if (modelRoutesSave) modelRoutesSave.addEventListener("click", function(){
+    var routes = {};
+    ["quick","standard","deep"].forEach(function(key){
+      var model = el("modelRoute_" + key);
+      var effort = el("effortRoute_" + key);
+      routes[key] = {model: model ? model.value : "", reasoning_effort: effort ? effort.value : ""};
+    });
+    modelRoutesSave.disabled = true;
+    callTool("model_routes_update", {routes: routes, confirm:true})
+      .then(function(){ toast("任务模型已保存", "ok"); return loadStatus(false); })
+      .catch(function(e){ toast("任务模型未保存：" + (e && e.message || e), "err"); })
+      .then(function(){ modelRoutesSave.disabled = false; });
+  });
+
   el("advBtn").addEventListener("click", function(){
     var on = document.body.classList.toggle("adv");
     if (on) { loadStatus(); window.scrollTo({top: document.body.scrollHeight, behavior:"smooth"}); }
@@ -1540,10 +3385,10 @@
     var btn = this; btn.disabled = true;
     var box = el("nativeState");
     if (box) { box.textContent = "原生直连：正在自检…"; }
-    callTool("codex_native_probe", {}).then(function(res){
+    callTool("codex_native_probe", {repair:true}).then(function(res){
       var probe = (res && res.last_probe) || res || {};
       if (probe.connected) { toast("原生直连已连通：可以把任务派进 Codex 窗口", "ok"); }
-      else { toast("原生直连不可用：" + (probe.reason || "原因见原生直连这一行"), "err"); }
+      else { toast("还不能把任务派进 Codex 窗口，请稍后重试。", "err"); }
       return loadStatus(false);
     }).catch(function(e){ toast("自检失败：" + (e && e.message || e), "err"); })
       .then(function(){ btn.disabled = false; });
@@ -1561,6 +3406,7 @@
     callTool("dashboard", {open:false}).then(function(res){ toast((res && res.__text__) || "已生成驾驶舱"); });
   });
 
+  initializeMcpApp().catch(function(){});
   setTimeout(function(){ if (!state) loadStatus(); }, 1500);
   setInterval(function(){ if (state && !document.body.classList.contains("adv")) loadStatus(); }, 20000);
 })();

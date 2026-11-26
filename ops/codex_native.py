@@ -7,6 +7,7 @@ import base64
 import hashlib
 import os
 import selectors
+import shlex
 import socket
 import sqlite3
 import stat
@@ -341,6 +342,65 @@ def _remote_control_requires_chatgpt():
         except OSError:
             continue
     return False
+
+
+def _repair_control_socket(progress=None):
+    """显式自检时启动官方 app-server daemon，补上缺失的控制 socket。
+
+    只调用官方的 `codex app-server daemon start`：它不会杀桌面端、不会切 provider、
+    不会改用户配置；已经运行时也是幂等返回。这里不把“命令退出 0”等同于“可派活”，
+    后面仍要重新检查 socket 并真连一次，失败时保留原始输出供用户复核。
+    """
+    command = [CLI, "app-server", "daemon", "start"]
+    result = {
+        "attempted": True,
+        "ok": False,
+        "status": "failed",
+        "command": shlex.join(command),
+        "exit_code": None,
+        "detail": "",
+    }
+    if progress:
+        progress("未找到控制 socket，正在启动官方 app-server daemon…")
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, timeout=20,
+                              check=False)
+    except subprocess.TimeoutExpired as exc:
+        result["status"] = "timeout"
+        result["detail"] = str(exc)[-400:]
+        return result
+    except OSError as exc:
+        result["status"] = "unsupported"
+        result["detail"] = str(exc)[-400:]
+        return result
+
+    result["exit_code"] = proc.returncode
+    output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+    result["detail"] = output[-600:]
+    if proc.returncode != 0:
+        return result
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except (TypeError, ValueError):
+        payload = None
+    status = payload.get("status") if isinstance(payload, dict) else None
+    if status in ("started", "running"):
+        result["ok"] = True
+        result["status"] = status
+    else:
+        result["status"] = "exit_zero_unconfirmed"
+    return result
+
+
+def _wait_for_control_socket(timeout=6.0, interval=0.25):
+    """等官方 daemon 把控制 socket 放到位；只等路径出现，不伪造连接结论。"""
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    while True:
+        if _socket_present():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(max(0.01, float(interval)))
 
 
 def _open_session(command, timeout=30):
@@ -769,12 +829,15 @@ def move_thread(thread_id, section_id=None, before_thread_id=None):
     return result, None
 
 
-def probe(timeout=12, progress=None):
+def probe(timeout=12, progress=None, repair=False):
     """如实报告「原生直连」现在通不通，以及不通是因为什么。
 
     这一条是给用户和面板用的：能派活的唯一条件是桌面端宿主的控制 socket 可达。
     socket 不可达时只降级成只读历史（能看，不能派），绝不把只读结果说成已连通，
     也不去改宿主的 SQLite 来伪造一个「已连接」。
+
+    ``repair=True`` 只用于用户显式触发的自检：缺控制 socket 时调用官方
+    `codex app-server daemon start`，然后重新验 socket 并真连一次。
     """
     info = {
         "socket": str(SOCKET),
@@ -786,9 +849,16 @@ def probe(timeout=12, progress=None):
         "reason": None,
         "sample": 0,
     }
+    if repair and not info["socket_present"]:
+        repair_result = _repair_control_socket(progress=progress)
+        info["repair"] = repair_result
+        if repair_result["ok"]:
+            if progress:
+                progress("官方 daemon 已启动，正在复查控制 socket…")
+            info["socket_present"] = _wait_for_control_socket()
     if info["socket_present"]:
-        if progress:
-            progress("正在连接 Codex 桌面宿主的控制 socket（最多等 %d 秒）…" % timeout)
+        if progress and info.get("repair"):
+            progress("控制 socket 已就绪，正在连接 Codex 桌面宿主（最多等 %d 秒）…" % timeout)
         result, error = _rpc("thread/list",
                              {"limit": 1, "useStateDbOnly": True}, host_only=True,
                              timeout=timeout)
@@ -809,10 +879,16 @@ def probe(timeout=12, progress=None):
         info["sample"] = len(_history_snapshot())
         info["reason"] = (info["reason"] or "") + "（只能只读看历史，不能派活）"
     reason = info["reason"] or ""
+    repair = info.get("repair")
     if "Operation not permitted" in reason or "Permission" in reason:
         info["hint"] = ("当前进程被系统权限挡住，连不到桌面端的控制 socket；"
                         "在终端（不受该限制的环境）里重跑一次 "
                         "`python3 ops/codex_native.py probe` 才是有效结论。")
+    elif repair and not repair.get("ok"):
+        info["hint"] = ("自动挡已尝试启动官方 app-server daemon，但控制 socket 仍不可用。"
+                        "复核命令：`%s`；详情：%s" % (
+                            repair.get("command") or "codex app-server daemon start",
+                            (repair.get("detail") or repair.get("status") or "无输出")[:240]))
     elif not info["socket_present"]:
         info["hint"] = "先启动 Codex 桌面端；它起来之后才会创建控制 socket。"
     elif not info["connected"]:
@@ -883,6 +959,7 @@ def _cli(argv):
 
     例：
         python3 ops/codex_native.py probe
+        python3 ops/codex_native.py probe --repair
         python3 ops/codex_native.py history --limit 5
         python3 ops/codex_native.py dispatch --cwd DIR --prompt "…" [--section SECTION] [--allow-isolated]
         python3 ops/codex_native.py follow --thread THREAD --prompt "…" [--allow-isolated]
@@ -899,7 +976,10 @@ def _cli(argv):
     action = argv[0] if argv else "probe"
     if action == "probe":
         # 连不上时会等一个超时；先打一行进度，别让人对着空屏幕猜是不是卡死了。
-        result = probe(progress=lambda line: print(line, file=sys.stderr, flush=True))
+        result = probe(
+            progress=lambda line: print(line, file=sys.stderr, flush=True),
+            repair="--repair" in argv[1:],
+        )
         record_probe(result)
         payload, error = result, None
         if not (result or {}).get("can_dispatch"):

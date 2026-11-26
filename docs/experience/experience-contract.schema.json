@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codex-autopilot.local/schemas/experience-contract.schema.json",
+  "title": "Codex Autopilot Experience Contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "experience_required",
+    "scope",
+    "primary_task",
+    "attention_order",
+    "states",
+    "surfaces",
+    "accessibility",
+    "machine_checks",
+    "human_checks",
+    "exceptions",
+    "evidence_policy"
+  ],
+  "properties": {
+    "schema_version": {"const": "1"},
+    "experience_required": {"type": "boolean"},
+    "scope": {
+      "type": "array",
+      "items": {"enum": ["information_architecture", "visual_hierarchy", "interaction_states", "responsive", "accessibility", "unknown"]},
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "primary_task": {"type": "string", "minLength": 1},
+    "attention_order": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "keep_information": {"type": "array", "items": {"type": "string"}},
+    "demote_information": {"type": "array", "items": {"type": "string"}},
+    "remove_information": {"type": "array", "items": {"type": "string"}},
+    "states": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "applicable", "evidence_required"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "applicable": {"type": "boolean"},
+          "evidence_required": {"type": "boolean"},
+          "reason": {"type": "string"}
+        }
+      }
+    },
+    "surfaces": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "accessibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wcag_level", "keyboard_required", "contrast_required", "non_color_status_required"],
+      "properties": {
+        "wcag_level": {"type": "string", "minLength": 1},
+        "keyboard_required": {"type": "boolean"},
+        "contrast_required": {"type": "boolean"},
+        "non_color_status_required": {"type": "boolean"}
+      }
+    },
+    "machine_checks": {"type": "array", "items": {"type": "string"}},
+    "human_checks": {"type": "array", "items": {"type": "string"}},
+    "exceptions": {"type": "array", "items": {"type": "string"}},
+    "evidence_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["real_content_required", "real_state_required", "screenshots_required"],
+      "properties": {
+        "real_content_required": {"type": "boolean"},
+        "real_state_required": {"type": "boolean"},
+        "screenshots_required": {"type": "boolean"}
+      }
+    }
+  }
+}

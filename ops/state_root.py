@@ -25,6 +25,7 @@ worktree。于是同一个项目里长出两份互不相认的账本——
 在只放账本的项目里会认不出自己的状态根。
 """
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -71,6 +72,33 @@ def looks_like_state_root(path: Path) -> bool:
             and (path / "ops" / "truth").is_dir())
 
 
+def has_usable_config(path: Path) -> bool:
+    """候选树是否带着可用项目配置。
+
+    `ops/tasks` 和 `ops/truth` 已签入版本库，每个 worktree 都像状态根；真正能区分
+    活状态根的是 `ops/central.config.json`。配置不存在或坏掉时按不可用处理，不能
+    静默退回内置默认（否则 land 门禁会在 merge 之后才失败）。
+    """
+    path = Path(path)
+    config = path / "ops" / "central.config.json"
+    if not config.is_file():
+        return False
+    try:
+        data = json.loads(config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False
+    return isinstance(data, dict)
+
+
+def _head_commit_time(path: Path) -> int:
+    """HEAD commit 的 Unix 秒；取不到时返回 0，不把「不知道」说成「最新」。"""
+    out = _git("log", "-1", "--format=%ct", cwd=path)
+    if out.returncode != 0:
+        return 0
+    text = out.stdout.strip()
+    return int(text) if text.isdigit() else 0
+
+
 def resolve_state_root() -> Path:
     env = os.environ.get("KG_REPO")
     if env:
@@ -79,7 +107,20 @@ def resolve_state_root() -> Path:
     main = main_worktree()
     trunk = Path(os.environ.get("KG_TRUNK",
                                 str(main.parent / (main.name + "-trunk")))).expanduser()
-    for cand in (main, trunk, current_worktree()):
+    candidates = [main, trunk, current_worktree()]
+    usable = []
+    for cand in candidates:
+        if looks_like_state_root(cand):
+            usable.append((cand.resolve(), has_usable_config(cand),
+                           _head_commit_time(cand)))
+
+    configured = [item for item in usable if item[1]]
+    if configured:
+        # 配置可用优先；同为可用配置时按 HEAD 时间选最新，避免停在旧分支的
+        # 共享检出压过活的主干工作树。同时间按候选顺序取第一个，保持确定性。
+        return max(configured, key=lambda item: item[2])[0]
+
+    for cand in candidates:
         if looks_like_state_root(cand):
             return cand.resolve()
 

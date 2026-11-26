@@ -1,0 +1,33 @@
+{
+  "schema_version": "1",
+  "experience_required": true,
+  "scope": ["visual_hierarchy", "interaction_states", "responsive", "accessibility"],
+  "primary_task": "让用户看懂自动挡当前工作、阻塞和下一步",
+  "attention_order": ["当前工作", "阻塞或需要行动", "下一步", "真实证据"],
+  "keep_information": ["当前状态", "主操作", "验收状态", "证据入口"],
+  "demote_information": ["历史进展", "高级诊断", "内部实现细节"],
+  "remove_information": ["重复状态", "无行动价值的内部字段"],
+  "states": [
+    {"name": "default", "applicable": true, "evidence_required": true},
+    {"name": "loading", "applicable": true, "evidence_required": true},
+    {"name": "empty", "applicable": true, "evidence_required": true},
+    {"name": "error", "applicable": true, "evidence_required": true},
+    {"name": "success", "applicable": true, "evidence_required": true},
+    {"name": "focus", "applicable": true, "evidence_required": true}
+  ],
+  "surfaces": ["host_panel", "minimum_viewport"],
+  "accessibility": {
+    "wcag_level": "AA-applicable-checks",
+    "keyboard_required": true,
+    "contrast_required": true,
+    "non_color_status_required": true
+  },
+  "machine_checks": ["no-overflow", "no-clipping", "accessible-names", "focus-visible"],
+  "human_checks": ["attention-order", "information-density", "task-completion"],
+  "exceptions": [],
+  "evidence_policy": {
+    "real_content_required": true,
+    "real_state_required": true,
+    "screenshots_required": true
+  }
+}

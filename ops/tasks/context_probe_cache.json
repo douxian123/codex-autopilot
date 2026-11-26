@@ -1,4 +1,193 @@
 {
+ "codex/disk-admission-fix-20261105@300ea3931412419b0f8515ffa5fc912c47f7d1b4@0faac6985da0918859a1d13120c8e12306663d28": {
+  "conflict_files": [],
+  "unresolved_marker_files": []
+ },
+ "codex/native-thread-bridge@ffc371d3621cb1f8280f17fbfeaf597de11b3714@0faac6985da0918859a1d13120c8e12306663d28": {
+  "conflict_files": [],
+  "unresolved_marker_files": []
+ },
+ "codex/disk-admission-fix-20261105@300ea3931412419b0f8515ffa5fc912c47f7d1b4@00a0b25b900ff5e4f06b8ab01c7f427d531d23ba": {
+  "conflict_files": [],
+  "unresolved_marker_files": []
+ },
+ "codex/native-thread-bridge@ffc371d3621cb1f8280f17fbfeaf597de11b3714@00a0b25b900ff5e4f06b8ab01c7f427d531d23ba": {
+  "conflict_files": [],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@6875a09c76fba364d96caa74e3581b512c90c64d@00a0b25b900ff5e4f06b8ab01c7f427d531d23ba": {
+  "conflict_files": [],
+  "unresolved_marker_files": [
+   "codex/converge-e87af5f335:docs/PRODUCT_MAINLINE.md",
+   "codex/converge-e87af5f335:docs/PROJECT_CONSTITUTION.md"
+  ]
+ },
+ "codex/converge-e87af5f335@6875a09c76fba364d96caa74e3581b512c90c64d@0fd73871db36a95fd4631ec09df2fa774c0487a5": {
+  "conflict_files": [],
+  "unresolved_marker_files": [
+   "codex/converge-e87af5f335:docs/PRODUCT_MAINLINE.md",
+   "codex/converge-e87af5f335:docs/PROJECT_CONSTITUTION.md"
+  ]
+ },
+ "codex/converge-e87af5f335@6875a09c76fba364d96caa74e3581b512c90c64d@0fde5aaa0600cb188479d7fff57ce904383c6c85": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@6875a09c76fba364d96caa74e3581b512c90c64d@16d1b84e83876de4032a34334793b7a907d252f0": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@6875a09c76fba364d96caa74e3581b512c90c64d@98c4543e799552b399e0afa8b6c92b6afb435315": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@6875a09c76fba364d96caa74e3581b512c90c64d@6beffd3ed0838b6b21d74b3662070de9cd213b07": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@6875a09c76fba364d96caa74e3581b512c90c64d@fc100b4854d424a4dd7ded13d7e2b0d173d92b0b": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md",
+   "docs/PROJECT_CONSTITUTION.md",
+   "ops/truth/product_state.json"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@e33f1ac4b509cb5545dc8ea0f1fff3a2e5539136@fc100b4854d424a4dd7ded13d7e2b0d173d92b0b": {
+  "conflict_files": [],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@e33f1ac4b509cb5545dc8ea0f1fff3a2e5539136@fe8a5d09fc3c0ae3467f5e14488b690c045e38fb": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md",
+   "docs/PROJECT_CONSTITUTION.md"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@e33f1ac4b509cb5545dc8ea0f1fff3a2e5539136@c591f7e185deedd2a47d5747b7141060f2cc8c15": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md",
+   "docs/PROJECT_CONSTITUTION.md"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@e33f1ac4b509cb5545dc8ea0f1fff3a2e5539136@92ce9951ce2d9694f726bddf79dceb0cdaa77058": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md",
+   "docs/PROJECT_CONSTITUTION.md"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@e33f1ac4b509cb5545dc8ea0f1fff3a2e5539136@af7d952e2e3ef99b8f2016d72f95efe987b88888": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md",
+   "docs/PROJECT_CONSTITUTION.md"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@e33f1ac4b509cb5545dc8ea0f1fff3a2e5539136@3a346e17c0af6b92decd872d24a5e4fda1cd8794": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md",
+   "docs/PROJECT_CONSTITUTION.md"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@e33f1ac4b509cb5545dc8ea0f1fff3a2e5539136@ab84a110eda212bdc47c19c108dce637e8f67689": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md",
+   "docs/PROJECT_CONSTITUTION.md"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@e33f1ac4b509cb5545dc8ea0f1fff3a2e5539136@0932db005577216dc6d18bb942393f62d924e08b": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md",
+   "docs/PROJECT_CONSTITUTION.md",
+   "ops/truth/product_state.json"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@e33f1ac4b509cb5545dc8ea0f1fff3a2e5539136@d1fd0e51dcb073abfb1e2005219360a63c22b5ef": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md",
+   "docs/PROJECT_CONSTITUTION.md",
+   "ops/truth/product_state.json"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@e33f1ac4b509cb5545dc8ea0f1fff3a2e5539136@c73683b2e502db139793bc66bd12e4311a991a16": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md",
+   "docs/PROJECT_CONSTITUTION.md"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-e87af5f335@e33f1ac4b509cb5545dc8ea0f1fff3a2e5539136@d9949000625c84fe19f2bb264df76453b3e80eb9": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md",
+   "docs/PROJECT_CONSTITUTION.md"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-682f47bfd5@6c86bc01cfb8d61573a7039ef2e5d6458440665d@8996251e07929a5376cbd936d06a1adaa506d151": {
+  "conflict_files": [
+   "CONTEXT.md",
+   "docs/PREVIEW.md",
+   "install.sh",
+   "ops/central_daemon.py",
+   "ops/kgctl.py",
+   "ops/panel_logic_check.py",
+   "ops/panel_render_check.py",
+   "ops/selftest.py",
+   "ops/test-ledger-identity-collision.py",
+   "ops/truthctl.py",
+   "plugin/.codex-plugin/plugin.json",
+   "plugin/ui/panel.html"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-682f47bfd5@6c86bc01cfb8d61573a7039ef2e5d6458440665d@e9291d574d7df93dec2cebef5a10cfe9b56a7ce4": {
+  "conflict_files": [
+   "CONTEXT.md",
+   "docs/PREVIEW.md",
+   "install.sh",
+   "ops/central_daemon.py",
+   "ops/kgctl.py",
+   "ops/panel_logic_check.py",
+   "ops/panel_render_check.py",
+   "ops/selftest.py",
+   "ops/test-ledger-identity-collision.py",
+   "ops/truthctl.py",
+   "plugin/.codex-plugin/plugin.json",
+   "plugin/ui/panel.html"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-682f47bfd5@6c86bc01cfb8d61573a7039ef2e5d6458440665d@fbb7bb9882294f75bd7ffcef08c8d92292831478": {
+  "conflict_files": [
+   "CONTEXT.md",
+   "docs/PREVIEW.md",
+   "install.sh",
+   "ops/central_daemon.py",
+   "ops/kgctl.py",
+   "ops/panel_logic_check.py",
+   "ops/panel_render_check.py",
+   "ops/selftest.py",
+   "ops/test-ledger-identity-collision.py",
+   "ops/truthctl.py",
+   "plugin/.codex-plugin/plugin.json",
+   "plugin/ui/panel.html"
+  ],
+  "unresolved_marker_files": []
+ },
  "codex/session-history-guard-20261125@36b6b4fba7f862fce33036d1733b111cea419e33@7ec1f9475354232e373872b9b5a86bd7102090df": {
   "conflict_files": [],
   "unresolved_marker_files": []
