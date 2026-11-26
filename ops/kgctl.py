@@ -49,6 +49,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
@@ -597,6 +598,84 @@ def _is_resolve_branch(branch: str) -> bool:
 def _is_generated_branch(branch: str) -> bool:
     """自动挡生成的任务容器（converge / resolve），一律不算待裁决的源分支。"""
     return _is_convergence_branch(branch) or _is_resolve_branch(branch)
+
+
+def _prune_stale_worktree_registration(branch: str) -> bool:
+    """把指定 resolve 容器的失效 worktree 登记挪出 Git 的扫描目录。
+
+    `git worktree list` 里的 `prunable` 登记仍会阻止 `git branch -D`：Git 认为分支
+    还被一个 worktree 占用，哪怕目录已经不存在。这里不像 `git worktree prune`
+    那样扫描全仓，而是只处理精确命中的注册目录：
+
+      1. 分支必须是自动挡自己生成的 `codex/resolve-*`（绝不碰用户源分支）；
+      2. 注册目录的 `HEAD` 必须精确写成 `ref: refs/heads/<branch>`；
+      3. `gitdir` 指向的 worktree 目录确实不存在。
+
+    只要有一条命中的 worktree 目录还在，就整批不动，避免把真实执行现场误判成失效。
+    登记不是直接删除，而是挪到 `.git/kgctl-stale-worktrees/` 留证：这不是账本，
+    只是误删现场的反证，但能保住 index / reflog 供复盘。
+
+    2026-11-25 实测：遗留 resolve 分支 `codex/resolve-reap-identical-tracked-20261027`
+    的 worktree 目录早已消失，但注册还在，导致 `kgctl resolve --auto --go` 每次都在
+    `git branch -D` 上报 `used by worktree` 而原地卡住。旧登记的路径未必等于当前
+    状态根推导出的新路径，所以不能按路径比对，只能按分支精确归属。
+    """
+    if not _is_resolve_branch(branch):
+        return False
+    common_dir = _git_common_dir()
+    registrations = common_dir / "worktrees"
+    if not registrations.is_dir():
+        return False
+    expected_head = f"ref: refs/heads/{branch}"
+    stale: list[tuple[Path, Path]] = []
+    for admin in sorted(registrations.iterdir()):
+        if not admin.is_dir():
+            continue
+        try:
+            head = (admin / "HEAD").read_text(encoding="utf-8").strip()
+            gitdir_text = (admin / "gitdir").read_text(encoding="utf-8").strip()
+        except OSError:
+            continue
+        if head != expected_head or not gitdir_text:
+            continue
+        gitdir_path = Path(gitdir_text)
+        if not gitdir_path.is_absolute():
+            gitdir_path = (admin / gitdir_path).resolve()
+        worktree_path = gitdir_path.parent
+        if worktree_path.is_dir():
+            print(f"× {branch} 的 worktree 仍在 {worktree_path}，不清理登记。")
+            return False
+        stale.append((admin, worktree_path))
+    if not stale:
+        return False
+    archive = common_dir / "kgctl-stale-worktrees"
+    try:
+        archive.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"× 清理 {branch} 的失效 worktree 登记失败（建归档目录）：{exc}")
+        return False
+    stamp = time.strftime("%Y%m%d%H%M%S")
+    for admin, worktree_path in stale:
+        dest = archive / f"{admin.name}-{stamp}-{secrets.token_hex(3)}"
+        try:
+            shutil.move(str(admin), str(dest))
+        except OSError as exc:
+            print(f"× 清理 {branch} 的失效 worktree 登记失败（{admin}）：{exc}")
+            return False
+        print(f"  归档 {branch} 的失效 worktree 登记 -> {dest}（目录不存在：{worktree_path}）。")
+    return True
+
+
+def _delete_resolve_container(branch: str, why: str):
+    """删除自动挡自己的 resolve 容器；失败时返回 git 输出供调用方判定。"""
+    _prune_stale_worktree_registration(branch)
+    gone = proc_run(["git", "-C", str(REPO), "branch", "-D", branch],
+                    capture_output=True, text=True)
+    if gone.returncode == 0:
+        return None
+    text = (gone.stdout + gone.stderr).strip()[:300]
+    print(f"× {why} {branch} 撤不掉：{text}")
+    return text
 
 
 def conflict_groups(rows=None) -> list:
@@ -3454,11 +3533,30 @@ def _trunk_is_foreign_clone(wt: Path) -> bool:
 
 
 def _trunk_can_checkout_main(wt: Path) -> bool:
-    """预演切到 main：有会覆盖用户文件的风险时返回 False。"""
-    probe = proc_run(["git", "-C", str(wt), "checkout", "--dry-run",
-                      "--detach", MAIN],
+    """预演切到 main：有会覆盖用户文件的风险时返回 False。
+
+    Apple Git 2.50.1 的 `git checkout --dry-run` 直接报 unknown option，旧实现
+    因此把所有候选主干都判成不可安全切换，最后去 checkout 一个还没创建的目录。
+    read-tree 的 dry-run 同时检查 index 与工作树；未跟踪文件单独求交集，因为
+    read-tree 不负责它们。
+    """
+    if not wt.exists() or not (wt / ".git").exists():
+        return False
+    probe = proc_run(["git", "-C", str(wt), "read-tree", "-n", "-m", "-u",
+                      "HEAD", MAIN],
                      capture_output=True, text=True)
-    return probe.returncode == 0
+    if probe.returncode != 0:
+        return False
+    untracked = proc_run(["git", "-C", str(wt), "ls-files", "--others", "-z"],
+                         capture_output=True, text=True)
+    target = proc_run(["git", "-C", str(wt), "ls-tree", "-r", "-z",
+                       "--name-only", MAIN],
+                      capture_output=True, text=True)
+    if untracked.returncode != 0 or target.returncode != 0:
+        return False
+    untracked_paths = set(filter(None, untracked.stdout.split("\0")))
+    target_paths = set(filter(None, target.stdout.split("\0")))
+    return not (untracked_paths & target_paths)
 
 
 def _trunk_worktree():
@@ -3490,8 +3588,12 @@ def _trunk_worktree():
         wt = fallback
     if not (wt / ".git").exists():
         wt.parent.mkdir(parents=True, exist_ok=True)
-        proc_run(["git", "-C", str(REPO), "worktree", "add", "--detach", str(wt), MAIN],
-                       capture_output=True, text=True)
+        worktree_add = proc_run(
+            ["git", "-C", str(REPO), "worktree", "add", "--detach", str(wt), MAIN],
+            capture_output=True, text=True)
+        if worktree_add.returncode != 0:
+            detail = (worktree_add.stderr or worktree_add.stdout or "").strip()
+            sys.exit(f"无法创建干净落盘工作树（{wt}）：{detail[-600:]}")
     shared = central_config.shared_dir(REPO, CFG)
     for side in (CFG.get("link_dirs") or []):
         dst = wt / side / "node_modules"
@@ -3691,6 +3793,62 @@ def _verify_evidence(verify_results: list) -> str:
         lines.append(f"{r.get('name')}: {r.get('cmd')} (cwd={r.get('cwd')}) -> exit {code}")
     return "\n".join(lines)
 
+
+def _mark_resolve_landed_in_file(path: Path, branch: str, commit: str) -> bool:
+    """把一个 resolve 任务标记成 landed；只改同一任务的一条当前记录。
+
+    返回是否真的改动，供调用方决定是否把 `ops/tasks/resolve.json` 一起暂存。
+    已裁决（landed/abandoned）的记录不再改写，避免重复 land 把理由冲掉。
+    """
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    tasks = [t for t in data.get("tasks", []) if isinstance(t, dict)]
+    matched = [t for t in tasks
+               if t.get("resolve_branch") == branch or t.get("branch") == branch]
+    if not matched:
+        return False
+    stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    changed = False
+    for rec in matched:
+        if rec.get("status") in ("landed", "abandoned"):
+            continue
+        rec["status"] = "landed"
+        rec["updated"] = stamp
+        rec["landed_commit"] = commit
+        changed = True
+    if not changed:
+        return False
+    data["tasks"] = _dedupe_resolve_tasks(tasks)
+    data["updated"] = max(str(data.get("updated") or ""), stamp)
+    write_json(path, data)
+    return True
+
+
+def _mark_resolve_landed_for_land(wt: Path, branch: str, commit: str) -> bool:
+    """直接 land resolve 分支时，任务台账必须同步收口。
+
+    2026-11-26 实测：`codex/resolve-reap-identical-tracked-20261027` 通过
+    `kgctl land` 落盘后，进展/验收台账都写了，唯独 resolve.json 还停在
+    needs_agent，`resolve --list` 每轮继续报同一条待解任务。走
+    `resolve --finish` 时由 `_resolve_land` 收口，直接 land 却没有这条出口。
+    这里在 land 的真相提交里补上，状态根副本也同步，避免下一拍被旧快照回退。
+    """
+    candidate = wt / "ops" / "tasks" / "resolve.json"
+    changed = _mark_resolve_landed_in_file(candidate, branch, commit)
+    try:
+        same = candidate.resolve() == RESOLVE.resolve()
+    except OSError:
+        same = False
+    if not same:
+        changed = _mark_resolve_landed_in_file(RESOLVE, branch, commit) or changed
+    return changed
+
 def _build_only_evidence(verify_results: list) -> bool:
     """Return true when every recorded gate is only a compile/build check."""
     if not verify_results:
@@ -3857,9 +4015,14 @@ def _record_land_progress(wt: Path, branch: str, commit: str, verify_results: li
     if accepted.returncode != 0:
         raise RuntimeError(f"写验收台账失败: {(accepted.stdout + accepted.stderr).strip()[:500]}")
 
+    # 直接 land codex/resolve-* 时，resolve 任务台账也要跟着收口。否则进展/验收
+    # 证明已落盘，resolve --list 却仍把同一条报成 needs_agent，下一拍又被重拆。
+    resolve_marked = _mark_resolve_landed_for_land(wt, branch, commit)
+    staged_paths = ["ops/truth/progress.jsonl", "ops/truth/acceptance.jsonl"]
+    if resolve_marked:
+        staged_paths.append("ops/tasks/resolve.json")
     staged = proc_run(
-        ["git", "-C", str(wt), "add", "ops/truth/progress.jsonl",
-         "ops/truth/acceptance.jsonl"],
+        ["git", "-C", str(wt), "add", *staged_paths],
         capture_output=True, text=True)
     if staged.returncode != 0:
         raise RuntimeError(f"暂存真相信台账失败: {staged.stderr.strip()[:500]}")
@@ -4414,6 +4577,52 @@ def _is_zero_loss_noise(line: str, head_regenerable: set) -> bool:
     return bool(head_regenerable) and _is_regenerable_rel(body) and body in head_regenerable
 
 
+def _stale_head_matches_origin(wt: Path, line: str) -> bool:
+    """这条非真相脏记录是否只是旧 HEAD 造成的假脏。
+
+    共享检出可能还停在一条已合入的 codex 分支，而工作副本已经被落盘流程拉伸到
+    `origin/main`。此时 `git status` 会把「与 origin/main 逐字节相同的文件」报成
+    修改；它不是在途代码，但也不能被吞进 `chore(truth)`。
+
+    严格判据（三条同时成立才豁免）：
+      1. 工作副本内容与 `origin/main` 一致；
+      2. 索引要么是 `origin/main` 版本，要么仍是 HEAD 版本（没有第三种暂存内容）；
+      3. 调用方已排除真相层与运行时伴随文件。
+    """
+    if line.startswith("??"):
+        return False
+    rel = _porcelain_body(line)
+    if not rel or is_truth_path(line) or is_runtime_sidecar(line):
+        return False
+    origin_ref = f"origin/{MAIN}"
+    if proc_run(["git", "-C", str(wt), "rev-parse", "--verify", "-q",
+                 origin_ref], capture_output=True).returncode != 0:
+        return False
+    work_path = wt / rel
+    if not work_path.is_file():
+        return False
+    # `git diff --quiet` 把「文件已删除」也当成与 origin 相同；这里必须直接比 blob，
+    # 否则真实的删除会被误判成假脏，等下一拍被吞进 chore(truth)。
+    work_blob = proc_run(["git", "-C", str(wt), "hash-object", "--", str(work_path)],
+                         capture_output=True, text=True)
+    origin_blob = proc_run(["git", "-C", str(wt), "rev-parse", f"{origin_ref}:{rel}"],
+                           capture_output=True, text=True)
+    if (work_blob.returncode != 0 or origin_blob.returncode != 0
+            or work_blob.stdout.strip() != origin_blob.stdout.strip()):
+        return False
+    # 索引允许两种安全形状：已经等于 origin，或还停在旧 HEAD。第三种暂存内容一律拒绝。
+    stage = proc_run(["git", "-C", str(wt), "rev-parse", f":{rel}"],
+                     capture_output=True, text=True)
+    if stage.returncode != 0:
+        return False
+    head_blob = proc_run(["git", "-C", str(wt), "rev-parse", f"HEAD:{rel}"],
+                         capture_output=True, text=True)
+    stage_oid = stage.stdout.strip()
+    return (stage_oid == origin_blob.stdout.strip()
+            or (head_blob.returncode == 0
+                and stage_oid == head_blob.stdout.strip()))
+
+
 def trunk_truth_commits(wt: Path, base: str = None):
     base = base or MAIN
     out = git("-C", str(wt), "log", "--format=%s", f"{base}..HEAD")
@@ -4663,6 +4872,11 @@ def _restore_truth_files(wt: Path, snap: dict) -> None:
                 # 生成视图谁新留谁；同时间戳时 main 已是权威，不让旧工作副本回退。
                 if generated_time(snap_text) > generated_time(current):
                     dst.write_text(snap_text, encoding="utf-8")
+            elif rel == "ops/tasks/resolve.json":
+                # land 切主干前会先恢复快照。resolve.json 的旧快照曾把已经落盘的
+                # landed/abandoned 倒退回 needs_agent；按任务终态并集后再写回。
+                dst.write_text(_union_resolve_with_head(current, snap_text),
+                               encoding="utf-8")
             elif rel.endswith(".json"):
                 try:
                     old_json, new_json = json.loads(snap_text), json.loads(current)
@@ -4808,8 +5022,16 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     pending = truth_pending_status(wt)
     if not pending:
         return False
-    dirty = [line for line in trunk_status(wt)
-             if not is_truth_path(line) and not is_runtime_sidecar(line)]
+    regenerable = _regenerable_head_paths(wt)
+    stale_head = []
+    dirty = []
+    for line in trunk_status(wt):
+        if is_truth_path(line) or _is_zero_loss_noise(line, regenerable):
+            continue
+        if _stale_head_matches_origin(wt, line):
+            stale_head.append(_porcelain_body(line))
+            continue
+        dirty.append(line)
     if dirty:
         # 共享检出里可能有并行任务在写代码/产品文件。只提交真相层会把它们吞进
         # `chore(truth)`，并让本地 main 与 origin/main 分叉，随后 land 永久卡死。
@@ -4821,6 +5043,14 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
         for line in dirty[:20]:
             print("  " + line)
         return False
+    # 放宽门禁不等于可以把它写进 chore(truth)。这些文件的工作副本已经等于
+    # origin/main；把索引退回 HEAD 只会撤销「被旧 HEAD 拉伸出来的假暂存」，
+    # 工作副本一个字节不动，下一拍对齐主干后自然消失。
+    if stale_head:
+        proc_run(["git", "-C", str(wt), "reset", "-q", "--", *stale_head],
+                 capture_output=True, text=True)
+        print(f"  跳过 {len(stale_head)} 个旧 HEAD 假脏文件（工作副本保持 origin/main）："
+              + "、".join(stale_head[:3]))
     if not _ensure_truth_baselines(wt):
         print("  × 稳定性基准保护失败，拒绝提交真相层")
         return False
@@ -4845,7 +5075,7 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
     for rel in truth_pending_status(wt):
         path = _porcelain_body(rel).strip('"')
         if not (path.startswith(("ops/truth/", "ops/tasks/"))
-                and path.endswith(".jsonl")):
+                and (path.endswith(".jsonl") or path == "ops/tasks/resolve.json")):
             continue
         head = proc_run(["git", "-C", str(wt), "show", f"HEAD:{path}"],
                         capture_output=True, text=True, errors="replace")
@@ -4856,10 +5086,17 @@ def sync_trunk_truth(wt: Path, reason: str) -> bool:
             work_text = target.read_text(encoding="utf-8")
         except OSError:
             continue
-        merged = _union_jsonl_text(head.stdout, work_text)
+        if path == "ops/tasks/resolve.json":
+            # resolve.json 不是 append-only JSONL：一条源分支只留一条终态。工作副本
+            # 若来自旧守护/旧检出，可能把 HEAD 已落盘的 landed/abandoned 倒退回
+            # needs_agent；与 HEAD 做任务级并集后再暂存，绝不让旧快照撤回裁决。
+            merged_text = _union_resolve_with_head(head.stdout, work_text)
+        else:
+            merged_text = _union_jsonl_text(head.stdout, work_text)
+        merged = merged_text
         if merged != work_text:
             target.write_text(merged, encoding="utf-8")
-            print(f"  JSONL 台账 {path} 已与 HEAD 并集对齐（防旧状态根覆盖）")
+            print(f"  台账 {path} 已与 HEAD 并集对齐（防旧状态根覆盖）")
     add_failures = []
     for rel in TRUTH_PATHS:
         if not (wt / rel).exists():
@@ -4957,6 +5194,34 @@ def _union_jsonl_text(a: str, b: str) -> str:
     return "\n".join(lines) + ("\n" if lines else "")
 
 
+def _union_resolve_with_head(head_text: str, work_text: str) -> str:
+    """按任务终态合并 `resolve.json`：HEAD 的 landed/abandoned 不能被旧工作副本撤回。
+
+    2026-11-25 实测：共享检出工作副本把 4 条已裁决记录退回 needs_agent，同时新增
+    2 条裁决。普通 JSON 的按 `updated` 选一侧在这里不够：两侧各有必须保留的记录。
+    这里按 slug/branch 分组，用 `_resolve_record_rank` 选终态优先的当前记录，未冲突
+    的任务原样保留；其余顶层键以工作副本为准，但 `updated` 取两者较新值。
+    """
+    def parse(text: str) -> dict:
+        try:
+            data = json.loads(text)
+        except (ValueError, TypeError):
+            return {"tasks": []}
+        if not isinstance(data, dict):
+            return {"tasks": []}
+        return data
+
+    head = parse(head_text)
+    work = parse(work_text)
+    merged = dict(work)
+    tasks = [t for t in (head.get("tasks") or []) + (work.get("tasks") or [])
+             if isinstance(t, dict)]
+    merged["tasks"] = _dedupe_resolve_tasks(tasks)
+    merged["updated"] = max(str(head.get("updated") or ""),
+                            str(work.get("updated") or ""))
+    return json.dumps(merged, ensure_ascii=False, indent=1) + "\n"
+
+
 def _merge_json_value(a, b):
     """真相 JSON 合并：字典递归，列表去重保序；冲突键以远端为底、本地覆盖。"""
     if isinstance(a, dict) and isinstance(b, dict):
@@ -5041,7 +5306,94 @@ def _merge_truth_from_origin() -> bool:
     return False
 
 
-def _git_bounded(args, timeout: int, label: str = ""):
+def _merge_truth_from_origin_in_clean_worktree() -> Path | None:
+    """分叉的真相提交在干净 worktree 里并回 origin/main，不碰共享检出。
+
+    2026-11-25 现场：状态根 HEAD 还停在已合入的 codex 分支，`origin/main` 已前进；
+    工作副本里又有 `ops/disk_reap.py` 这种「旧 HEAD 假脏」和真实未跟踪产物。原地
+    `git merge origin/main` 会被这些文件挡住，旧实现随后静默 return，tick 报「真相层
+    已提交」但永远不推送。这里制作一份 origin/main 的临时 worktree，只把状态根相对
+    merge-base 的真相层净改动镜像进去，再按现有 JSONL/台账并集规则提交。
+
+    非真相层净改动一律不搬运：那属于在途代码，交给 land，绝不混进真相推送。
+    """
+    base = proc_run(["git", "-C", str(REPO), "merge-base", "HEAD", f"origin/{MAIN}"],
+                    capture_output=True, text=True)
+    if base.returncode != 0 or not base.stdout.strip():
+        print("  × 找不到状态根与 origin/main 的共同祖先，拒绝自动合并真相层")
+        return None
+    merge_base = base.stdout.strip()
+    diff = proc_run(["git", "-C", str(REPO), "diff", "--name-only", merge_base, "HEAD"],
+                    capture_output=True, text=True)
+    if diff.returncode != 0:
+        print("  × 读不出状态根相对 origin/main 的净改动，拒绝自动合并真相层")
+        return None
+    changed = [line.strip() for line in diff.stdout.splitlines() if line.strip()]
+    if not changed:
+        return None
+    non_truth = [rel for rel in changed if not _truth_rel(rel)]
+    if non_truth:
+        print(f"  主干工作树有 {len(non_truth)} 个非真相层提交，跳过自动推送（交给 land）："
+              + "、".join(non_truth[:3]))
+        return None
+    tmp_root = tempfile.mkdtemp(prefix="autopilot-truth-push-")
+    wt = Path(tmp_root) / "trunk"
+
+    def cleanup_temp():
+        proc_run(["git", "-C", str(REPO), "worktree", "remove", "--force",
+                  str(wt)], capture_output=True, text=True)
+        shutil.rmtree(tmp_root, ignore_errors=True)
+
+    add = proc_run(["git", "-C", str(REPO), "worktree", "add", "-q", "--detach",
+                    str(wt), f"origin/{MAIN}"], capture_output=True, text=True)
+    if add.returncode != 0:
+        cleanup_temp()
+        print(f"  × 无法创建真相推送临时主干：{(add.stdout + add.stderr).strip()[:200]}")
+        return None
+    ok = False
+    try:
+        snap = {}
+        for rel in changed:
+            blob = proc_run(["git", "-C", str(REPO), "show", f"HEAD:{rel}"],
+                            capture_output=True, text=True, errors="replace")
+            if blob.returncode != 0:
+                print(f"  × 状态根 HEAD 缺少真相文件 {rel}，拒绝自动推送")
+                return None
+            # 复用既有恢复规则：JSONL 行级并集、追加台账按章节并集、生成视图按时间，
+            # 不让旧状态根把 origin/main 上已落盘的记录整文件覆盖掉。
+            snap[rel] = blob.stdout.encode("utf-8")
+        _restore_truth_files(wt, snap)
+        added = proc_run(["git", "-C", str(wt), "add", "--", *changed],
+                         capture_output=True, text=True)
+        if added.returncode != 0:
+            print(f"  × 真相推送临时主干暂存失败："
+                  f"{(added.stdout + added.stderr).strip()[:200]}")
+            return None
+        staged = proc_run(["git", "-C", str(wt), "diff", "--cached", "--name-only"],
+                          capture_output=True, text=True).stdout.strip()
+        if not staged:
+            print("  × 真相推送临时主干没有可提交的净改动")
+            return None
+        commit = proc_run(
+            ["git", "-C", str(wt), "commit", "-m",
+             "chore(truth): merge diverged truth state into origin/main"],
+            capture_output=True, text=True)
+        if commit.returncode != 0:
+            print(f"  × 真相推送临时主干提交失败："
+                  f"{(commit.stdout + commit.stderr).strip()[:200]}")
+            return None
+        ok = True
+        print("  真相层已在独立 worktree 中合并到 origin/main（不碰共享检出）")
+        return wt
+    except Exception as exc:
+        print(f"  × 真相推送临时主干异常：{type(exc).__name__}: {exc}")
+        return None
+    finally:
+        if not ok:
+            cleanup_temp()
+
+
+def _git_bounded(args, timeout: int, label: str = "", repo: Path | None = None):
     """有界的 git 调用：超时就杀，返回 (rc, 合并后的输出)，绝不无限期挂着。
 
     事故（2026-10-15 22:19 那一轮）：tick 挂满 1800s 被守护进程杀掉，日志里只剩
@@ -5051,7 +5403,7 @@ def _git_bounded(args, timeout: int, label: str = ""):
     这里给每一步一个上限，把「无限期挂着」变成「一条可见的失败」。
     """
     try:
-        p = proc_run(["git", "-C", str(REPO), *args], capture_output=True,
+        p = proc_run(["git", "-C", str(repo or REPO), *args], capture_output=True,
                            text=True, errors="replace", timeout=timeout)
         return p.returncode, (p.stdout or "") + (p.stderr or "")
     except subprocess.TimeoutExpired:
@@ -5081,16 +5433,37 @@ def _push_truth_state_locked() -> None:
         return
     ff = proc_run(["git", "-C", str(REPO), "merge-base", "--is-ancestor",
                          f"origin/{MAIN}", "HEAD"], capture_output=True, text=True)
+    temp_root = None
+    push_repo = REPO
     if ff.returncode != 0:
-        if not _merge_truth_from_origin():
+        push_wt = _merge_truth_from_origin_in_clean_worktree()
+        if push_wt is None:
             return
-        ahead = int(git("rev-list", "--count", f"origin/{MAIN}..HEAD") or 0)
-    prc, pout = _git_bounded(["push", "origin", f"HEAD:{MAIN}"], 180)
+        push_repo = push_wt
+        temp_root = push_wt.parent
+        ahead = int(git("-C", str(push_repo), "rev-list",
+                        "--count", f"origin/{MAIN}..HEAD") or 0)
+    pushed_head = ""
+    try:
+        prc, pout = _git_bounded(["push", "origin", f"HEAD:{MAIN}"], 180,
+                                 repo=push_repo)
+        if prc == 0:
+            got = proc_run(["git", "-C", str(push_repo), "rev-parse", "HEAD"],
+                           capture_output=True, text=True)
+            pushed_head = got.stdout.strip() if got.returncode == 0 else ""
+    finally:
+        if temp_root is not None:
+            proc_run(["git", "-C", str(REPO), "worktree", "remove", "--force",
+                      str(push_repo)], capture_output=True, text=True)
+            shutil.rmtree(temp_root, ignore_errors=True)
     if prc != 0:
         print(f"  真相层推送失败，{ahead} 条提交留在本地：{pout.strip()[:200]}")
         return
-    proc_run(["git", "-C", str(REPO), "update-ref", f"refs/heads/{MAIN}", "HEAD"],
-                   check=False)
+    if pushed_head:
+        proc_run(["git", "-C", str(REPO), "update-ref",
+                  f"refs/heads/{MAIN}", pushed_head], check=False)
+        proc_run(["git", "-C", str(REPO), "update-ref",
+                  f"refs/remotes/origin/{MAIN}", pushed_head], check=False)
     print(f"  真相层 {ahead} 条提交已推送 origin/{MAIN}")
 
 
@@ -5502,11 +5875,7 @@ def _resolve_prepare(args) -> None:
         # 于是又一次卡回同一个 blocked（2026-10-27 实测 codex/resolve-hover-card-info-restore）。
         container_ahead, _cb = counts(resolve_branch)
         if container_ahead == 0:
-            gone0 = proc_run(["git", "-C", str(REPO), "branch", "-D", resolve_branch],
-                             capture_output=True, text=True)
-            if gone0.returncode != 0:
-                print(f"× 已合入 main 的残留容器分支 {resolve_branch} 撤不掉："
-                      f"{(gone0.stdout + gone0.stderr).strip()[:300]}")
+            if _delete_resolve_container(resolve_branch, "已合入 main 的残留容器分支"):
                 print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
                 return
             print(f"  撤掉残留容器分支 {resolve_branch}（ahead=0，内容已全在 {MAIN}），重新拆一条。")
@@ -5521,10 +5890,7 @@ def _resolve_prepare(args) -> None:
             print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
             return
         if resolve_branch_exists:
-            gone = proc_run(["git", "-C", str(REPO), "branch", "-D", resolve_branch],
-                            capture_output=True, text=True)
-            if gone.returncode != 0:
-                print(f"× 遗留分支 {resolve_branch} 撤不掉：{(gone.stdout + gone.stderr).strip()[:300]}")
+            if _delete_resolve_container(resolve_branch, "遗留容器分支"):
                 print(f"RESOLVE_RESULT branch={branch} outcome=blocked")
                 return
             print(f"  撤掉遗留容器分支 {resolve_branch}（原 head={orphan_head[:8]}，worktree 已不在；"

@@ -1,7 +1,11 @@
 # Verify the user-facing handoff contract remains part of the shipped skill.
 from pathlib import Path
 
-skill = Path(__file__).resolve().parents[1] / "plugin/skills/central-command/SKILL.md"
+root = Path(__file__).resolve().parents[1]
+skill = root / "plugin/skills/central-command/SKILL.md"
+if not skill.is_file():
+    # 不可变 release 目录把 plugin/skills 摊平成顶层 skills。
+    skill = root / "skills/central-command/SKILL.md"
 text = skill.read_text()
 
 required = (

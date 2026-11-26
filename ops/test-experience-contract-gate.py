@@ -159,6 +159,14 @@ with tempfile.TemporaryDirectory() as tmp:
         "experience_evidence", OPS / "experience_evidence.py")
     real_runner = importlib.util.module_from_spec(real_spec)
     real_spec.loader.exec_module(real_runner)
+    check(real_runner.normalize_browser_product("HeadlessChrome/149.0.7827.55") ==
+          "Chrome/149.0.7827.55", "headless CDP product must normalize to Chrome")
+    check(real_runner.normalize_browser_product("Chrome/158.0.0.0") ==
+          "Chrome/158.0.0.0", "standard CDP product must not be rewritten")
+    check(real_runner.normalize_browser_product("Chromium/158.0.0.0") ==
+          "Chromium/158.0.0.0", "standard Chromium product must not be rewritten")
+    check(real_runner.normalize_browser_product("HeadlessChromium/158.0.0.0") ==
+          "Chromium/158.0.0.0", "headless CDP Chromium must normalize to Chromium")
     real_evidence_dir = root / "real-evidence"
     # 源码树的面板在 plugin/ui，release 快照里面板在根 ui/。
     # 两种布局都必须能跑真实浏览器证据，否则 release 总闸会因为路径假设假红。

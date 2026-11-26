@@ -47,6 +47,20 @@ class EvidenceError(RuntimeError):
     pass
 
 
+def normalize_browser_product(value):
+    """Map CDP headless product names to the names accepted by the gate."""
+    product = str(value or "unknown")
+    aliases = (
+        ("HeadlessChrome/", "Chrome/"),
+        ("HeadChrome/", "Chrome/"),
+        ("HeadlessChromium/", "Chromium/"),
+    )
+    for prefix, normalized in aliases:
+        if product.startswith(prefix) and len(product) > len(prefix):
+            return normalized + product[len(prefix):]
+    return product
+
+
 def _terminate_chrome(proc):
     """Stop only the browser process group started by this runner."""
     if proc is None:
@@ -493,7 +507,8 @@ def run_browser_checks(panel=PANEL, chrome=None, include_screenshots=True):
     ws = None
     try:
         user_dir = str(Path(tmp) / "chrome-profile")
-        proc, browser, ws_url = _launch_chrome(chrome, port, user_dir)
+        proc, browser_product, ws_url = _launch_chrome(chrome, port, user_dir)
+        browser = normalize_browser_product(browser_product)
         ws = MiniWebSocket(ws_url, timeout=15)
         cdp = CDP(ws, ws_url)
         cdp.call("Page.enable")
@@ -563,6 +578,7 @@ def run_browser_checks(panel=PANEL, chrome=None, include_screenshots=True):
                     })
         return {
             "browser": browser,
+            "browser_product": browser_product,
             "panel_sha256": _sha256(panel),
             "checks": checks,
             "screenshots": screenshots,

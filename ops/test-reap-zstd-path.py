@@ -25,6 +25,11 @@ from unittest import mock
 OPS = Path(__file__).resolve().parent
 failures = []
 
+# Keep the fixture above the (mocked) minimum-size gate while avoiding tens of
+# megabytes of temporary writes on a nearly full developer disk.
+SESSION_FIXTURE_LINES = 40_000
+SESSION_FIXTURE_MIN_MB = 1.0
+
 
 def check(label, cond, detail=""):
     if cond:
@@ -43,6 +48,7 @@ def load_disk_reap(log_path: Path | None = None):
     # 合成夹具的压缩记录伪装成生产事件（实测 2026-11-11 反复出现）。
     if log_path is not None:
         mod.LOG = log_path
+    mod.SESSION_COMPACT_MIN_MB = SESSION_FIXTURE_MIN_MB
     return mod
 
 
@@ -50,7 +56,7 @@ def make_old_session(root: Path) -> Path:
     sessions = root / ".codex/sessions/2026/01/01"
     sessions.mkdir(parents=True)
     old = sessions / "old.jsonl"
-    old.write_bytes(b'{"type":"event","payload":"keep me"}\n' * 900_000)
+    old.write_bytes(b'{"type":"event","payload":"keep me"}\n' * SESSION_FIXTURE_LINES)
     old.touch()
     ts = old.stat().st_mtime
     os.utime(old, (ts - 7 * 3600, ts - 7 * 3600))
@@ -60,6 +66,8 @@ def make_old_session(root: Path) -> Path:
 def main():
     log_sink = Path(tempfile.mkdtemp(prefix="reap-zstd-log-")) / "disk-reap.log"
     mod = load_disk_reap(log_sink)
+    os.environ.pop("KG_SESSION_COMPACT", None)
+    os.environ.pop("KG_SESSION_COMPACT_ALLOW_DANGEROUS", None)
 
     # 1) 精简 PATH 下仍能定位 zstd：证明不再依赖 PATH。
     with mock.patch.dict("os.environ", {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}, clear=False):
@@ -80,13 +88,31 @@ def main():
         check("高盘时空闲时不动历史会话", n == 0 and freed == 0 and old.is_file(),
               (n, freed, old.exists()))
 
-    # 3) 显式 opt-in + 精简 PATH + 低盘 → 才允许真归档且无损。
+    # 2b) 旧开关单独打开时绝不迁移会话：2026-11-25 事故复发闸门。
     with tempfile.TemporaryDirectory(prefix="reap-zstd-") as tmp:
         root = Path(tmp)
         old = make_old_session(root)
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
                               "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "0"}), \
+             mock.patch.object(mod, "free_gb", return_value=1.0), \
+             mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
+             mock.patch.object(mod, "SESSION_COMPACT_RECENT_WRITE_MIN", 0.0):
+            n, freed = mod.compact_session_logs()
+        archive = root / ".codex/session-archive/2026/01/01/old.jsonl.zst"
+        check("旧开关单独打开时不迁移任何会话",
+              n == 0 and freed == 0 and old.is_file() and not archive.exists(),
+              (n, freed, old.exists(), archive.exists()))
+
+    # 3) 双重显式 opt-in + 精简 PATH + 低盘 → 才允许真归档且无损。
+    with tempfile.TemporaryDirectory(prefix="reap-zstd-") as tmp:
+        root = Path(tmp)
+        old = make_old_session(root)
+        with mock.patch.dict("os.environ",
+                             {"CODEX_HOME": str(root / ".codex"),
+                              "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "1",
                               "PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
              mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
@@ -105,7 +131,8 @@ def main():
         old = make_old_session(root)
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
-                              "KG_SESSION_COMPACT": "1"}), \
+                              "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
              mock.patch.object(mod, "_zstd_path", return_value=None), \
              mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
@@ -122,7 +149,8 @@ def main():
         old = make_old_session(root)
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
-                              "KG_SESSION_COMPACT": "1"}), \
+                              "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
              mock.patch.object(mod, "_path_is_open", return_value=True), \
              mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
@@ -136,12 +164,14 @@ def main():
         old = make_old_session(root)
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
-                              "KG_SESSION_COMPACT": "1"}), \
+                              "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
-             mock.patch.object(mod, "_path_is_open", side_effect=[False, True]), \
+             mock.patch.object(mod, "_path_is_open", side_effect=[False, True]) as is_open, \
              mock.patch.object(mod, "SESSION_COMPACT_QUIET_H", 1.0), \
              mock.patch.object(mod, "SESSION_COMPACT_RECENT_WRITE_MIN", 0.0):
             n, freed = mod.compact_session_logs()
+        check("压缩后复查确实执行", is_open.call_count >= 2, is_open.call_count)
         archive_root = root / ".codex/session-archive"
         leftovers = list(archive_root.rglob("*.zst")) + list(archive_root.rglob("*.tmp")) if archive_root.exists() else []
         check("压缩后、删除前再次打开时不替换原文件",
@@ -155,7 +185,7 @@ def main():
         os.utime(old, (old_ts, old_ts))
         sessions = old.parent
         hot = sessions / "hot.jsonl"
-        hot.write_bytes(b'{"type":"event","payload":"hot"}\n' * 900_000)
+        hot.write_bytes(b'{"type":"event","payload":"hot"}\n' * SESSION_FIXTURE_LINES)
         # Keep hot much newer than old. The previous fixture gave both files
         # the same mtime, which cannot test a recency exclusion.
         hot_ts = time.time() - 3600
@@ -168,7 +198,8 @@ def main():
         check("低盘默认不自动迁移历史会话", n == 0 and freed == 0 and old.is_file(), (n, freed))
         with mock.patch.dict("os.environ",
                              {"CODEX_HOME": str(root / ".codex"),
-                              "KG_SESSION_COMPACT": "1"}), \
+                              "KG_SESSION_COMPACT": "1",
+                              "KG_SESSION_COMPACT_ALLOW_DANGEROUS": "1"}), \
              mock.patch.object(mod, "free_gb", return_value=1.0), \
              mock.patch.object(mod, "SESSION_COMPACT_MAX_FILES", 1):
             n, freed = mod.compact_session_logs()

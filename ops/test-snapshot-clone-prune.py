@@ -260,13 +260,37 @@ def main():
         os.utime(old, ns=(old_ns, old_ns))
         os.utime(newer, ns=(new_ns, new_ns))
 
+        base_env = dict(os.environ)
+        base_env.pop("KG_SNAPSHOT_PRUNE_ALLOW_DANGEROUS", None)
+        default_result = subprocess.run(
+            [SYSTEM_PYTHON, str(HELPER),
+             "--source", str(source),
+             "--snapshots", str(snapshots),
+             "--archive", str(archive),
+             "--keep", "1"],
+            capture_output=True, text=True, env=base_env)
+        default_archived = [
+            path for path in archive.rglob("*.gz") if path.is_file()
+        ]
+        check("默认禁止 snapshot prune，历史快照不会被移动",
+              default_result.returncode == 0
+              and old.is_dir()
+              and (old / "unique.jsonl").is_file()
+              and not default_archived
+              and "snapshot prune disabled" in default_result.stdout,
+              (default_result.returncode, default_result.stdout.strip(),
+               default_result.stderr.strip(), old.exists(),
+               (old / "unique.jsonl").is_file(), default_archived))
+
+        opt_in_env = dict(base_env)
+        opt_in_env["KG_SNAPSHOT_PRUNE_ALLOW_DANGEROUS"] = "1"
         result = subprocess.run(
             [SYSTEM_PYTHON, str(HELPER),
              "--source", str(source),
              "--snapshots", str(snapshots),
              "--archive", str(archive),
              "--keep", "1"],
-            capture_output=True, text=True)
+            capture_output=True, text=True, env=opt_in_env)
         archived = [
             path for path in archive.rglob("*.gz")
             if path.is_file()

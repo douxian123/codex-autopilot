@@ -1,6 +1,57 @@
 {
  "tasks": [
   {
+   "slug": "reap-identical-tracked-20261027",
+   "branch": "codex/reap-identical-tracked-20261027",
+   "resolve_branch": "codex/resolve-reap-identical-tracked-20261027",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-truth-sync-20261124-land-clean-1795595101-resolve-reap-identical-tracked-20261027",
+   "base_main": "91ea9687f0c753a8473e0f401ff0651519b27031",
+   "source_head": "4cc6c7b8d3de55c0f21ca55578fce5da7aabd77d",
+   "source_commits": [
+    "4cc6c7b8d3de55c0f21ca55578fce5da7aabd77d"
+   ],
+   "created": "2026-11-25 22:14:21",
+   "updated": "2026-11-26 03:17:50",
+   "conflict_files": [
+    "ops/central_daemon.py",
+    "ops/selftest.py",
+    "ops/workspace_guard.py"
+   ],
+   "unresolved_files": [
+    "ops/central_daemon.py",
+    "ops/selftest.py",
+    "ops/workspace_guard.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "landed",
+   "landed_commit": "8c20327973db41ac2f0d6f8387adf62f484f7bc0",
+   "reason": "源提交 4cc6c7b8d 与 resolve 分支 91f68a3a7 均为 main 祖先；P-0264/A-0256 已记录 8c203279 落盘，旧 needs_agent 是状态回归。"
+  },
+  {
+   "slug": "truth-sync-clean-20261124",
+   "branch": "codex/truth-sync-clean-20261124",
+   "resolve_branch": "codex/resolve-truth-sync-clean-20261124",
+   "worktree": "/Users/danta/Documents/Codex/codex-autopilot-steward-history-20261123-truth-sync-20261124-resolve-truth-sync-clean-20261124",
+   "base_main": "fbb7bb9882294f75bd7ffcef08c8d92292831478",
+   "source_head": "43e20a2bd761c6de27c9166ad4c7c65ed67e911a",
+   "source_commits": [
+    "43e20a2bd761c6de27c9166ad4c7c65ed67e911a"
+   ],
+   "created": "2026-11-25 15:53:32",
+   "updated": "2026-11-25 18:00:24",
+   "conflict_files": [
+    "docs/PROJECT_STATUS.md",
+    "ops/tasks/context_probe_cache.json"
+   ],
+   "unresolved_files": [
+    "docs/PROJECT_STATUS.md",
+    "ops/tasks/context_probe_cache.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "status": "abandoned",
+   "reason": "旧分支唯一未落地提交 43e20a2bd 是 15:53 的旧真相快照；其净差异会删除 main 5d060b629 已落地的 test-truth-push-diverged-clean-worktree.py 与 test-truth-sync-stale-head-fake-dirty.py 修复测试。真相同步/推送修复已由 2ac88ecd 与 f66d05d3a 落盘；保留源分支不动，裁决为已覆盖，不再计入冲突队列。"
+  },
+  {
    "slug": "session-compact-danger-switch-20261125",
    "branch": "codex/session-compact-danger-switch-20261125",
    "resolve_branch": "codex/resolve-session-compact-danger-switch-20261125",
@@ -165,7 +216,54 @@
    "updated": "2026-10-17 07:17:30",
    "status": "abandoned",
    "reason": "核心能力已由 f1942be/e0c38d3/44e3f59 落盘；旧分支剩余差异含版本与 socket 回退，不应整支合并"
+  },
+  {
+   "slug": "native-thread-bridge",
+   "branch": "codex/native-thread-bridge",
+   "base_main": "e8857c7a18aa0712589b75f1b7e15aa590b7fbaf",
+   "source_head": "ffc371d3621cb1f8280f17fbfeaf597de11b3714",
+   "source_commits": [
+    "ffc371d3621cb1f8280f17fbfeaf597de11b3714"
+   ],
+   "conflict_files": [
+    "ops/test-central-command-followup-contract.py"
+   ],
+   "unresolved_files": [
+    "ops/test-central-command-followup-contract.py"
+   ],
+   "auto_resolved_jsonl": [],
+   "created": "2026-11-25 22:32:47",
+   "updated": "2026-11-25 22:32:47",
+   "status": "abandoned",
+   "reason": "源提交的用户可见路由责任段落已在 main 的 plugin/skills/central-command/SKILL.md；其测试旧路径会被 main 的 release 目录兼容版本回退，port 实测 add/add 冲突后已 abort。源分支保留不动。"
+  },
+  {
+   "slug": "disk-admission-clean-20261027",
+   "branch": "codex/disk-admission-clean-20261027",
+   "base_main": "e8857c7a18aa0712589b75f1b7e15aa590b7fbaf",
+   "source_head": "728b93900d9e3376026062185d606bdc24523a25",
+   "source_commits": [
+    "728b93900d9e3376026062185d606bdc24523a25",
+    "50c852b82371cfec53b9798d232f09cfa42d6e0d",
+    "99f8548bb8568a994776f4d1516480f9d383942b",
+    "3896b32e0e20d8035a6ac5b3dd657a7dbbd6e7ee"
+   ],
+   "conflict_files": [
+    "ops/central_daemon.py",
+    "ops/selftest.py",
+    "plugin/.codex-plugin/plugin.json"
+   ],
+   "unresolved_files": [
+    "ops/central_daemon.py",
+    "ops/selftest.py",
+    "plugin/.codex-plugin/plugin.json"
+   ],
+   "auto_resolved_jsonl": [],
+   "created": "2026-11-25 22:32:48",
+   "updated": "2026-11-25 22:32:48",
+   "status": "abandoned",
+   "reason": "磁盘准入、压力回收预算与相关回归均已由 main 的 central_daemon.py/selftest.py 覆盖；源分支还带旧版本目录与大规模过时树，整支合并会回退 main。源分支保留不动。"
   }
  ],
- "updated": "2026-11-25 12:53:09"
+ "updated": "2026-11-25 22:32:48"
 }
