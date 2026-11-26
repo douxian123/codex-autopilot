@@ -1,6 +1,6 @@
 # 项目状态（自动生成，勿手改）
 
-> 生成时间 2026-11-25 16:20:22　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
+> 生成时间 2026-11-26 12:17:02　·　由 `python3 ops/truthctl.py` 从 `ops/truth/` 生成　·　改状态请改台账，不要改本文件。
 
 ## 一、产品主线
 
@@ -48,14 +48,14 @@
 
 ## 四、进展
 
-- `P-0244` [已完成] 最终审计确认：B1 全量 PRD 契约包、七管家责任视图、公开 .140 入口、本机面板主链与使用说明已形成可复核闭环；过期 P-0242 已追加停用，人工签收、native 派活与跨设备仍按未闭合项保留。证据见 docs/B1_FINAL_AUDIT_20261124.md 与 A-0243/A-0244。
-- `P-0245` [已落盘] @ `5ae6bae260` codex/final-progress-closure-20261124 验证门禁通过，已落盘 main @ 5ae6bae260；改动 3 个文件：docs/B1_FINAL_AUDIT_20261124.md（+116/-0）、ops/test-truth-dedupe.py（+19/-0）、ops/truthctl.py（+14/-4）｜3 files changed, 149 insertions(+), 4 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
-- `P-0246` [已完成] panel-design-restore-20261124 的 focus-visible 旧 runner 假红已复核：目标树机器证据全绿，落盘只卡人工体验签收；不再重跑同一失败 land。
-- `P-0247` [已完成] 把 18 条被后续 verified/landed/superseded 或目标树机器证据覆盖的旧 todo 验收转 void；把 steward-history-detail 的 needs_agent 旧行追加 abandoned 终态；人工验收 A-0022/A-0044/A-0187..A-0192、L-0019/L-0020/L-0021 不动。
-- `P-0249` [已完成] 最终审计确认当前可机器闭环项已全部闭环：origin/main 35fedb84；全量 selftest exit 0；experience-evidence PASS 48/48 fresh=True screenshots=4；panel-logic、panel-render、project-constitution 均 exit 0；验收按 id 最新态 verified=167/todo=8/wip=0/blocked=0/void=23，8 条 todo 全为 needs_human=true，机器型未闭环=0；剩余为人工验收、产品/发布决策与 ChatGPT pairing B2。
-- `P-0250` [已完成] 修复插件绑定漂移：旧脏 worktree 绑定被 binding_health 识别，capture_request/intake_request/route_preview 在写入前 fail-closed 并返回 AUTOPILOT_BINDING_DRIFT 恢复动作；安装器自检 opt-out 不误拦脏 source + 干净 trunk 夹具；面板坏绑定夹具清掉外层 KG_REPO。门禁：python3 -u ops/selftest.py exit 0；python3 ops/panel_logic_check.py exit 0；python3 ops/panel_render_check.py --no-shot exit 0；python3 ops/test-project-constitution.py exit 0；python3 ops/experience_evidence.py exit 0 (PASS 48/48 fresh=True screenshots=4)。
-- `P-0251` [已完成] 绑定漂移已改为 fail-closed：旧脏绑定被识别，投稿/路由预演先拦截并给出重绑定+重开 Codex 的恢复动作；安装与坏绑定夹具不误报。记录为 P-0250、A-0246。
-- `P-0252` [已落盘] @ `f83677fb91` codex/truth-sync-clean-20261124 验证门禁通过，已落盘 main @ f83677fb91；改动 8 个文件：docs/B1_FINAL_AUDIT_20261124.md（+42/-0）、docs/BETA_LOCAL_TRIAL.md（+8/-0）、docs/experience/experience-evidence.json（+1/-1）、install.sh（+8/-1）、ops/central_mcp.py（+9/-1），另有 3 个文件｜8 files changed, 440 insertions(+), 9 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0246
+- `P-0259` [已落盘] @ `39d49bd5cd` codex/resolve-truth-sync-covered-20261125 验证门禁通过，已落盘 main @ 39d49bd5cd；改动 2 个文件：ops/truth/acceptance.jsonl（+1/-0）、ops/truth/progress.jsonl（+1/-0）｜2 files changed, 2 insertions(+)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- `P-0260` [已归档] @ `9845fb9e97` codex/public-beta-docs-closure-20261124 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
+- `P-0261` [已归档] @ `300ea39314` codex/disk-admission-fix-20261105 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
+- `P-0262` [已归档] @ `07b17402d8` codex/disk-reap-into-repo 相对自身基线的独有内容已逐文件确认全部存在于 main，属重复分支，不产生空合并提交。
+- `P-0263` [已落盘] @ `73da84b973` codex/fix-stale-resolve-worktree-20261125 验证门禁通过，已落盘 main @ 73da84b973；改动 3 个文件：ops/kgctl.py（+80/-9）、ops/selftest.py（+1/-0）、ops/test-stale-resolve-worktree-registration.py（+151/-0）｜3 files changed, 232 insertions(+), 9 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- `P-0264` [已落盘] @ `8c20327973` codex/resolve-reap-identical-tracked-20261027 验证门禁通过，已落盘 main @ 8c20327973；改动：本次合并未带进新内容（分支内容已在主干，属空合并）｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0
+- `P-0265` [已落盘] @ `4c5d6d2b8b` codex/resolve-truth-baseline-20261125 验证门禁通过，已落盘 main @ 4c5d6d2b8b；改动 3 个文件：ops/kgctl.py（+43/-3）、ops/selftest.py（+1/-0）、ops/test-resolve-truth-baseline.py（+177/-0）｜3 files changed, 221 insertions(+), 3 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0257
+- `P-0266` [已落盘] @ `967801da6f` codex/land-resolve-task-status-20261126 验证门禁通过，已落盘 main @ 967801da6f；改动 2 个文件：ops/kgctl.py（+63/-2）、ops/test-resolve-truth-baseline.py（+33/-0）｜2 files changed, 96 insertions(+), 2 deletions(-)｜门禁：experience-contract exit 0；selftest exit 0；panel-logic exit 0；panel-render exit 0｜对应验收项：A-0259
 
 ## 五、验收进度
 
@@ -77,7 +77,7 @@
 - `A-0189` [P1] Codex Autopilot 面板人工验收：任务完成感
   - 人看首屏默认截图，确认当前目标、总体进度、最近完成和当前步骤能支撑判断任务是否在推进
 
-**已机器验收（169）**
+**已机器验收（182）**
 - `A-0002` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0003` [P1] codex/pm-truth-closure-20261118 门禁预跑（未落盘）
 - `A-0004` [P1] codex/truth-close-pm-truth-closure-20261118 门禁预跑（未落盘）
@@ -247,6 +247,19 @@
 - `A-0245` [P1] codex/final-progress-closure-20261124 落盘验收
 - `A-0246` [P1] 绑定漂移 fail-closed 机器验收
 - `A-0247` [P1] codex/truth-sync-clean-20261124 落盘验收
+- `A-0248` [P1] codex/synthesize-status-gate-20261125 落盘验收
+- `A-0249` [P1] codex/truth-sync-clean-20261124 落盘验收
+- `A-0250` [P1] codex/session-compact-danger-switch-20261125 落盘验收
+- `A-0251` [P1] codex/fix-truth-sync-stale-checkout-20261125 落盘验收
+- `A-0252` [P1] codex/fix-truth-push-stale-head-20261125 落盘验收
+- `A-0253` [P1] codex/fix-headless-chrome-browser-name-20261125 落盘验收
+- `A-0254` [P1] codex/resolve-truth-sync-covered-20261125 落盘验收
+- `A-0255` [P1] codex/fix-stale-resolve-worktree-20261125 落盘验收
+- `A-0256` [P1] codex/resolve-reap-identical-tracked-20261027 落盘验收
+- `A-0257` [P1] codex/resolve-truth-baseline-20261125 门禁预跑（未落盘）
+- `A-0258` [P1] codex/resolve-truth-baseline-20261125 落盘验收
+- `A-0259` [P1] codex/land-resolve-task-status-20261126 门禁预跑（未落盘）
+- `A-0260` [P1] codex/land-resolve-task-status-20261126 落盘验收
 
 ## 六、决策记录
 
