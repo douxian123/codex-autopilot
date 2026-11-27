@@ -1,5 +1,6 @@
 {
-  "browser": "Chrome/158.0.8127.37",
+  "browser": "Chrome/158.0.8127.90",
+  "browser_product": "Chrome/158.0.8127.90",
   "panel_sha256": "2259ce2cc4487ab46c40a91ca11970ea130f4f9a75b5c442a5570a8ef2af6b02",
   "checks": [
     {
@@ -484,7 +485,7 @@
     }
   ],
   "schema_version": "1",
-  "generated_at": "2026-11-24T20:04:39+0800",
+  "generated_at": "2026-11-27T21:43:03+0800",
   "source": "chrome-cdp",
   "contract_sha256": "9c4820b2f7334bf6033cd3c501f150a5cee7f510366e1e478698ab6913d7bbee",
   "screenshots": [
