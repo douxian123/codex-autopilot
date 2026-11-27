@@ -1,8 +1,4 @@
 {
- "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@fbb7bb9882294f75bd7ffcef08c8d92292831478": {
-  "files": 4,
-  "lines": 5372
- },
  "codex/truth-sync-clean-20261124@43e20a2bd761c6de27c9166ad4c7c65ed67e911a@fbb7bb9882294f75bd7ffcef08c8d92292831478": {
   "files": 6,
   "lines": 144
@@ -2396,6 +2392,10 @@
   "lines": 5372
  },
  "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@039395a3dd6f60acbba9726337bf391ede1678a0": {
+  "files": 4,
+  "lines": 5372
+ },
+ "codex/slow-model-routing@4389d57f07721ca347c40f49aff69a8b7ab8b3e0@4be440b428b30663e7ee06c7547ebba2911593b8": {
   "files": 4,
   "lines": 5372
  }
