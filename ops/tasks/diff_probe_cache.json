@@ -4818,5 +4818,17 @@
  "codex/release-124-truthctl-runtime-20261122@39e745af6b9fc4102f82b1f384336b79b3279e89@6069a592e702d35ede8fd36d2f4275f80cb90f94": {
   "files": 6,
   "lines": 263
+ },
+ "codex/prd-closure-package-20261121@44b485e4a045555b92fed90a41c24494654cc2df@f9aab917a45ab5d55528e4583363839b2d1625f8": {
+  "files": 6,
+  "lines": 153
+ },
+ "codex/project-autonomy-mode-20261121@1aebb35c6630b5e7fcaf3605b26766d1d7785532@f9aab917a45ab5d55528e4583363839b2d1625f8": {
+  "files": 7,
+  "lines": 621
+ },
+ "codex/release-124-truthctl-runtime-20261122@39e745af6b9fc4102f82b1f384336b79b3279e89@f9aab917a45ab5d55528e4583363839b2d1625f8": {
+  "files": 6,
+  "lines": 263
  }
 }
