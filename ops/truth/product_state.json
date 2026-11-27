@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-25",
+ "updated": "2026-11-26",
  "modules": [
   {
    "area": "唯一入口",
@@ -111,6 +111,18 @@
     "docs/acceptance/USER_WALKTHROUGH_CLOSURE_MATRIX_20261123.md"
    ],
    "updated": "2026-11-25"
+  },
+  {
+   "area": "中心调度闭环",
+   "behavior": "当前知识图谱走查中，P01 首值定义修复、P01 当前合并复放证据、验收台账去重均已合入本地与远端 main；E-014 运行身份两条门禁已在干净副本实跑为绿，但 T37 全量 Release Gates、T38/T39 发布证据包、P07 移动端窄屏裁切仍未闭环。",
+   "why": "把这轮真实产品状态写回，避免面板继续显示过期的「未合入 main」口径。",
+   "files": [
+    "ops/truth/acceptance.jsonl",
+    "frontend/scripts/verify-stack-guard.mts",
+    "frontend/scripts/verify-browser-gate-stack-guard.mts",
+    "frontend/scripts/audit-launch-quality-replay.mjs"
+   ],
+   "updated": "2026-11-26"
   }
  ]
 }

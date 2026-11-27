@@ -1,9 +1,9 @@
 # 项目宪法（自动投影，勿手改）
 
-> 生成时间 2026-11-26 12:22:52　·　由 `python3 ops/truthctl.py constitution` 从约束/候选/判断台账投影
+> 生成时间 2026-11-27 22:15:21　·　由 `python3 ops/truthctl.py constitution` 从约束/候选/判断台账投影
 > 只有人确认过的约束才生效；候选与驳回项保留原话供追溯，不自动参与执行。
 
-生效 4 · 待确认 13 · 已确认待落账 0 · 已驳回 0 · 判断逻辑 25
+生效 4 · 待确认 13 · 已确认待落账 0 · 已驳回 0 · 判断逻辑 26
 
 ## 一、生效约束
 
@@ -103,6 +103,8 @@
   - 为什么：panel-design-restore-20261124: 目标树 experience_evidence PASS 48/48 fresh=True screenshots=4、panel_render_check --no-shot 全 PASS，直接 land_gate 的 machine_reason=None；只剩 A-0187..A-0192、A-0022、A-0044 人工体验项未由人确认。
 - **J-0028** [process] 陈旧机器验收要看最新证据：被后续 verified/landed/superseded 或目标树复核覆盖的旧 todo 转 void，不删除历史；人工验收项保持 todo 等待真人拍板。
   - 为什么：追加式台账里的旧 todo 若已有同事项后续 verified/landed/superseded 证据，继续显示会制造假待办；但 needs_human 项即使有机器证据也不能转 verified。void 用于撤回过期机器记录，verified 用于有真实复核的证据。
+- **J-0030** [process] 命题全链路是否闭环必须分层回答：普通命题主链局部闭环不等于全产品或图谱产物质量达标；判定依据是当前真相层、T37/T38/T39 状态、真实用户走查问题是否关闭，以及同运行身份的全量发布门禁证据。
+  - 为什么：用户反复追问「闭环了吗/是否达到预期」，历史中多次把局部 PASS、门禁绿或远端缺失当成整体闭环；当前审计明确显示普通命题主链验收通过，但 T37/T38/T39 与多条走查质量项仍 open。
 
 ## 六、未接线与缺口
 
