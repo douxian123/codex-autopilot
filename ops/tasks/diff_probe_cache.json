@@ -4838,5 +4838,9 @@
  "codex/release-124-truthctl-runtime-20261122@39e745af6b9fc4102f82b1f384336b79b3279e89@1ceee980b7d2e814ec7881e1e7e95eb289778926": {
   "files": 6,
   "lines": 263
+ },
+ "codex/project-autonomy-mode-20261121@1aebb35c6630b5e7fcaf3605b26766d1d7785532@2896df20c370c4c9ca35fe63c41c6ceff9bf0588": {
+  "files": 7,
+  "lines": 621
  }
 }
