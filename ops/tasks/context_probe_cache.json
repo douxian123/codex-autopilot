@@ -10682,5 +10682,34 @@
    "docs/PRODUCT_CONTRACT.md"
   ],
   "unresolved_marker_files": []
+ },
+ "codex/converge-d6c50f03d9@79f7ac3fa5b7a24f46481238aef7cb6343e0496f@a0e6660cb69f69e0b20d45ec3117160dc303118b": {
+  "conflict_files": [
+   "docs/PROJECT_STATUS.md",
+   "ops/tasks/conflict_burden.json",
+   "ops/tasks/diff_probe_cache.json"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-d218251f8b@c35fff1b4e295690f07f00f14ac503adf36e7696@a0e6660cb69f69e0b20d45ec3117160dc303118b": {
+  "conflict_files": [
+   "docs/PRODUCT_CONTRACT.md"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-d6c50f03d9@79f7ac3fa5b7a24f46481238aef7cb6343e0496f@772785d6dfadd602b3ad51d93b18293e55a47736": {
+  "conflict_files": [
+   "docs/PROJECT_STATUS.md",
+   "ops/tasks/conflict_burden.json",
+   "ops/tasks/context_probe_cache.json",
+   "plugin/.codex-plugin/plugin.json"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-d218251f8b@c35fff1b4e295690f07f00f14ac503adf36e7696@772785d6dfadd602b3ad51d93b18293e55a47736": {
+  "conflict_files": [
+   "docs/PRODUCT_CONTRACT.md"
+  ],
+  "unresolved_marker_files": []
  }
 }
