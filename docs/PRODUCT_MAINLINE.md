@@ -1,6 +1,6 @@
 # 产品主线（自动综合，勿手改）
 
-> 生成时间 2026-11-27 22:15:21　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
+> 生成时间 2026-11-28 12:54:00　·　由 `python3 ops/truthctl.py synthesize` 从真相层综合
 > 产品方向以 `ops/truth/mainline.json` 为准（人拍板）；这一页是 Agent 从决策/进展/问题/验收里综合出来的现状。
 
 ## Codex 自动挡
@@ -43,6 +43,7 @@
 - **绑定漂移**：插件绑定旧脏 worktree、当前会话在同仓库干净状态根时，binding_health 报漂移；capture_request、intake_request、route_preview 在写入前返回 AUTOPILOT_BINDING_DRIFT，并提示重跑 install.sh <当前状态根> 后重开 Codex；干净多 worktree 和安装自检不误报。
 - **验收结论口径**：当前知识图谱走查修复分支已提交推送但尚未合入 main；真实浏览器复放和 30 条全量重跑未完成，因此不能宣称符合预期或全产品闭环生效。
 - **中心调度闭环**：当前知识图谱走查中，P01 首值定义修复、P01 当前合并复放证据、验收台账去重均已合入本地与远端 main；E-014 运行身份两条门禁已在干净副本实跑为绿，但 T37 全量 Release Gates、T38/T39 发布证据包、P07 移动端窄屏裁切仍未闭环。
+- **浏览器插件现场可用性专项**：用户反馈插件实际上用不了；当前不再以 main 合并或旧门禁绿作为完成证据，必须同时证明入口可达、安装包预填正确、真实 Chromium 装载、划线/右键自动提交并当场生长。
 
 ## 决策脉络
 

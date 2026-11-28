@@ -1,5 +1,5 @@
 {
- "updated": "2026-11-26",
+ "updated": "2026-11-28",
  "modules": [
   {
    "area": "唯一入口",
@@ -123,6 +123,18 @@
     "frontend/scripts/audit-launch-quality-replay.mjs"
    ],
    "updated": "2026-11-26"
+  },
+  {
+   "area": "浏览器插件现场可用性专项",
+   "behavior": "用户反馈插件实际上用不了；当前不再以 main 合并或旧门禁绿作为完成证据，必须同时证明入口可达、安装包预填正确、真实 Chromium 装载、划线/右键自动提交并当场生长。",
+   "why": "用户要求专项负责人对真实运行结果和质量负责。",
+   "files": [
+    "backend/src/index.ts",
+    "backend/src/services/browserExtensionPackage.ts",
+    "frontend/public/browser-extension",
+    "frontend/scripts/verify-live-extension-package.mjs"
+   ],
+   "updated": "2026-11-28"
   }
  ]
 }
