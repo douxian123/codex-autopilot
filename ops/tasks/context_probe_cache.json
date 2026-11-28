@@ -9041,5 +9041,23 @@
    "docs/PRODUCT_CONTRACT.md"
   ],
   "unresolved_marker_files": []
+ },
+ "codex/converge-d6c50f03d9@b2d073fd1f9a31c0cd1cac0872b524fdbab626c2@07e6f11640570c3d7edc563660092910af40ed6b": {
+  "conflict_files": [
+   "docs/PRODUCT_MAINLINE.md",
+   "docs/PROJECT_CONSTITUTION.md",
+   "docs/PROJECT_STATUS.md",
+   "ops/tasks/conflict_burden.json",
+   "ops/tasks/diff_probe_cache.json",
+   "ops/tasks/resolve.json",
+   "plugin/.codex-plugin/plugin.json"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-d218251f8b@c35fff1b4e295690f07f00f14ac503adf36e7696@07e6f11640570c3d7edc563660092910af40ed6b": {
+  "conflict_files": [
+   "docs/PRODUCT_CONTRACT.md"
+  ],
+  "unresolved_marker_files": []
  }
 }
