@@ -54,6 +54,7 @@ import time
 from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 # ---- 受控子进程执行器（说明见 ops/proc.py 顶部）---------------------------
 # 全仓 130+ 处 `proc_run(["git", ...])` 旧实现既没有 timeout，又用 pipe 收输出。
@@ -4384,6 +4385,51 @@ def _push_main_with_one_retry(wt: Path) -> str:
     raise RuntimeError(f"push origin HEAD:main 失败：{last[:800]}")
 
 
+def _local_remote_main_worktree_owner(repo: Path) -> str:
+    """只读识别「本地路径远端把 main 挂在 worktree 上」的发布阻塞。
+
+    仅在 origin 指向本机路径、远端未显式允许更新当前分支、且 `main` 真被某个
+    worktree 检出时返回该 worktree 路径。判断取不到时返回空，交给原有 push 流程；
+    这里不切分支、不改配置、不动任何工作副本。
+    """
+    got = proc_run(["git", "-C", str(repo), "config", "--get",
+                    "remote.origin.url"], capture_output=True, text=True)
+    if got.returncode != 0:
+        return ""
+    url = got.stdout.strip()
+    if not url or url.startswith(("http://", "https://", "ssh://", "git@")):
+        return ""
+    if url.startswith("file://"):
+        url = unquote(urlparse(url).path)
+    elif "://" in url:
+        return ""
+    remote = Path(url).expanduser()
+    if not remote.is_absolute():
+        remote = (Path(repo).expanduser().resolve() / remote).resolve()
+    else:
+        remote = remote.resolve()
+    if not remote.exists():
+        return ""
+
+    deny = proc_run(["git", "-C", str(remote), "config", "--get",
+                     "receive.denyCurrentBranch"],
+                    capture_output=True, text=True).stdout.strip().lower()
+    if deny in {"ignore", "updateinstead", "warn"}:
+        return ""
+
+    listed = proc_run(["git", "-C", str(remote), "worktree", "list", "--porcelain"],
+                      capture_output=True, text=True)
+    if listed.returncode != 0:
+        return ""
+    owner = ""
+    for line in listed.stdout.splitlines():
+        if line.startswith("worktree "):
+            owner = line[len("worktree "):]
+        elif line == f"branch refs/heads/{MAIN}" and owner:
+            return owner
+    return ""
+
+
 def _align_main_ref_to_origin(new: str = "") -> str:
     """把本地 main 引用对齐到 origin/main（push 成功后调用）。
 
@@ -6142,6 +6188,20 @@ def cmd_land(args):
             print(f"    {f}")
         print("  先在 convergence worktree 解干净并提交，再重新排队。")
         return
+
+    # 2026-11-28 现场：origin 指向本机另一个非裸仓库，而 main 被那里的 worktree
+    # 占着。旧实现要等 merge、门禁、台账都写完，push 五次后才报 checked out branch，
+    # 于是留下看似已落盘、实际推不上去的进展/验收记录。这里在任何写操作前只读发现
+    # 这个拓扑并 fail-closed；切分支、stash、reset 或改远端配置都必须由人授权。
+    occupied = _local_remote_main_worktree_owner(REPO)
+    if occupied:
+        sys.exit(
+            f"× 远端 origin 是本机仓库，且 {MAIN} 正被 worktree 占用：{occupied}\n"
+            f"  为保护那里的在途工作，拒绝 land；未执行 merge、门禁或台账写入，"
+            f"main 与源分支都未动。\n"
+            f"  请先让该 worktree 切离 {MAIN}（在途改动先提交到独立分支），"
+            f"或明确授权处理远端拓扑；自动挡不会切分支、reset、stash 或改 "
+            f"receive.denyCurrentBranch。")
 
     print(f"→ {branch}: {ahead} 提交、落后 {behind}、无冲突")
     print("  步骤：主干工作树 merge → 验证门禁 → 写进展/验收台账 → push origin/main → 同步 main")
