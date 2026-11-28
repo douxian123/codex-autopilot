@@ -12229,5 +12229,21 @@
    "docs/PRODUCT_CONTRACT.md"
   ],
   "unresolved_marker_files": []
+ },
+ "codex/converge-d6c50f03d9@79f7ac3fa5b7a24f46481238aef7cb6343e0496f@1e14005dc75cdb67e53ff9be0a4cf4fbdb264ec5": {
+  "conflict_files": [
+   "docs/PREVIEW.md",
+   "docs/PROJECT_STATUS.md",
+   "ops/tasks/conflict_burden.json",
+   "ops/tasks/diff_probe_cache.json",
+   "plugin/.codex-plugin/plugin.json"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-d218251f8b@c35fff1b4e295690f07f00f14ac503adf36e7696@1e14005dc75cdb67e53ff9be0a4cf4fbdb264ec5": {
+  "conflict_files": [
+   "docs/PRODUCT_CONTRACT.md"
+  ],
+  "unresolved_marker_files": []
  }
 }
