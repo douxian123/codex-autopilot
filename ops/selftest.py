@@ -9107,6 +9107,13 @@ if __name__ == "__main__":
     test_conflict_decision_hold_survives_existing_markers()
     test_prune_keeps_open_resolve_hold()
     test_reset_trunk_truth_conflict()
+    run([sys.executable, str(OPS / "test-push-remote-truth-conflict.py")],
+        cwd=str(OPS.parent))
+    # 2026-11-28 现场：本地路径远端把 main 挂在 worktree 上时，旧实现等到五次
+    # push 失败才暴露，期间 merge/门禁/台账都已写。这条门禁要求写前 fail-closed，
+    # 且裸远端与显式允许更新当前分支的配置不被误伤。
+    run([sys.executable, str(OPS / "test-land-local-remote-worktree-guard.py")],
+        cwd=str(OPS.parent))
     test_sync_trunk_truth_failclosed_non_truth()
     test_publish_lock_and_origin_containment()
     test_stale_lock_selfheals_and_never_deletes_others()
