@@ -5166,5 +5166,17 @@
  "codex/release-124-truthctl-runtime-20261122@39e745af6b9fc4102f82b1f384336b79b3279e89@3cc3bb6e3e0fc73b14b77864fcb238b801972d31": {
   "files": 6,
   "lines": 263
+ },
+ "codex/preserve-remote-main-dirty-20261128@1e575f0db6ee887ec677bebb17e4370c8731c444@53d5b49f3627c48dc15ca69c0be6fbbe3e83e7f2": {
+  "files": 120,
+  "lines": 28637
+ },
+ "codex/project-autonomy-mode-20261121@1aebb35c6630b5e7fcaf3605b26766d1d7785532@53d5b49f3627c48dc15ca69c0be6fbbe3e83e7f2": {
+  "files": 7,
+  "lines": 621
+ },
+ "codex/release-124-truthctl-runtime-20261122@39e745af6b9fc4102f82b1f384336b79b3279e89@53d5b49f3627c48dc15ca69c0be6fbbe3e83e7f2": {
+  "files": 6,
+  "lines": 263
  }
 }
