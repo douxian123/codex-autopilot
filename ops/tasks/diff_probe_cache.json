@@ -4842,5 +4842,9 @@
  "codex/project-autonomy-mode-20261121@1aebb35c6630b5e7fcaf3605b26766d1d7785532@2896df20c370c4c9ca35fe63c41c6ceff9bf0588": {
   "files": 7,
   "lines": 621
+ },
+ "codex/preserve-remote-main-dirty-20261128@1e575f0db6ee887ec677bebb17e4370c8731c444@4d000d38f26fefa5a1e3342c82325ed2e1bd4730": {
+  "files": 120,
+  "lines": 28637
  }
 }

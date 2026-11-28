@@ -10445,5 +10445,17 @@
    "docs/PRODUCT_CONTRACT.md"
   ],
   "unresolved_marker_files": []
+ },
+ "codex/converge-d6c50f03d9@79f7ac3fa5b7a24f46481238aef7cb6343e0496f@4d000d38f26fefa5a1e3342c82325ed2e1bd4730": {
+  "conflict_files": [
+   "docs/PROJECT_STATUS.md"
+  ],
+  "unresolved_marker_files": []
+ },
+ "codex/converge-d218251f8b@c35fff1b4e295690f07f00f14ac503adf36e7696@4d000d38f26fefa5a1e3342c82325ed2e1bd4730": {
+  "conflict_files": [
+   "docs/PRODUCT_CONTRACT.md"
+  ],
+  "unresolved_marker_files": []
  }
 }
