@@ -4359,7 +4359,11 @@ def _push_main_with_one_retry(wt: Path) -> str:
         if fetched.returncode != 0:
             raise RuntimeError(f"push 后 fetch origin/{MAIN} 失败: {fetched.stderr.strip()[:500]}")
         remote = git("rev-parse", f"origin/{MAIN}")
-        if remote == git("rev-parse", "HEAD"):
+        # 被验证/落盘的提交在 trunk worktree 的 HEAD，而不一定在 REPO 的共享
+        # 检出 HEAD。用 REPO 的 HEAD 比较会把「远端已包含本次提交」误判成还没落盘，
+        # 白白再合并一次；干净落盘工作树场景下尤其明显。
+        head = git("-C", str(wt), "rev-parse", "HEAD")
+        if remote == head:
             print("  远端 origin/main 已包含 trunk HEAD；空合并等同已落盘")
             return ("origin/main 已包含 HEAD（空合并，无需重复推送）")
         synced = proc_run(
@@ -4367,10 +4371,13 @@ def _push_main_with_one_retry(wt: Path) -> str:
              "-m", "train: sync origin/main before landing"],
             capture_output=True, text=True)
         if synced.returncode != 0:
-            proc_run(["git", "-C", str(wt), "merge", "--abort"],
-                           capture_output=True, text=True)
-            raise RuntimeError(
-                f"远端 main 前进且自动同步出现冲突，未推送：{(synced.stdout + synced.stderr).strip()[:500]}")
+            # 并发 tick / supersede 推进 origin/main 时，双方常常只改了真相层的
+            # JSON / 生成 Markdown。land 主合并路径早已按台账规则自动解这类冲突；
+            # push 重试此前却直接 abort，把已经过完门禁的落盘卡在最后一步。
+            if not _resolve_truth_merge(wt):
+                raise RuntimeError(
+                    f"远端 main 前进且自动同步出现冲突，未推送：{(synced.stdout + synced.stderr).strip()[:500]}")
+            print("  并发同步冲突全部属于真相层，已按台账规则合并")
         ok, _results, out = _run_verify_gates(wt, "")
         if not ok:
             raise RuntimeError(f"同步远端 main 后验证门禁失败，未推送：{out[-800:]}")

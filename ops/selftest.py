@@ -9107,6 +9107,8 @@ if __name__ == "__main__":
     test_conflict_decision_hold_survives_existing_markers()
     test_prune_keeps_open_resolve_hold()
     test_reset_trunk_truth_conflict()
+    run([sys.executable, str(OPS / "test-push-remote-truth-conflict.py")],
+        cwd=str(OPS.parent))
     test_sync_trunk_truth_failclosed_non_truth()
     test_publish_lock_and_origin_containment()
     test_stale_lock_selfheals_and_never_deletes_others()
